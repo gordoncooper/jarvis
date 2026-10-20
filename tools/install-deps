@@ -210,6 +210,82 @@ def gitleaks_installed_version(bin_path: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def _installed_binary_version(bin_path: Path, args: list[str]) -> str | None:
+    if not bin_path.is_file():
+        return None
+    try:
+        proc = subprocess.run(
+            [str(bin_path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout.strip() or proc.stderr.strip())
+    return match.group(1) if match else None
+
+
+def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["kustomize_version"]
+    dest = dest_dir / "kustomize"
+    installed = _installed_binary_version(dest, ["version", "--short"])
+    if installed == version:
+        print(f"kustomize {version} already installed at {dest}")
+        return
+
+    sha_key = f"kustomize_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = (
+        f"https://github.com/kubernetes-sigs/kustomize/releases/download/"
+        f"kustomize%2Fv{version}/kustomize_v{version}_linux_{arch}.tar.gz"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-kustomize-") as tmp:
+        tarball = Path(tmp) / "kustomize.tar.gz"
+        print(f"downloading kustomize {version} ({arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract("kustomize", path=tmp)
+        binary = Path(tmp) / "kustomize"
+        _install_age_binary(
+            src=binary,
+            dest=dest,
+            expected_sha=expected_sha,
+            label="kustomize",
+            version=version,
+        )
+
+
+def install_kubeconform(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["kubeconform_version"]
+    dest = dest_dir / "kubeconform"
+    installed = _installed_binary_version(dest, ["-v"])
+    if installed == version:
+        print(f"kubeconform {version} already installed at {dest}")
+        return
+
+    sha_key = f"kubeconform_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = (
+        f"https://github.com/yannh/kubeconform/releases/download/v{version}/"
+        f"kubeconform-linux-{arch}.tar.gz"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-kubeconform-") as tmp:
+        tarball = Path(tmp) / "kubeconform.tar.gz"
+        print(f"downloading kubeconform {version} ({arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract("kubeconform", path=tmp)
+        binary = Path(tmp) / "kubeconform"
+        _install_age_binary(
+            src=binary,
+            dest=dest,
+            expected_sha=expected_sha,
+            label="kubeconform",
+            version=version,
+        )
+
+
 def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     version = versions["gitleaks_version"]
     dest = dest_dir / "gitleaks"
@@ -296,6 +372,8 @@ def main() -> None:
     install_sops(versions, arch, INSTALL_DIR)
     install_age(versions, arch, INSTALL_DIR)
     install_gitleaks(versions, arch, INSTALL_DIR)
+    install_kustomize(versions, arch, INSTALL_DIR)
+    install_kubeconform(versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
 
 

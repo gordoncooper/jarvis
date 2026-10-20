@@ -1,0 +1,26 @@
+# Managed by Ansible (flux-operator role) on first boot; Flux reconciles this copy from Git (R1).
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  distribution:
+    version: "2.8.x"
+    registry: ghcr.io/fluxcd
+  components:
+    - source-controller
+    - kustomize-controller
+    - helm-controller
+    - notification-controller
+  cluster:
+    type: kubernetes
+    size: medium
+    multitenant: false
+    networkPolicy: true
+    domain: cluster.local
+  sync:
+    kind: GitRepository
+    url: "https://github.com/gordoncooper/jarvis"
+    ref: "refs/heads/main"
+    path: "envs/env-01/flux"

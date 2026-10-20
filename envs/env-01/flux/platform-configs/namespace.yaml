@@ -1,0 +1,5 @@
+# Canonical copy: platform/backups/namespace.yaml (keep in sync; tested in CI).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-backups
