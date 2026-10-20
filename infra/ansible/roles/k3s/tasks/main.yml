@@ -57,7 +57,7 @@
     owner: root
     group: root
     checksum: "sha256:{{ k3s_sha256 }}"
-  register: k3s_binary_download
+  notify: Restart k3s
   tags:
     - k3s
     - k3s-upgrade
@@ -70,14 +70,6 @@
     group: root
     mode: "0644"
   notify: Restart k3s
-  tags:
-    - k3s
-    - k3s-upgrade
-
-- name: Reload systemd after unit or binary change
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: k3s_binary_download is changed
   tags:
     - k3s
     - k3s-upgrade

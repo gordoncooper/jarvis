@@ -14,8 +14,10 @@ Narrow runs use `--tags` from the playbook controller. Guard tasks and cluster-v
 | `kubeconfig` | Fetch and install kubeconfig for the playbook runner | `ansible-playbook site.yml --tags kubeconfig` |
 | `k3s-upgrade` | Pinned k3s binary and unit after a version pin change | `ansible-playbook site.yml --tags k3s-upgrade` |
 | `k3s-config` | `/etc/rancher/k3s/config.yaml` and k3s restart | `ansible-playbook site.yml --tags k3s-config` |
-| `time` | Chrony and node timezone | `ansible-playbook site.yml --tags time` |
+| `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `ansible-playbook site.yml --tags time` |
 | `apt-policy` | Apt list refresh timers and inert unattended-upgrades policy | `ansible-playbook site.yml --tags apt-policy` |
 | `journald` | journald drop-in and restart | `ansible-playbook site.yml --tags journald` |
+
+`k3s-config`, `k3s-upgrade`, and `journald` restart their services through handlers; handlers do not appear in `ansible-playbook --list-tasks`.
 
 Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.

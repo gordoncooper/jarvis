@@ -83,7 +83,6 @@ EXPECTED_TASKS_BY_TAG: dict[str, frozenset[str]] = {
             "k3s : Install k3s server config",
             "k3s : Download pinned k3s binary",
             "k3s : Install k3s systemd unit",
-            "k3s : Reload systemd after unit or binary change",
         }
         | GUARD_TASKS
         | REQUIRED_VAR_ASSERTS
@@ -301,6 +300,65 @@ def test_every_role_task_carries_a_role_tag(role: str) -> None:
         if not (tags & ROLE_TAGS):
             missing.append(f"{path.relative_to(REPO_ROOT)}: {name} tags={sorted(tags)}")
     assert not missing, "\n".join(missing)
+
+
+K3S_RESTART_HANDLER = "Restart k3s"
+K3S_NOTIFY_TASKS = frozenset(
+    {
+        "Install k3s server config",
+        "Download pinned k3s binary",
+        "Install k3s systemd unit",
+    }
+)
+
+
+def _task_notify(entry: dict[str, Any]) -> str | list[str] | None:
+    notify = entry.get("notify")
+    if notify is not None:
+        return notify
+    for key in entry:
+        if key.endswith(".template") or key.endswith(".get_url"):
+            module = entry[key]
+            if isinstance(module, dict):
+                return module.get("notify")
+    return None
+
+
+def test_k3s_upgrade_tasks_notify_restart_handler() -> None:
+    main = ANSIBLE_DIR / "roles" / "k3s" / "tasks" / "main.yml"
+    entries = yaml.safe_load(main.read_text(encoding="utf-8"))
+    assert isinstance(entries, list)
+    missing: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if name not in K3S_NOTIFY_TASKS:
+            continue
+        notify = _task_notify(entry)
+        if notify == K3S_RESTART_HANDLER:
+            continue
+        if isinstance(notify, list) and K3S_RESTART_HANDLER in notify:
+            continue
+        missing.append(f"{name}: notify={notify!r}")
+    assert not missing, "\n".join(missing)
+
+
+def test_k3s_restart_handler_carries_operator_tags() -> None:
+    handlers = ANSIBLE_DIR / "roles" / "k3s" / "handlers" / "main.yml"
+    entries = yaml.safe_load(handlers.read_text(encoding="utf-8"))
+    assert isinstance(entries, list)
+    handler = next(
+        (e for e in entries if isinstance(e, dict) and e.get("name") == K3S_RESTART_HANDLER),
+        None,
+    )
+    assert handler is not None
+    tags = _merge_tags(frozenset(), handler.get("tags"))
+    assert "k3s-upgrade" in tags
+    assert "k3s-config" in tags
+    module = handler.get("ansible.builtin.systemd")
+    assert isinstance(module, dict)
+    assert module.get("daemon_reload") is True
 
 
 def test_no_legacy_k3s_kubeconfig_tag_in_repo() -> None:
