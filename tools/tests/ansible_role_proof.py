@@ -23,6 +23,8 @@ ROLE_TEMPLATES = ROLE_DIR / "templates"
 SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
+# Docker CI often blocks NTS (TCP 4460); production keeps base_os_chrony_pool_nts default true.
+CONTAINER_PLAYBOOK_EXTRA_VARS = ["-e", "base_os_chrony_pool_nts=false"]
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
     """\
@@ -93,7 +95,10 @@ def ansible_render_template(template_name: str, variables: dict[str, object]) ->
         dest = Path(handle.name)
     extra: list[str] = []
     for key, value in variables.items():
-        extra.extend(["-e", f"{key}={value}"])
+        if isinstance(value, bool):
+            extra.extend(["-e", f"{key}={str(value).lower()}"])
+        else:
+            extra.extend(["-e", f"{key}={value}"])
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
@@ -252,8 +257,11 @@ def playbook_cmd(extra_vars: list[str] | None = None) -> list[str]:
 
 
 def run_playbook(extra_vars: list[str] | None = None) -> subprocess.CompletedProcess[str]:
+    merged = list(CONTAINER_PLAYBOOK_EXTRA_VARS)
+    if extra_vars:
+        merged.extend(extra_vars)
     return subprocess.run(
-        playbook_cmd(extra_vars),
+        playbook_cmd(merged),
         cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,

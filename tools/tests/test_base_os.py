@@ -73,7 +73,10 @@ def test_journald_template_time_zone_with_slash_and_underscore() -> None:
 def test_chrony_template_exact_content() -> None:
     rendered = ansible_render_template(
         "chrony.conf.j2",
-        {"base_os_chrony_test_invalid": False},
+        {
+            "base_os_chrony_test_invalid": False,
+            "base_os_chrony_pool_nts": True,
+        },
     )
     assert rendered == textwrap.dedent(
         """\
@@ -86,7 +89,6 @@ def test_chrony_template_exact_content() -> None:
 
         # Ubuntu default pool with NTS enabled.
         pool ntp.ubuntu.com iburst maxsources 4 nts
-
         leapsectz right/UTC
         makestep 1.0 3 3
         rtcsync
@@ -94,6 +96,18 @@ def test_chrony_template_exact_content() -> None:
         logdir /var/log/chrony
         """
     )
+
+
+def test_chrony_template_without_nts_for_container_fallback() -> None:
+    rendered = ansible_render_template(
+        "chrony.conf.j2",
+        {
+            "base_os_chrony_test_invalid": False,
+            "base_os_chrony_pool_nts": False,
+        },
+    )
+    assert "pool ntp.ubuntu.com iburst maxsources 4\n" in rendered
+    assert " nts" not in rendered.split("pool ntp.ubuntu.com")[1].splitlines()[0]
 
 
 def test_auto_upgrades_template_exact_content() -> None:

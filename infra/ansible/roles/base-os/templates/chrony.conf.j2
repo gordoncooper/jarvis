@@ -5,15 +5,15 @@ keyfile /etc/chrony/chrony.keys
 driftfile /var/lib/chrony/chrony.drift
 ntsdumpdir /var/lib/chrony
 
-# Ubuntu default pool with NTS enabled.
-pool ntp.ubuntu.com iburst maxsources 4 nts
+# Ubuntu default pool{% if base_os_chrony_pool_nts | default(true) | bool %} with NTS enabled{% endif %}.
+pool ntp.ubuntu.com iburst maxsources 4{% if base_os_chrony_pool_nts | default(true) | bool %} nts{% endif %}
 
 leapsectz right/UTC
 makestep 1.0 3 3
 rtcsync
 
 logdir /var/log/chrony
-{% if base_os_chrony_test_invalid | default(false) | bool -%}
+{% if base_os_chrony_test_invalid | default(false) | bool %}
 
 invalid-syntax-test-line
 {% endif -%}

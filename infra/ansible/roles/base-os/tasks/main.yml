@@ -56,6 +56,12 @@
         name: chrony
         state: restarted
         enabled: true
+
+    - name: Verify chrony is active after configuration change
+      ansible.builtin.command: systemctl is-active chrony
+      changed_when: false
+      register: base_os_chrony_active
+      failed_when: base_os_chrony_active.stdout.strip() != "active"
   rescue:
     - name: Restore chrony configuration from template backup
       ansible.builtin.copy:
