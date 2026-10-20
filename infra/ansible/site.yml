@@ -1,0 +1,10 @@
+---
+# Minimal playbook for local --syntax-check (p0a-11). p0a-13 owns the full site.yml
+# (base-os → k3s → flux-operator, inventory wiring, and marker guards).
+- name: Apply base OS role
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  roles:
+    - base-os

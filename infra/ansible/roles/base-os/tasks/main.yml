@@ -1,0 +1,84 @@
+---
+- name: Require time_zone from cluster-vars
+  ansible.builtin.assert:
+    that:
+      - time_zone is defined
+      - time_zone | length > 0
+    fail_msg: time_zone must be set in cluster-vars (env schema).
+
+- name: Install base OS packages
+  ansible.builtin.apt:
+    name:
+      - chrony
+      - unattended-upgrades
+      - tzdata
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure journald drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install journald disk cap
+  ansible.builtin.template:
+    src: journald-jarvis.conf.j2
+    dest: /etc/systemd/journald.conf.d/jarvis.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart systemd-journald
+
+# AppArmor usr.sbin.chronyd only allows chronyd to read /etc/chrony/**; validate must copy there.
+- name: Install chrony configuration with NTS
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "/bin/sh -c 'f=/etc/chrony/.ansible-validate.conf; install -m 0644 \"$1\" \"$f\" && chronyd -p -f \"$f\" >/dev/null; rc=$?; rm -f \"$f\"; exit $rc' _ %s"
+
+- name: Enable and start chrony
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+  tags:
+    - chrony-service
+
+- name: Configure periodic apt (list refresh only)
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Keep unattended-upgrades package policy inert
+  ansible.builtin.template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Keep apt-daily timer enabled for package list refresh
+  ansible.builtin.systemd:
+    name: apt-daily.timer
+    enabled: true
+    state: started
+
+- name: Disable automatic package upgrades timer
+  ansible.builtin.systemd:
+    name: apt-daily-upgrade.timer
+    enabled: false
+    state: stopped
+
+- name: Set node timezone from cluster-vars
+  community.general.timezone:
+    name: "{{ time_zone }}"
