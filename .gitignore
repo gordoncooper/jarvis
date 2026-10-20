@@ -1,4 +1,6 @@
 .venv/
+tools/.node/
+tools/.npm/
 .pytest_cache/
 __pycache__/
 *.pyc

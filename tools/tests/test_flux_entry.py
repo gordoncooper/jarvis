@@ -13,8 +13,6 @@ import yaml
 from _flux_entry import (
     FLUX_KUSTOMIZATION_CHAIN,
     FLUX_KUSTOMIZATION_PATHS,
-    FLUX_OPERATOR_CHART_CURRENT,
-    FLUX_OPERATOR_CHART_PIN,
     kustomize_build_paths,
 )
 from ansible_role_proof import (
@@ -173,20 +171,6 @@ def test_helmrelease_substitute_disabled() -> None:
         doc["metadata"]["annotations"]["kustomize.toolkit.fluxcd.io/substitute"]
         == "disabled"
     )
-
-
-def test_flux_operator_chart_pin_one_release_behind() -> None:
-    oci = yaml.safe_load(
-        (REPO_ROOT / "platform" / "flux-operator" / "oci-repository.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert oci["spec"]["ref"]["tag"] == FLUX_OPERATOR_CHART_PIN
-    assert FLUX_OPERATOR_CHART_PIN != FLUX_OPERATOR_CHART_CURRENT
-    comment = (REPO_ROOT / "platform" / "flux-operator" / "oci-repository.yaml").read_text(
-        encoding="utf-8"
-    )
-    assert FLUX_OPERATOR_CHART_CURRENT in comment
 
 
 def test_backups_restic_secret_stays_sops_encrypted_in_git() -> None:

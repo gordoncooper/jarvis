@@ -1,5 +1,6 @@
 ---
-# One-time bootstrap chart pin (R33, D11); not env-specific — changes only by PR.
+# One-time bootstrap chart pin (R33, D11); not env-specific — Renovate bumps with oci-repository.yaml.
+# renovate: datasource=docker depName=ghcr.io/controlplaneio-fluxcd/charts/flux-operator versioning=semver
 flux_operator_chart_version: "0.60.0"
 flux_operator_crd_wait_timeout: 120s
 flux_operator_rollout_wait_timeout: 300s
@@ -11,8 +12,11 @@ flux_distribution_version: "2.8.x"
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 helm_binary_path: /usr/local/bin/helm
 # Pinned Helm host CLI (must match tools/versions.env).
+# renovate: datasource=github-releases depName=helm/helm versioning=semver
 helm_version: 3.16.4
-helm_archive_sha256_linux_amd64: fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179
-helm_archive_sha256_linux_arm64: d3f8f15b3d9ec8c8678fbf3280c3e5902efabe5912e2f9fcf29107efbc8ead69
+# renovate: datasource=github-releases depName=helm/helm
+helm_linux_amd64_tarball_sha256: fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179
+# renovate: datasource=github-releases depName=helm/helm
+helm_linux_arm64_tarball_sha256: d3f8f15b3d9ec8c8678fbf3280c3e5902efabe5912e2f9fcf29107efbc8ead69
 helm_archive_member_linux_amd64: linux-amd64/helm
 helm_archive_member_linux_arm64: linux-arm64/helm

@@ -69,11 +69,11 @@ def test_ansible_helm_cli_pins_match_tools_versions_env() -> None:
     versions = _load_versions_env()
     assert defaults["helm_version"] == versions["helm_version"]
     assert (
-        defaults["helm_archive_sha256_linux_amd64"]
+        defaults["helm_linux_amd64_tarball_sha256"]
         == versions["helm_linux_amd64_tarball_sha256"]
     )
     assert (
-        defaults["helm_archive_sha256_linux_arm64"]
+        defaults["helm_linux_arm64_tarball_sha256"]
         == versions["helm_linux_arm64_tarball_sha256"]
     )
 

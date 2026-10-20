@@ -28,32 +28,61 @@ jobs:
       - name: Install Python test deps
         run: pip install -r requirements-dev.txt
 
+      - name: Validate renovate.json
+        run: renovate-config-validator renovate.json
+
       - name: Run tools/checks
         run: |
           set -euo pipefail
           export PATH="${HOME}/.local/bin:${PATH}"
+          expected_checks=(
+            cli-deny
+            contract-md
+            core-names
+            env-schema
+            pvc-backup
+            secret-scan
+          )
           shopt -s nullglob
-          checks=(tools/checks/*)
-          if ((${#checks[@]} == 0)); then
-            echo "no checks in tools/checks/" >&2
+          found_checks=()
+          for check in tools/checks/*; do
+            name="$(basename "$check")"
+            if [[ ! -f "$check" ]]; then
+              echo "missing check file: $check" >&2
+              exit 1
+            fi
+            if [[ ! -x "$check" ]]; then
+              echo "check must be executable: $check" >&2
+              exit 1
+            fi
+            found_checks+=("$name")
+          done
+          missing=()
+          for name in "${expected_checks[@]}"; do
+            if [[ " ${found_checks[*]} " != *" ${name} "* ]]; then
+              missing+=("$name")
+            fi
+          done
+          if ((${#missing[@]} > 0)); then
+            echo "missing expected checks: ${missing[*]}" >&2
             exit 1
           fi
-          ran=0
-          for check in "${checks[@]}"; do
-            name="$(basename "$check")"
-            if [[ ! -f "$check" || ! -x "$check" ]]; then
-              echo "skip non-executable: $check" >&2
-              continue
+          extra=()
+          for name in "${found_checks[@]}"; do
+            if [[ " ${expected_checks[*]} " != *" ${name} "* ]]; then
+              extra+=("$name")
             fi
-            ran=$((ran + 1))
+          done
+          if ((${#extra[@]} > 0)); then
+            echo "unexpected checks in tools/checks/: ${extra[*]}" >&2
+            exit 1
+          fi
+          for name in "${expected_checks[@]}"; do
+            check="tools/checks/${name}"
             echo "::group::$name"
             "$check"
             echo "::endgroup::"
           done
-          if ((ran == 0)); then
-            echo "no executable checks in tools/checks/" >&2
-            exit 1
-          fi
 
       - name: pytest
         run: |
