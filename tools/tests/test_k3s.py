@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import textwrap
+from pathlib import Path
 
 import pytest
 import yaml
@@ -25,6 +26,15 @@ from ansible_role_proof import (
 )
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
+K3S_KUBECONFIG_TASKS = (
+    Path(__file__).resolve().parents[2]
+    / "infra"
+    / "ansible"
+    / "roles"
+    / "k3s"
+    / "tasks"
+    / "kubeconfig.yml"
+)
 
 
 def inventory_hostname() -> str:
@@ -227,6 +237,40 @@ def test_k3s_guard_refuses_stopped_k3s_without_marker() -> None:
         assert "k3s is already present" in result.stdout + result.stderr
     finally:
         stop_systemd_container()
+
+
+def _kubeconfig_task_by_name(name: str) -> dict[str, object]:
+    loaded = yaml.safe_load(K3S_KUBECONFIG_TASKS.read_text(encoding="utf-8"))
+    assert isinstance(loaded, list)
+    for entry in loaded:
+        if not isinstance(entry, dict):
+            continue
+        block = entry.get("block")
+        if isinstance(block, list):
+            for task in block:
+                if isinstance(task, dict) and task.get("name") == name:
+                    return task
+        always = entry.get("always")
+        if isinstance(always, list):
+            for task in always:
+                if isinstance(task, dict) and task.get("name") == name:
+                    return task
+    raise AssertionError(f"task not found: {name}")
+
+
+def test_kubeconfig_staging_tasks_never_report_changed() -> None:
+    """Only Install kubeconfig may report changed on a re-run (staging is scratch work)."""
+    staging_names = (
+        "Create temp directory for kubeconfig staging",
+        "Fetch kubeconfig from node",
+        "Point kubeconfig server at inventory hostname",
+        "Remove kubeconfig staging directory",
+    )
+    for name in staging_names:
+        task = _kubeconfig_task_by_name(name)
+        assert task.get("changed_when") is False, name
+    install = _kubeconfig_task_by_name("Install kubeconfig for site.yml runner")
+    assert "changed_when" not in install
 
 
 def test_k3s_guard_allows_matching_marker() -> None:

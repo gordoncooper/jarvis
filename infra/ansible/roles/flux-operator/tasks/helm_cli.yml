@@ -37,6 +37,7 @@
         state: directory
         prefix: jarvis-helm-cli-
       register: flux_operator_helm_staging
+      changed_when: false
 
     - name: Download pinned Helm CLI archive
       ansible.builtin.get_url:
@@ -52,6 +53,7 @@
           -C {{ flux_operator_helm_staging.path }}
           {{ helm_archive_member }}
           --strip-components=1
+      changed_when: false
 
     - name: Install Helm CLI on node
       ansible.builtin.copy:
@@ -67,3 +69,4 @@
         path: "{{ flux_operator_helm_staging.path }}"
         state: absent
       when: flux_operator_helm_staging is defined and flux_operator_helm_staging.path is defined
+      changed_when: false

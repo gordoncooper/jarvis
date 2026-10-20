@@ -1,0 +1,13 @@
+---
+# Proof playbook: exercise flux-operator sops_age tasks without cluster bootstrap.
+- name: sops-age secret compare proof
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  vars:
+    k3s_binary_path: /usr/local/bin/k3s
+  tasks:
+    - ansible.builtin.import_role:
+        name: flux-operator
+        tasks_from: sops_age

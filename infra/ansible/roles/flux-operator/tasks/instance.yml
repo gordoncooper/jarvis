@@ -31,6 +31,7 @@
         state: directory
         prefix: jarvis-flux-instance-
       register: flux_instance_staging
+      changed_when: false
 
     - name: Render FluxInstance manifest
       ansible.builtin.template:
@@ -39,6 +40,7 @@
         owner: root
         group: root
         mode: "0600"
+      changed_when: false
 
     - name: Apply FluxInstance manifest once
       ansible.builtin.command:
@@ -51,3 +53,4 @@
         path: "{{ flux_instance_staging.path }}"
         state: absent
       when: flux_instance_staging is defined and flux_instance_staging.path is defined
+      changed_when: false

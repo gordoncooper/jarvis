@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import textwrap
@@ -26,6 +28,7 @@ from ansible_role_proof import (
     DOCKER_PLAYBOOK_EXTRA_VARS,
     flux_operator_check_playbook_cmd,
     inventory_path,
+    sops_age_proof_playbook_cmd,
     load_cluster_vars,
     playbook_recap_field,
     require_docker,
@@ -203,7 +206,8 @@ def test_sops_age_tasks_use_no_log() -> None:
         "flux_sops_age_key",
         "age private key",
         "age.agekey",
-        "flux_sops_age_existing_b64",
+        "flux_sops_age_existing_json",
+        "flux_sops_age_existing_key_content",
     )
     for task in _task_documents():
         blob = _task_text(task).lower()
@@ -225,7 +229,89 @@ def _generate_throwaway_age_key(tmp_path: Path) -> tuple[Path, str]:
     return keyfile, key_body
 
 
+def _sops_age_secret_read_argv() -> list[str]:
+    tasks = yaml.safe_load(
+        (FLUX_OPERATOR_ROLE_TASKS / "sops_age.yml").read_text(encoding="utf-8")
+    )
+    assert isinstance(tasks, list)
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if task.get("name") != "Read existing sops-age secret data when present":
+            continue
+        module = task.get("ansible.builtin.command")
+        assert isinstance(module, dict), task
+        cmd = module.get("cmd")
+        assert isinstance(cmd, str)
+        rendered = (
+            cmd.replace("{{ k3s_binary_path }}", "/usr/local/bin/k3s")
+            .replace("{{ flux_system_namespace }}", "flux-system")
+            .replace("\n", " ")
+        )
+        return shlex.split(rendered)
+    raise AssertionError("sops-age read task not found")
+
+
+def test_sops_age_secret_read_command_argv_uses_json_not_jsonpath() -> None:
+    argv = _sops_age_secret_read_argv()
+    assert argv[:6] == [
+        "/usr/local/bin/k3s",
+        "kubectl",
+        "-n",
+        "flux-system",
+        "get",
+        "secret",
+    ]
+    assert argv[6] == "sops-age"
+    assert argv[7:9] == ["-o", "json"]
+    assert "jsonpath" not in argv
+    assert "{.data.age.agekey}" not in argv
+
+
+def sops_age_key_matches_secret(secret: dict[str, object], key_file_content: str) -> bool:
+    data = secret.get("data")
+    if not isinstance(data, dict):
+        return False
+    encoded = data.get("age.agekey")
+    if not isinstance(encoded, str) or not encoded:
+        return False
+    existing = base64.b64decode(encoded).decode("utf-8").strip()
+    return existing == key_file_content.strip()
+
+
+def test_sops_age_compare_logic_matches_fixture_secret() -> None:
+    key_body = textwrap.dedent(
+        """\
+        # created: 2026-01-01T00:00:00Z
+        # public key: age1example
+        AGE-SECRET-KEY-1COMPARE000000000000000000000000000000000000000000000000
+        """
+    )
+    secret = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "data": {
+            "age.agekey": base64.b64encode(key_body.encode("utf-8")).decode("ascii"),
+        },
+    }
+    assert sops_age_key_matches_secret(secret, key_body)
+    other = dict(secret)
+    other["data"] = {
+        "age.agekey": base64.b64encode(b"AGE-SECRET-KEY-1OTHER\n").decode("ascii"),
+    }
+    assert not sops_age_key_matches_secret(other, key_body)
+
+
 def _install_fake_k3s_with_flux_done(secret_b64: str) -> None:
+    secret_json = json.dumps(
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": "sops-age", "namespace": "flux-system"},
+            "data": {"age.agekey": secret_b64},
+        },
+        separators=(",", ":"),
+    )
     script = textwrap.dedent(
         f"""\
         #!/bin/bash
@@ -242,8 +328,8 @@ def _install_fake_k3s_with_flux_done(secret_b64: str) -> None:
               echo "fluxinstance.fluxcd.controlplane.io/flux"
               exit 0
               ;;
-            *"get secret sops-age"*"jsonpath"*)
-              printf '%s' '{secret_b64}'
+            *"get secret sops-age"*" -o json"*)
+              printf '%s' '{secret_json}'
               exit 0
               ;;
             *"get secret sops-age"*)
@@ -334,6 +420,37 @@ def _run_flux_operator_playbook(
         check=False,
         env={**os.environ, **(env or {})},
     )
+
+
+def test_sops_age_second_run_accepts_existing_secret(tmp_path: Path) -> None:
+    require_docker()
+    keyfile, key_content = _generate_throwaway_age_key(tmp_path)
+    secret_b64 = base64.b64encode(key_content.encode("utf-8")).decode("ascii")
+    start_systemd_container()
+    try:
+        _install_fake_k3s_with_flux_done(secret_b64)
+        env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
+        first = subprocess.run(
+            sops_age_proof_playbook_cmd(),
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        second = subprocess.run(
+            sops_age_proof_playbook_cmd(),
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert first.returncode == 0, first.stdout + first.stderr
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
+    finally:
+        stop_systemd_container()
 
 
 def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
