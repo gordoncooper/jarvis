@@ -25,9 +25,8 @@ SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
 CHRONY_INVALID_FIXTURE = REPO_ROOT / "tools/tests/fixtures/chrony-invalid.conf"
 CHRONY_TEMPLATE_VALIDATE = (
-    "cp %s /tmp/chrony-ansible-validate.conf "
-    "&& chmod a+r /tmp/chrony-ansible-validate.conf "
-    "&& chronyd -p -f /tmp/chrony-ansible-validate.conf"
+    "install -m 0644 %s /run/chrony-ansible-validate.conf "
+    "&& chronyd -p -f /run/chrony-ansible-validate.conf"
 )
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
