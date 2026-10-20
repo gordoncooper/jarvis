@@ -4,7 +4,7 @@
 
 ## Operator tags
 
-Narrow runs use `--tags` on the bastion. Guard tasks and cluster-vars asserts are tagged `always` so they still run. CI skip tags (`chrony-service`, `k3s-service`, `flux-cluster`) are unchanged.
+Narrow runs use `--tags` from the playbook controller. Guard tasks and cluster-vars asserts are tagged `always` so they still run. CI skip tags (`chrony-service`, `k3s-service`, `flux-cluster`) are unchanged.
 
 | Tag | Purpose | Example |
 | --- | --- | --- |
