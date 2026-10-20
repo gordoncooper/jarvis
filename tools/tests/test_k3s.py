@@ -267,17 +267,23 @@ def _install_fake_remote_kubeconfig(container: str) -> None:
     assert write.returncode == 0, write.stderr
 
 
-def _kubeconfig_proof_env(home: Path) -> dict[str, str]:
+CONTAINER_ANSIBLE_REMOTE_TMP = "/tmp/jarvis-ansible-remote"
+
+
+def _kubeconfig_proof_env(
+    home: Path,
+    *,
+    local_tmp: Path,
+    remote_tmp: Path,
+) -> dict[str, str]:
     home.mkdir(parents=True, exist_ok=True)
-    for path in (
-        Path("/tmp/jarvis-ansible-local"),
-        Path("/tmp/jarvis-ansible-remote"),
-    ):
-        path.mkdir(parents=True, exist_ok=True)
+    local_tmp.mkdir(parents=True, exist_ok=True)
+    remote_tmp.mkdir(parents=True, exist_ok=True)
     return {
         **os.environ,
         "HOME": str(home),
-        "ANSIBLE_LOCAL_TEMP": "/tmp/jarvis-ansible-local",
+        "ANSIBLE_LOCAL_TEMP": str(local_tmp),
+        "ANSIBLE_REMOTE_TEMP": str(remote_tmp),
     }
 
 
@@ -289,9 +295,20 @@ def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
     start_systemd_container()
     try:
         _install_fake_remote_kubeconfig(CONTAINER_NAME)
-        env = _kubeconfig_proof_env(runner_home)
+        prep_tmp = docker_exec(
+            CONTAINER_NAME,
+            "mkdir",
+            "-p",
+            CONTAINER_ANSIBLE_REMOTE_TMP,
+        )
+        assert prep_tmp.returncode == 0, prep_tmp.stderr
+        env = _kubeconfig_proof_env(
+            runner_home,
+            local_tmp=tmp_path / "ansible-local-tmp",
+            remote_tmp=tmp_path / "ansible-remote-tmp",
+        )
         first = subprocess.run(
-            kubeconfig_proof_playbook_cmd(),
+            kubeconfig_proof_playbook_cmd(remote_tmp=CONTAINER_ANSIBLE_REMOTE_TMP),
             cwd=ANSIBLE_DIR,
             capture_output=True,
             text=True,
@@ -299,7 +316,7 @@ def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
             env=env,
         )
         second = subprocess.run(
-            kubeconfig_proof_playbook_cmd(),
+            kubeconfig_proof_playbook_cmd(remote_tmp=CONTAINER_ANSIBLE_REMOTE_TMP),
             cwd=ANSIBLE_DIR,
             capture_output=True,
             text=True,
