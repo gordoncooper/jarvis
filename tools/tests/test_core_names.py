@@ -150,6 +150,49 @@ def test_bastion_word_outside_envs_fails(tmp_path: Path):
     assert any(v.kind == "bastion" for v in violations)
 
 
+def test_inventory_hostname_in_docs_fails(tmp_path: Path):
+    _init_git_repo(tmp_path)
+    _write_env(tmp_path, env_name="env-test")
+    validate_env_tree(tmp_path)
+    hosts = yaml.safe_load(
+        (tmp_path / "envs/env-test/inventory/hosts.yml").read_text(encoding="utf-8")
+    )
+    hostname = next(iter(hosts["all"]["hosts"]))
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "bad.md").write_text(f"SSH target: {hostname}\n", encoding="utf-8")
+    _git_add_all(tmp_path)
+
+    violations = scan_core_names(tmp_path)
+    assert any(
+        v.path == "docs/bad.md"
+        and v.kind == "inventory_hostname"
+        and v.value == hostname
+        for v in violations
+    )
+
+
+def test_github_owner_word_outside_docs_fails(tmp_path: Path):
+    _init_git_repo(tmp_path)
+    _write_env(tmp_path, env_name="env-test")
+    validate_env_tree(tmp_path)
+    cluster = yaml.safe_load(
+        (tmp_path / "envs/env-test/values/cluster-vars.yaml").read_text(encoding="utf-8")
+    )
+    owner = cluster["flux_git_repo_url"].split("github.com/", 1)[1].split("/", 1)[0]
+
+    bad = tmp_path / "platform" / "bad.txt"
+    bad.parent.mkdir(parents=True)
+    bad.write_text(f"Org: {owner} owns the repo\n", encoding="utf-8")
+    _git_add_all(tmp_path)
+
+    violations = scan_core_names(tmp_path)
+    assert any(
+        v.kind == "github_owner_word" and v.value == owner for v in violations
+    )
+
+
 def test_docs_and_readme_planning_links_allowed(tmp_path: Path):
     _init_git_repo(tmp_path)
     _write_env(tmp_path, env_name="env-test")
