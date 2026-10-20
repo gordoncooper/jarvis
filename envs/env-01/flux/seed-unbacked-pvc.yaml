@@ -1,0 +1,12 @@
+# Seed fixture for p0a-09: intentionally missing backup (do not merge).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seed-unbacked
+  namespace: platform-seed
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Mi
