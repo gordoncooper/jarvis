@@ -1,0 +1,56 @@
+---
+- name: Require jarvis_env from cluster-vars
+  ansible.builtin.assert:
+    that:
+      - jarvis_env is defined
+      - jarvis_env | length > 0
+    fail_msg: jarvis_env must be set in cluster-vars (env schema).
+  tags:
+    - k3s-guard
+
+- name: Probe whether k3s service is active
+  ansible.builtin.command:
+    cmd: systemctl is-active {{ k3s_service_name }}
+  register: k3s_guard_active
+  changed_when: false
+  failed_when: false
+  tags:
+    - k3s-guard
+
+- name: Stat jarvis env marker
+  ansible.builtin.stat:
+    path: "{{ jarvis_marker_path }}"
+  register: k3s_guard_marker_stat
+  tags:
+    - k3s-guard
+
+- name: Read jarvis env marker
+  ansible.builtin.slurp:
+    src: "{{ jarvis_marker_path }}"
+  register: k3s_guard_marker
+  when: k3s_guard_marker_stat.stat.exists
+  tags:
+    - k3s-guard
+
+- name: Refuse host with foreign or unmarked k3s
+  ansible.builtin.assert:
+    that:
+      - k3s_guard_active.stdout != 'active' or (
+          k3s_guard_marker_stat.stat.exists
+          and (k3s_guard_marker.content | b64decode | trim) == jarvis_env
+        )
+    fail_msg: >-
+      k3s is already active on this host but {{ jarvis_marker_path }} is missing or does not
+      contain '{{ jarvis_env }}'. Wipe the node or fix the marker before re-running this env.
+  tags:
+    - k3s-guard
+
+- name: Write jarvis env marker
+  ansible.builtin.copy:
+    dest: "{{ jarvis_marker_path }}"
+    content: "{{ jarvis_env }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - k3s-guard

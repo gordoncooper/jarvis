@@ -8,3 +8,4 @@
     - "{{ jarvis_cluster_vars }}"
   roles:
     - base-os
+    - k3s

@@ -71,6 +71,7 @@ def _valid_cluster_vars() -> dict:
     cluster_vars_path = REPO_ROOT / "envs" / env_name / "values" / "cluster-vars.yaml"
     reference = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8"))
     return {
+        "jarvis_env": "env-test",
         "dns_suffix": reference["dns_suffix"],
         "time_zone": "America/Los_Angeles",
         "code_delivery": "github",
@@ -81,8 +82,14 @@ def _valid_cluster_vars() -> dict:
         "backup_retention_weekly": 4,
         "backup_retention_monthly": 3,
         "k3s_version": "v1.36.5+k3s1",
+        "k3s_sha256": "d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313",
         "pod_cidr": "10.42.0.0/16",
         "service_cidr": "10.43.0.0/16",
+        "local_path_data": "/var/lib/jarvis/local-path",
+        "bastion_kubeconfig_local_paths": [
+            "/home/gordon/.kube/config",
+            "/home/agent/.kube/config",
+        ],
     }
 
 
@@ -115,6 +122,24 @@ def test_ssh_user_explicit_value_kept(tmp_path: Path):
     _write_env(tmp_path, cluster_vars=cv)
     resolved = validate_env_tree(tmp_path)
     assert resolved["env-test"]["ssh_user"] == "deploy"
+
+
+def test_jarvis_env_must_match_env_directory(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["jarvis_env"] = "env-other"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "jarvis_env" in "\n".join(excinfo.value.messages)
+
+
+def test_bad_k3s_sha256_fails(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["k3s_sha256"] = "not-a-checksum"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "k3s_sha256" in "\n".join(excinfo.value.messages)
 
 
 def test_bad_code_delivery_fails(tmp_path: Path):

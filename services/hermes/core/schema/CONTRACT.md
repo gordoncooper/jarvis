@@ -39,9 +39,13 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `backup_retention_daily` | yes | Restic keep count for daily snapshots (§7). |
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots (§7). |
 | `backup_retention_monthly` | yes | Restic keep count for monthly snapshots (§7). |
+| `jarvis_env` | yes | Env name for `/etc/jarvis/env` marker and guards; must match `envs/<env>/` (p0a-12). |
 | `k3s_version` | yes | Host binary version; changes only by PR (R33, D5). |
+| `k3s_sha256` | yes | SHA-256 of the pinned `k3s` amd64 release binary (verified on install). |
 | `pod_cidr` | yes | Pod network CIDR; set once per env (D4). |
 | `service_cidr` | yes | Service network CIDR; set once per env (D4). |
+| `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
+| `bastion_kubeconfig_local_paths` | yes | Absolute paths on the bastion (≥2) where Ansible fetches kubeconfig for Gordon and the agent user. |
 | `ingress_class` | when ingress exists | Ingress class from bundled Traefik (D32). |
 | Feature toggles and sizing | per env | Role labels map roles to nodes; sizes and enabled platform features are env-specific patches, not core logic. |
 

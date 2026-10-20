@@ -1,4 +1,5 @@
 # Flat keys for Flux postBuild substitution and Ansible (env schema: services/hermes/core/schema/CONTRACT.md).
+jarvis_env: env-01
 dns_suffix: alpha.lan
 time_zone: America/Los_Angeles
 code_delivery: github
@@ -12,5 +13,11 @@ backup_retention_monthly: 3
 
 # Host binary; changes only by PR (R33, D5). CIDRs are k3s defaults for this pin (D4).
 k3s_version: v1.36.5+k3s1
+k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
 pod_cidr: 10.42.0.0/16
 service_cidr: 10.43.0.0/16
+local_path_data: /var/lib/jarvis/local-path
+# Bastion kubeconfig paths (Gordon + agent user); not referenced from infra/ (R3).
+bastion_kubeconfig_local_paths:
+  - /home/gordon/.kube/config
+  - /home/agent/.kube/config

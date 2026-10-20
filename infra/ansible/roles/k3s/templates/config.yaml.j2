@@ -1,0 +1,13 @@
+# Managed by Ansible (k3s role): server config (framework §8 step 4; not the k3s install script).
+cluster-init: true
+secrets-encryption: true
+cluster-cidr: {{ pod_cidr }}
+service-cidr: {{ service_cidr }}
+default-local-storage-path: {{ local_path_data }}
+etcd-snapshot-schedule-cron: "{{ k3s_etcd_snapshot_schedule_cron }}"
+etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
+etcd-snapshot-dir: {{ backup_path }}
+kubelet-arg:
+  - "kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi"
+  - "system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi"
+  - "eviction-hard=memory.available<500Mi,nodefs.available<10%"
