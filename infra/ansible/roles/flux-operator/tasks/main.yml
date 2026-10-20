@@ -15,6 +15,7 @@
       flux-operator role requires jarvis_env, flux_git_repo_url, and flux_git_ref
       in cluster-vars.
   tags:
+    - always
     - flux-operator
 
 - name: Install Flux Operator once

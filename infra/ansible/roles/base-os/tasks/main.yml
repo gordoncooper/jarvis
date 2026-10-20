@@ -5,6 +5,9 @@
       - time_zone is defined
       - time_zone | length > 0
     fail_msg: time_zone must be set in cluster-vars (env schema).
+  tags:
+    - always
+    - base-os
 
 - name: Install base OS packages
   ansible.builtin.apt:
@@ -15,6 +18,8 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  tags:
+    - base-os
 
 - name: Ensure journald drop-in directory exists
   ansible.builtin.file:
@@ -23,6 +28,9 @@
     owner: root
     group: root
     mode: "0755"
+  tags:
+    - base-os
+    - journald
 
 - name: Install journald disk cap
   ansible.builtin.template:
@@ -32,6 +40,9 @@
     group: root
     mode: "0644"
   notify: Restart systemd-journald
+  tags:
+    - base-os
+    - journald
 
 # AppArmor usr.sbin.chronyd only allows chronyd to read /etc/chrony/**; validate must copy there.
 - name: Install chrony configuration with NTS
@@ -42,6 +53,9 @@
     group: root
     mode: "0644"
     validate: "/bin/sh -c 'f=/etc/chrony/.ansible-validate.conf; install -m 0644 \"$1\" \"$f\" && chronyd -p -f \"$f\" >/dev/null; rc=$?; rm -f \"$f\"; exit $rc' _ %s"
+  tags:
+    - base-os
+    - time
 
 - name: Enable and start chrony
   ansible.builtin.service:
@@ -49,6 +63,8 @@
     state: started
     enabled: true
   tags:
+    - base-os
+    - time
     - chrony-service
 
 - name: Configure periodic apt (list refresh only)
@@ -58,6 +74,9 @@
     owner: root
     group: root
     mode: "0644"
+  tags:
+    - base-os
+    - apt-policy
 
 - name: Keep unattended-upgrades package policy inert
   ansible.builtin.template:
@@ -66,19 +85,31 @@
     owner: root
     group: root
     mode: "0644"
+  tags:
+    - base-os
+    - apt-policy
 
 - name: Keep apt-daily timer enabled for package list refresh
   ansible.builtin.systemd:
     name: apt-daily.timer
     enabled: true
     state: started
+  tags:
+    - base-os
+    - apt-policy
 
 - name: Disable automatic package upgrades timer
   ansible.builtin.systemd:
     name: apt-daily-upgrade.timer
     enabled: false
     state: stopped
+  tags:
+    - base-os
+    - apt-policy
 
 - name: Set node timezone from cluster-vars
   community.general.timezone:
     name: "{{ time_zone }}"
+  tags:
+    - base-os
+    - time
