@@ -33,74 +33,22 @@
     mode: "0644"
   notify: Restart systemd-journald
 
-- name: Read existing chrony configuration before changes
-  ansible.builtin.slurp:
-    src: /etc/chrony/chrony.conf
-  register: base_os_chrony_before
-  failed_when: false
+- name: Install chrony configuration with NTS
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "chronyd -p -f %s"
 
-- name: Apply chrony configuration with NTS (restore on start failure)
-  block:
-    - name: Install chrony configuration with NTS
-      ansible.builtin.template:
-        src: chrony.conf.j2
-        dest: /etc/chrony/chrony.conf
-        owner: root
-        group: root
-        mode: "0644"
-        backup: true
-      register: base_os_chrony_template
-
-    - name: Enable and restart chrony with new configuration
-      when: base_os_chrony_manage_service | default(true) | bool
-      ansible.builtin.service:
-        name: chrony
-        state: restarted
-        enabled: true
-
-    - name: Verify chrony is active after configuration change
-      when: base_os_chrony_manage_service | default(true) | bool
-      ansible.builtin.command: systemctl is-active chrony
-      changed_when: false
-      register: base_os_chrony_active
-      failed_when: base_os_chrony_active.stdout.strip() != "active"
-  rescue:
-    - name: Skip chrony rescue when service management is disabled
-      ansible.builtin.meta: end_host
-      when: not (base_os_chrony_manage_service | default(true) | bool)
-    - name: Restore chrony configuration from template backup
-      ansible.builtin.copy:
-        src: "{{ base_os_chrony_template.backup_file }}"
-        dest: /etc/chrony/chrony.conf
-        remote_src: true
-        owner: root
-        group: root
-        mode: "0644"
-      when: base_os_chrony_template.backup_file is defined
-
-    - name: Restore chrony configuration from pre-change slurp
-      ansible.builtin.copy:
-        dest: /etc/chrony/chrony.conf
-        content: "{{ base_os_chrony_before.content | b64decode }}"
-        owner: root
-        group: root
-        mode: "0644"
-      when:
-        - base_os_chrony_template.backup_file is not defined
-        - not base_os_chrony_before.failed
-        - base_os_chrony_before.content is defined
-
-    - name: Restart chrony after restoring configuration
-      ansible.builtin.service:
-        name: chrony
-        state: restarted
-        enabled: true
-
-    - name: Report chrony NTS configuration failure
-      ansible.builtin.fail:
-        msg: >-
-          chrony failed to start after applying the NTS configuration; restored the
-          previous chrony.conf. Ensure outbound UDP 123 and TCP 4460 are available.
+- name: Enable and start chrony
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+  tags:
+    - chrony-service
 
 - name: Configure periodic apt (list refresh only)
   ansible.builtin.template:

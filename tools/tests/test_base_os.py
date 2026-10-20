@@ -10,6 +10,7 @@ import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
+    CHRONY_INVALID_FIXTURE,
     CONTAINER_NAME,
     EXPECTED_20_AUTO_UPGRADES,
     ansible_render_template,
@@ -17,6 +18,7 @@ from ansible_role_proof import (
     assert_apt_timer_states,
     assert_localtime_matches_zone,
     cluster_vars_playbook_path,
+    docker_exec,
     inventory_path,
     load_cluster_vars,
     playbook_recap_field,
@@ -33,6 +35,8 @@ JOURNALD_EXPECTED_BODY = textwrap.dedent(
     SystemMaxUse={system_max_use}
     """
 )
+
+CHRONY_MARKER = "JARVIS_CHRONY_VALIDATE_PRESERVE_MARKER\n"
 
 
 @pytest.mark.parametrize(
@@ -67,17 +71,11 @@ def test_journald_template_time_zone_with_slash_and_underscore() -> None:
         },
     )
     assert "SystemMaxUse=2G" in rendered
-    assert zone  # exercised as role variable alongside journald render
+    assert zone
 
 
 def test_chrony_template_exact_content() -> None:
-    rendered = ansible_render_template(
-        "chrony.conf.j2",
-        {
-            "base_os_chrony_test_invalid": False,
-            "base_os_chrony_pool_nts": True,
-        },
-    )
+    rendered = ansible_render_template("chrony.conf.j2", {})
     assert rendered == textwrap.dedent(
         """\
         # Managed by Ansible (base-os): chrony with NTS (framework §4).
@@ -89,6 +87,7 @@ def test_chrony_template_exact_content() -> None:
 
         # Ubuntu default pool with NTS enabled.
         pool ntp.ubuntu.com iburst maxsources 4 nts
+
         leapsectz right/UTC
         makestep 1.0 3 3
         rtcsync
@@ -96,21 +95,6 @@ def test_chrony_template_exact_content() -> None:
         logdir /var/log/chrony
         """
     )
-
-
-def test_chrony_template_without_nts_for_container_fallback() -> None:
-    rendered = ansible_render_template(
-        "chrony.conf.j2",
-        {
-            "base_os_chrony_test_invalid": False,
-            "base_os_chrony_pool_nts": False,
-            "base_os_chrony_enable_rtcsync": False,
-        },
-    )
-    assert "pool ntp.ubuntu.com iburst maxsources 4\n" in rendered
-    assert "ntsdumpdir" not in rendered
-    assert "rtcsync" not in rendered
-    assert " nts" not in rendered.split("pool ntp.ubuntu.com")[1].splitlines()[0]
 
 
 def test_auto_upgrades_template_exact_content() -> None:
@@ -161,6 +145,79 @@ def test_site_yml_syntax_check() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+def test_chronyd_rejects_invalid_config() -> None:
+    if shutil.which("chronyd") is not None:
+        check = subprocess.run(
+            ["chronyd", "-p", "-f", str(CHRONY_INVALID_FIXTURE)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        require_docker()
+        start_systemd_container()
+        try:
+            subprocess.run(
+                [
+                    "docker",
+                    "cp",
+                    str(CHRONY_INVALID_FIXTURE),
+                    f"{CONTAINER_NAME}:/tmp/chrony-invalid.conf",
+                ],
+                check=True,
+            )
+            check = docker_exec(
+                CONTAINER_NAME,
+                "chronyd",
+                "-p",
+                "-f",
+                "/tmp/chrony-invalid.conf",
+            )
+        finally:
+            stop_systemd_container()
+    assert check.returncode != 0
+
+
+def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
+    require_docker()
+    start_systemd_container()
+    try:
+        seed = docker_exec(
+            CONTAINER_NAME,
+            "bash",
+            "-lc",
+            f"printf %s '{CHRONY_MARKER}' > /etc/chrony/chrony.conf",
+        )
+        assert seed.returncode == 0, seed.stderr
+        apply = subprocess.run(
+            [
+                "ansible",
+                CONTAINER_NAME,
+                "-i",
+                f"{CONTAINER_NAME},",
+                "-e",
+                "ansible_connection=docker",
+                "-m",
+                "ansible.builtin.template",
+                "-a",
+                (
+                    f"src={CHRONY_INVALID_FIXTURE} dest=/etc/chrony/chrony.conf "
+                    "validate='chronyd -p -f %s'"
+                ),
+            ],
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert apply.returncode != 0, apply.stdout + apply.stderr
+        after = docker_exec(CONTAINER_NAME, "cat", "/etc/chrony/chrony.conf")
+        assert after.returncode == 0, after.stderr
+        assert after.stdout == CHRONY_MARKER
+    finally:
+        stop_systemd_container()
+
+
 def test_base_os_role_idempotent_in_container() -> None:
     require_docker()
     start_systemd_container()
@@ -176,40 +233,5 @@ def test_base_os_role_idempotent_in_container() -> None:
         time_zone = cluster["time_zone"]
         assert isinstance(time_zone, str)
         assert_localtime_matches_zone(CONTAINER_NAME, time_zone)
-    finally:
-        stop_systemd_container()
-
-
-def test_chrony_rescue_restores_config_on_invalid_test_var() -> None:
-    require_docker()
-    start_systemd_container()
-    try:
-        bootstrap = run_playbook()
-        assert bootstrap.returncode == 0, bootstrap.stdout + bootstrap.stderr
-        result = run_playbook(
-            {
-                "base_os_chrony_manage_service": True,
-                "base_os_chrony_test_invalid": True,
-            }
-        )
-        output = result.stdout + result.stderr
-        assert result.returncode != 0, output
-        assert playbook_recap_field(output, "rescued") == 1
-        conf = subprocess.run(
-            [
-                "docker",
-                "exec",
-                CONTAINER_NAME,
-                "grep",
-                "-c",
-                "invalid-syntax-test-line",
-                "/etc/chrony/chrony.conf",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert conf.returncode != 0
-        assert "chrony failed to start after applying the NTS configuration" in output
     finally:
         stop_systemd_container()
