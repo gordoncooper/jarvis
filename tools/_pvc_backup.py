@@ -8,8 +8,8 @@ from typing import Any, Iterable
 
 import yaml
 
-# Annotation on the PVC (or volumeClaimTemplate metadata) marking rebuildable storage.
-BACKUP_NONE_ANNOTATION = "jarvis.io/backup"
+# Unprefixed annotation on the PVC or volumeClaimTemplate metadata (R31).
+BACKUP_NONE_ANNOTATION = "backup"
 BACKUP_NONE_VALUE = "none"
 
 # §6 observability components that may use backup:none (R31).
@@ -92,7 +92,7 @@ def scan_pvc_backup(repo_root: Path | str) -> list[PvcBackupViolation]:
                         pvc.namespace,
                         pvc.name,
                         pvc.origin,
-                        "backup:none only allowed for VictoriaMetrics and VictoriaLogs",
+                        "backup: none only allowed for VictoriaMetrics and VictoriaLogs",
                     ),
                 )
             continue
@@ -105,7 +105,7 @@ def scan_pvc_backup(repo_root: Path | str) -> list[PvcBackupViolation]:
                     pvc.namespace,
                     pvc.name,
                     pvc.origin,
-                    "missing VolSync ReplicationSource (spec.sourcePVC) and backup:none mark",
+                    "missing VolSync ReplicationSource (spec.sourcePVC) and backup: none",
                 ),
             )
 
@@ -141,20 +141,32 @@ def _collect_from_doc(
         if isinstance(source_pvc, str) and source_pvc.strip():
             backup_sources.append((_doc_namespace(doc), source_pvc.strip()))
     elif kind == "StatefulSet":
+        meta = doc.get("metadata") or {}
+        sts_name = meta.get("name")
+        if not isinstance(sts_name, str) or not sts_name:
+            return
+        spec = doc.get("spec") or {}
+        replicas = spec.get("replicas", 1)
+        if not isinstance(replicas, int) or replicas < 0:
+            replicas = 1
         ns = _doc_namespace(doc)
-        for tpl in (doc.get("spec") or {}).get("volumeClaimTemplates") or []:
+        for tpl in spec.get("volumeClaimTemplates") or []:
             if not isinstance(tpl, dict):
                 continue
             tpl_meta = tpl.get("metadata") or {}
             tpl_name = tpl_meta.get("name")
-            if isinstance(tpl_name, str) and tpl_name:
+            if not isinstance(tpl_name, str) or not tpl_name:
+                continue
+            marked_none = has_backup_none_mark(tpl_meta)
+            for ordinal in range(replicas):
+                claim_name = f"{tpl_name}-{sts_name}-{ordinal}"
                 pvcs.append(
                     PvcRef(
                         rel_path,
                         ns,
-                        tpl_name,
+                        claim_name,
                         "volumeClaimTemplate",
-                        has_backup_none_mark(tpl_meta),
+                        marked_none,
                     ),
                 )
 

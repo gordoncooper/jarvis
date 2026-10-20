@@ -69,7 +69,7 @@ metadata:
   name: vmstorage
   namespace: observability
   annotations:
-    jarvis.io/backup: none
+    backup: none
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -113,7 +113,7 @@ metadata:
   name: hermes-data
   namespace: hermes-ops
   annotations:
-    jarvis.io/backup: none
+    backup: none
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -153,3 +153,113 @@ spec:
     )
     violations = scan_pvc_backup(tmp_path)
     assert len(violations) == 1
+
+
+def test_statefulset_pvc_with_per_replica_replication_source_passes(tmp_path: Path):
+    _write(
+        tmp_path,
+        "platform/backups/sts.yaml",
+        """
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vm
+  namespace: observability
+spec:
+  replicas: 2
+  serviceName: vm
+  selector:
+    matchLabels:
+      app: vm
+  template:
+    metadata:
+      labels:
+        app: vm
+    spec:
+      containers:
+        - name: vm
+          image: example:latest
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+""",
+    )
+    _write(
+        tmp_path,
+        "platform/backups/sources.yaml",
+        """
+apiVersion: volsync.backube/v1alpha1
+kind: ReplicationSource
+metadata:
+  name: data-vm-0-backup
+  namespace: observability
+spec:
+  sourcePVC: data-vm-0
+---
+apiVersion: volsync.backube/v1alpha1
+kind: ReplicationSource
+metadata:
+  name: data-vm-1-backup
+  namespace: observability
+spec:
+  sourcePVC: data-vm-1
+""",
+    )
+    assert scan_pvc_backup(tmp_path) == []
+
+
+def test_statefulset_replication_source_on_template_name_only_fails(tmp_path: Path):
+    _write(
+        tmp_path,
+        "platform/backups/sts.yaml",
+        """
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vm
+  namespace: observability
+spec:
+  serviceName: vm
+  selector:
+    matchLabels:
+      app: vm
+  template:
+    metadata:
+      labels:
+        app: vm
+    spec:
+      containers:
+        - name: vm
+          image: example:latest
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+""",
+    )
+    _write(
+        tmp_path,
+        "platform/backups/source.yaml",
+        """
+apiVersion: volsync.backube/v1alpha1
+kind: ReplicationSource
+metadata:
+  name: data-backup
+  namespace: observability
+spec:
+  sourcePVC: data
+""",
+    )
+    violations = scan_pvc_backup(tmp_path)
+    assert len(violations) == 1
+    assert violations[0].name == "data-vm-0"
+    assert "backup: none" in violations[0].reason
