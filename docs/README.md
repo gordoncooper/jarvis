@@ -1,0 +1,15 @@
+# jarvis documentation
+
+Authoritative planning lives outside this repo:
+
+- [jarvis-alphacut framework, plan, and decisions](https://github.com/gordoncooper/project-plans/tree/main/jarvis-alphacut/)
+
+Do not copy those documents into `jarvis`; link here instead.
+
+## In-repo contracts
+
+| Path | Topic |
+| --- | --- |
+| [CONTRACT.template.md](CONTRACT.template.md) | Shared contract section layout |
+| [code-delivery/CONTRACT.md](code-delivery/CONTRACT.md) | Code delivery provider (`github`) |
+| [../services/hermes/core/schema/CONTRACT.md](../services/hermes/core/schema/CONTRACT.md) | Env and profile schema |

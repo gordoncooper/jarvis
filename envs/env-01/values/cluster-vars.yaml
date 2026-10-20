@@ -1,0 +1,15 @@
+# Flat keys for Flux postBuild substitution and Ansible (env schema: services/hermes/core/schema/CONTRACT.md).
+dns_suffix: alpha.lan
+time_zone: America/Los_Angeles
+code_delivery: github
+build_agent: cursor
+
+backup_path: /var/lib/jarvis/backup
+backup_retention_daily: 7
+backup_retention_weekly: 4
+backup_retention_monthly: 3
+
+# Host binary; changes only by PR (R33, D5). CIDRs are k3s defaults for this pin (D4).
+k3s_version: v1.31.5+k3s1
+pod_cidr: 10.42.0.0/16
+service_cidr: 10.43.0.0/16
