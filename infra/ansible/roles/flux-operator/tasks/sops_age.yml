@@ -7,6 +7,7 @@
   register: flux_sops_age_lookup
   changed_when: false
   failed_when: false
+  check_mode: false
   tags:
     - flux-operator
     - flux-cluster
@@ -21,6 +22,8 @@
 
 - name: Validate controller age key environment
   no_log: true
+  vars:
+    ansible_remote_tmp: /tmp/ansible-jarvis-local
   block:
     - name: Require SOPS_AGE_KEY_FILE on the controller
       ansible.builtin.assert:
@@ -94,6 +97,7 @@
   changed_when: false
   failed_when: false
   when: flux_sops_age_present | bool
+  check_mode: false
   no_log: true
   tags:
     - flux-operator
