@@ -64,7 +64,6 @@
       "Shell(age:-d*)",
       "Shell(age:*--decrypt*)",
 
-      "Read(**/.config/sops/age/**)",
       "Read(**/*.agekey)"
     ]
   }
