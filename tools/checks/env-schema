@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# CI rule check: env schema validation (R4, framework §5 Env schema).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from services.hermes.core.schema.env import ValidationError, validate_env_tree
+
+try:
+    validate_env_tree(Path("."))
+except ValidationError as exc:
+    for line in exc.messages:
+        print(line, flush=True)
+    raise SystemExit(1)
+PY
