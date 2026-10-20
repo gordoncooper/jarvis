@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: core must not name envs, DNS suffixes, or models (R3, R28).
+# CI rule check: core must not name envs, DNS suffixes, or operator-specific strings (R3, R28).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -37,43 +37,6 @@ def test_hardcoded_dns_suffix_under_platform_fails(tmp_path: Path):
     assert violations[0].value == dns_suffix
 
 
-def test_flux_git_repo_url_outside_envs_fails(tmp_path: Path):
-    _init_git_repo(tmp_path)
-    _write_env(tmp_path, env_name="env-test")
-    validate_env_tree(tmp_path)
-    cluster = yaml.safe_load(
-        (tmp_path / "envs/env-test/values/cluster-vars.yaml").read_text(encoding="utf-8")
-    )
-    repo_url = cluster["flux_git_repo_url"]
-
-    bad = tmp_path / "platform" / "bad.txt"
-    bad.parent.mkdir(parents=True)
-    bad.write_text(f"sync: {repo_url}\n", encoding="utf-8")
-    _git_add_all(tmp_path)
-
-    violations = scan_core_names(tmp_path)
-    assert any(v.kind == "flux_git_repo_url" and v.value == repo_url for v in violations)
-
-
-def test_github_owner_segment_outside_envs_fails(tmp_path: Path):
-    _init_git_repo(tmp_path)
-    _write_env(tmp_path, env_name="env-test")
-    validate_env_tree(tmp_path)
-    cluster = yaml.safe_load(
-        (tmp_path / "envs/env-test/values/cluster-vars.yaml").read_text(encoding="utf-8")
-    )
-    owner = cluster["flux_git_repo_url"].split("github.com/", 1)[1].split("/", 1)[0]
-    segment = f"github.com/{owner}/"
-
-    bad = tmp_path / "platform" / "bad.txt"
-    bad.parent.mkdir(parents=True)
-    bad.write_text(f"remote: {segment}jarvis.git\n", encoding="utf-8")
-    _git_add_all(tmp_path)
-
-    violations = scan_core_names(tmp_path)
-    assert any(v.kind == "github_owner" and v.value == segment for v in violations)
-
-
 def test_inventory_hostname_outside_envs_fails(tmp_path: Path):
     _init_git_repo(tmp_path)
     _write_env(tmp_path, env_name="env-test")

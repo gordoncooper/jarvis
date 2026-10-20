@@ -8,8 +8,9 @@ Rules here are prose only for what `tools/checks/` and `.cursor/cli.json` cannot
 - **R3 / R28 — Core stays env-agnostic (no env names, DNS suffixes, or models in core):** `tools/checks/core-names`.
 - **Env schema (values under `envs/<env>/`):** `tools/checks/env-schema`.
 - **R2 — Each component folder has `CONTRACT.md`:** `tools/checks/contract-md`.
-- **R31 — Every PVC has backup coverage or `backup: none`:** `tools/checks/pvc-backup`.
 - **R25 — No plaintext secrets in Git:** `tools/checks/secret-scan`.
+
+**R31 (PVC backup coverage):** re-add `tools/checks/pvc-backup` with the first real PVC in **p0b-09** (VolSync test volume); deferred in lean pass 2 because no PVC exists in Git yet.
 
 ## Stay lean
 
