@@ -1,0 +1,29 @@
+# Managed by Ansible (flux-operator role): one-time FluxInstance (R1); Flux manages it afterward.
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: {{ flux_instance_name }}
+  namespace: {{ flux_system_namespace }}
+spec:
+  distribution:
+    version: "{{ flux_distribution_version }}"
+    registry: ghcr.io/fluxcd
+  components:
+    - source-controller
+    - source-watcher
+    - kustomize-controller
+    - helm-controller
+    - notification-controller
+    - image-reflector-controller
+    - image-automation-controller
+  cluster:
+    type: kubernetes
+    size: medium
+    multitenant: false
+    networkPolicy: true
+    domain: cluster.local
+  sync:
+    kind: GitRepository
+    url: "{{ flux_git_repo_url }}"
+    ref: "{{ flux_git_ref }}"
+    path: "envs/{{ jarvis_env }}/flux"

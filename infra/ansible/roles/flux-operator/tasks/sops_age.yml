@@ -1,0 +1,123 @@
+---
+- name: Check whether flux-system sops-age secret exists
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
+      get secret sops-age -o name
+  register: flux_sops_age_lookup
+  changed_when: false
+  failed_when: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Record flux-system sops-age secret presence
+  ansible.builtin.set_fact:
+    flux_sops_age_present: >-
+      {{ flux_sops_age_lookup.rc == 0 and (flux_sops_age_lookup.stdout | trim | length) > 0 }}
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Validate controller age key environment
+  no_log: true
+  block:
+    - name: Require SOPS_AGE_KEY_FILE on the controller
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'SOPS_AGE_KEY_FILE') | length > 0
+        fail_msg: >-
+          Set SOPS_AGE_KEY_FILE to the age private key path on the controller before
+          running flux-operator (bootstrap secret flux-system/sops-age).
+      delegate_to: localhost
+      become: false
+      run_once: true
+      no_log: true
+      tags:
+        - flux-operator
+        - flux-cluster
+
+    - name: Stat age private key on the controller
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: flux_sops_age_key_stat
+      no_log: true
+      tags:
+        - flux-operator
+        - flux-cluster
+
+    - name: Require age private key file on the controller
+      ansible.builtin.assert:
+        that:
+          - flux_sops_age_key_stat.stat.exists
+          - flux_sops_age_key_stat.stat.isreg
+        fail_msg: >-
+          SOPS_AGE_KEY_FILE must point at an existing age private key file on the
+          controller.
+      delegate_to: localhost
+      become: false
+      run_once: true
+      no_log: true
+      tags:
+        - flux-operator
+        - flux-cluster
+
+    - name: Read age private key from the controller
+      ansible.builtin.slurp:
+        src: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: flux_sops_age_key_slurp
+      no_log: true
+      tags:
+        - flux-operator
+        - flux-cluster
+
+    - name: Decode age private key for comparison
+      ansible.builtin.set_fact:
+        flux_sops_age_key_content: "{{ flux_sops_age_key_slurp.content | b64decode }}"
+      no_log: true
+      tags:
+        - flux-operator
+        - flux-cluster
+
+- name: Read existing sops-age secret data when present
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
+      get secret sops-age -o jsonpath={.data.age\.agekey}
+  register: flux_sops_age_existing_b64
+  changed_when: false
+  failed_when: false
+  when: flux_sops_age_present | bool
+  no_log: true
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Refuse to overwrite an existing sops-age secret with different content
+  ansible.builtin.assert:
+    that:
+      - (flux_sops_age_existing_b64.stdout | b64decode) == flux_sops_age_key_content
+    fail_msg: >-
+      flux-system/sops-age already exists with different content; remove it manually
+      or fix SOPS_AGE_KEY_FILE before re-running site.yml.
+  when: flux_sops_age_present | bool
+  no_log: true
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Apply flux-system sops-age secret once
+  ansible.builtin.shell:
+    cmd: set -o pipefail && {{ k3s_binary_path }} kubectl apply -f -
+    stdin: "{{ lookup('template', 'sops-age-secret.yaml.j2') }}"
+  when: not (flux_sops_age_present | bool)
+  no_log: true
+  tags:
+    - flux-operator
+    - flux-cluster

@@ -17,3 +17,7 @@ k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
 pod_cidr: 10.42.0.0/16
 service_cidr: 10.43.0.0/16
 local_path_data: /var/lib/jarvis/local-path
+
+# Flux Operator install manifest pin (R33); HelmRelease pin lands in p0a-14 (D11).
+flux_operator_version: v0.60.0
+flux_operator_install_sha256: ef5f7c2ae52810d886f6bccc66a0fed3b436f3a7797e79a59c0443f191ddd02e
