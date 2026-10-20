@@ -104,9 +104,12 @@ def test_chrony_template_without_nts_for_container_fallback() -> None:
         {
             "base_os_chrony_test_invalid": False,
             "base_os_chrony_pool_nts": False,
+            "base_os_chrony_enable_rtcsync": False,
         },
     )
     assert "pool ntp.ubuntu.com iburst maxsources 4\n" in rendered
+    assert "ntsdumpdir" not in rendered
+    assert "rtcsync" not in rendered
     assert " nts" not in rendered.split("pool ntp.ubuntu.com")[1].splitlines()[0]
 
 

@@ -24,7 +24,12 @@ SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
 # Docker CI often blocks NTS (TCP 4460); production keeps base_os_chrony_pool_nts default true.
-CONTAINER_PLAYBOOK_EXTRA_VARS = ["-e", "base_os_chrony_pool_nts=false"]
+CONTAINER_PLAYBOOK_EXTRA_VARS = [
+    "-e",
+    "base_os_chrony_pool_nts=false",
+    "-e",
+    "base_os_chrony_enable_rtcsync=false",
+]
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
     """\
