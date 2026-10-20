@@ -1,9 +1,7 @@
-// Managed by Ansible (base-os): security upgrades only; Gordon reboots after kernel updates (§8).
+// Managed by Ansible (base-os): Ubuntu -security pocket only; Gordon reboots after kernel updates (§8).
+// Remove-* keys match the ubuntu unattended-upgrades package defaults (24.04+ ship file).
 Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}";
     "${distro_id}:${distro_codename}-security";
-    "${distro_id}ESMApps:${distro_codename}-apps-security";
-    "${distro_id}ESM:${distro_codename}-infra-security";
 };
 
 Unattended-Upgrade::Package-Blacklist {
@@ -12,5 +10,5 @@ Unattended-Upgrade::Package-Blacklist {
 Unattended-Upgrade::DevRelease "false";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
 Unattended-Upgrade::Automatic-Reboot "false";

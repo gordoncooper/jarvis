@@ -101,10 +101,23 @@ def test_auto_upgrades_template_exact_content() -> None:
 
 def test_unattended_upgrades_template_exact_content() -> None:
     rendered = _render("50unattended-upgrades.j2", {})
-    assert "Unattended-Upgrade::Automatic-Reboot \"false\";" in rendered
-    assert rendered.endswith("\n")
-    assert rendered.startswith(
-        "// Managed by Ansible (base-os): security upgrades only; Gordon reboots after kernel updates (§8).\n"
+    assert rendered == textwrap.dedent(
+        """\
+        // Managed by Ansible (base-os): Ubuntu -security pocket only; Gordon reboots after kernel updates (§8).
+        // Remove-* keys match the ubuntu unattended-upgrades package defaults (24.04+ ship file).
+        Unattended-Upgrade::Allowed-Origins {
+            "${distro_id}:${distro_codename}-security";
+        };
+
+        Unattended-Upgrade::Package-Blacklist {
+        };
+
+        Unattended-Upgrade::DevRelease "false";
+        Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+        Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+        Unattended-Upgrade::Remove-Unused-Dependencies "false";
+        Unattended-Upgrade::Automatic-Reboot "false";
+        """
     )
 
 
