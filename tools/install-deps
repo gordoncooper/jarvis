@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install pinned sops and age into ~/.local/bin with sha256 verification."""
+"""Install pinned sops, age, and age-keygen into ~/.local/bin with sha256 verification."""
 
 from __future__ import annotations
 
@@ -178,16 +178,37 @@ def install_sops(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     print(f"installed sops {version} -> {dest}")
 
 
+def _install_age_binary(
+    *,
+    src: Path,
+    dest: Path,
+    expected_sha: str,
+    label: str,
+    version: str,
+) -> None:
+    verify_sha256(src, expected_sha, label)
+    dest_dir = dest.parent
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    os.chmod(dest, 0o755)
+    print(f"installed {label} {version} -> {dest}")
+
+
 def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     version = versions["age_version"]
-    dest = dest_dir / "age"
-    installed = age_installed_version(dest)
-    if installed == version:
-        print(f"age {version} already installed at {dest}")
+    age_dest = dest_dir / "age"
+    keygen_dest = dest_dir / "age-keygen"
+    age_ok = age_installed_version(age_dest) == version
+    keygen_ok = age_installed_version(keygen_dest) == version
+    if age_ok:
+        print(f"age {version} already installed at {age_dest}")
+    if keygen_ok:
+        print(f"age-keygen {version} already installed at {keygen_dest}")
+    if age_ok and keygen_ok:
         return
 
-    sha_key = f"age_linux_{arch}_sha256"
-    expected_sha = versions[sha_key]
+    age_sha = versions[f"age_linux_{arch}_sha256"]
+    keygen_sha = versions[f"age_keygen_linux_{arch}_sha256"]
     url = (
         f"https://github.com/FiloSottile/age/releases/download/v{version}/"
         f"age-v{version}-linux-{arch}.tar.gz"
@@ -198,12 +219,25 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
         download(url, tarball)
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("age/age", path=tmp)
-        binary = Path(tmp) / "age" / "age"
-        verify_sha256(binary, expected_sha, "age")
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(binary, dest)
-        os.chmod(dest, 0o755)
-    print(f"installed age {version} -> {dest}")
+            archive.extract("age/age-keygen", path=tmp)
+        age_src = Path(tmp) / "age" / "age"
+        keygen_src = Path(tmp) / "age" / "age-keygen"
+        if not age_ok:
+            _install_age_binary(
+                src=age_src,
+                dest=age_dest,
+                expected_sha=age_sha,
+                label="age",
+                version=version,
+            )
+        if not keygen_ok:
+            _install_age_binary(
+                src=keygen_src,
+                dest=keygen_dest,
+                expected_sha=keygen_sha,
+                label="age-keygen",
+                version=version,
+            )
 
 
 def main() -> None:
