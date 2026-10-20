@@ -110,7 +110,7 @@ def test_secret_manifest_shape(tmp_path, monkeypatch):
     decrypted = subprocess.check_output([sops_bin, "-d", str(restic_path)], env=env, text=True)
     restic = yaml.safe_load(decrypted)
     assert restic["metadata"]["namespace"] == "platform-backups"
-    assert "restic_password" in restic["stringData"]
+    assert "RESTIC_PASSWORD" in restic["stringData"]
 
 
 def test_sops_failure_leaves_no_target_file(tmp_path):
@@ -128,7 +128,7 @@ def test_sops_failure_leaves_no_target_file(tmp_path):
         "kind": "Secret",
         "metadata": {"name": "backups-restic", "namespace": "platform-backups"},
         "type": "Opaque",
-        "stringData": {"restic_password": "test"},
+        "stringData": {"RESTIC_PASSWORD": "test"},
     }
 
     with pytest.raises(subprocess.CalledProcessError):

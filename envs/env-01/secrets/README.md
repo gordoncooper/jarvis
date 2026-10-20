@@ -21,4 +21,4 @@ make bootstrap-secrets
 
 Creates missing files only; a second run changes nothing. Commit the generated `*.sops.yaml` files; do not commit the age private key.
 
-Bootstrap files (p0a-04): internal CA (`cert-manager-ca`), VolSync restic password (`backups-restic`), Grafana admin password (`grafana-admin`), and per-deploy Hermes API keys and dashboard credentials (`hermes-ops-*`, `hermes-code-factory-*`). Later secrets (Telegram, Google OAuth, and so on) are added with `make seal` or other make targets.
+Bootstrap files (p0a-04): internal CA (`cert-manager-ca`), VolSync restic password (`backups-restic`, key `RESTIC_PASSWORD` only — not `RESTIC_REPOSITORY`; the repository path is per PVC from `cluster-vars` `backup_path` when ReplicationSources or the CronJob fallback are wired in p0a-14/p0b), Grafana admin password (`grafana-admin`), and per-deploy Hermes API keys and dashboard credentials (`hermes-ops-*`, `hermes-code-factory-*`). Later secrets (Telegram, Google OAuth, and so on) are added with `make seal` or other make targets.
