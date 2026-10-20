@@ -11,6 +11,7 @@ import yaml
 from ansible_role_proof import (
     ANSIBLE_DIR,
     CHRONY_INVALID_FIXTURE,
+    CHRONY_TEMPLATE_VALIDATE,
     CONTAINER_NAME,
     EXPECTED_20_AUTO_UPGRADES,
     ansible_render_template,
@@ -202,7 +203,7 @@ def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
                 "-a",
                 (
                     f"src={CHRONY_INVALID_FIXTURE} dest=/etc/chrony/chrony.conf "
-                    "validate='chronyd -p -f %s'"
+                    f"validate='{CHRONY_TEMPLATE_VALIDATE}'"
                 ),
             ],
             cwd=ANSIBLE_DIR,
