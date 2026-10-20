@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import textwrap
+from pathlib import Path
 
 import pytest
 import yaml
-
-import os
-from pathlib import Path
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
