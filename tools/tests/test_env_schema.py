@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from services.hermes.core.schema.core_names import sole_env_directory_name
 from services.hermes.core.schema.env import (
     DEFAULT_SSH_USER,
     ValidationError,
@@ -66,8 +67,11 @@ def _write_env(
 
 
 def _valid_cluster_vars() -> dict:
+    env_name = sole_env_directory_name(REPO_ROOT)
+    cluster_vars_path = REPO_ROOT / "envs" / env_name / "values" / "cluster-vars.yaml"
+    reference = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8"))
     return {
-        "dns_suffix": "alpha.lan",
+        "dns_suffix": reference["dns_suffix"],
         "time_zone": "America/Los_Angeles",
         "code_delivery": "github",
         "build_agent": "cursor",
@@ -84,7 +88,8 @@ def _valid_cluster_vars() -> dict:
 
 def test_env_01_in_repo_passes():
     resolved = validate_env_tree(REPO_ROOT)
-    assert resolved["env-01"]["ssh_user"] == DEFAULT_SSH_USER
+    env_name = sole_env_directory_name(REPO_ROOT)
+    assert resolved[env_name]["ssh_user"] == DEFAULT_SSH_USER
 
 
 def test_bad_build_agent_fails(tmp_path: Path):

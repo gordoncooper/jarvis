@@ -1,7 +1,7 @@
 # Wraps tools/ as targets land in P0a (render, check, verify, bootstrap-secrets, seal, …).
 .DEFAULT_GOAL := help
 
-ENV ?= env-01
+ENV ?= $(shell ls -1 envs 2>/dev/null | head -1)
 
 .PHONY: help deps bootstrap-secrets seal
 help:
