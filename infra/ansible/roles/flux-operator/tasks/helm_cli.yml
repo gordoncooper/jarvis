@@ -2,18 +2,18 @@
 - name: Select Helm CLI archive metadata for this architecture
   ansible.builtin.set_fact:
     helm_download_arch: >-
-      {{ 'amd64' if ansible_architecture in ['x86_64', 'amd64'] else 'arm64' }}
+      {{ 'amd64' if ansible_facts['architecture'] in ['x86_64', 'amd64'] else 'arm64' }}
     helm_archive_member: >-
       {{ helm_archive_member_linux_amd64
-         if ansible_architecture in ['x86_64', 'amd64']
+         if ansible_facts['architecture'] in ['x86_64', 'amd64']
          else helm_archive_member_linux_arm64 }}
     helm_archive_sha256: >-
       {{ helm_archive_sha256_linux_amd64
-         if ansible_architecture in ['x86_64', 'amd64']
+         if ansible_facts['architecture'] in ['x86_64', 'amd64']
          else helm_archive_sha256_linux_arm64 }}
     helm_download_url: >-
       https://get.helm.sh/helm-v{{ helm_version }}-linux-{{
-      'amd64' if ansible_architecture in ['x86_64', 'amd64'] else 'arm64' }}.tar.gz
+      'amd64' if ansible_facts['architecture'] in ['x86_64', 'amd64'] else 'arm64' }}.tar.gz
   tags:
     - flux-operator
     - flux-cluster

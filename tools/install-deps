@@ -161,7 +161,7 @@ def install_sops(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
         print(f"sops {version} already installed at {dest}")
         return
 
-    sha_key = f"sops_linux_{arch}_sha256"
+    sha_key = f"sops_linux_{arch}_binary_sha256"
     expected_sha = versions[sha_key]
     url = (
         f"https://github.com/getsops/sops/releases/download/v{version}/"
@@ -236,23 +236,21 @@ def install_helm(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
 
     tar_arch = "amd64" if arch == "amd64" else "arm64"
     member = f"linux-{tar_arch}/helm"
-    sha_key = f"helm_linux_{arch}_sha256"
+    sha_key = f"helm_linux_{arch}_tarball_sha256"
     expected_sha = versions[sha_key]
     url = f"https://get.helm.sh/helm-v{version}-linux-{tar_arch}.tar.gz"
     with tempfile.TemporaryDirectory(prefix="jarvis-helm-") as tmp:
         tarball = Path(tmp) / "helm.tar.gz"
         print(f"downloading helm {version} ({tar_arch})…")
         download(url, tarball)
+        verify_sha256(tarball, expected_sha, "helm archive")
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract(member, path=tmp)
         binary = Path(tmp) / member
-        _install_verified_binary(
-            src=binary,
-            dest=dest,
-            expected_sha=expected_sha,
-            label="helm",
-            version=version,
-        )
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, dest)
+        os.chmod(dest, 0o755)
+        print(f"installed helm {version} -> {dest}")
 
 
 def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
@@ -263,7 +261,7 @@ def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> No
         print(f"kustomize {version} already installed at {dest}")
         return
 
-    sha_key = f"kustomize_linux_{arch}_sha256"
+    sha_key = f"kustomize_linux_{arch}_tarball_sha256"
     expected_sha = versions[sha_key]
     url = (
         f"https://github.com/kubernetes-sigs/kustomize/releases/download/"
@@ -273,16 +271,14 @@ def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> No
         tarball = Path(tmp) / "kustomize.tar.gz"
         print(f"downloading kustomize {version} ({arch})…")
         download(url, tarball)
+        verify_sha256(tarball, expected_sha, "kustomize archive")
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("kustomize", path=tmp)
         binary = Path(tmp) / "kustomize"
-        _install_verified_binary(
-            src=binary,
-            dest=dest,
-            expected_sha=expected_sha,
-            label="kustomize",
-            version=version,
-        )
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, dest)
+        os.chmod(dest, 0o755)
+        print(f"installed kustomize {version} -> {dest}")
 
 
 def install_kubeconform(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
@@ -293,7 +289,7 @@ def install_kubeconform(versions: dict[str, str], arch: str, dest_dir: Path) -> 
         print(f"kubeconform {version} already installed at {dest}")
         return
 
-    sha_key = f"kubeconform_linux_{arch}_sha256"
+    sha_key = f"kubeconform_linux_{arch}_tarball_sha256"
     expected_sha = versions[sha_key]
     url = (
         f"https://github.com/yannh/kubeconform/releases/download/v{version}/"
@@ -303,16 +299,14 @@ def install_kubeconform(versions: dict[str, str], arch: str, dest_dir: Path) -> 
         tarball = Path(tmp) / "kubeconform.tar.gz"
         print(f"downloading kubeconform {version} ({arch})…")
         download(url, tarball)
+        verify_sha256(tarball, expected_sha, "kubeconform archive")
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("kubeconform", path=tmp)
         binary = Path(tmp) / "kubeconform"
-        _install_verified_binary(
-            src=binary,
-            dest=dest,
-            expected_sha=expected_sha,
-            label="kubeconform",
-            version=version,
-        )
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, dest)
+        os.chmod(dest, 0o755)
+        print(f"installed kubeconform {version} -> {dest}")
 
 
 def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
@@ -324,7 +318,7 @@ def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> Non
         return
 
     tar_arch = "x64" if arch == "amd64" else arch
-    sha_key = f"gitleaks_linux_{arch}_sha256"
+    sha_key = f"gitleaks_linux_{arch}_tarball_sha256"
     expected_sha = versions[sha_key]
     url = (
         f"https://github.com/gitleaks/gitleaks/releases/download/v{version}/"
@@ -334,16 +328,14 @@ def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> Non
         tarball = Path(tmp) / "gitleaks.tar.gz"
         print(f"downloading gitleaks {version} ({arch})…")
         download(url, tarball)
+        verify_sha256(tarball, expected_sha, "gitleaks archive")
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("gitleaks", path=tmp)
         binary = Path(tmp) / "gitleaks"
-        _install_verified_binary(
-            src=binary,
-            dest=dest,
-            expected_sha=expected_sha,
-            label="gitleaks",
-            version=version,
-        )
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, dest)
+        os.chmod(dest, 0o755)
+        print(f"installed gitleaks {version} -> {dest}")
 
 
 def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
@@ -359,8 +351,8 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     if age_ok and keygen_ok:
         return
 
-    age_sha = versions[f"age_linux_{arch}_sha256"]
-    keygen_sha = versions[f"age_keygen_linux_{arch}_sha256"]
+    age_sha = versions[f"age_linux_{arch}_binary_sha256"]
+    keygen_sha = versions[f"age_keygen_linux_{arch}_binary_sha256"]
     url = (
         f"https://github.com/FiloSottile/age/releases/download/v{version}/"
         f"age-v{version}-linux-{arch}.tar.gz"
