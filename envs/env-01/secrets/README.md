@@ -2,17 +2,17 @@
 
 SOPS-encrypted Kubernetes Secrets for this env. Paths match `.sops.yaml` (`envs/*/secrets/*.sops.yaml`).
 
-## Bastion prerequisites (Gordon's user)
+## Prerequisites (Gordon's user)
 
-On the bastion, install pinned **sops** and **age** plus check system packages:
+On the machine you run this on, install pinned **sops** and **age** plus system packages:
 
 ```bash
 make deps
 ```
 
-`make deps` installs [getsops/sops](https://github.com/getsops/sops) and [FiloSottile/age](https://github.com/FiloSottile/age) into `~/.local/bin` (pinned in `tools/versions.env`). It also requires **openssl** and **python3** with **PyYAML**; if either is missing, it prints the exact `apt-get` command (Debian/Ubuntu).
+`make deps` installs [getsops/sops](https://github.com/getsops/sops) and [FiloSottile/age](https://github.com/FiloSottile/age) into `~/.local/bin` (pinned in `tools/versions.env`). It also needs **openssl** and **python3** with **PyYAML**; on Debian/Ubuntu it installs missing `openssl` / `python3-yaml` packages when `sudo` and `apt-get` are available, otherwise it prints the exact `apt-get` command and exits.
 
-Ensure `~/.local/bin` is on `PATH`. The age **public** key must already be in the repo root `.sops.yaml`. Encryption does not need the private key; Gordon keeps the private key offline (R25).
+Ensure `~/.local/bin` is on `PATH` on that machine. The age **public** key must already be in the repo root `.sops.yaml`. Encryption does not need the private key; Gordon keeps the private key offline (R25).
 
 ## Usage
 

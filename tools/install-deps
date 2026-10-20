@@ -58,17 +58,9 @@ def verify_sha256(path: Path, expected: str, label: str) -> None:
         )
 
 
-def require_system_tools() -> None:
-    if shutil.which("openssl") is None:
-        raise SystemExit(
-            "openssl not found; install with:\n"
-            "  sudo apt-get install -y openssl"
-        )
+def _python_has_yaml() -> bool:
     if shutil.which("python3") is None:
-        raise SystemExit(
-            "python3 not found; install with:\n"
-            "  sudo apt-get install -y python3 python3-yaml"
-        )
+        return False
     try:
         subprocess.run(
             [sys.executable, "-c", "import yaml"],
@@ -76,10 +68,51 @@ def require_system_tools() -> None:
             capture_output=True,
         )
     except subprocess.CalledProcessError:
+        return False
+    return True
+
+
+def _missing_apt_packages() -> list[str]:
+    missing: list[str] = []
+    if shutil.which("openssl") is None:
+        missing.append("openssl")
+    if shutil.which("python3") is None:
+        missing.extend(["python3", "python3-yaml"])
+    elif not _python_has_yaml():
+        missing.append("python3-yaml")
+    return missing
+
+
+def _apt_install_command(packages: list[str]) -> str:
+    return "sudo apt-get install -y " + " ".join(packages)
+
+
+def _try_apt_install(packages: list[str]) -> None:
+    subprocess.run(
+        ["sudo", "apt-get", "install", "-y", *packages],
+        check=True,
+    )
+
+
+def require_system_tools() -> None:
+    missing = _missing_apt_packages()
+    if not missing:
+        return
+    if shutil.which("apt-get") and shutil.which("sudo"):
+        print(f"installing missing packages: {' '.join(missing)}")
+        try:
+            _try_apt_install(missing)
+        except subprocess.CalledProcessError as err:
+            raise SystemExit(
+                f"apt-get install failed (exit {err.returncode}); try:\n"
+                f"  {_apt_install_command(missing)}"
+            ) from err
+        missing = _missing_apt_packages()
+    if missing:
         raise SystemExit(
-            "python3 PyYAML not available; install with:\n"
-            "  sudo apt-get install -y python3-yaml"
-        ) from None
+            "missing system packages; install with:\n"
+            f"  {_apt_install_command(missing)}"
+        )
 
 
 def sops_installed_version(bin_path: Path) -> str | None:
