@@ -1,0 +1,16 @@
+# Hermes env config (rendered profiles land in rendered/ from P2).
+bots: []
+
+cron: {}
+
+# §7 tier map (R23). Bots are off until P2 profiles merge; tiers are fixed for env-01.
+bot_tier_map:
+  concierge: mid
+  inbox: mid
+  homelab: mid
+  foreman: cheap
+  spec-writer: cheap
+
+tier_model_map: {}
+
+lane_model_map: {}
