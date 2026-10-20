@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from services.hermes.core.schema.env import ValidationError, validate_env_tree
+from services.hermes.core.schema.env import (
+    DEFAULT_SSH_USER,
+    ValidationError,
+    validate_env_tree,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,7 +83,8 @@ def _valid_cluster_vars() -> dict:
 
 
 def test_env_01_in_repo_passes():
-    validate_env_tree(REPO_ROOT)
+    resolved = validate_env_tree(REPO_ROOT)
+    assert resolved["env-01"]["ssh_user"] == DEFAULT_SSH_USER
 
 
 def test_bad_build_agent_fails(tmp_path: Path):
@@ -95,7 +100,16 @@ def test_bad_build_agent_fails(tmp_path: Path):
 
 def test_ssh_user_defaults_to_ubuntu_when_omitted(tmp_path: Path):
     _write_env(tmp_path, omit_ssh_user=True)
-    validate_env_tree(tmp_path)
+    resolved = validate_env_tree(tmp_path)
+    assert resolved["env-test"]["ssh_user"] == DEFAULT_SSH_USER
+
+
+def test_ssh_user_explicit_value_kept(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["ssh_user"] = "deploy"
+    _write_env(tmp_path, cluster_vars=cv)
+    resolved = validate_env_tree(tmp_path)
+    assert resolved["env-test"]["ssh_user"] == "deploy"
 
 
 def test_bad_code_delivery_fails(tmp_path: Path):
