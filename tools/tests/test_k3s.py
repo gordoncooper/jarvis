@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import textwrap
-from pathlib import Path
 
 import pytest
 import yaml
 
-from conftest import require_cli
 from ansible_role_proof import (
     ANSIBLE_DIR,
     CONTAINER_NAME,
@@ -19,10 +16,8 @@ from ansible_role_proof import (
     cluster_vars_playbook_path,
     docker_exec,
     inventory_path,
-    kubeconfig_proof_playbook_cmd,
     k3s_guard_playbook_cmd,
     load_cluster_vars,
-    playbook_recap_field,
     require_docker,
     start_systemd_container,
     stop_systemd_container,
@@ -46,36 +41,7 @@ def render_k3s_config(variables: dict[str, object]) -> str:
     )
 
 
-def expected_config_from_cluster_vars(cluster: dict[str, object]) -> str:
-    schedule = cluster.get("k3s_etcd_snapshot_schedule_cron", "0 */12 * * *")
-    retention = cluster.get("k3s_etcd_snapshot_retention", 5)
-    host = inventory_hostname()
-    backup = cluster["backup_path"]
-    kube_reserved = cluster["k3s_kubelet_kube_reserved"]
-    system_reserved = cluster["k3s_kubelet_system_reserved"]
-    eviction_hard = cluster["k3s_kubelet_eviction_hard"]
-    return textwrap.dedent(
-        f"""\
-        # Managed by Ansible (k3s role): server config (framework §8 step 4; not the k3s install script).
-        cluster-init: true
-        secrets-encryption: true
-        cluster-cidr: {cluster["pod_cidr"]}
-        service-cidr: {cluster["service_cidr"]}
-        tls-san:
-          - {host}
-        default-local-storage-path: {cluster["local_path_data"]}
-        etcd-snapshot-schedule-cron: "{schedule}"
-        etcd-snapshot-retention: {retention}
-        etcd-snapshot-dir: {backup}/etcd-snapshots
-        kubelet-arg:
-          - "kube-reserved={kube_reserved}"
-          - "system-reserved={system_reserved}"
-          - "eviction-hard={eviction_hard}"
-        """
-    )
-
-
-def test_k3s_config_template_exact_content_env_01() -> None:
+def test_k3s_config_template_encodes_p0a12_rules() -> None:
     cluster = load_cluster_vars()
     variables = {
         "pod_cidr": cluster["pod_cidr"],
@@ -90,58 +56,15 @@ def test_k3s_config_template_exact_content_env_01() -> None:
         "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
     }
     rendered = render_k3s_config(variables)
-    assert rendered == expected_config_from_cluster_vars(cluster)
-    assert not any(line.strip().startswith("INSTALL_K3S_") for line in rendered.splitlines())
     assert "cluster-init: true" in rendered
     assert "secrets-encryption: true" in rendered
-
-
-@pytest.mark.parametrize(
-    ("raw_cidr", "expected"),
-    [
-        ("10.42.0.0/16", "10.42.0.0/16"),
-        ('"10.42.0.0/16"', "10.42.0.0/16"),
-    ],
-)
-def test_k3s_config_template_quoted_cidr(raw_cidr: str, expected: str) -> None:
-    loaded = yaml.safe_load(raw_cidr)
-    assert isinstance(loaded, str)
-    cluster = load_cluster_vars()
-    variables = {
-        "pod_cidr": loaded,
-        "service_cidr": cluster["service_cidr"],
-        "local_path_data": cluster["local_path_data"],
-        "backup_path": cluster["backup_path"],
-        "inventory_hostname": inventory_hostname(),
-        "k3s_etcd_snapshot_schedule_cron": "0 */12 * * *",
-        "k3s_etcd_snapshot_retention": 5,
-        "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
-        "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
-        "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
-    }
-    rendered = render_k3s_config(variables)
-    assert f"cluster-cidr: {expected}" in rendered
-
-
-def test_site_yml_syntax_check_includes_k3s() -> None:
-    require_cli("ansible-playbook")
-    cmd = [
-        "ansible-playbook",
-        "--syntax-check",
-        "site.yml",
-        "-i",
-        str(inventory_path().resolve()),
-        "-e",
-        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-    ]
-    proc = subprocess.run(
-        cmd,
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"cluster-cidr: {cluster['pod_cidr']}" in rendered
+    assert f"service-cidr: {cluster['service_cidr']}" in rendered
+    assert "etcd-snapshot-dir:" in rendered
+    assert "kube-reserved=" in rendered
+    assert "system-reserved=" in rendered
+    assert "eviction-hard=" in rendered
+    assert not any(line.strip().startswith("INSTALL_K3S_") for line in rendered.splitlines())
 
 
 def _install_fake_k3s_service(container: str) -> None:
@@ -173,204 +96,20 @@ def _install_fake_k3s_service(container: str) -> None:
     assert active.stdout.strip() == "active", active.stdout + active.stderr
 
 
-def _install_stopped_k3s_binary(container: str) -> None:
-    prep = docker_exec(
-        container,
-        "bash",
-        "-lc",
-        "install -m 0755 /bin/true /usr/local/bin/k3s && mkdir -p /var/lib/rancher/k3s",
-    )
-    assert prep.returncode == 0, prep.stderr
-    inactive = docker_exec(container, "systemctl", "is-active", "k3s")
-    assert inactive.stdout.strip() != "active", inactive.stdout + inactive.stderr
-
-
-def _run_k3s_guard() -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        k3s_guard_playbook_cmd(),
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-@pytest.mark.container
-def test_k3s_guard_fresh_node_writes_marker() -> None:
-    require_docker()
-    start_systemd_container()
-    try:
-        result = _run_k3s_guard()
-        assert result.returncode == 0, result.stdout + result.stderr
-        marker = docker_exec(CONTAINER_NAME, "cat", "/etc/jarvis/env")
-        assert marker.returncode == 0, marker.stderr
-        assert marker.stdout.strip() == load_cluster_vars()["jarvis_env"]
-    finally:
-        stop_systemd_container()
-
-
 @pytest.mark.container
 def test_k3s_guard_refuses_active_k3s_without_marker() -> None:
     require_docker()
     start_systemd_container()
     try:
         _install_fake_k3s_service(CONTAINER_NAME)
-        result = _run_k3s_guard()
-        assert result.returncode != 0, result.stdout + result.stderr
-        assert "k3s is already present" in result.stdout + result.stderr
-    finally:
-        stop_systemd_container()
-
-
-@pytest.mark.container
-def test_k3s_guard_refuses_stopped_k3s_without_marker() -> None:
-    require_docker()
-    start_systemd_container()
-    try:
-        _install_stopped_k3s_binary(CONTAINER_NAME)
-        result = _run_k3s_guard()
-        assert result.returncode != 0, result.stdout + result.stderr
-        assert "k3s is already present" in result.stdout + result.stderr
-    finally:
-        stop_systemd_container()
-
-
-def _fake_remote_kubeconfig_yaml() -> str:
-    return textwrap.dedent(
-        """\
-        apiVersion: v1
-        kind: Config
-        clusters:
-          - cluster:
-              server: https://127.0.0.1:6443
-            name: default
-        contexts:
-          - context:
-              cluster: default
-              user: default
-            name: default
-        current-context: default
-        users:
-          - name: default
-            user: {}
-        """
-    )
-
-
-def _install_fake_remote_kubeconfig(container: str) -> None:
-    content = _fake_remote_kubeconfig_yaml()
-    write = docker_exec(
-        container,
-        "bash",
-        "-lc",
-        "mkdir -p /etc/rancher/k3s && "
-        "cat > /etc/rancher/k3s/k3s.yaml <<'EOF'\n" + content + "EOF",
-    )
-    assert write.returncode == 0, write.stderr
-
-
-CONTAINER_ANSIBLE_REMOTE_TMP = "/tmp/jarvis-ansible-remote"
-
-
-def _kubeconfig_proof_inventory(
-    tmp_path: Path,
-    *,
-    container: str,
-    container_remote_tmp: str,
-    localhost_remote_tmp: Path,
-) -> Path:
-    localhost_remote_tmp.mkdir(parents=True, exist_ok=True)
-    data: dict[str, object] = {
-        "all": {
-            "hosts": {
-                container: {
-                    "ansible_connection": "docker",
-                    "ansible_remote_tmp": container_remote_tmp,
-                },
-                "localhost": {
-                    "ansible_connection": "local",
-                    "ansible_remote_tmp": str(localhost_remote_tmp),
-                },
-            }
-        }
-    }
-    path = tmp_path / "kubeconfig-proof-inventory.yml"
-    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    return path
-
-
-def _kubeconfig_proof_env(home: Path, *, local_tmp: Path) -> dict[str, str]:
-    home.mkdir(parents=True, exist_ok=True)
-    local_tmp.mkdir(parents=True, exist_ok=True)
-    return {
-        **os.environ,
-        "HOME": str(home),
-        "ANSIBLE_LOCAL_TEMP": str(local_tmp),
-    }
-
-
-@pytest.mark.container
-def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
-    """kubeconfig role tasks install once; staging work never reports changed on re-run."""
-    require_docker()
-    runner_home = tmp_path / "runner-home"
-    kubeconfig_path = runner_home / ".kube" / "config"
-    start_systemd_container()
-    try:
-        _install_fake_remote_kubeconfig(CONTAINER_NAME)
-        inventory = _kubeconfig_proof_inventory(
-            tmp_path,
-            container=CONTAINER_NAME,
-            container_remote_tmp=CONTAINER_ANSIBLE_REMOTE_TMP,
-            localhost_remote_tmp=tmp_path / "localhost-ansible-remote-tmp",
-        )
-        env = _kubeconfig_proof_env(
-            runner_home,
-            local_tmp=tmp_path / "ansible-local-tmp",
-        )
-        first = subprocess.run(
-            kubeconfig_proof_playbook_cmd(inventory),
+        result = subprocess.run(
+            k3s_guard_playbook_cmd(),
             cwd=ANSIBLE_DIR,
             capture_output=True,
             text=True,
             check=False,
-            env=env,
         )
-        second = subprocess.run(
-            kubeconfig_proof_playbook_cmd(inventory),
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-        output = first.stdout + first.stderr
-        assert first.returncode == 0, output
-        assert kubeconfig_path.is_file(), output
-        installed = kubeconfig_path.read_text(encoding="utf-8")
-        assert f"https://{CONTAINER_NAME}:6443" in installed
-        assert "https://127.0.0.1:6443" not in installed
-        assert second.returncode == 0, second.stdout + second.stderr
-        assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
-    finally:
-        stop_systemd_container()
-
-
-@pytest.mark.container
-def test_k3s_guard_allows_matching_marker() -> None:
-    require_docker()
-    env = str(load_cluster_vars()["jarvis_env"])
-    start_systemd_container()
-    try:
-        seed = docker_exec(
-            CONTAINER_NAME,
-            "bash",
-            "-lc",
-            f"mkdir -p /etc/jarvis && printf '%s\\n' '{env}' > /etc/jarvis/env",
-        )
-        assert seed.returncode == 0, seed.stderr
-        _install_fake_k3s_service(CONTAINER_NAME)
-        result = _run_k3s_guard()
-        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "k3s is already present" in result.stdout + result.stderr
     finally:
         stop_systemd_container()

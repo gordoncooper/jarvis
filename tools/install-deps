@@ -60,12 +60,12 @@ def verify_sha256(path: Path, expected: str, label: str) -> None:
         )
 
 
-def _python_has_yaml() -> bool:
+def _python_probe(*, code: str) -> bool:
     if shutil.which("python3") is None:
         return False
     try:
         subprocess.run(
-            [sys.executable, "-c", "import yaml"],
+            ["python3", "-c", code],
             check=True,
             capture_output=True,
         )
@@ -79,9 +79,12 @@ def _missing_apt_packages() -> list[str]:
     if shutil.which("openssl") is None:
         missing.append("openssl")
     if shutil.which("python3") is None:
-        missing.extend(["python3", "python3-yaml"])
-    elif not _python_has_yaml():
-        missing.append("python3-yaml")
+        missing.extend(["python3", "python3-yaml", "python3-venv"])
+    else:
+        if not _python_probe(code="import yaml"):
+            missing.append("python3-yaml")
+        if not _python_probe(code="import venv"):
+            missing.append("python3-venv")
     return missing
 
 

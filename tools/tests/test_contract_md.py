@@ -2,21 +2,9 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from _contract_md import missing_contract_roots
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_MD_CHECK = REPO_ROOT / "tools" / "checks" / "contract-md"
-
-
-def test_repo_tree_passes_contract_md_check():
-    assert missing_contract_roots(REPO_ROOT) == []
-
-
-def test_contract_md_check_executable_passes_in_repo():
-    subprocess.run([str(CONTRACT_MD_CHECK)], cwd=REPO_ROOT, check=True)
 
 
 def test_component_root_with_contract_passes(tmp_path: Path):

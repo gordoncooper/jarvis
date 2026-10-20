@@ -35,15 +35,8 @@ jobs:
           .venv/bin/pytest -m "not container"
 
   slow:
-    name: slow (${{ matrix.container_test_file }})
+    name: slow
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        container_test_file:
-          - test_base_os
-          - test_flux_operator
-          - test_k3s
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,7 +53,7 @@ jobs:
       - name: pytest (container)
         run: |
           export PATH="${HOME}/.local/bin:${PATH}"
-          .venv/bin/pytest "tools/tests/${{ matrix.container_test_file }}.py" -m container
+          .venv/bin/pytest -m container
 
   ci:
     name: ci

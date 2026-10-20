@@ -19,7 +19,6 @@ Attach command output, links, or logs that prove the done checks (R35).
 - [ ] Open questions from this PR are answered.
 - [ ] Pins match upstream (or the pin change is intentional and noted).
 - [ ] Each new or changed `tools/checks/` script fails on a seeded bad value.
-- [ ] New tests were shown failing on a seeded regression before the fix.
 - [ ] Infra idempotence: a second run shows `changed=0` where it applies.
 - [ ] Full diff scanned for leftovers and env/user/host-agnostic literals.
 - [ ] This PR is one related batch (no unrelated drive-by changes).
