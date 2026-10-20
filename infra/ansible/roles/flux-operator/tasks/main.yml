@@ -1,0 +1,35 @@
+---
+- name: Require flux-operator cluster-vars
+  ansible.builtin.assert:
+    that:
+      - jarvis_env is defined
+      - jarvis_env | length > 0
+      - flux_operator_version is defined
+      - flux_operator_version | length > 0
+      - flux_operator_install_sha256 is defined
+      - flux_operator_install_sha256 | length == 64
+      - flux_git_repo_url is defined
+      - flux_git_repo_url | length > 0
+      - flux_git_repo_url is match('^https://')
+      - flux_git_ref is defined
+      - flux_git_ref | length > 0
+    fail_msg: >-
+      flux-operator role requires jarvis_env, flux_git_repo_url, and flux_git_ref
+      in cluster-vars.
+  tags:
+    - flux-operator
+
+- name: Install Flux Operator once
+  ansible.builtin.import_tasks: operator.yml
+  tags:
+    - flux-operator
+
+- name: Bootstrap flux-system sops-age secret once
+  ansible.builtin.import_tasks: sops_age.yml
+  tags:
+    - flux-operator
+
+- name: Apply FluxInstance once
+  ansible.builtin.import_tasks: instance.yml
+  tags:
+    - flux-operator

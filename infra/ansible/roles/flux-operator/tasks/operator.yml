@@ -1,0 +1,74 @@
+---
+- name: Check whether Flux Operator deployment exists
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
+      get deployment {{ flux_operator_deployment_name }} -o name
+  register: flux_operator_deploy_lookup
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Record Flux Operator deployment presence
+  ansible.builtin.set_fact:
+    flux_operator_deployed: >-
+      {{ flux_operator_deploy_lookup.rc == 0
+         and (flux_operator_deploy_lookup.stdout | trim | length) > 0 }}
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Bootstrap Flux Operator when absent
+  when: not (flux_operator_deployed | bool)
+  tags:
+    - flux-operator
+    - flux-cluster
+  block:
+    - name: Create staging directory for Flux Operator bootstrap
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: jarvis-flux-operator-
+      register: flux_operator_staging
+
+    - name: Download pinned Flux Operator install manifest
+      ansible.builtin.get_url:
+        url: "{{ flux_operator_install_url }}"
+        dest: "{{ flux_operator_staging.path }}/install.yaml"
+        mode: "0600"
+        owner: root
+        group: root
+        checksum: "sha256:{{ flux_operator_install_sha256 }}"
+      register: flux_operator_binary_download
+
+    - name: Apply Flux Operator install manifest once
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl apply -f
+          {{ flux_operator_staging.path }}/install.yaml
+
+    - name: Wait for FluxInstance CRD to be established
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl wait --for=condition=Established
+          crd/fluxinstances.fluxcd.controlplane.io
+          --timeout={{ flux_operator_crd_wait_timeout }}
+      changed_when: false
+      check_mode: false
+
+    - name: Wait for Flux Operator deployment rollout
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }} wait
+          --for=condition=Available deployment/{{ flux_operator_deployment_name }}
+          --timeout={{ flux_operator_rollout_wait_timeout }}
+      changed_when: false
+      check_mode: false
+  always:
+    - name: Remove Flux Operator staging directory
+      ansible.builtin.file:
+        path: "{{ flux_operator_staging.path }}"
+        state: absent
+      when: flux_operator_staging is defined and flux_operator_staging.path is defined

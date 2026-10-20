@@ -1,0 +1,53 @@
+---
+- name: Check whether FluxInstance exists
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
+      get fluxinstance {{ flux_instance_name }} -o name
+  register: flux_instance_lookup
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Record FluxInstance presence
+  ansible.builtin.set_fact:
+    flux_instance_present: >-
+      {{ flux_instance_lookup.rc == 0 and (flux_instance_lookup.stdout | trim | length) > 0 }}
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Bootstrap FluxInstance when absent
+  when: not (flux_instance_present | bool)
+  tags:
+    - flux-operator
+    - flux-cluster
+  block:
+    - name: Create staging directory for FluxInstance bootstrap
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: jarvis-flux-instance-
+      register: flux_instance_staging
+
+    - name: Render FluxInstance manifest
+      ansible.builtin.template:
+        src: flux-instance.yaml.j2
+        dest: "{{ flux_instance_staging.path }}/flux-instance.yaml"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Apply FluxInstance manifest once
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl apply -f
+          {{ flux_instance_staging.path }}/flux-instance.yaml
+  always:
+    - name: Remove FluxInstance staging directory
+      ansible.builtin.file:
+        path: "{{ flux_instance_staging.path }}"
+        state: absent
+      when: flux_instance_staging is defined and flux_instance_staging.path is defined

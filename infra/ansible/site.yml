@@ -1,11 +1,13 @@
 ---
-# Minimal playbook for local --syntax-check (p0a-11). p0a-13 owns the full site.yml
-# (base-os → k3s → flux-operator, inventory wiring, and marker guards).
-- name: Apply base OS role
+# §8 step 4 order: base-os → k3s → flux-operator (cluster-vars via jarvis_cluster_vars).
+- name: Bootstrap jarvis node
   hosts: all
   become: true
+  vars:
+    ansible_user: "{{ ssh_user }}"
   vars_files:
     - "{{ jarvis_cluster_vars }}"
   roles:
     - base-os
     - k3s
+    - flux-operator

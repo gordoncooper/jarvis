@@ -6,6 +6,7 @@ import ipaddress
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -32,6 +33,8 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "pod_cidr",
         "service_cidr",
         "local_path_data",
+        "flux_git_repo_url",
+        "flux_git_ref",
     }
 )
 
@@ -190,12 +193,15 @@ def _validate_cluster_vars(
         "pod_cidr",
         "service_cidr",
         "local_path_data",
+        "flux_git_ref",
     ):
         val = data.get(key)
         if val is not None and not isinstance(val, str):
             errors.append(f"{rel_path}: {key} must be a string")
         elif isinstance(val, str) and not val.strip():
             errors.append(f"{rel_path}: {key} must not be empty")
+
+    errors.extend(_validate_https_url(rel_path, "flux_git_repo_url", data.get("flux_git_repo_url")))
 
     jarvis_env = data.get("jarvis_env")
     if isinstance(jarvis_env, str) and jarvis_env and jarvis_env != env_name:
@@ -225,6 +231,19 @@ def _validate_cluster_vars(
             errors.append(f"{rel_path}: {key} must be > 0")
 
     return errors
+
+
+def _validate_https_url(rel_path: str, key: str, value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, str):
+        return [f"{rel_path}: {key} must be a string"]
+    if not value.strip():
+        return [f"{rel_path}: {key} must not be empty"]
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return [f"{rel_path}: {key} must be an https URL"]
+    return []
 
 
 def _validate_enum(rel_path: str, key: str, value: Any, allowed: tuple[str, ...]) -> list[str]:

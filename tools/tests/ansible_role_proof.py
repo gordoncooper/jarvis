@@ -21,11 +21,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
 ROLE_DIR = ANSIBLE_DIR / "roles" / "base-os"
 K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"
+FLUX_OPERATOR_ROLE_DIR = ANSIBLE_DIR / "roles" / "flux-operator"
+FLUX_OPERATOR_ROLE_TEMPLATES = FLUX_OPERATOR_ROLE_DIR / "templates"
+FLUX_OPERATOR_ROLE_TASKS = FLUX_OPERATOR_ROLE_DIR / "tasks"
 ROLE_TEMPLATES = ROLE_DIR / "templates"
 K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
 SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
+# site.yml sets ansible_user from ssh_user; the systemd fixture connects as root.
+DOCKER_PLAYBOOK_EXTRA_VARS: list[str] = ["-e", "ansible_user=root"]
 CHRONY_INVALID_FIXTURE = REPO_ROOT / "tools/tests/fixtures/chrony-invalid.conf"
 ROLE_TASKS = ROLE_DIR / "tasks" / "main.yml"
 
@@ -267,8 +272,26 @@ def playbook_cmd() -> list[str]:
         f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
         "-e",
         "ansible_connection=docker",
+        *DOCKER_PLAYBOOK_EXTRA_VARS,
         "--skip-tags",
-        "chrony-service,k3s",
+        "chrony-service,k3s,k3s-service,flux-cluster",
+    ]
+
+
+def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
+    return [
+        "ansible-playbook",
+        "site.yml",
+        "-i",
+        f"{container},",
+        "-e",
+        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
+        "-e",
+        "ansible_connection=docker",
+        *DOCKER_PLAYBOOK_EXTRA_VARS,
+        "--check",
+        "--skip-tags",
+        "chrony-service,k3s,k3s-service",
     ]
 
 
@@ -282,6 +305,7 @@ def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
         f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
         "-e",
         "ansible_connection=docker",
+        *DOCKER_PLAYBOOK_EXTRA_VARS,
         "--tags",
         "k3s-guard",
     ]
