@@ -23,6 +23,7 @@ from ansible_role_proof import (
     cluster_vars_playbook_path,
     docker_exec,
     env_name,
+    DOCKER_PLAYBOOK_EXTRA_VARS,
     flux_operator_check_playbook_cmd,
     inventory_path,
     load_cluster_vars,
@@ -306,6 +307,7 @@ def _run_flux_operator_playbook(
         f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
         "-e",
         "ansible_connection=docker",
+        *DOCKER_PLAYBOOK_EXTRA_VARS,
         "--skip-tags",
         "chrony-service,k3s,k3s-service",
     ]
@@ -337,6 +339,7 @@ def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
                 f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
                 "-e",
                 "ansible_connection=docker",
+                *DOCKER_PLAYBOOK_EXTRA_VARS,
                 "--skip-tags",
                 "chrony-service,k3s,k3s-service,flux-cluster",
             ],
