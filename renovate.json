@@ -45,22 +45,9 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version=(?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version: (?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_linux_amd64_tarball_sha256=(?<currentDigest>[a-f0-9]{64})",
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_linux_arm64_tarball_sha256=(?<currentDigest>[a-f0-9]{64})",
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_linux_amd64_tarball_sha256: (?<currentDigest>[a-f0-9]{64})",
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_linux_arm64_tarball_sha256: (?<currentDigest>[a-f0-9]{64})",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nflux_operator_chart_version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
-    },
-    {
-      "customType": "regex",
-      "description": "Explicit k3s pin in cluster-vars (managed only by PR; disabled above).",
-      "managerFilePatterns": ["/^envs\\/.+\\/values\\/cluster-vars\\.yaml$/"],
-      "matchStrings": ["k3s_version:\\s*(?<currentValue>\\S+)"],
-      "depNameTemplate": "k3s-io/k3s",
-      "datasourceTemplate": "github-releases",
-      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?<prerelease>[a-z]+\\d+))?\\+k3s(?<build>\\d+)$"
     }
   ]
 }

@@ -388,7 +388,7 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
 
 
 def _portable_node_bins(versions: dict[str, str]) -> tuple[Path, Path]:
-    node_version = versions.get("nodejs_version", "22.14.0")
+    node_version = versions["nodejs_version"]
     arch = linux_arch()
     node_bin = NODE_DIR / "bin" / "node"
     npm_bin = NODE_DIR / "bin" / "npm"
@@ -398,6 +398,8 @@ def _portable_node_bins(versions: dict[str, str]) -> tuple[Path, Path]:
             return node_bin, npm_bin
 
     tar_arch = "x64" if arch == "amd64" else "arm64"
+    sha_key = f"nodejs_linux_{arch}_tarball_sha256"
+    expected_sha = versions[sha_key]
     url = (
         f"https://nodejs.org/dist/v{node_version}/"
         f"node-v{node_version}-linux-{tar_arch}.tar.xz"
@@ -407,6 +409,7 @@ def _portable_node_bins(versions: dict[str, str]) -> tuple[Path, Path]:
     with tempfile.TemporaryDirectory(prefix="jarvis-node-") as tmp:
         tarball = Path(tmp) / "node.tar.xz"
         download(url, tarball)
+        verify_sha256(tarball, expected_sha, "node.js archive")
         if NODE_DIR.exists():
             shutil.rmtree(NODE_DIR)
         NODE_DIR.mkdir(parents=True, exist_ok=True)
@@ -444,25 +447,18 @@ def _renovate_validator_script(prefix: Path) -> Path:
 
 
 def install_renovate_config_validator(versions: dict[str, str]) -> None:
-    version = versions.get("renovate_version", "41.140.1")
+    version = versions["renovate_version"]
     dest = INSTALL_DIR / "renovate-config-validator"
     installed = renovate_installed_version(NPM_PREFIX)
     if installed == version and dest.is_file():
         print(f"renovate {version} already installed (renovate-config-validator at {dest})")
         return
 
-    system_npm = shutil.which("npm")
-    system_node = shutil.which("node")
-    if system_npm and system_node:
-        node_bin = Path(system_node)
-        npm_bin = Path(system_npm)
-    else:
-        node_bin, npm_bin = _portable_node_bins(versions)
+    node_bin, npm_bin = _portable_node_bins(versions)
 
     print(f"installing renovate {version} under {NPM_PREFIX}…")
     env = os.environ.copy()
-    if not system_npm:
-        env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
+    env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
     subprocess.run(
         [
             str(npm_bin),
@@ -470,6 +466,8 @@ def install_renovate_config_validator(versions: dict[str, str]) -> None:
             "--prefix",
             str(NPM_PREFIX),
             "--no-save",
+            "--no-audit",
+            "--no-fund",
             f"renovate@{version}",
         ],
         check=True,
