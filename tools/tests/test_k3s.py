@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import textwrap
@@ -18,23 +19,16 @@ from ansible_role_proof import (
     cluster_vars_playbook_path,
     docker_exec,
     inventory_path,
+    kubeconfig_proof_playbook_cmd,
     k3s_guard_playbook_cmd,
     load_cluster_vars,
+    playbook_recap_field,
     require_docker,
     start_systemd_container,
     stop_systemd_container,
 )
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
-K3S_KUBECONFIG_TASKS = (
-    Path(__file__).resolve().parents[2]
-    / "infra"
-    / "ansible"
-    / "roles"
-    / "k3s"
-    / "tasks"
-    / "kubeconfig.yml"
-)
 
 
 def inventory_hostname() -> str:
@@ -239,38 +233,124 @@ def test_k3s_guard_refuses_stopped_k3s_without_marker() -> None:
         stop_systemd_container()
 
 
-def _kubeconfig_task_by_name(name: str) -> dict[str, object]:
-    loaded = yaml.safe_load(K3S_KUBECONFIG_TASKS.read_text(encoding="utf-8"))
-    assert isinstance(loaded, list)
-    for entry in loaded:
-        if not isinstance(entry, dict):
-            continue
-        block = entry.get("block")
-        if isinstance(block, list):
-            for task in block:
-                if isinstance(task, dict) and task.get("name") == name:
-                    return task
-        always = entry.get("always")
-        if isinstance(always, list):
-            for task in always:
-                if isinstance(task, dict) and task.get("name") == name:
-                    return task
-    raise AssertionError(f"task not found: {name}")
-
-
-def test_kubeconfig_staging_tasks_never_report_changed() -> None:
-    """Only Install kubeconfig may report changed on a re-run (staging is scratch work)."""
-    staging_names = (
-        "Create temp directory for kubeconfig staging",
-        "Fetch kubeconfig from node",
-        "Point kubeconfig server at inventory hostname",
-        "Remove kubeconfig staging directory",
+def _fake_remote_kubeconfig_yaml() -> str:
+    return textwrap.dedent(
+        """\
+        apiVersion: v1
+        kind: Config
+        clusters:
+          - cluster:
+              server: https://127.0.0.1:6443
+            name: default
+        contexts:
+          - context:
+              cluster: default
+              user: default
+            name: default
+        current-context: default
+        users:
+          - name: default
+            user: {}
+        """
     )
-    for name in staging_names:
-        task = _kubeconfig_task_by_name(name)
-        assert task.get("changed_when") is False, name
-    install = _kubeconfig_task_by_name("Install kubeconfig for site.yml runner")
-    assert "changed_when" not in install
+
+
+def _install_fake_remote_kubeconfig(container: str) -> None:
+    content = _fake_remote_kubeconfig_yaml()
+    write = docker_exec(
+        container,
+        "bash",
+        "-lc",
+        "mkdir -p /etc/rancher/k3s && "
+        "cat > /etc/rancher/k3s/k3s.yaml <<'EOF'\n" + content + "EOF",
+    )
+    assert write.returncode == 0, write.stderr
+
+
+CONTAINER_ANSIBLE_REMOTE_TMP = "/tmp/jarvis-ansible-remote"
+
+
+def _kubeconfig_proof_inventory(
+    tmp_path: Path,
+    *,
+    container: str,
+    container_remote_tmp: str,
+    localhost_remote_tmp: Path,
+) -> Path:
+    localhost_remote_tmp.mkdir(parents=True, exist_ok=True)
+    data: dict[str, object] = {
+        "all": {
+            "hosts": {
+                container: {
+                    "ansible_connection": "docker",
+                    "ansible_remote_tmp": container_remote_tmp,
+                },
+                "localhost": {
+                    "ansible_connection": "local",
+                    "ansible_remote_tmp": str(localhost_remote_tmp),
+                },
+            }
+        }
+    }
+    path = tmp_path / "kubeconfig-proof-inventory.yml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _kubeconfig_proof_env(home: Path, *, local_tmp: Path) -> dict[str, str]:
+    home.mkdir(parents=True, exist_ok=True)
+    local_tmp.mkdir(parents=True, exist_ok=True)
+    return {
+        **os.environ,
+        "HOME": str(home),
+        "ANSIBLE_LOCAL_TEMP": str(local_tmp),
+    }
+
+
+def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
+    """kubeconfig role tasks install once; staging work never reports changed on re-run."""
+    require_docker()
+    runner_home = tmp_path / "runner-home"
+    kubeconfig_path = runner_home / ".kube" / "config"
+    start_systemd_container()
+    try:
+        _install_fake_remote_kubeconfig(CONTAINER_NAME)
+        inventory = _kubeconfig_proof_inventory(
+            tmp_path,
+            container=CONTAINER_NAME,
+            container_remote_tmp=CONTAINER_ANSIBLE_REMOTE_TMP,
+            localhost_remote_tmp=tmp_path / "localhost-ansible-remote-tmp",
+        )
+        env = _kubeconfig_proof_env(
+            runner_home,
+            local_tmp=tmp_path / "ansible-local-tmp",
+        )
+        first = subprocess.run(
+            kubeconfig_proof_playbook_cmd(inventory),
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        second = subprocess.run(
+            kubeconfig_proof_playbook_cmd(inventory),
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        output = first.stdout + first.stderr
+        assert first.returncode == 0, output
+        assert kubeconfig_path.is_file(), output
+        installed = kubeconfig_path.read_text(encoding="utf-8")
+        assert f"https://{CONTAINER_NAME}:6443" in installed
+        assert "https://127.0.0.1:6443" not in installed
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
+    finally:
+        stop_systemd_container()
 
 
 def test_k3s_guard_allows_matching_marker() -> None:
