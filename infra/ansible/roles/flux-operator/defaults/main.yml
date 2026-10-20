@@ -12,7 +12,7 @@ k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 helm_binary_path: /usr/local/bin/helm
 # Pinned Helm host CLI (must match tools/versions.env).
 helm_version: 3.16.4
-helm_archive_sha256_linux_amd64: cbdd624538954ae94d267a6372c4c706dfcadb2c5ab7045ee19b6dd4012794ed
-helm_archive_sha256_linux_arm64: 66bd1d61928d1d4fd2756d505c91b29653ffb95e993f5d35c2b14c96ce7ab803
+helm_archive_sha256_linux_amd64: fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179
+helm_archive_sha256_linux_arm64: d3f8f15b3d9ec8c8678fbf3280c3e5902efabe5912e2f9fcf29107efbc8ead69
 helm_archive_member_linux_amd64: linux-amd64/helm
 helm_archive_member_linux_arm64: linux-arm64/helm

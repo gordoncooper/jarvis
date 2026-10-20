@@ -68,8 +68,14 @@ def test_ansible_helm_cli_pins_match_tools_versions_env() -> None:
     defaults = _load_role_defaults()
     versions = _load_versions_env()
     assert defaults["helm_version"] == versions["helm_version"]
-    assert defaults["helm_archive_sha256_linux_amd64"] == versions["helm_linux_amd64_sha256"]
-    assert defaults["helm_archive_sha256_linux_arm64"] == versions["helm_linux_arm64_sha256"]
+    assert (
+        defaults["helm_archive_sha256_linux_amd64"]
+        == versions["helm_linux_amd64_tarball_sha256"]
+    )
+    assert (
+        defaults["helm_archive_sha256_linux_arm64"]
+        == versions["helm_linux_arm64_tarball_sha256"]
+    )
 
 
 def test_helm_upgrade_command_renders_expected_argv() -> None:
