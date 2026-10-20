@@ -40,7 +40,7 @@
     owner: root
     group: root
     mode: "0644"
-    validate: "chmod a+r %s && chronyd -p -f %s"
+    validate: chronyd -u root -p -f %s
 
 - name: Enable and start chrony
   ansible.builtin.service:

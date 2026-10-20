@@ -24,7 +24,7 @@ SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
 CHRONY_INVALID_FIXTURE = REPO_ROOT / "tools/tests/fixtures/chrony-invalid.conf"
-CHRONY_TEMPLATE_VALIDATE = "chmod a+r %s && chronyd -p -f %s"
+CHRONY_TEMPLATE_VALIDATE = "chronyd -u root -p -f %s"
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
     """\

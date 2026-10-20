@@ -203,7 +203,7 @@ def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
                 "-a",
                 (
                     f"src={CHRONY_INVALID_FIXTURE} dest=/etc/chrony/chrony.conf "
-                    f"validate='{CHRONY_TEMPLATE_VALIDATE}'"
+                    f'validate="{CHRONY_TEMPLATE_VALIDATE}"'
                 ),
             ],
             cwd=ANSIBLE_DIR,
