@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Baseline single-node production for JARVIS AlphaCut: one CPU-only host (`bench.lan`), 32 GB RAM, one disk. Gordon is the only user at launch. No HA.
+Baseline single-node production for JARVIS AlphaCut: one CPU-only node (`bench.lan`). Gordon is the only user at launch. No HA.
 
 ## What deploys here
 

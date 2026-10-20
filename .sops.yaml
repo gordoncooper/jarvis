@@ -3,5 +3,4 @@ creation_rules:
     encrypted_regex: ^(data|stringData)$
     age: age1geh8jvqae24u4f0xymxdpys946z35ayxlx6gpn0gdxqsa0lqy90q4xxt0y
   - path_regex: envs/.*/inventory/group_vars/.*\.sops\.yaml$
-    encrypted_regex: ^(data|stringData)$
     age: age1geh8jvqae24u4f0xymxdpys946z35ayxlx6gpn0gdxqsa0lqy90q4xxt0y
