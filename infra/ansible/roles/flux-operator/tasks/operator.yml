@@ -41,7 +41,6 @@
         owner: root
         group: root
         checksum: "sha256:{{ flux_operator_install_sha256 }}"
-      register: flux_operator_binary_download
 
     - name: Apply Flux Operator install manifest once
       ansible.builtin.command:

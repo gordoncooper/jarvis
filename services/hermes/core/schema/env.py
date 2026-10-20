@@ -35,8 +35,14 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "local_path_data",
         "flux_git_repo_url",
         "flux_git_ref",
+        "ntp_pools",
+        "k3s_kubelet_kube_reserved",
+        "k3s_kubelet_system_reserved",
+        "k3s_kubelet_eviction_hard",
     }
 )
+
+_NTP_POOL = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 
 _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 
@@ -230,6 +236,34 @@ def _validate_cluster_vars(
         elif val <= 0:
             errors.append(f"{rel_path}: {key} must be > 0")
 
+    errors.extend(_validate_ntp_pools(rel_path, data.get("ntp_pools")))
+
+    for key in (
+        "k3s_kubelet_kube_reserved",
+        "k3s_kubelet_system_reserved",
+        "k3s_kubelet_eviction_hard",
+    ):
+        val = data.get(key)
+        if val is None:
+            continue
+        if not isinstance(val, str) or not val.strip():
+            errors.append(f"{rel_path}: {key} must be a non-empty string")
+
+    return errors
+
+
+def _validate_ntp_pools(rel_path: str, value: Any) -> list[str]:
+    if value is None:
+        return [f"{rel_path}: missing required key: ntp_pools"]
+    if not isinstance(value, list) or not value:
+        return [f"{rel_path}: ntp_pools must be a non-empty list"]
+    errors: list[str] = []
+    for idx, pool in enumerate(value):
+        if not isinstance(pool, str) or not pool.strip():
+            errors.append(f"{rel_path}: ntp_pools[{idx}] must be a non-empty string")
+            continue
+        if not _NTP_POOL.match(pool.strip()):
+            errors.append(f"{rel_path}: ntp_pools[{idx}] must be a hostname or pool name")
     return errors
 
 

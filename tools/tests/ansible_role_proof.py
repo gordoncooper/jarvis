@@ -124,8 +124,8 @@ def ansible_render_template(
     with tempfile.NamedTemporaryFile(delete=False) as handle:
         dest = Path(handle.name)
     extra: list[str] = []
-    for key, value in variables.items():
-        extra.extend(["-e", f"{key}={json.dumps(value)}"])
+    if variables:
+        extra.extend(["-e", json.dumps(variables)])
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")

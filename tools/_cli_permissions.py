@@ -156,7 +156,7 @@ def read_allowed(allow: list[str], deny: list[str], file_path: str) -> bool:
 DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "kubectl apply -f deployment.yaml",
     "helm upgrade --install demo ./chart",
-    "ssh user@bench.lan",
+    "ssh user@node.example",
     "sops decrypt envs/<env>/secrets/grafana-admin.sops.yaml",
     "sops -d envs/<env>/secrets/grafana-admin.sops.yaml",
     "flux bootstrap github",

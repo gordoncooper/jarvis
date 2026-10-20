@@ -61,9 +61,15 @@ def yaml_scalar(raw: str) -> str:
 
 
 def test_chrony_template_exact_content() -> None:
-    rendered = ansible_render_template("chrony.conf.j2", {})
+    cluster = load_cluster_vars()
+    pools = cluster["ntp_pools"]
+    assert isinstance(pools, list)
+    rendered = ansible_render_template("chrony.conf.j2", {"ntp_pools": pools})
+    pool_lines = "\n".join(
+        f"pool {pool} iburst maxsources 4 nts" for pool in pools
+    )
     assert rendered == textwrap.dedent(
-        """\
+        f"""\
         # Managed by Ansible (base-os): chrony with NTS (framework §4).
         # Outbound 123/udp and 4460/tcp must remain available for NTS; no node firewall changes here.
 
@@ -71,8 +77,7 @@ def test_chrony_template_exact_content() -> None:
         driftfile /var/lib/chrony/chrony.drift
         ntsdumpdir /var/lib/chrony
 
-        # Ubuntu default pool with NTS enabled.
-        pool ntp.ubuntu.com iburst maxsources 4 nts
+        {pool_lines}
 
         leapsectz right/UTC
         makestep 1.0 3

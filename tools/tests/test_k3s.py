@@ -47,6 +47,9 @@ def expected_config_from_cluster_vars(cluster: dict[str, object]) -> str:
     retention = cluster.get("k3s_etcd_snapshot_retention", 5)
     host = inventory_hostname()
     backup = cluster["backup_path"]
+    kube_reserved = cluster["k3s_kubelet_kube_reserved"]
+    system_reserved = cluster["k3s_kubelet_system_reserved"]
+    eviction_hard = cluster["k3s_kubelet_eviction_hard"]
     return textwrap.dedent(
         f"""\
         # Managed by Ansible (k3s role): server config (framework §8 step 4; not the k3s install script).
@@ -61,9 +64,9 @@ def expected_config_from_cluster_vars(cluster: dict[str, object]) -> str:
         etcd-snapshot-retention: {retention}
         etcd-snapshot-dir: {backup}/etcd-snapshots
         kubelet-arg:
-          - "kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi"
-          - "system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi"
-          - "eviction-hard=memory.available<500Mi,nodefs.available<10%"
+          - "kube-reserved={kube_reserved}"
+          - "system-reserved={system_reserved}"
+          - "eviction-hard={eviction_hard}"
         """
     )
 
@@ -78,6 +81,9 @@ def test_k3s_config_template_exact_content_env_01() -> None:
         "inventory_hostname": inventory_hostname(),
         "k3s_etcd_snapshot_schedule_cron": "0 */12 * * *",
         "k3s_etcd_snapshot_retention": 5,
+        "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
+        "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
+        "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
     }
     rendered = render_k3s_config(variables)
     assert rendered == expected_config_from_cluster_vars(cluster)
@@ -105,6 +111,9 @@ def test_k3s_config_template_quoted_cidr(raw_cidr: str, expected: str) -> None:
         "inventory_hostname": inventory_hostname(),
         "k3s_etcd_snapshot_schedule_cron": "0 */12 * * *",
         "k3s_etcd_snapshot_retention": 5,
+        "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
+        "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
+        "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
     }
     rendered = render_k3s_config(variables)
     assert f"cluster-cidr: {expected}" in rendered

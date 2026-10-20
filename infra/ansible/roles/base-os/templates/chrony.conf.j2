@@ -5,8 +5,9 @@ keyfile /etc/chrony/chrony.keys
 driftfile /var/lib/chrony/chrony.drift
 ntsdumpdir /var/lib/chrony
 
-# Ubuntu default pool with NTS enabled.
-pool ntp.ubuntu.com iburst maxsources 4 nts
+{% for pool in ntp_pools %}
+pool {{ pool }} iburst maxsources 4 nts
+{% endfor %}
 
 leapsectz right/UTC
 makestep 1.0 3
