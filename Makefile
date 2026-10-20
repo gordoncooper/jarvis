@@ -6,7 +6,7 @@ ENV ?= env-01
 .PHONY: help deps bootstrap-secrets seal
 help:
 	@echo "JARVIS Makefile — targets are added with tools/ in later P0a tasks."
-	@echo "  make deps               Install pinned sops, age, and age-keygen into ~/.local/bin"
+	@echo "  make deps               Install pinned sops, age, age-keygen, and gitleaks into ~/.local/bin"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=$(ENV))"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=..."
 

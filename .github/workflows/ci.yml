@@ -1,0 +1,61 @@
+name: ci
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned CLIs
+        run: make deps
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test deps
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tools/checks
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.local/bin:${PATH}"
+          shopt -s nullglob
+          checks=(tools/checks/*)
+          if ((${#checks[@]} == 0)); then
+            echo "no checks in tools/checks/" >&2
+            exit 1
+          fi
+          ran=0
+          for check in "${checks[@]}"; do
+            name="$(basename "$check")"
+            if [[ ! -f "$check" || ! -x "$check" ]]; then
+              echo "skip non-executable: $check" >&2
+              continue
+            fi
+            ran=$((ran + 1))
+            echo "::group::$name"
+            "$check"
+            echo "::endgroup::"
+          done
+          if ((ran == 0)); then
+            echo "no executable checks in tools/checks/" >&2
+            exit 1
+          fi
+
+      - name: pytest
+        run: |
+          export PATH="${HOME}/.local/bin:${PATH}"
+          pytest tools/tests/
