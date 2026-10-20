@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -11,6 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from conftest import require_cli
 from ansible_role_proof import (
     ANSIBLE_DIR,
     CONTAINER_NAME,
@@ -124,8 +124,7 @@ def test_k3s_config_template_quoted_cidr(raw_cidr: str, expected: str) -> None:
 
 
 def test_site_yml_syntax_check_includes_k3s() -> None:
-    if shutil.which("ansible-playbook") is None:
-        pytest.skip("ansible-playbook not installed")
+    require_cli("ansible-playbook")
     cmd = [
         "ansible-playbook",
         "--syntax-check",
@@ -196,6 +195,7 @@ def _run_k3s_guard() -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.container
 def test_k3s_guard_fresh_node_writes_marker() -> None:
     require_docker()
     start_systemd_container()
@@ -209,6 +209,7 @@ def test_k3s_guard_fresh_node_writes_marker() -> None:
         stop_systemd_container()
 
 
+@pytest.mark.container
 def test_k3s_guard_refuses_active_k3s_without_marker() -> None:
     require_docker()
     start_systemd_container()
@@ -221,6 +222,7 @@ def test_k3s_guard_refuses_active_k3s_without_marker() -> None:
         stop_systemd_container()
 
 
+@pytest.mark.container
 def test_k3s_guard_refuses_stopped_k3s_without_marker() -> None:
     require_docker()
     start_systemd_container()
@@ -307,6 +309,7 @@ def _kubeconfig_proof_env(home: Path, *, local_tmp: Path) -> dict[str, str]:
     }
 
 
+@pytest.mark.container
 def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
     """kubeconfig role tasks install once; staging work never reports changed on re-run."""
     require_docker()
@@ -353,6 +356,7 @@ def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
         stop_systemd_container()
 
 
+@pytest.mark.container
 def test_k3s_guard_allows_matching_marker() -> None:
     require_docker()
     env = str(load_cluster_vars()["jarvis_env"])

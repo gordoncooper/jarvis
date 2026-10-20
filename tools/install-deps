@@ -19,7 +19,8 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 VERSIONS_FILE = TOOLS_DIR / "versions.env"
 INSTALL_DIR = Path.home() / ".local" / "bin"
-NPM_PREFIX = TOOLS_DIR / ".npm"
+RENOVATE_DIR = TOOLS_DIR / "renovate"
+RENOVATE_NODE_MODULES = RENOVATE_DIR / "node_modules"
 NODE_DIR = TOOLS_DIR / ".node"
 
 
@@ -424,8 +425,20 @@ def _portable_node_bins(versions: dict[str, str]) -> tuple[Path, Path]:
     return node_bin, npm_bin
 
 
-def renovate_installed_version(prefix: Path) -> str | None:
-    package_json = prefix / "node_modules" / "renovate" / "package.json"
+def renovate_package_version() -> str:
+    package_json = RENOVATE_DIR / "package.json"
+    try:
+        data = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as err:
+        raise SystemExit(f"invalid {package_json}: {err}") from err
+    version = data.get("dependencies", {}).get("renovate")
+    if not isinstance(version, str) or not version:
+        raise SystemExit(f"missing dependencies.renovate in {package_json}")
+    return version
+
+
+def renovate_installed_version(modules_dir: Path) -> str | None:
+    package_json = modules_dir / "renovate" / "package.json"
     if not package_json.is_file():
         return None
     try:
@@ -436,45 +449,43 @@ def renovate_installed_version(prefix: Path) -> str | None:
     return version if isinstance(version, str) else None
 
 
-def _renovate_validator_script(prefix: Path) -> Path:
+def _renovate_validator_script(modules_dir: Path) -> Path:
     for candidate in (
-        prefix / "node_modules" / "renovate" / "dist" / "config-validator.js",
-        prefix / "node_modules" / "renovate" / "dist" / "config-validator",
+        modules_dir / "renovate" / "dist" / "config-validator.js",
+        modules_dir / "renovate" / "dist" / "config-validator",
     ):
         if candidate.is_file():
             return candidate
-    raise SystemExit(f"renovate config validator not found under {prefix}")
+    raise SystemExit(f"renovate config validator not found under {modules_dir}")
 
 
 def install_renovate_config_validator(versions: dict[str, str]) -> None:
     version = versions["renovate_version"]
+    package_version = renovate_package_version()
+    if version != package_version:
+        raise SystemExit(
+            "renovate_version in tools/versions.env "
+            f"({version}) does not match tools/renovate/package.json ({package_version})"
+        )
     dest = INSTALL_DIR / "renovate-config-validator"
-    installed = renovate_installed_version(NPM_PREFIX)
+    installed = renovate_installed_version(RENOVATE_NODE_MODULES)
     if installed == version and dest.is_file():
         print(f"renovate {version} already installed (renovate-config-validator at {dest})")
         return
 
     node_bin, npm_bin = _portable_node_bins(versions)
 
-    print(f"installing renovate {version} under {NPM_PREFIX}…")
+    print(f"installing renovate {version} from {RENOVATE_DIR}/package-lock.json…")
     env = os.environ.copy()
     env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
     subprocess.run(
-        [
-            str(npm_bin),
-            "install",
-            "--prefix",
-            str(NPM_PREFIX),
-            "--no-save",
-            "--no-audit",
-            "--no-fund",
-            f"renovate@{version}",
-        ],
+        [str(npm_bin), "ci", "--no-audit", "--no-fund"],
+        cwd=RENOVATE_DIR,
         check=True,
         env=env,
     )
 
-    validator_src = _renovate_validator_script(NPM_PREFIX)
+    validator_src = _renovate_validator_script(RENOVATE_NODE_MODULES)
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
     dest.write_text(
         f"""#!/usr/bin/env bash

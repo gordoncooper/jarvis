@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import textwrap
 import pytest
 import yaml
 
+from conftest import require_cli
 from ansible_role_proof import (
     ANSIBLE_DIR,
     CHRONY_INVALID_FIXTURE,
@@ -115,8 +115,7 @@ def test_unattended_upgrades_template_exact_content() -> None:
 
 
 def test_site_yml_syntax_check() -> None:
-    if shutil.which("ansible-playbook") is None:
-        pytest.skip("ansible-playbook not installed")
+    require_cli("ansible-playbook")
     cmd = [
         "ansible-playbook",
         "--syntax-check",
@@ -136,6 +135,7 @@ def test_site_yml_syntax_check() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+@pytest.mark.container
 def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
     require_docker()
     validate = chrony_template_validate_command()
@@ -181,6 +181,7 @@ def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
         stop_systemd_container()
 
 
+@pytest.mark.container
 def test_base_os_role_idempotent_in_container() -> None:
     require_docker()
     start_systemd_container()
