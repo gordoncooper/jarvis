@@ -283,7 +283,7 @@ def test_sops_age_compare_logic_matches_fixture_secret() -> None:
     key_body = textwrap.dedent(
         """\
         # created: 2026-01-01T00:00:00Z
-        # public key: age1comparefixture
+        # public key: age1example
         AGE-SECRET-KEY-1COMPARE000000000000000000000000000000000000000000000000
         """
     )
