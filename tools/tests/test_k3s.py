@@ -345,7 +345,7 @@ def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
         assert first.returncode == 0, output
         assert kubeconfig_path.is_file(), output
         installed = kubeconfig_path.read_text(encoding="utf-8")
-        assert f"https://{inventory_hostname()}:6443" in installed
+        assert f"https://{CONTAINER_NAME}:6443" in installed
         assert "https://127.0.0.1:6443" not in installed
         assert second.returncode == 0, second.stdout + second.stderr
         assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
