@@ -85,7 +85,7 @@
     - k3s
     - k3s-service
 
-- name: Fetch kubeconfig to bastion paths
+- name: Install kubeconfig for the site.yml runner
   ansible.builtin.include_tasks: kubeconfig.yml
   tags:
     - k3s
