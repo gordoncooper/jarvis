@@ -226,6 +226,35 @@ def _installed_binary_version(bin_path: Path, args: list[str]) -> str | None:
     return match.group(1) if match else None
 
 
+def install_helm(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["helm_version"]
+    dest = dest_dir / "helm"
+    installed = _installed_binary_version(dest, ["version", "--short"])
+    if installed in {version, f"v{version}"}:
+        print(f"helm {version} already installed at {dest}")
+        return
+
+    tar_arch = "amd64" if arch == "amd64" else "arm64"
+    member = f"linux-{tar_arch}/helm"
+    sha_key = f"helm_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = f"https://get.helm.sh/helm-v{version}-linux-{tar_arch}.tar.gz"
+    with tempfile.TemporaryDirectory(prefix="jarvis-helm-") as tmp:
+        tarball = Path(tmp) / "helm.tar.gz"
+        print(f"downloading helm {version} ({tar_arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract(member, path=tmp)
+        binary = Path(tmp) / member
+        _install_verified_binary(
+            src=binary,
+            dest=dest,
+            expected_sha=expected_sha,
+            label="helm",
+            version=version,
+        )
+
+
 def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     version = versions["kustomize_version"]
     dest = dest_dir / "kustomize"
@@ -374,6 +403,7 @@ def main() -> None:
     install_gitleaks(versions, arch, INSTALL_DIR)
     install_kustomize(versions, arch, INSTALL_DIR)
     install_kubeconform(versions, arch, INSTALL_DIR)
+    install_helm(versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
 
 

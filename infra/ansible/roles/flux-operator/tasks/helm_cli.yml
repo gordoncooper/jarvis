@@ -1,0 +1,69 @@
+---
+- name: Select Helm CLI archive metadata for this architecture
+  ansible.builtin.set_fact:
+    helm_download_arch: >-
+      {{ 'amd64' if ansible_architecture in ['x86_64', 'amd64'] else 'arm64' }}
+    helm_archive_member: >-
+      {{ helm_archive_member_linux_amd64
+         if ansible_architecture in ['x86_64', 'amd64']
+         else helm_archive_member_linux_arm64 }}
+    helm_archive_sha256: >-
+      {{ helm_archive_sha256_linux_amd64
+         if ansible_architecture in ['x86_64', 'amd64']
+         else helm_archive_sha256_linux_arm64 }}
+    helm_download_url: >-
+      https://get.helm.sh/helm-v{{ helm_version }}-linux-{{
+      'amd64' if ansible_architecture in ['x86_64', 'amd64'] else 'arm64' }}.tar.gz
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Check whether pinned Helm CLI is present
+  ansible.builtin.stat:
+    path: "{{ helm_binary_path }}"
+  register: flux_operator_helm_stat
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Install pinned Helm CLI for operator bootstrap
+  when: not flux_operator_helm_stat.stat.exists
+  tags:
+    - flux-operator
+    - flux-cluster
+  block:
+    - name: Create staging directory for Helm CLI
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: jarvis-helm-cli-
+      register: flux_operator_helm_staging
+
+    - name: Download pinned Helm CLI archive
+      ansible.builtin.get_url:
+        url: "{{ helm_download_url }}"
+        dest: "{{ flux_operator_helm_staging.path }}/helm.tar.gz"
+        mode: "0600"
+        checksum: "sha256:{{ helm_archive_sha256 }}"
+
+    - name: Extract Helm CLI binary
+      ansible.builtin.command:
+        cmd: >-
+          tar -xzf {{ flux_operator_helm_staging.path }}/helm.tar.gz
+          -C {{ flux_operator_helm_staging.path }}
+          {{ helm_archive_member }}
+          --strip-components=1
+
+    - name: Install Helm CLI on node
+      ansible.builtin.copy:
+        src: "{{ flux_operator_helm_staging.path }}/helm"
+        dest: "{{ helm_binary_path }}"
+        mode: "0755"
+        owner: root
+        group: root
+        remote_src: true
+  always:
+    - name: Remove Helm CLI staging directory
+      ansible.builtin.file:
+        path: "{{ flux_operator_helm_staging.path }}"
+        state: absent
+      when: flux_operator_helm_staging is defined and flux_operator_helm_staging.path is defined

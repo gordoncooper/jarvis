@@ -1,4 +1,4 @@
-"""Parse pinned flux-operator install.yaml for Helm adoption (p0a-14)."""
+"""Parse pinned flux-operator install.yaml and chart templates (p0a-14)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,34 @@ _K8S_KIND_TO_KUBECTL: dict[str, str] = {
     "ClusterRoleBinding": "clusterrolebinding",
     "Service": "service",
     "Deployment": "deployment",
+    "NetworkPolicy": "networkpolicy",
 }
+
+# install.yaml v0.60.0 vs chart 0.60.0 helm template (verified in test).
+INSTALL_CHART_DIFF_CHART_ONLY: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        ("ClusterRoleBinding", "", "flux-operator"),
+        ("NetworkPolicy", "flux-system", "flux-operator-web"),
+    }
+)
+INSTALL_CHART_DIFF_INSTALL_ONLY: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        ("ClusterRoleBinding", "", "flux-operator-cluster-admin"),
+        ("Namespace", "", "flux-system"),
+    }
+)
+
+FLUX_OPERATOR_CHART_VERSION = "0.60.0"
+FLUX_OPERATOR_CHART_OCI = "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator"
+
+INSTALL_SHA256_V0_60_0 = (
+    "ef5f7c2ae52810d886f6bccc66a0fed3b436f3a7797e79a59c0443f191ddd02e"
+)
+
+INSTALL_URL_V0_60_0 = (
+    "https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/"
+    "v0.60.0/install.yaml"
+)
 
 
 @dataclass(frozen=True)
@@ -57,40 +84,3 @@ def parse_install_manifest(text: str) -> tuple[InstallResource, ...]:
 
 def resource_keys(resources: Iterable[InstallResource]) -> frozenset[tuple[str, str, str]]:
     return frozenset(item.resource_key() for item in resources)
-
-
-def parse_helm_template_manifest(text: str) -> frozenset[tuple[str, str, str]]:
-    return resource_keys(parse_install_manifest(text))
-
-
-# Chart 0.60.0 helm template keys (must match install.yaml v0.60.0 for Helm adoption).
-FLUX_OPERATOR_CHART_0_60_0_RESOURCE_KEYS: frozenset[tuple[str, str, str]] = frozenset(
-    {
-        ("ClusterRole", "", "flux-operator-edit"),
-        ("ClusterRole", "", "flux-operator-view"),
-        ("ClusterRole", "", "flux-web-admin"),
-        ("ClusterRole", "", "flux-web-user"),
-        ("ClusterRoleBinding", "", "flux-operator-cluster-admin"),
-        ("CustomResourceDefinition", "", "fluxinstances.fluxcd.controlplane.io"),
-        ("CustomResourceDefinition", "", "fluxreports.fluxcd.controlplane.io"),
-        (
-            "CustomResourceDefinition",
-            "",
-            "resourcesetinputproviders.fluxcd.controlplane.io",
-        ),
-        ("CustomResourceDefinition", "", "resourcesets.fluxcd.controlplane.io"),
-        ("Deployment", "flux-system", "flux-operator"),
-        ("Namespace", "", "flux-system"),
-        ("Service", "flux-system", "flux-operator"),
-        ("ServiceAccount", "flux-system", "flux-operator"),
-    }
-)
-
-INSTALL_SHA256_V0_60_0 = (
-    "ef5f7c2ae52810d886f6bccc66a0fed3b436f3a7797e79a59c0443f191ddd02e"
-)
-
-INSTALL_URL_V0_60_0 = (
-    "https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/"
-    "v0.60.0/install.yaml"
-)

@@ -1,0 +1,1 @@
+{{ k3s_binary_path }} kubectl label --overwrite{% if item.namespace | length > 0 %} -n {{ item.namespace }}{% endif %} {{ item.kubectl_resource }}/{{ item.name }} app.kubernetes.io/managed-by=Helm

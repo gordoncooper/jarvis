@@ -27,29 +27,21 @@
     - flux-operator
     - flux-cluster
   block:
-    - name: Create staging directory for Flux Operator bootstrap
-      ansible.builtin.tempfile:
-        state: directory
-        prefix: jarvis-flux-operator-
-      register: flux_operator_staging
+    - name: Ensure Helm CLI for chart bootstrap
+      ansible.builtin.import_tasks: helm_cli.yml
 
-    - name: Download pinned Flux Operator install manifest
-      ansible.builtin.get_url:
-        url: "{{ flux_operator_install_url }}"
-        dest: "{{ flux_operator_staging.path }}/install.yaml"
-        mode: "0600"
-        owner: root
-        group: root
-        checksum: "sha256:{{ flux_operator_install_sha256 }}"
-
-    - name: Apply Flux Operator install manifest once
+    - name: Install Flux Operator chart once (matches Git HelmRelease pin)
       ansible.builtin.command:
         cmd: >-
-          {{ k3s_binary_path }} kubectl apply -f
-          {{ flux_operator_staging.path }}/install.yaml
-
-    - name: Stamp Helm adoption metadata on install objects
-      ansible.builtin.import_tasks: operator_adopt.yml
+          {{ helm_binary_path }} upgrade --install {{ flux_operator_deployment_name }}
+          oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator
+          --version {{ flux_operator_chart_version }}
+          --namespace {{ flux_system_namespace }}
+          --create-namespace
+          --wait
+          --timeout {{ flux_operator_helm_timeout }}
+      environment:
+        KUBECONFIG: "{{ k3s_kubeconfig_path }}"
       when: not ansible_check_mode
 
     - name: Wait for FluxInstance CRD to be established
@@ -69,18 +61,29 @@
           --timeout={{ flux_operator_rollout_wait_timeout }}
       changed_when: false
       check_mode: false
-  always:
-    - name: Remove Flux Operator staging directory
-      ansible.builtin.file:
-        path: "{{ flux_operator_staging.path }}"
-        state: absent
-      when: flux_operator_staging is defined and flux_operator_staging.path is defined
 
-- name: Ensure Helm adoption metadata when operator already installed
+- name: Check for legacy kubectl install manifest
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl get clusterrolebinding
+      flux-operator-cluster-admin -o name
+  register: flux_operator_legacy_install_lookup
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: flux_operator_deployed | bool
+  tags:
+    - flux-operator
+    - flux-cluster
+    - flux-adopt
+
+- name: Migrate legacy kubectl install objects for Helm adoption
   ansible.builtin.import_tasks: operator_adopt.yml
   when:
     - flux_operator_deployed | bool
     - not ansible_check_mode
+    - flux_operator_legacy_install_lookup.rc == 0
   tags:
     - flux-operator
     - flux-cluster
+    - flux-adopt

@@ -1,5 +1,5 @@
 ---
-# Parsed from install.yaml v0.60.0; keep in sync via test_install_manifest_matches_chart_resource_keys.
+# Parsed from install.yaml v0.60.0 (legacy kubectl bootstrap); keep in sync via test_ansible_helm_adopt_vars_match_install_manifest.
 flux_operator_helm_adopt_resources:
   - kind: Namespace
     kubectl_resource: namespace
