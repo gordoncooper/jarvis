@@ -17,9 +17,3 @@ k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
 pod_cidr: 10.42.0.0/16
 service_cidr: 10.43.0.0/16
 local_path_data: /var/lib/jarvis/local-path
-# Bastion kubeconfig destinations (admin + agent user); not referenced from infra/ (R3).
-bastion_kubeconfig_destinations:
-  - path: /home/bastion/.kube/config
-    owner: bastion
-  - path: /home/agent/.kube/config
-    owner: agent

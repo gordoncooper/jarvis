@@ -86,10 +86,6 @@ def _valid_cluster_vars() -> dict:
         "pod_cidr": "10.42.0.0/16",
         "service_cidr": "10.43.0.0/16",
         "local_path_data": "/var/lib/jarvis/local-path",
-        "bastion_kubeconfig_destinations": [
-            {"path": "/home/bastion/.kube/config", "owner": "bastion"},
-            {"path": "/home/agent/.kube/config", "owner": "agent"},
-        ],
     }
 
 
