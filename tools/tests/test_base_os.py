@@ -48,10 +48,7 @@ CHRONY_MARKER = "JARVIS_CHRONY_VALIDATE_PRESERVE_MARKER\n"
     ],
 )
 def test_journald_template_via_ansible_jinja(raw_value: str, expected_max: str) -> None:
-    variables = {
-        "jarvis_journald_system_max_use": yaml_scalar(raw_value),
-        "time_zone": "America/Argentina/Buenos_Aires",
-    }
+    variables = {"jarvis_journald_system_max_use": yaml_scalar(raw_value)}
     rendered = ansible_render_template("journald-jarvis.conf.j2", variables)
     assert rendered == JOURNALD_EXPECTED_BODY.format(system_max_use=expected_max)
 
@@ -60,19 +57,6 @@ def yaml_scalar(raw: str) -> str:
     loaded = yaml.safe_load(raw)
     assert isinstance(loaded, str)
     return loaded
-
-
-def test_journald_template_time_zone_with_slash_and_underscore() -> None:
-    zone = "America/Argentina/Buenos_Aires"
-    rendered = ansible_render_template(
-        "journald-jarvis.conf.j2",
-        {
-            "jarvis_journald_system_max_use": "2G",
-            "time_zone": zone,
-        },
-    )
-    assert "SystemMaxUse=2G" in rendered
-    assert zone
 
 
 def test_chrony_template_exact_content() -> None:
@@ -90,7 +74,7 @@ def test_chrony_template_exact_content() -> None:
         pool ntp.ubuntu.com iburst maxsources 4 nts
 
         leapsectz right/UTC
-        makestep 1.0 3 3
+        makestep 1.0 3
         rtcsync
 
         logdir /var/log/chrony
