@@ -29,6 +29,8 @@ CONTAINER_PLAYBOOK_EXTRA_VARS = [
     "base_os_chrony_pool_nts=false",
     "-e",
     "base_os_chrony_enable_rtcsync=false",
+    "-e",
+    "base_os_chrony_manage_service=false",
 ]
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(

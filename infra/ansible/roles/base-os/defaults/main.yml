@@ -8,3 +8,5 @@ base_os_chrony_test_invalid: false
 # NTS on pool lines (framework §4); container tests set false when outbound 4460 is unavailable.
 base_os_chrony_pool_nts: true
 base_os_chrony_enable_rtcsync: true
+# Container tests set false when chronyd cannot run under Docker systemd.
+base_os_chrony_manage_service: true

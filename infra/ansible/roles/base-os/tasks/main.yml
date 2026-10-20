@@ -52,17 +52,22 @@
       register: base_os_chrony_template
 
     - name: Enable and restart chrony with new configuration
+      when: base_os_chrony_manage_service | default(true) | bool
       ansible.builtin.service:
         name: chrony
         state: restarted
         enabled: true
 
     - name: Verify chrony is active after configuration change
+      when: base_os_chrony_manage_service | default(true) | bool
       ansible.builtin.command: systemctl is-active chrony
       changed_when: false
       register: base_os_chrony_active
       failed_when: base_os_chrony_active.stdout.strip() != "active"
   rescue:
+    - name: Skip chrony rescue when service management is disabled
+      ansible.builtin.meta: end_host
+      when: not (base_os_chrony_manage_service | default(true) | bool)
     - name: Restore chrony configuration from template backup
       ansible.builtin.copy:
         src: "{{ base_os_chrony_template.backup_file }}"
