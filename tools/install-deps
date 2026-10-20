@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install pinned sops, age, and age-keygen into ~/.local/bin with sha256 verification."""
+"""Install pinned sops, age, age-keygen, and gitleaks into ~/.local/bin with sha256 verification."""
 
 from __future__ import annotations
 
@@ -194,6 +194,53 @@ def _install_age_binary(
     print(f"installed {label} {version} -> {dest}")
 
 
+def gitleaks_installed_version(bin_path: Path) -> str | None:
+    if not bin_path.is_file():
+        return None
+    try:
+        proc = subprocess.run(
+            [str(bin_path), "version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout.strip())
+    return match.group(1) if match else None
+
+
+def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["gitleaks_version"]
+    dest = dest_dir / "gitleaks"
+    installed = gitleaks_installed_version(dest)
+    if installed == version:
+        print(f"gitleaks {version} already installed at {dest}")
+        return
+
+    tar_arch = "x64" if arch == "amd64" else arch
+    sha_key = f"gitleaks_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = (
+        f"https://github.com/gitleaks/gitleaks/releases/download/v{version}/"
+        f"gitleaks_{version}_linux_{tar_arch}.tar.gz"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-gitleaks-") as tmp:
+        tarball = Path(tmp) / "gitleaks.tar.gz"
+        print(f"downloading gitleaks {version} ({arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract("gitleaks", path=tmp)
+        binary = Path(tmp) / "gitleaks"
+        _install_age_binary(
+            src=binary,
+            dest=dest,
+            expected_sha=expected_sha,
+            label="gitleaks",
+            version=version,
+        )
+
+
 def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     version = versions["age_version"]
     age_dest = dest_dir / "age"
@@ -248,6 +295,7 @@ def main() -> None:
     arch = linux_arch()
     install_sops(versions, arch, INSTALL_DIR)
     install_age(versions, arch, INSTALL_DIR)
+    install_gitleaks(versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
 
 
