@@ -6,6 +6,7 @@
       - jarvis_env | length > 0
     fail_msg: jarvis_env must be set in cluster-vars (env schema).
   tags:
+    - k3s
     - k3s-guard
 
 - name: Probe whether k3s service is active
@@ -15,6 +16,7 @@
   changed_when: false
   failed_when: false
   tags:
+    - k3s
     - k3s-guard
 
 - name: Stat jarvis env marker
@@ -22,6 +24,7 @@
     path: "{{ jarvis_marker_path }}"
   register: k3s_guard_marker_stat
   tags:
+    - k3s
     - k3s-guard
 
 - name: Read jarvis env marker
@@ -30,6 +33,7 @@
   register: k3s_guard_marker
   when: k3s_guard_marker_stat.stat.exists
   tags:
+    - k3s
     - k3s-guard
 
 - name: Refuse host with foreign or unmarked k3s
@@ -43,6 +47,18 @@
       k3s is already active on this host but {{ jarvis_marker_path }} is missing or does not
       contain '{{ jarvis_env }}'. Wipe the node or fix the marker before re-running this env.
   tags:
+    - k3s
+    - k3s-guard
+
+- name: Ensure jarvis marker directory exists
+  ansible.builtin.file:
+    path: /etc/jarvis
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags:
+    - k3s
     - k3s-guard
 
 - name: Write jarvis env marker
@@ -53,4 +69,5 @@
     group: root
     mode: "0644"
   tags:
+    - k3s
     - k3s-guard

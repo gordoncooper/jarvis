@@ -1,8 +1,12 @@
 ---
 - name: k3s guard and env marker
   ansible.builtin.import_tasks: guard.yml
+  tags:
+    - k3s
 
 - name: Require k3s cluster-vars
+  tags:
+    - k3s
   ansible.builtin.assert:
     that:
       - k3s_version is defined
@@ -18,6 +22,8 @@
     fail_msg: k3s role requires k3s_version, k3s_sha256, CIDRs, paths, and bastion_kubeconfig_local_paths in cluster-vars.
 
 - name: Ensure jarvis state directories exist
+  tags:
+    - k3s
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -31,6 +37,8 @@
     - "{{ backup_path }}"
 
 - name: Install k3s server config
+  tags:
+    - k3s
   ansible.builtin.template:
     src: config.yaml.j2
     dest: "{{ k3s_config_path }}"
@@ -40,6 +48,8 @@
   notify: Restart k3s
 
 - name: Download pinned k3s binary
+  tags:
+    - k3s
   ansible.builtin.get_url:
     url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/k3s"
     dest: "{{ k3s_binary_path }}"
@@ -50,6 +60,8 @@
   register: k3s_binary_download
 
 - name: Install k3s systemd unit
+  tags:
+    - k3s
   ansible.builtin.template:
     src: k3s.service.j2
     dest: /etc/systemd/system/k3s.service
@@ -59,6 +71,8 @@
   notify: Restart k3s
 
 - name: Reload systemd after unit or binary change
+  tags:
+    - k3s
   ansible.builtin.systemd:
     daemon_reload: true
   when: k3s_binary_download is changed
@@ -69,10 +83,12 @@
     enabled: true
     state: started
   tags:
+    - k3s
     - k3s-service
 
 - name: Fetch kubeconfig to bastion paths
   ansible.builtin.include_tasks: kubeconfig.yml
   tags:
+    - k3s
     - k3s-service
     - k3s-kubeconfig

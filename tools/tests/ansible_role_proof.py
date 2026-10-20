@@ -268,7 +268,7 @@ def playbook_cmd() -> list[str]:
         "-e",
         "ansible_connection=docker",
         "--skip-tags",
-        "chrony-service,k3s-service,k3s-kubeconfig",
+        "chrony-service,k3s",
     ]
 
 
