@@ -2,7 +2,7 @@
 
 ## Offers
 
-Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-time Ansible `kubectl apply` bootstrap (R1).
+Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-time Ansible `helm upgrade --install` bootstrap (R1).
 
 ## Expects
 
@@ -15,8 +15,8 @@ Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-ti
 
 ## Config
 
-Chart tag in `oci-repository.yaml` (Renovate-managed after p0a-15). Helm values use upstream defaults unless overridden here.
+Chart tag in `oci-repository.yaml` must match `flux_operator_chart_version` in the flux-operator Ansible role (Renovate-managed after p0a-15). Helm values use upstream defaults unless overridden here.
 
 ## Proven by
 
-`tools/tests/test_flux_entry.py` (chart pin, substitute disabled, kustomize render + schema validation).
+`tools/tests/test_flux_operator_install.py` (Ansible/Git pin alignment, helm CLI argv), `tools/tests/test_flux_entry.py` (substitute disabled, kustomize render + schema validation).

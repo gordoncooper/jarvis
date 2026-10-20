@@ -1,27 +1,12 @@
-"""Pinned flux-operator install.yaml vs chart 0.60.0; adoption kubectl rendering."""
+"""Flux Operator Ansible helm bootstrap aligns with Git HelmRelease (p0a-14)."""
 
 from __future__ import annotations
 
-import hashlib
 import shlex
-import shutil
-import subprocess
-import urllib.request
 from pathlib import Path
 
-import pytest
 import yaml
 
-from _flux_operator_install import (
-    FLUX_OPERATOR_CHART_OCI,
-    FLUX_OPERATOR_CHART_VERSION,
-    INSTALL_CHART_DIFF_CHART_ONLY,
-    INSTALL_CHART_DIFF_INSTALL_ONLY,
-    INSTALL_SHA256_V0_60_0,
-    INSTALL_URL_V0_60_0,
-    parse_install_manifest,
-    resource_keys,
-)
 from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_DIR,
     FLUX_OPERATOR_ROLE_TEMPLATES,
@@ -29,138 +14,83 @@ from ansible_role_proof import (
     ansible_render_template,
 )
 
-HELM_ADOPT_VARS = (
-    REPO_ROOT / "infra/ansible/roles/flux-operator/vars/helm_adopt_resources.yml"
-)
-ADOPT_SAMPLE = {
-    "k3s_binary_path": "/usr/local/bin/k3s",
-    "flux_operator_deployment_name": "flux-operator",
-    "flux_system_namespace": "flux-system",
-    "item": {
-        "kind": "Deployment",
-        "kubectl_resource": "deployment",
-        "name": "flux-operator",
-        "namespace": "flux-system",
-    },
-}
+VERSIONS_ENV = REPO_ROOT / "tools" / "versions.env"
+ROLE_DEFAULTS = FLUX_OPERATOR_ROLE_DIR / "defaults" / "main.yml"
+OCI_REPOSITORY = REPO_ROOT / "platform" / "flux-operator" / "oci-repository.yaml"
+HELM_RELEASE = REPO_ROOT / "platform" / "flux-operator" / "helmrelease.yaml"
+FLUX_OPERATOR_CHART_OCI = "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator"
 
 
-def _require_helm() -> str:
-    path = shutil.which("helm")
-    if not path:
-        pytest.fail("helm not found on PATH (run make deps)")
-    return path
+def _load_role_defaults() -> dict[str, object]:
+    data = yaml.safe_load(ROLE_DEFAULTS.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
 
 
-def _download_install_manifest() -> str:
-    with urllib.request.urlopen(INSTALL_URL_V0_60_0, timeout=60) as response:
-        data = response.read()
-    digest = hashlib.sha256(data).hexdigest()
-    assert digest == INSTALL_SHA256_V0_60_0
-    return data.decode("utf-8")
+def _load_versions_env() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for raw in VERSIONS_ENV.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        versions[key.strip()] = value.strip()
+    return versions
 
 
-def _helm_template_manifest() -> str:
-    helm = _require_helm()
-    proc = subprocess.run(
-        [
-            helm,
-            "template",
-            "flux-operator",
-            FLUX_OPERATOR_CHART_OCI,
-            "--version",
-            FLUX_OPERATOR_CHART_VERSION,
-            "--namespace",
-            "flux-system",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
-    return proc.stdout
-
-
-def _assert_kubectl_verb_argv(argv: list[str], verb: str) -> None:
-    assert len(argv) >= 4
-    assert argv[0].endswith("k3s") or argv[0] == "k3s"
-    assert argv[1] == "kubectl"
-    assert argv[2] == verb
-    assert argv[3] == "--overwrite"
-
-
-def test_install_yaml_and_chart_resource_keys_have_known_difference() -> None:
-    install_keys = resource_keys(parse_install_manifest(_download_install_manifest()))
-    chart_keys = resource_keys(parse_install_manifest(_helm_template_manifest()))
-    assert install_keys != chart_keys
-    assert chart_keys - install_keys == INSTALL_CHART_DIFF_CHART_ONLY
-    assert install_keys - chart_keys == INSTALL_CHART_DIFF_INSTALL_ONLY
-
-
-def test_ansible_helm_adopt_vars_match_install_manifest() -> None:
-    text = _download_install_manifest()
-    install_keys = resource_keys(parse_install_manifest(text))
-    vars_doc = yaml.safe_load(HELM_ADOPT_VARS.read_text(encoding="utf-8"))
-    assert isinstance(vars_doc, dict)
-    entries = vars_doc["flux_operator_helm_adopt_resources"]
-    var_keys = frozenset(
-        (item["kind"], item.get("namespace", ""), item["name"]) for item in entries
-    )
-    assert var_keys == install_keys
-
-
-def test_adopt_label_command_renders_valid_kubectl_argv() -> None:
-    rendered = ansible_render_template(
-        "adopt-label.cmd.j2",
-        ADOPT_SAMPLE,
-        templates_dir=FLUX_OPERATOR_ROLE_TEMPLATES,
-    ).strip()
-    argv = shlex.split(rendered)
-    _assert_kubectl_verb_argv(argv, "label")
-    assert argv[-1] == "app.kubernetes.io/managed-by=Helm"
-    assert "deployment/flux-operator" in argv
-
-
-def test_adopt_annotate_command_renders_valid_kubectl_argv() -> None:
-    rendered = ansible_render_template(
-        "adopt-annotate.cmd.j2",
-        ADOPT_SAMPLE,
-        templates_dir=FLUX_OPERATOR_ROLE_TEMPLATES,
-    ).strip()
-    argv = shlex.split(rendered)
-    _assert_kubectl_verb_argv(argv, "annotate")
-    assert "meta.helm.sh/release-name=flux-operator" in argv
-    assert "meta.helm.sh/release-namespace=flux-system" in argv
-
-
-def test_adopt_label_cluster_scoped_resource_omits_namespace_flag() -> None:
-    sample = {
-        **ADOPT_SAMPLE,
-        "item": {
-            "kind": "Namespace",
-            "kubectl_resource": "namespace",
-            "name": "flux-system",
-            "namespace": "",
-        },
+def _helm_upgrade_variables() -> dict[str, object]:
+    defaults = _load_role_defaults()
+    return {
+        "helm_binary_path": defaults["helm_binary_path"],
+        "flux_operator_deployment_name": defaults["flux_operator_deployment_name"],
+        "flux_operator_chart_version": defaults["flux_operator_chart_version"],
+        "flux_system_namespace": defaults["flux_system_namespace"],
+        "flux_operator_helm_timeout": defaults["flux_operator_helm_timeout"],
     }
+
+
+def test_ansible_chart_pin_matches_git_helmrelease() -> None:
+    defaults = _load_role_defaults()
+    oci = yaml.safe_load(OCI_REPOSITORY.read_text(encoding="utf-8"))
+    release = yaml.safe_load(HELM_RELEASE.read_text(encoding="utf-8"))
+    assert isinstance(oci, dict)
+    assert isinstance(release, dict)
+
+    chart_version = defaults["flux_operator_chart_version"]
+    assert oci["spec"]["ref"]["tag"] == chart_version
+    assert release["metadata"]["name"] == defaults["flux_operator_deployment_name"]
+    assert release["metadata"]["namespace"] == defaults["flux_system_namespace"]
+    assert release["spec"]["releaseName"] == defaults["flux_operator_deployment_name"]
+    assert release["spec"]["chartRef"]["name"] == defaults["flux_operator_deployment_name"]
+
+
+def test_ansible_helm_cli_pins_match_tools_versions_env() -> None:
+    defaults = _load_role_defaults()
+    versions = _load_versions_env()
+    assert defaults["helm_version"] == versions["helm_version"]
+    assert defaults["helm_archive_sha256_linux_amd64"] == versions["helm_linux_amd64_sha256"]
+    assert defaults["helm_archive_sha256_linux_arm64"] == versions["helm_linux_arm64_sha256"]
+
+
+def test_helm_upgrade_command_renders_expected_argv() -> None:
+    variables = _helm_upgrade_variables()
     rendered = ansible_render_template(
-        "adopt-label.cmd.j2",
-        sample,
+        "helm-upgrade.cmd.j2",
+        variables,
         templates_dir=FLUX_OPERATOR_ROLE_TEMPLATES,
     ).strip()
     argv = shlex.split(rendered)
-    _assert_kubectl_verb_argv(argv, "label")
-    assert "-n" not in argv
-    assert "namespace/flux-system" in argv
-
-
-def test_operator_bootstrap_uses_helm_chart_not_install_yaml() -> None:
-    operator = (
-        FLUX_OPERATOR_ROLE_DIR / "tasks" / "operator.yml"
-    ).read_text(encoding="utf-8")
-    assert "upgrade --install" in operator
-    assert "charts/flux-operator" in operator
-    assert "kubectl apply" not in operator
-    assert "flux-operator-cluster-admin" in (
-        REPO_ROOT / "infra/ansible/roles/flux-operator/tasks/operator.yml"
-    ).read_text(encoding="utf-8")
+    defaults = _load_role_defaults()
+    chart_version = defaults["flux_operator_chart_version"]
+    assert argv[0] == defaults["helm_binary_path"]
+    assert argv[1:5] == [
+        "upgrade",
+        "--install",
+        defaults["flux_operator_deployment_name"],
+        FLUX_OPERATOR_CHART_OCI,
+    ]
+    version_index = argv.index("--version")
+    assert argv[version_index + 1] == chart_version
+    assert "--namespace" in argv
+    ns_index = argv.index("--namespace")
+    assert argv[ns_index + 1] == defaults["flux_system_namespace"]

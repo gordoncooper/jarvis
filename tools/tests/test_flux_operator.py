@@ -322,7 +322,7 @@ def _run_flux_operator_playbook(
         "ansible_connection=docker",
         *DOCKER_PLAYBOOK_EXTRA_VARS,
         "--skip-tags",
-        "chrony-service,k3s,k3s-service,flux-adopt",
+        "chrony-service,k3s,k3s-service,flux-cluster",
     ]
     if extra_args:
         cmd.extend(extra_args)
@@ -428,8 +428,3 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:
     assert "kubectl create" in content
     assert "kubectl apply" not in content
 
-
-def test_operator_bootstrap_uses_helm_upgrade_install() -> None:
-    content = (FLUX_OPERATOR_ROLE_TASKS / "operator.yml").read_text(encoding="utf-8")
-    assert "upgrade --install" in content
-    assert "kubectl apply" not in content

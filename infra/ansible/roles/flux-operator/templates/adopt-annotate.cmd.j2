@@ -1,1 +1,0 @@
-{{ k3s_binary_path }} kubectl annotate --overwrite{% if item.namespace | length > 0 %} -n {{ item.namespace }}{% endif %} {{ item.kubectl_resource }}/{{ item.name }} meta.helm.sh/release-name={{ flux_operator_deployment_name }} meta.helm.sh/release-namespace={{ flux_system_namespace }}
