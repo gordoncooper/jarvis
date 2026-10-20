@@ -1,0 +1,79 @@
+{
+  "kind": "APIResourceList",
+  "apiVersion": "v1",
+  "groupVersion": "v1",
+  "resources": [
+    {
+      "name": "kustomizations",
+      "singularName": "kustomization",
+      "namespaced": true,
+      "group": "kustomize.toolkit.fluxcd.io",
+      "version": "v1",
+      "kind": "Kustomization",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    },
+    {
+      "name": "gitrepositories",
+      "singularName": "gitrepository",
+      "namespaced": true,
+      "group": "source.toolkit.fluxcd.io",
+      "version": "v1",
+      "kind": "GitRepository",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    },
+    {
+      "name": "helmrepositories",
+      "singularName": "helmrepository",
+      "namespaced": true,
+      "group": "source.toolkit.fluxcd.io",
+      "version": "v1",
+      "kind": "HelmRepository",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    },
+    {
+      "name": "helmcharts",
+      "singularName": "helmchart",
+      "namespaced": true,
+      "group": "source.toolkit.fluxcd.io",
+      "version": "v1",
+      "kind": "HelmChart",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    },
+    {
+      "name": "helmreleases",
+      "singularName": "helmrelease",
+      "namespaced": true,
+      "group": "helm.toolkit.fluxcd.io",
+      "version": "v2",
+      "kind": "HelmRelease",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    },
+    {
+      "name": "fluxinstances",
+      "singularName": "fluxinstance",
+      "namespaced": true,
+      "group": "fluxcd.controlplane.io",
+      "version": "v1",
+      "kind": "FluxInstance",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    },
+    {
+      "name": "alerts",
+      "singularName": "alert",
+      "namespaced": true,
+      "group": "notification.toolkit.fluxcd.io",
+      "version": "v1beta3",
+      "kind": "Alert",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    },
+    {
+      "name": "providers",
+      "singularName": "provider",
+      "namespaced": true,
+      "group": "notification.toolkit.fluxcd.io",
+      "version": "v1beta3",
+      "kind": "Provider",
+      "verbs": ["delete", "deletecollection", "get", "list", "patch", "create", "update", "watch"]
+    }
+  ]
+}

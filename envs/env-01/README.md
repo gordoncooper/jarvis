@@ -12,6 +12,8 @@ env-01 values live only under `envs/env-01/`; core stays env-agnostic (R3).
 
 ## Promotion
 
+- P0a exit cleanup: after `make verify PHASE=p0a` evidence is attached, remove `rollback-drill-configmap.yaml` from `flux/platform-configs/` (the rollback drill ConfigMap only exists for the drill).
+
 - Routine jarvis changes: agent PRs merge on green `ci` until the P2 exit; then `admin-gate` applies to protected paths (R36).
 - Infra Ansible (`infra/`): the admin re-runs `site.yml` on the controller node after merge (§8).
 - Hermes image bumps: the admin merges; soak between code-factory and ops deploys (R33).

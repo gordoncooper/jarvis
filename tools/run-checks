@@ -7,14 +7,32 @@ cd "$repo_root"
 
 export PATH="${HOME}/.local/bin:${PATH}"
 
-expected_checks=(
-  cli-deny
-  contract-md
-  core-names
-  env-schema
-  pvc-backup
-  secret-scan
-)
+expected_checks=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%%#*}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [[ -n "$line" ]] || continue
+  expected_checks+=("$line")
+done <"$repo_root/tools/ci-rule-checks.txt"
+if ((${#expected_checks[@]} == 0)); then
+  echo "tools/ci-rule-checks.txt is empty" >&2
+  exit 1
+fi
+
+phase_verify_scripts=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%%#*}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [[ -n "$line" ]] || continue
+  phase_verify_scripts+=("$line")
+done <"$repo_root/tools/phase-verify-scripts.txt"
+if ((${#phase_verify_scripts[@]} == 0)); then
+  echo "tools/phase-verify-scripts.txt is empty" >&2
+  exit 1
+fi
+
 shopt -s nullglob
 found_checks=()
 for check in tools/checks/*; do
@@ -26,6 +44,9 @@ for check in tools/checks/*; do
   if [[ ! -x "$check" ]]; then
     echo "check must be executable: $check" >&2
     exit 1
+  fi
+  if [[ " ${phase_verify_scripts[*]} " == *" $name "* ]]; then
+    continue
   fi
   found_checks+=("$name")
 done
