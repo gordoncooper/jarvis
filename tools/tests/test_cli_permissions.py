@@ -19,7 +19,6 @@ from _cli_permissions import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_JSON = REPO_ROOT / ".cursor" / "cli.json"
 CLI_DENY_CHECK = REPO_ROOT / "tools" / "checks" / "cli-deny"
-DRY_RUN = REPO_ROOT / "tools" / "cli-deny-dry-run"
 
 
 def test_repo_cli_json_passes_dry_run():
@@ -29,10 +28,6 @@ def test_repo_cli_json_passes_dry_run():
 
 def test_cli_deny_check_executable_passes_in_repo():
     subprocess.run([str(CLI_DENY_CHECK)], cwd=REPO_ROOT, check=True)
-
-
-def test_dry_run_script_exits_zero():
-    subprocess.run([str(DRY_RUN)], cwd=REPO_ROOT, check=True)
 
 
 def test_kubectl_apply_blocked_kubectl_get_allowed():

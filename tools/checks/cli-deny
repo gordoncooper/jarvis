@@ -9,10 +9,18 @@ export PYTHONPATH="${repo_root}/tools:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 
 python3 - <<'PY'
 import json
-import subprocess
 from pathlib import Path
 
-from _cli_permissions import load_cli_permissions, run_dry_run, validate_deny_coverage
+from _cli_permissions import (
+    DRY_RUN_MUST_ALLOW,
+    DRY_RUN_MUST_BLOCK,
+    DRY_RUN_MUST_BLOCK_READS,
+    command_allowed,
+    load_cli_permissions,
+    read_allowed,
+    run_dry_run,
+    validate_deny_coverage,
+)
 
 cli_path = Path(".cursor/cli.json")
 if not cli_path.is_file():
@@ -32,13 +40,39 @@ if coverage_errors:
         print(line, flush=True)
     raise SystemExit(1)
 
+allow, deny = perms["allow"], perms["deny"]
+print(f"cli permissions dry-run ({cli_path})")
+print(
+    "matching: Shell(commandBase) or Shell(command:args); "
+    "Read(pathOrGlob); globs * ? **; deny beats allow"
+)
+print()
+
+print("must BLOCK (shell)")
+for cmd in DRY_RUN_MUST_BLOCK:
+    allowed = command_allowed(allow, deny, cmd)
+    status = "ALLOW" if allowed else "BLOCK"
+    print(f"  [{status}] {cmd}")
+print()
+
+print("must BLOCK (read)")
+for read_path in DRY_RUN_MUST_BLOCK_READS:
+    allowed = read_allowed(allow, deny, read_path)
+    status = "ALLOW" if allowed else "BLOCK"
+    print(f"  [{status}] Read({read_path})")
+print()
+
+print("must ALLOW (shell)")
+for cmd in DRY_RUN_MUST_ALLOW:
+    allowed = command_allowed(allow, deny, cmd)
+    status = "ALLOW" if allowed else "BLOCK"
+    print(f"  [{status}] {cmd}")
+print()
+
 failures, _ = run_dry_run(cli_path)
 if failures:
     for line in failures:
         print(line, flush=True)
     raise SystemExit(1)
-
-repo_root = Path(".")
-dry_run = repo_root / "tools" / "cli-deny-dry-run"
-subprocess.run([str(dry_run)], cwd=repo_root, check=True)
+print("dry-run OK")
 PY

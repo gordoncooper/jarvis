@@ -6,7 +6,7 @@ SHELL := /bin/bash
 help:
 	@echo "JARVIS Makefile — targets are added with tools/ in later P0a tasks."
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
-	@echo "  make ci-verify          Run checks, renovate validator, and full pytest (pre-push)"
+	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
 	@echo "  make verify PHASE=p0a   Run phase exit checks (evidence via JARVIS_VERIFY_EVIDENCE)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (optional ENV=<env>)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (optional ENV=<env>)"

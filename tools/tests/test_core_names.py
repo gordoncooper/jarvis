@@ -129,7 +129,7 @@ def test_home_path_outside_envs_fails(tmp_path: Path):
 
     bad = tmp_path / "platform" / "bad.txt"
     bad.parent.mkdir(parents=True)
-    bad.write_text("path: /home/agent/.kube\n", encoding="utf-8")
+    bad.write_text("path: /home/someuser/.kube\n", encoding="utf-8")
     _git_add_all(tmp_path)
 
     violations = scan_core_names(tmp_path)
