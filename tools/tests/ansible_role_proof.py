@@ -24,7 +24,11 @@ SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
 CHRONY_INVALID_FIXTURE = REPO_ROOT / "tools/tests/fixtures/chrony-invalid.conf"
-CHRONY_TEMPLATE_VALIDATE = "chronyd -u root -p -f %s"
+CHRONY_TEMPLATE_VALIDATE = (
+    "/bin/sh -c 'install -m 0644 \"$1\" /run/chrony-validate.conf "
+    "&& chronyd -p -f /run/chrony-validate.conf; rc=$?; rm -f /run/chrony-validate.conf; "
+    "exit $rc' _ %s"
+)
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
     """\

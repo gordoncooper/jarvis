@@ -40,7 +40,7 @@
     owner: root
     group: root
     mode: "0644"
-    validate: chronyd -u root -p -f %s
+    validate: "/bin/sh -c 'install -m 0644 \"$1\" /run/chrony-validate.conf && chronyd -p -f /run/chrony-validate.conf; rc=$?; rm -f /run/chrony-validate.conf; exit $rc' _ %s"
 
 - name: Enable and start chrony
   ansible.builtin.service:
