@@ -1,0 +1,3 @@
+---
+# journald cap (framework §7); cluster-vars supplies time_zone and other env keys.
+jarvis_journald_system_max_use: "2G"

@@ -1,0 +1,15 @@
+# Managed by Ansible (base-os): chrony with NTS (framework §4).
+# Outbound 123/udp and 4460/tcp must remain available for NTS; no node firewall changes here.
+
+keyfile /etc/chrony/chrony.keys
+driftfile /var/lib/chrony/chrony.drift
+ntsdumpdir /var/lib/chrony
+
+# Ubuntu default pool with NTS enabled.
+pool ntp.ubuntu.com iburst maxsources 4 nts
+
+leapsectz right/UTC
+makestep 1.0 3 3
+rtcsync
+
+logdir /var/log/chrony
