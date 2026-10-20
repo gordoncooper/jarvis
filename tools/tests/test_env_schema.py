@@ -57,7 +57,7 @@ def _write_env(
             """
             all:
               hosts:
-                bench.lan:
+                node.example:
             """
         ).strip()
         + "\n",
@@ -86,6 +86,10 @@ def _valid_cluster_vars() -> dict:
         "pod_cidr": "10.42.0.0/16",
         "service_cidr": "10.43.0.0/16",
         "local_path_data": "/var/lib/jarvis/local-path",
+        "ntp_pools": reference["ntp_pools"],
+        "k3s_kubelet_kube_reserved": reference["k3s_kubelet_kube_reserved"],
+        "k3s_kubelet_system_reserved": reference["k3s_kubelet_system_reserved"],
+        "k3s_kubelet_eviction_hard": reference["k3s_kubelet_eviction_hard"],
         "flux_git_repo_url": reference["flux_git_repo_url"],
         "flux_git_ref": reference["flux_git_ref"],
     }

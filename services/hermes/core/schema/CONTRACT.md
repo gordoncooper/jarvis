@@ -16,7 +16,6 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 
 - One folder per env: `envs/<env>/` with the four files above present when that env is active.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file (R4).
-- Gordon creates `jarvis` and `jarvis-apps` under `gordoncooper` before env values land in this repo (D1).
 
 ## Health
 
@@ -47,6 +46,10 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
 | `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; R25). |
 | `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
+| `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4 nts` line. |
+| `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
+| `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
+| `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. |
 | `ingress_class` | when ingress exists | Ingress class from bundled Traefik (D32). |
 | Feature toggles and sizing | per env | Role labels map roles to nodes; sizes and enabled platform features are env-specific patches, not core logic. |
 
