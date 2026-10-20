@@ -10,7 +10,9 @@ from _cli_permissions import (
     command_allowed,
     command_blocked_by_deny,
     load_cli_permissions,
+    matches_read,
     matches_shell,
+    read_blocked_by_deny,
     run_dry_run,
 )
 
@@ -47,12 +49,27 @@ def test_helm_and_ssh_blocked():
     assert command_blocked_by_deny(deny, "ssh user@host")
 
 
+def test_flux_writes_blocked_reads_allowed():
+    perms = load_cli_permissions(CLI_JSON)
+    deny = perms["deny"]
+    assert command_blocked_by_deny(deny, "flux bootstrap github")
+    assert command_blocked_by_deny(deny, "flux delete source git demo")
+    assert not command_blocked_by_deny(deny, "flux get kustomizations -A")
+    assert not command_blocked_by_deny(deny, "flux reconcile kustomization demo --with-source")
+
+
+def test_age_key_path_read_blocked():
+    perms = load_cli_permissions(CLI_JSON)
+    deny = perms["deny"]
+    assert read_blocked_by_deny(deny, ".config/sops/age/alphacut.txt")
+    assert matches_read("Read(**/.config/sops/age/**)", ".config/sops/age/alphacut.txt")
+
+
 def test_sops_decrypt_blocked_sops_encrypt_not_denied_by_decrypt_rules():
     perms = load_cli_permissions(CLI_JSON)
     deny = perms["deny"]
     assert command_blocked_by_deny(deny, "sops -d file.yaml")
     assert command_blocked_by_deny(deny, "sops decrypt file.yaml")
-    # encrypt is not in the p0a-10 deny set (agents use make seal / bootstrap-secrets).
     assert not command_blocked_by_deny(deny, "sops -e file.yaml")
 
 
@@ -83,8 +100,10 @@ def test_minimal_deny_list_in_tmp(tmp_path: Path):
                         "Shell(sops:decrypt*)",
                         "Shell(sops:-d*)",
                         "Shell(scp)",
-                        "Shell(age:-d*)",
-                        "Read(**/age/keys.txt)",
+                        "Shell(flux:bootstrap*)",
+                        "Shell(flux:install*)",
+                        "Shell(flux:suspend*)",
+                        "Read(**/.config/sops/age/**)",
                     ]
                 }
             }

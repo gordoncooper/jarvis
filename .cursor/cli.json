@@ -43,6 +43,21 @@
       "Shell(*kubectl*exec*)",
       "Shell(*kubectl*port-forward*)",
 
+      "Shell(flux:create*)",
+      "Shell(flux:delete*)",
+      "Shell(flux:suspend*)",
+      "Shell(flux:resume*)",
+      "Shell(flux:install*)",
+      "Shell(flux:uninstall*)",
+      "Shell(flux:bootstrap*)",
+      "Shell(*flux*create*)",
+      "Shell(*flux*delete*)",
+      "Shell(*flux*suspend*)",
+      "Shell(*flux*resume*)",
+      "Shell(*flux*install*)",
+      "Shell(*flux*uninstall*)",
+      "Shell(*flux*bootstrap*)",
+
       "Shell(sops:decrypt*)",
       "Shell(sops:-d*)",
       "Shell(sops:*--decrypt*)",
@@ -50,8 +65,7 @@
       "Shell(age:-d*)",
       "Shell(age:*--decrypt*)",
 
-      "Read(**/age/keys.txt)",
-      "Read(**/.config/sops/age/keys.txt)",
+      "Read(**/.config/sops/age/**)",
       "Read(**/*.agekey)"
     ]
   }

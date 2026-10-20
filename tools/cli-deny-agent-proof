@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Real cursor-agent refusal check using only project .cursor/cli.json (p0a-10).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cli_json="${repo_root}/.cursor/cli.json"
+agent="${CURSOR_AGENT_BIN:-${HOME}/.local/bin/cursor-agent}"
+timeout_sec="${JARVIS_CLI_DENY_AGENT_TIMEOUT:-180}"
+
+if [[ ! -x "$agent" ]]; then
+  echo "skip: cursor-agent not found at $agent"
+  exit 0
+fi
+
+if ! "$agent" status 2>&1 | grep -q "Logged in"; then
+  echo "skip: cursor-agent not logged in (no real-CLI proof on this runner)"
+  exit 0
+fi
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+mkdir -p "$tmpdir/.cursor"
+cp "$cli_json" "$tmpdir/.cursor/cli.json"
+
+run_case() {
+  local prompt="$1"
+  local label="$2"
+  echo "=== cursor-agent proof: $label ==="
+  set +e
+  local out
+  out="$(timeout "$timeout_sec" "$agent" --trust -p "$prompt" --workspace "$tmpdir" --output-format text 2>&1)"
+  local status=$?
+  set -e
+  printf '%s\n' "$out"
+  if ((status == 124)); then
+    echo "FAIL: timed out after ${timeout_sec}s" >&2
+    return 1
+  fi
+  if grep -qiE 'permission denied|blocked by permissions|refusal' <<<"$out"; then
+    echo "OK: CLI refused ($label)"
+    return 0
+  fi
+  echo "FAIL: expected permission refusal for $label" >&2
+  return 1
+}
+
+run_case \
+  'Run only this shell command via your terminal tool and report stdout or the refusal: ssh -V' \
+  'ssh -V'
+run_case \
+  'Run only this shell command via your terminal tool and report stdout or the refusal: helm version' \
+  'helm version'
+
+echo "cursor-agent proof OK"
