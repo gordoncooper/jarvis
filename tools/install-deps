@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Install pinned sops, age, and age-keygen into ~/.local/bin with sha256 verification."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+from pathlib import Path
+
+TOOLS_DIR = Path(__file__).resolve().parent
+VERSIONS_FILE = TOOLS_DIR / "versions.env"
+INSTALL_DIR = Path.home() / ".local" / "bin"
+
+
+def load_versions(path: Path) -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep:
+            raise SystemExit(f"invalid line in {path}: {raw!r}")
+        versions[key.strip()] = value.strip()
+    return versions
+
+
+def linux_arch() -> str:
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    raise SystemExit(f"unsupported linux architecture: {platform.machine()}")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_sha256(path: Path, expected: str, label: str) -> None:
+    actual = sha256_file(path)
+    if actual != expected.lower():
+        raise SystemExit(
+            f"{label}: sha256 mismatch (expected {expected}, got {actual})"
+        )
+
+
+def _python_has_yaml() -> bool:
+    if shutil.which("python3") is None:
+        return False
+    try:
+        subprocess.run(
+            [sys.executable, "-c", "import yaml"],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError:
+        return False
+    return True
+
+
+def _missing_apt_packages() -> list[str]:
+    missing: list[str] = []
+    if shutil.which("openssl") is None:
+        missing.append("openssl")
+    if shutil.which("python3") is None:
+        missing.extend(["python3", "python3-yaml"])
+    elif not _python_has_yaml():
+        missing.append("python3-yaml")
+    return missing
+
+
+def _apt_install_command(packages: list[str]) -> str:
+    return "sudo apt-get install -y " + " ".join(packages)
+
+
+def _try_apt_install(packages: list[str]) -> None:
+    subprocess.run(
+        ["sudo", "apt-get", "install", "-y", *packages],
+        check=True,
+    )
+
+
+def require_system_tools() -> None:
+    missing = _missing_apt_packages()
+    if not missing:
+        return
+    if shutil.which("apt-get") and shutil.which("sudo"):
+        print(f"installing missing packages: {' '.join(missing)}")
+        try:
+            _try_apt_install(missing)
+        except subprocess.CalledProcessError as err:
+            raise SystemExit(
+                f"apt-get install failed (exit {err.returncode}); try:\n"
+                f"  {_apt_install_command(missing)}"
+            ) from err
+        missing = _missing_apt_packages()
+    if missing:
+        raise SystemExit(
+            "missing system packages; install with:\n"
+            f"  {_apt_install_command(missing)}"
+        )
+
+
+def sops_installed_version(bin_path: Path) -> str | None:
+    if not bin_path.is_file():
+        return None
+    try:
+        proc = subprocess.run(
+            [str(bin_path), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout)
+    return match.group(1) if match else None
+
+
+def age_installed_version(bin_path: Path) -> str | None:
+    if not bin_path.is_file():
+        return None
+    try:
+        proc = subprocess.run(
+            [str(bin_path), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout.strip())
+    return match.group(1) if match else None
+
+
+def download(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url) as response, dest.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+
+
+def install_sops(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["sops_version"]
+    dest = dest_dir / "sops"
+    installed = sops_installed_version(dest)
+    if installed == version:
+        print(f"sops {version} already installed at {dest}")
+        return
+
+    sha_key = f"sops_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = (
+        f"https://github.com/getsops/sops/releases/download/v{version}/"
+        f"sops-v{version}.linux.{arch}"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-sops-") as tmp:
+        binary = Path(tmp) / "sops"
+        print(f"downloading sops {version} ({arch})…")
+        download(url, binary)
+        verify_sha256(binary, expected_sha, "sops")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, dest)
+        os.chmod(dest, 0o755)
+    print(f"installed sops {version} -> {dest}")
+
+
+def _install_age_binary(
+    *,
+    src: Path,
+    dest: Path,
+    expected_sha: str,
+    label: str,
+    version: str,
+) -> None:
+    verify_sha256(src, expected_sha, label)
+    dest_dir = dest.parent
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    os.chmod(dest, 0o755)
+    print(f"installed {label} {version} -> {dest}")
+
+
+def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["age_version"]
+    age_dest = dest_dir / "age"
+    keygen_dest = dest_dir / "age-keygen"
+    age_ok = age_installed_version(age_dest) == version
+    keygen_ok = age_installed_version(keygen_dest) == version
+    if age_ok:
+        print(f"age {version} already installed at {age_dest}")
+    if keygen_ok:
+        print(f"age-keygen {version} already installed at {keygen_dest}")
+    if age_ok and keygen_ok:
+        return
+
+    age_sha = versions[f"age_linux_{arch}_sha256"]
+    keygen_sha = versions[f"age_keygen_linux_{arch}_sha256"]
+    url = (
+        f"https://github.com/FiloSottile/age/releases/download/v{version}/"
+        f"age-v{version}-linux-{arch}.tar.gz"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-age-") as tmp:
+        tarball = Path(tmp) / "age.tar.gz"
+        print(f"downloading age {version} ({arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract("age/age", path=tmp)
+            archive.extract("age/age-keygen", path=tmp)
+        age_src = Path(tmp) / "age" / "age"
+        keygen_src = Path(tmp) / "age" / "age-keygen"
+        if not age_ok:
+            _install_age_binary(
+                src=age_src,
+                dest=age_dest,
+                expected_sha=age_sha,
+                label="age",
+                version=version,
+            )
+        if not keygen_ok:
+            _install_age_binary(
+                src=keygen_src,
+                dest=keygen_dest,
+                expected_sha=keygen_sha,
+                label="age-keygen",
+                version=version,
+            )
+
+
+def main() -> None:
+    if sys.platform != "linux":
+        raise SystemExit("install-deps supports linux only")
+    require_system_tools()
+    versions = load_versions(VERSIONS_FILE)
+    arch = linux_arch()
+    install_sops(versions, arch, INSTALL_DIR)
+    install_age(versions, arch, INSTALL_DIR)
+    print(f"done; ensure {INSTALL_DIR} is on PATH")
+
+
+if __name__ == "__main__":
+    main()
