@@ -8,9 +8,14 @@
       - flux_operator_version | length > 0
       - flux_operator_install_sha256 is defined
       - flux_operator_install_sha256 | length == 64
+      - flux_git_repo_url is defined
+      - flux_git_repo_url | length > 0
+      - flux_git_repo_url is match('^https://')
+      - flux_git_ref is defined
+      - flux_git_ref | length > 0
     fail_msg: >-
-      flux-operator role requires jarvis_env, flux_operator_version, and
-      flux_operator_install_sha256 in cluster-vars (or role defaults).
+      flux-operator role requires jarvis_env, flux_git_repo_url, flux_git_ref,
+      flux_operator_version, and flux_operator_install_sha256 in cluster-vars.
   tags:
     - flux-operator
 

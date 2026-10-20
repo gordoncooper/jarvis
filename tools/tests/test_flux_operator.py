@@ -36,52 +36,69 @@ from ansible_role_proof import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_YML = ANSIBLE_DIR / "site.yml"
 
-FLUX_INSTANCE_EXPECTED = textwrap.dedent(
-    """\
-    # Managed by Ansible (flux-operator role): one-time FluxInstance (R1); Flux manages it afterward.
-    apiVersion: fluxcd.controlplane.io/v1
-    kind: FluxInstance
-    metadata:
-      name: flux
-      namespace: flux-system
-    spec:
-      distribution:
-        version: "2.8.x"
-        registry: ghcr.io/fluxcd
-      components:
-        - source-controller
-        - source-watcher
-        - kustomize-controller
-        - helm-controller
-        - notification-controller
-        - image-reflector-controller
-        - image-automation-controller
-      cluster:
-        type: kubernetes
-        size: medium
-        multitenant: false
-        networkPolicy: true
-        domain: cluster.local
-      sync:
-        kind: GitRepository
-        url: "https://github.com/gordoncooper/jarvis"
-        ref: "refs/heads/main"
-        path: "envs/{jarvis_env}/flux"
-    """
-)
+def _flux_instance_template_variables(jarvis_env: str) -> dict[str, object]:
+    defaults = yaml.safe_load(
+        (FLUX_OPERATOR_ROLE_DIR / "defaults" / "main.yml").read_text(encoding="utf-8")
+    )
+    assert isinstance(defaults, dict)
+    cluster = load_cluster_vars()
+    return {
+        "flux_instance_name": defaults["flux_instance_name"],
+        "flux_system_namespace": defaults["flux_system_namespace"],
+        "flux_distribution_version": defaults["flux_distribution_version"],
+        "flux_git_repo_url": cluster["flux_git_repo_url"],
+        "flux_git_ref": cluster["flux_git_ref"],
+        "jarvis_env": jarvis_env,
+    }
+
+
+def _expected_flux_instance(jarvis_env: str) -> str:
+    variables = _flux_instance_template_variables(jarvis_env)
+    repo_url = variables["flux_git_repo_url"]
+    git_ref = variables["flux_git_ref"]
+    dist = variables["flux_distribution_version"]
+    assert isinstance(repo_url, str)
+    assert isinstance(git_ref, str)
+    assert isinstance(dist, str)
+    return textwrap.dedent(
+        f"""\
+        # Managed by Ansible (flux-operator role): one-time FluxInstance (R1); Flux manages it afterward.
+        apiVersion: fluxcd.controlplane.io/v1
+        kind: FluxInstance
+        metadata:
+          name: flux
+          namespace: flux-system
+        spec:
+          distribution:
+            version: "{dist}"
+            registry: ghcr.io/fluxcd
+          components:
+            - source-controller
+            - source-watcher
+            - kustomize-controller
+            - helm-controller
+            - notification-controller
+            - image-reflector-controller
+            - image-automation-controller
+          cluster:
+            type: kubernetes
+            size: medium
+            multitenant: false
+            networkPolicy: true
+            domain: cluster.local
+          sync:
+            kind: GitRepository
+            url: "{repo_url}"
+            ref: "{git_ref}"
+            path: "envs/{jarvis_env}/flux"
+        """
+    )
 
 
 def _render_flux_instance(jarvis_env: str) -> str:
     return ansible_render_template(
         "flux-instance.yaml.j2",
-        {
-            "flux_instance_name": "flux",
-            "flux_system_namespace": "flux-system",
-            "flux_distribution_version": "2.8.x",
-            "flux_git_repo_url": "https://github.com/gordoncooper/jarvis",
-            "flux_git_ref": "refs/heads/main",
-            "jarvis_env": jarvis_env,
-        },
+        _flux_instance_template_variables(jarvis_env),
         templates_dir=FLUX_OPERATOR_ROLE_TEMPLATES,
     )
 
@@ -89,7 +106,7 @@ def _render_flux_instance(jarvis_env: str) -> str:
 def test_flux_instance_template_exact_content() -> None:
     jarvis_env = env_name()
     rendered = _render_flux_instance(jarvis_env)
-    assert rendered == FLUX_INSTANCE_EXPECTED.format(jarvis_env=jarvis_env)
+    assert rendered == _expected_flux_instance(jarvis_env)
 
 
 def test_flux_instance_template_quoted_jarvis_env() -> None:
@@ -98,7 +115,7 @@ def test_flux_instance_template_quoted_jarvis_env() -> None:
     loaded = yaml.safe_load(quoted)
     assert isinstance(loaded, str)
     rendered = _render_flux_instance(loaded)
-    assert rendered == FLUX_INSTANCE_EXPECTED.format(jarvis_env=jarvis_env)
+    assert rendered == _expected_flux_instance(loaded)
 
 
 def test_sops_age_secret_template_exact_content() -> None:

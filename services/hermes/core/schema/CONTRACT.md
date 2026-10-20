@@ -45,6 +45,8 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `pod_cidr` | yes | Pod network CIDR; set once per env (D4). |
 | `service_cidr` | yes | Service network CIDR; set once per env (D4). |
 | `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
+| `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; R25). |
+| `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
 | `ingress_class` | when ingress exists | Ingress class from bundled Traefik (D32). |
 | Feature toggles and sizing | per env | Role labels map roles to nodes; sizes and enabled platform features are env-specific patches, not core logic. |
 

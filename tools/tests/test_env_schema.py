@@ -86,6 +86,8 @@ def _valid_cluster_vars() -> dict:
         "pod_cidr": "10.42.0.0/16",
         "service_cidr": "10.43.0.0/16",
         "local_path_data": "/var/lib/jarvis/local-path",
+        "flux_git_repo_url": reference["flux_git_repo_url"],
+        "flux_git_ref": reference["flux_git_ref"],
     }
 
 
@@ -127,6 +129,15 @@ def test_jarvis_env_must_match_env_directory(tmp_path: Path):
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "jarvis_env" in "\n".join(excinfo.value.messages)
+
+
+def test_bad_flux_git_repo_url_fails(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["flux_git_repo_url"] = "http://example.com/repo.git"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "flux_git_repo_url" in "\n".join(excinfo.value.messages)
 
 
 def test_bad_k3s_sha256_fails(tmp_path: Path):

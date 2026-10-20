@@ -8,6 +8,4 @@ flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
 flux_instance_name: flux
 flux_distribution_version: "2.8.x"
-flux_git_repo_url: https://github.com/gordoncooper/jarvis
-flux_git_ref: refs/heads/main
 k3s_binary_path: /usr/local/bin/k3s
