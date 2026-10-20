@@ -216,17 +216,16 @@ def test_sops_age_tasks_use_no_log() -> None:
 
 
 def _generate_throwaway_age_key(tmp_path: Path) -> tuple[Path, str]:
-    age_keygen = shutil.which("age-keygen")
-    if age_keygen is None:
-        pytest.skip("age-keygen not installed")
-    keyfile = tmp_path / "age.key"
-    subprocess.run(
-        [age_keygen, "-o", str(keyfile)],
-        check=True,
-        capture_output=True,
-        text=True,
+    key_body = textwrap.dedent(
+        """\
+        # created: 2026-01-01T00:00:00Z
+        # public key: age1prooffixture000000000000000000000000000000000000000000
+        AGE-SECRET-KEY-1PROOF00000000000000000000000000000000000000000000000000
+        """
     )
-    return keyfile, keyfile.read_text(encoding="utf-8")
+    keyfile = tmp_path / "age.key"
+    keyfile.write_text(key_body, encoding="utf-8")
+    return keyfile, key_body
 
 
 def _install_fake_k3s_with_flux_done(secret_b64: str) -> None:

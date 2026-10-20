@@ -76,7 +76,8 @@
 - name: Refuse to overwrite an existing sops-age secret with different content
   ansible.builtin.assert:
     that:
-      - (flux_sops_age_existing_b64.stdout | b64decode) == flux_sops_age_key_content
+      - (flux_sops_age_existing_b64.stdout | trim | b64decode | trim)
+        == (flux_sops_age_key_content | trim)
     fail_msg: >-
       flux-system/sops-age already exists with different content; remove it manually
       or fix SOPS_AGE_KEY_FILE before re-running site.yml.
