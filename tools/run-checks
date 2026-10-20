@@ -32,9 +32,6 @@ for check in tools/checks/*; do
     echo "check must be executable: $check" >&2
     exit 1
   fi
-  if [[ $name == verify-* ]]; then
-    continue
-  fi
   found_checks+=("$name")
 done
 missing=()

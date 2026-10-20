@@ -5,7 +5,9 @@ Rules here are prose only for what `tools/checks/` and `.cursor/cli.json` cannot
 ## Automated guards (do not duplicate)
 
 - **R34 — Git is the source of truth; no direct cluster or secret tooling:** `tools/checks/cli-deny` and `.cursor/cli.json`.
-- **R3 / R28 — Core stays env-agnostic (no env names, DNS suffixes, or models in core):** `tools/checks/core-names`.
+- **R3 / R28 — Core stays env-agnostic (no env names, DNS suffixes, or operator-specific strings in core):** `tools/checks/core-names`.
+
+**Model names in core (R28):** re-add to `tools/checks/core-names` in **p2-23** when `tier_model_map` / `lane_model_map` are populated; lean pass 2 dropped that scan while the maps are empty.
 - **Env schema (values under `envs/<env>/`):** `tools/checks/env-schema`.
 - **R2 — Each component folder has `CONTRACT.md`:** `tools/checks/contract-md`.
 - **R25 — No plaintext secrets in Git:** `tools/checks/secret-scan`.
