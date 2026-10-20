@@ -309,22 +309,14 @@ def sops_age_proof_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
     ]
 
 
-def kubeconfig_proof_playbook_cmd(
-    container: str = CONTAINER_NAME,
-    *,
-    remote_tmp: str = "/tmp/jarvis-ansible-remote",
-) -> list[str]:
+def kubeconfig_proof_playbook_cmd(inventory: Path | str) -> list[str]:
     return [
         "ansible-playbook",
         str(REPO_ROOT / "tools/tests/fixtures/kubeconfig-proof.yml"),
         "-i",
-        f"{container},",
+        str(inventory),
         "-e",
         f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-        "-e",
-        "ansible_connection=docker",
-        "-e",
-        f"ansible_remote_tmp={remote_tmp}",
         *DOCKER_PLAYBOOK_EXTRA_VARS,
     ]
 

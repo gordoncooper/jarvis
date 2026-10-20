@@ -270,20 +270,40 @@ def _install_fake_remote_kubeconfig(container: str) -> None:
 CONTAINER_ANSIBLE_REMOTE_TMP = "/tmp/jarvis-ansible-remote"
 
 
-def _kubeconfig_proof_env(
-    home: Path,
+def _kubeconfig_proof_inventory(
+    tmp_path: Path,
     *,
-    local_tmp: Path,
-    remote_tmp: Path,
-) -> dict[str, str]:
+    container: str,
+    container_remote_tmp: str,
+    localhost_remote_tmp: Path,
+) -> Path:
+    localhost_remote_tmp.mkdir(parents=True, exist_ok=True)
+    data: dict[str, object] = {
+        "all": {
+            "hosts": {
+                container: {
+                    "ansible_connection": "docker",
+                    "ansible_remote_tmp": container_remote_tmp,
+                },
+                "localhost": {
+                    "ansible_connection": "local",
+                    "ansible_remote_tmp": str(localhost_remote_tmp),
+                },
+            }
+        }
+    }
+    path = tmp_path / "kubeconfig-proof-inventory.yml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _kubeconfig_proof_env(home: Path, *, local_tmp: Path) -> dict[str, str]:
     home.mkdir(parents=True, exist_ok=True)
     local_tmp.mkdir(parents=True, exist_ok=True)
-    remote_tmp.mkdir(parents=True, exist_ok=True)
     return {
         **os.environ,
         "HOME": str(home),
         "ANSIBLE_LOCAL_TEMP": str(local_tmp),
-        "ANSIBLE_REMOTE_TEMP": str(remote_tmp),
     }
 
 
@@ -295,20 +315,18 @@ def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
     start_systemd_container()
     try:
         _install_fake_remote_kubeconfig(CONTAINER_NAME)
-        prep_tmp = docker_exec(
-            CONTAINER_NAME,
-            "mkdir",
-            "-p",
-            CONTAINER_ANSIBLE_REMOTE_TMP,
+        inventory = _kubeconfig_proof_inventory(
+            tmp_path,
+            container=CONTAINER_NAME,
+            container_remote_tmp=CONTAINER_ANSIBLE_REMOTE_TMP,
+            localhost_remote_tmp=tmp_path / "localhost-ansible-remote-tmp",
         )
-        assert prep_tmp.returncode == 0, prep_tmp.stderr
         env = _kubeconfig_proof_env(
             runner_home,
             local_tmp=tmp_path / "ansible-local-tmp",
-            remote_tmp=tmp_path / "ansible-remote-tmp",
         )
         first = subprocess.run(
-            kubeconfig_proof_playbook_cmd(remote_tmp=CONTAINER_ANSIBLE_REMOTE_TMP),
+            kubeconfig_proof_playbook_cmd(inventory),
             cwd=ANSIBLE_DIR,
             capture_output=True,
             text=True,
@@ -316,7 +334,7 @@ def test_kubeconfig_tasks_idempotent_in_container(tmp_path: Path) -> None:
             env=env,
         )
         second = subprocess.run(
-            kubeconfig_proof_playbook_cmd(remote_tmp=CONTAINER_ANSIBLE_REMOTE_TMP),
+            kubeconfig_proof_playbook_cmd(inventory),
             cwd=ANSIBLE_DIR,
             capture_output=True,
             text=True,
