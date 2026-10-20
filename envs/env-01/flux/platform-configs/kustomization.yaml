@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - ../../../../platform/backups
   - ../../secrets/backups-restic.sops.yaml
+  - rollback-drill-configmap.yaml
