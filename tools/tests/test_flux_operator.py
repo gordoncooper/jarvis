@@ -22,6 +22,7 @@ from ansible_role_proof import (
     ansible_render_template,
     cluster_vars_playbook_path,
     docker_exec,
+    env_name,
     flux_operator_check_playbook_cmd,
     inventory_path,
     load_cluster_vars,
@@ -84,18 +85,19 @@ def _render_flux_instance(jarvis_env: str) -> str:
     )
 
 
-@pytest.mark.parametrize(
-    ("raw_env", "expected_env"),
-    [
-        ("env-01", "env-01"),
-        ('"env-01"', "env-01"),
-    ],
-)
-def test_flux_instance_template_exact_content(raw_env: str, expected_env: str) -> None:
-    loaded = yaml.safe_load(raw_env) if raw_env.startswith('"') else raw_env
+def test_flux_instance_template_exact_content() -> None:
+    jarvis_env = env_name()
+    rendered = _render_flux_instance(jarvis_env)
+    assert rendered == FLUX_INSTANCE_EXPECTED.format(jarvis_env=jarvis_env)
+
+
+def test_flux_instance_template_quoted_jarvis_env() -> None:
+    jarvis_env = env_name()
+    quoted = yaml.safe_dump(jarvis_env).strip()
+    loaded = yaml.safe_load(quoted)
     assert isinstance(loaded, str)
     rendered = _render_flux_instance(loaded)
-    assert rendered == FLUX_INSTANCE_EXPECTED.format(jarvis_env=expected_env)
+    assert rendered == FLUX_INSTANCE_EXPECTED.format(jarvis_env=jarvis_env)
 
 
 def test_sops_age_secret_template_exact_content() -> None:
