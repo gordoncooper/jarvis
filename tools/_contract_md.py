@@ -4,31 +4,38 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# §6 layout folders assigned CONTRACT.md (D7 paths included; nested only where D7 names them).
-COMPONENT_ROOTS: tuple[str, ...] = (
+# §6 docs/ and services/ roots (D7 nested paths included). platform/* is discovered at scan time.
+EXPLICIT_COMPONENT_ROOTS: tuple[str, ...] = (
     "docs/code-delivery",
     "docs/build-agent",
-    "platform/app-hosting",
-    "platform/backups",
-    "platform/cert-manager",
-    "platform/flux-operator",
-    "platform/lan-dns",
-    "platform/traefik",
     "services/hermes/core",
     "services/hermes/core/schema",
     "services/hermes/deploy/code-factory",
     "services/hermes/deploy/code-factory/sandbox",
+    "services/hermes/deploy/ops",
     "services/observability",
 )
 
 
-def _component_root_present(rel: str, root: Path) -> bool:
+def component_roots(repo_root: Path | str) -> tuple[str, ...]:
+    """All §6 component root paths for this repo tree."""
+    root = Path(repo_root).resolve()
+    roots: set[str] = set(EXPLICIT_COMPONENT_ROOTS)
+    platform_dir = root / "platform"
+    if platform_dir.is_dir():
+        for child in sorted(platform_dir.iterdir()):
+            if child.is_dir():
+                roots.add(f"platform/{child.name}")
+    return tuple(sorted(roots))
+
+
+def _component_root_present(rel: str, root: Path, all_roots: tuple[str, ...]) -> bool:
     """True when this §6 root exists on disk and is more than a namespace for a nested root."""
     component_dir = root / rel
     if not component_dir.is_dir():
         return False
     has_nested_root = any(
-        other != rel and other.startswith(f"{rel}/") for other in COMPONENT_ROOTS
+        other != rel and other.startswith(f"{rel}/") for other in all_roots
     )
     if not has_nested_root:
         return True
@@ -38,10 +45,11 @@ def _component_root_present(rel: str, root: Path) -> bool:
 def missing_contract_roots(repo_root: Path | str) -> list[str]:
     """Return component root paths (relative) that exist but have no CONTRACT.md."""
     root = Path(repo_root).resolve()
+    all_roots = component_roots(root)
     missing: list[str] = []
-    for rel in COMPONENT_ROOTS:
+    for rel in all_roots:
         component_dir = root / rel
-        if not _component_root_present(rel, root):
+        if not _component_root_present(rel, root, all_roots):
             continue
         if not (component_dir / "CONTRACT.md").is_file():
             missing.append(rel)

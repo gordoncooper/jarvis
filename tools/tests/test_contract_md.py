@@ -54,3 +54,21 @@ def test_missing_contract_reported(tmp_path: Path):
 
     missing = missing_contract_roots(tmp_path)
     assert missing == ["platform/traefik"]
+
+
+def test_undiscovered_platform_child_without_contract_fails(tmp_path: Path):
+    novel = tmp_path / "platform" / "future-widget"
+    novel.mkdir(parents=True)
+    (novel / "placeholder.yaml").write_text("kind: ConfigMap\n", encoding="utf-8")
+
+    missing = missing_contract_roots(tmp_path)
+    assert missing == ["platform/future-widget"]
+
+
+def test_ops_deploy_root_without_contract_fails(tmp_path: Path):
+    ops = tmp_path / "services" / "hermes" / "deploy" / "ops"
+    ops.mkdir(parents=True)
+    (ops / "kustomization.yaml").write_text("resources: []\n", encoding="utf-8")
+
+    missing = missing_contract_roots(tmp_path)
+    assert missing == ["services/hermes/deploy/ops"]
