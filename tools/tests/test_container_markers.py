@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -55,17 +57,33 @@ def _has_container_marker(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return any(_is_container_marker_decorator(dec) for dec in func.decorator_list)
 
 
-def _files_with_container_marked_tests() -> set[str]:
+def _container_test_stems_from_pytest() -> set[str]:
+    pytest_bin = REPO_ROOT / ".venv" / "bin" / "pytest"
+    if not pytest_bin.is_file():
+        pytest_bin = Path(sys.executable)
+    proc = subprocess.run(
+        [str(pytest_bin), "--collect-only", "-q", "-m", "container"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.fail(
+            "pytest --collect-only -m container failed:\n"
+            + proc.stdout
+            + proc.stderr
+        )
     stems: set[str] = set()
-    for path in _test_py_files():
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in tree.body:
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not node.name.startswith("test_"):
-                continue
-            if _has_container_marker(node):
-                stems.add(path.stem)
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith("=") or "/test_" not in line:
+            continue
+        if "::" not in line:
+            continue
+        rel = line.split("::", 1)[0]
+        if rel.startswith("tools/tests/test_") and rel.endswith(".py"):
+            stems.add(Path(rel).stem)
     return stems
 
 
@@ -105,7 +123,7 @@ def test_container_marker_guard() -> None:
 
 
 def test_slow_ci_matrix_lists_every_container_test_file() -> None:
-    expected = _files_with_container_marked_tests()
+    expected = _container_test_stems_from_pytest()
     matrix = _slow_matrix_stems_from_ci_yml()
     missing = sorted(expected - matrix)
     extra = sorted(matrix - expected)

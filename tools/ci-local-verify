@@ -11,7 +11,7 @@ renovate-config-validator
 bash tools/run-checks
 
 if ! docker info >/dev/null 2>&1; then
-  echo "docker: permission denied (agent must be in the docker group)" >&2
+  echo "docker info failed: the Docker daemon isn't reachable by the current user (not running, or user lacks access)" >&2
   exit 1
 fi
 

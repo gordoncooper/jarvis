@@ -157,35 +157,16 @@ def ansible_render_template(
 
 def build_systemd_image() -> str:
     require_docker()
-    use_gha_cache = os.environ.get("JARVIS_DOCKER_GHA_CACHE", "").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    cmd: list[str] = ["docker", "buildx", "build", "--load"] if use_gha_cache else [
-        "docker",
-        "build",
-    ]
-    cmd.extend(
+    build = subprocess.run(
         [
+            "docker",
+            "build",
             "--build-arg",
             "UBUNTU_VERSION=26.04",
             "-t",
             SYSTEMD_IMAGE,
             str(SYSTEMD_DOCKERFILE),
-        ]
-    )
-    if use_gha_cache:
-        cmd.extend(
-            [
-                "--cache-from",
-                "type=gha,scope=jarvis-systemd-ubuntu",
-                "--cache-to",
-                "type=gha,mode=max,scope=jarvis-systemd-ubuntu",
-            ]
-        )
-    build = subprocess.run(
-        cmd,
+        ],
         capture_output=True,
         text=True,
         check=False,
