@@ -74,12 +74,9 @@ def _expected_flux_instance(jarvis_env: str) -> str:
             registry: ghcr.io/fluxcd
           components:
             - source-controller
-            - source-watcher
             - kustomize-controller
             - helm-controller
             - notification-controller
-            - image-reflector-controller
-            - image-automation-controller
           cluster:
             type: kubernetes
             size: medium
@@ -420,13 +417,13 @@ def test_sops_age_key_file_missing_fails(tmp_path: Path) -> None:
         stop_systemd_container()
 
 
-def test_cluster_vars_flux_operator_pin_matches_defaults() -> None:
+def test_cluster_vars_omit_flux_operator_bootstrap_pin() -> None:
     cluster = load_cluster_vars()
-    defaults = yaml.safe_load(
-        (FLUX_OPERATOR_ROLE_DIR / "defaults" / "main.yml").read_text(encoding="utf-8")
-    )
-    assert isinstance(defaults, dict)
-    assert cluster["flux_operator_version"] == defaults["flux_operator_version"]
-    sha = cluster["flux_operator_install_sha256"]
-    assert isinstance(sha, str)
-    assert re.fullmatch(r"[0-9a-f]{64}", sha)
+    assert "flux_operator_version" not in cluster
+    assert "flux_operator_install_sha256" not in cluster
+
+
+def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:
+    content = (FLUX_OPERATOR_ROLE_TASKS / "sops_age.yml").read_text(encoding="utf-8")
+    assert "kubectl create" in content
+    assert "kubectl apply" not in content

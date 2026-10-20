@@ -10,12 +10,9 @@ spec:
     registry: ghcr.io/fluxcd
   components:
     - source-controller
-    - source-watcher
     - kustomize-controller
     - helm-controller
     - notification-controller
-    - image-reflector-controller
-    - image-automation-controller
   cluster:
     type: kubernetes
     size: medium

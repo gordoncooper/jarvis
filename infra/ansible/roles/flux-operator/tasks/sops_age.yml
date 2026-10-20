@@ -87,9 +87,9 @@
     - flux-operator
     - flux-cluster
 
-- name: Apply flux-system sops-age secret once
-  ansible.builtin.shell:
-    cmd: set -o pipefail && {{ k3s_binary_path }} kubectl apply -f -
+- name: Create flux-system sops-age secret once
+  ansible.builtin.command:
+    cmd: "{{ k3s_binary_path }} kubectl create -f -"
     stdin: "{{ lookup('template', 'sops-age-secret.yaml.j2') }}"
   when: not (flux_sops_age_present | bool)
   no_log: true

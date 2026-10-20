@@ -1,7 +1,9 @@
 ---
-# Overridden from env cluster-vars when set (same pin pattern as k3s, R33).
+# One-time bootstrap manifest pin (R33); not env-specific — changes only by PR.
 flux_operator_version: v0.60.0
 flux_operator_install_sha256: ef5f7c2ae52810d886f6bccc66a0fed3b436f3a7797e79a59c0443f191ddd02e
+flux_operator_crd_wait_timeout: 120s
+flux_operator_rollout_wait_timeout: 300s
 flux_operator_install_url: >-
   https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/{{ flux_operator_version }}/install.yaml
 flux_system_namespace: flux-system

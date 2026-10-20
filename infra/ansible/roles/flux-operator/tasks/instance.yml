@@ -20,22 +20,34 @@
     - flux-operator
     - flux-cluster
 
-- name: Render FluxInstance manifest
-  ansible.builtin.template:
-    src: flux-instance.yaml.j2
-    dest: /tmp/flux-instance.yaml
-    owner: root
-    group: root
-    mode: "0600"
+- name: Bootstrap FluxInstance when absent
   when: not (flux_instance_present | bool)
   tags:
     - flux-operator
     - flux-cluster
+  block:
+    - name: Create staging directory for FluxInstance bootstrap
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: jarvis-flux-instance-
+      register: flux_instance_staging
 
-- name: Apply FluxInstance manifest once
-  ansible.builtin.command:
-    cmd: "{{ k3s_binary_path }} kubectl apply -f /tmp/flux-instance.yaml"
-  when: not (flux_instance_present | bool)
-  tags:
-    - flux-operator
-    - flux-cluster
+    - name: Render FluxInstance manifest
+      ansible.builtin.template:
+        src: flux-instance.yaml.j2
+        dest: "{{ flux_instance_staging.path }}/flux-instance.yaml"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Apply FluxInstance manifest once
+      ansible.builtin.command:
+        cmd: >-
+          {{ k3s_binary_path }} kubectl apply -f
+          {{ flux_instance_staging.path }}/flux-instance.yaml
+  always:
+    - name: Remove FluxInstance staging directory
+      ansible.builtin.file:
+        path: "{{ flux_instance_staging.path }}"
+        state: absent
+      when: flux_instance_staging is defined and flux_instance_staging.path is defined
