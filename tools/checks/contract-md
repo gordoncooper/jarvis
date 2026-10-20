@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# CI rule check: each §6 component root must have CONTRACT.md (R2, D8).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/tools:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _contract_md import format_missing, missing_contract_roots
+
+missing = missing_contract_roots(Path("."))
+if missing:
+    for line in format_missing(missing):
+        print(line, flush=True)
+    raise SystemExit(1)
+PY
