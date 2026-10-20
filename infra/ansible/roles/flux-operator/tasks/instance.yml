@@ -7,6 +7,7 @@
   register: flux_instance_lookup
   changed_when: false
   failed_when: false
+  check_mode: false
   tags:
     - flux-operator
     - flux-cluster
