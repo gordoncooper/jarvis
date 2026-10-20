@@ -17,9 +17,9 @@
       - service_cidr is defined
       - backup_path is defined
       - local_path_data is defined
-      - bastion_kubeconfig_local_paths is defined
-      - bastion_kubeconfig_local_paths | length >= 2
-    fail_msg: k3s role requires k3s_version, k3s_sha256, CIDRs, paths, and bastion_kubeconfig_local_paths in cluster-vars.
+      - bastion_kubeconfig_destinations is defined
+      - bastion_kubeconfig_destinations | length >= 2
+    fail_msg: k3s role requires k3s_version, k3s_sha256, CIDRs, paths, and bastion_kubeconfig_destinations in cluster-vars.
 
 - name: Ensure jarvis state directories exist
   tags:
@@ -35,6 +35,7 @@
     - /etc/rancher/k3s
     - "{{ local_path_data }}"
     - "{{ backup_path }}"
+    - "{{ backup_path }}/etcd-snapshots"
 
 - name: Install k3s server config
   tags:

@@ -19,6 +19,32 @@
     - k3s
     - k3s-guard
 
+- name: Stat k3s binary
+  ansible.builtin.stat:
+    path: "{{ k3s_binary_path }}"
+  register: k3s_guard_binary
+  tags:
+    - k3s
+    - k3s-guard
+
+- name: Stat k3s data directory
+  ansible.builtin.stat:
+    path: "{{ k3s_data_dir }}"
+  register: k3s_guard_data
+  tags:
+    - k3s
+    - k3s-guard
+
+- name: Determine whether k3s is present on the host
+  ansible.builtin.set_fact:
+    k3s_guard_present: >-
+      {{ (k3s_guard_active.stdout == 'active')
+         or k3s_guard_binary.stat.exists
+         or k3s_guard_data.stat.exists }}
+  tags:
+    - k3s
+    - k3s-guard
+
 - name: Stat jarvis env marker
   ansible.builtin.stat:
     path: "{{ jarvis_marker_path }}"
@@ -39,12 +65,12 @@
 - name: Refuse host with foreign or unmarked k3s
   ansible.builtin.assert:
     that:
-      - k3s_guard_active.stdout != 'active' or (
+      - not (k3s_guard_present | bool) or (
           k3s_guard_marker_stat.stat.exists
           and (k3s_guard_marker.content | b64decode | trim) == jarvis_env
         )
     fail_msg: >-
-      k3s is already active on this host but {{ jarvis_marker_path }} is missing or does not
+      k3s is already present on this host but {{ jarvis_marker_path }} is missing or does not
       contain '{{ jarvis_env }}'. Wipe the node or fix the marker before re-running this env.
   tags:
     - k3s

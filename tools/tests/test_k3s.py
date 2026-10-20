@@ -27,6 +27,13 @@ from ansible_role_proof import (
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
 
 
+def inventory_hostname() -> str:
+    hosts = yaml.safe_load(inventory_path().read_text(encoding="utf-8"))
+    all_hosts = hosts["all"]["hosts"]
+    assert isinstance(all_hosts, dict) and all_hosts
+    return next(iter(all_hosts))
+
+
 def render_k3s_config(variables: dict[str, object]) -> str:
     return ansible_render_template(
         K3S_CONFIG_TEMPLATE,
@@ -38,6 +45,8 @@ def render_k3s_config(variables: dict[str, object]) -> str:
 def expected_config_from_cluster_vars(cluster: dict[str, object]) -> str:
     schedule = cluster.get("k3s_etcd_snapshot_schedule_cron", "0 */12 * * *")
     retention = cluster.get("k3s_etcd_snapshot_retention", 5)
+    host = inventory_hostname()
+    backup = cluster["backup_path"]
     return textwrap.dedent(
         f"""\
         # Managed by Ansible (k3s role): server config (framework §8 step 4; not the k3s install script).
@@ -45,10 +54,12 @@ def expected_config_from_cluster_vars(cluster: dict[str, object]) -> str:
         secrets-encryption: true
         cluster-cidr: {cluster["pod_cidr"]}
         service-cidr: {cluster["service_cidr"]}
+        tls-san:
+          - {host}
         default-local-storage-path: {cluster["local_path_data"]}
         etcd-snapshot-schedule-cron: "{schedule}"
         etcd-snapshot-retention: {retention}
-        etcd-snapshot-dir: {cluster["backup_path"]}
+        etcd-snapshot-dir: {backup}/etcd-snapshots
         kubelet-arg:
           - "kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi"
           - "system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi"
@@ -64,6 +75,7 @@ def test_k3s_config_template_exact_content_env_01() -> None:
         "service_cidr": cluster["service_cidr"],
         "local_path_data": cluster["local_path_data"],
         "backup_path": cluster["backup_path"],
+        "inventory_hostname": inventory_hostname(),
         "k3s_etcd_snapshot_schedule_cron": "0 */12 * * *",
         "k3s_etcd_snapshot_retention": 5,
     }
@@ -90,6 +102,7 @@ def test_k3s_config_template_quoted_cidr(raw_cidr: str, expected: str) -> None:
         "service_cidr": cluster["service_cidr"],
         "local_path_data": cluster["local_path_data"],
         "backup_path": cluster["backup_path"],
+        "inventory_hostname": inventory_hostname(),
         "k3s_etcd_snapshot_schedule_cron": "0 */12 * * *",
         "k3s_etcd_snapshot_retention": 5,
     }
@@ -148,6 +161,18 @@ def _install_fake_k3s_service(container: str) -> None:
     assert active.stdout.strip() == "active", active.stdout + active.stderr
 
 
+def _install_stopped_k3s_binary(container: str) -> None:
+    prep = docker_exec(
+        container,
+        "bash",
+        "-lc",
+        "install -m 0755 /bin/true /usr/local/bin/k3s && mkdir -p /var/lib/rancher/k3s",
+    )
+    assert prep.returncode == 0, prep.stderr
+    inactive = docker_exec(container, "systemctl", "is-active", "k3s")
+    assert inactive.stdout.strip() != "active", inactive.stdout + inactive.stderr
+
+
 def _run_k3s_guard() -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         k3s_guard_playbook_cmd(),
@@ -178,7 +203,19 @@ def test_k3s_guard_refuses_active_k3s_without_marker() -> None:
         _install_fake_k3s_service(CONTAINER_NAME)
         result = _run_k3s_guard()
         assert result.returncode != 0, result.stdout + result.stderr
-        assert "k3s is already active" in result.stdout + result.stderr
+        assert "k3s is already present" in result.stdout + result.stderr
+    finally:
+        stop_systemd_container()
+
+
+def test_k3s_guard_refuses_stopped_k3s_without_marker() -> None:
+    require_docker()
+    start_systemd_container()
+    try:
+        _install_stopped_k3s_binary(CONTAINER_NAME)
+        result = _run_k3s_guard()
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "k3s is already present" in result.stdout + result.stderr
     finally:
         stop_systemd_container()
 

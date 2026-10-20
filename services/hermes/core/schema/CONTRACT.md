@@ -45,7 +45,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `pod_cidr` | yes | Pod network CIDR; set once per env (D4). |
 | `service_cidr` | yes | Service network CIDR; set once per env (D4). |
 | `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
-| `bastion_kubeconfig_local_paths` | yes | Absolute paths on the bastion (≥2) where Ansible fetches kubeconfig for Gordon and the agent user. |
+| `bastion_kubeconfig_destinations` | yes | List (≥2) of `{path, owner}` entries: absolute kubeconfig paths on the bastion for the admin bastion user and the agent user. |
 | `ingress_class` | when ingress exists | Ingress class from bundled Traefik (D32). |
 | Feature toggles and sizing | per env | Role labels map roles to nodes; sizes and enabled platform features are env-specific patches, not core logic. |
 

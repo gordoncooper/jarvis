@@ -32,7 +32,7 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "pod_cidr",
         "service_cidr",
         "local_path_data",
-        "bastion_kubeconfig_local_paths",
+        "bastion_kubeconfig_destinations",
     }
 )
 
@@ -212,23 +212,43 @@ def _validate_cluster_vars(
     if isinstance(local_path, str) and local_path and not local_path.startswith("/"):
         errors.append(f"{rel_path}: local_path_data must be an absolute path")
 
-    kube_paths = data.get("bastion_kubeconfig_local_paths")
-    if kube_paths is not None:
-        if not isinstance(kube_paths, list):
-            errors.append(f"{rel_path}: bastion_kubeconfig_local_paths must be a list")
-        elif len(kube_paths) < 2:
+    kube_dests = data.get("bastion_kubeconfig_destinations")
+    if kube_dests is not None:
+        if not isinstance(kube_dests, list):
+            errors.append(f"{rel_path}: bastion_kubeconfig_destinations must be a list")
+        elif len(kube_dests) < 2:
             errors.append(
-                f"{rel_path}: bastion_kubeconfig_local_paths must list at least two paths"
+                f"{rel_path}: bastion_kubeconfig_destinations must list at least two entries"
             )
         else:
-            for idx, path in enumerate(kube_paths):
+            for idx, entry in enumerate(kube_dests):
+                if not isinstance(entry, dict):
+                    errors.append(
+                        f"{rel_path}: bastion_kubeconfig_destinations[{idx}] must be a mapping"
+                    )
+                    continue
+                for key in entry:
+                    if key not in ("path", "owner"):
+                        errors.append(
+                            f"{rel_path}: bastion_kubeconfig_destinations[{idx}]: unknown key '{key}'"
+                        )
+                path = entry.get("path")
+                owner = entry.get("owner")
                 if not isinstance(path, str) or not path.strip():
                     errors.append(
-                        f"{rel_path}: bastion_kubeconfig_local_paths[{idx}] must be a non-empty string"
+                        f"{rel_path}: bastion_kubeconfig_destinations[{idx}].path must be a non-empty string"
                     )
                 elif not path.startswith("/"):
                     errors.append(
-                        f"{rel_path}: bastion_kubeconfig_local_paths[{idx}] must be an absolute path"
+                        f"{rel_path}: bastion_kubeconfig_destinations[{idx}].path must be an absolute path"
+                    )
+                if not isinstance(owner, str) or not owner.strip():
+                    errors.append(
+                        f"{rel_path}: bastion_kubeconfig_destinations[{idx}].owner must be a non-empty string"
+                    )
+                elif not re.match(r"^[a-z][a-z0-9_-]*$", owner):
+                    errors.append(
+                        f"{rel_path}: bastion_kubeconfig_destinations[{idx}].owner must be a valid username"
                     )
 
     for key in (
