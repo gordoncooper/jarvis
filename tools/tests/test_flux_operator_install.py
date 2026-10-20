@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import urllib.request
+from pathlib import Path
 
-import pytest
+import yaml
 
 from _flux_operator_install import (
     FLUX_OPERATOR_CHART_0_60_0_RESOURCE_KEYS,
@@ -15,7 +16,11 @@ from _flux_operator_install import (
     resource_keys,
 )
 
-REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+HELM_ADOPT_VARS = (
+    REPO_ROOT
+    / "infra/ansible/roles/flux-operator/vars/helm_adopt_resources.yml"
+)
 
 
 def _download_install_manifest() -> str:
@@ -30,6 +35,18 @@ def test_install_manifest_matches_chart_resource_keys() -> None:
     text = _download_install_manifest()
     install_keys = resource_keys(parse_install_manifest(text))
     assert install_keys == FLUX_OPERATOR_CHART_0_60_0_RESOURCE_KEYS
+
+
+def test_ansible_helm_adopt_vars_match_install_manifest() -> None:
+    text = _download_install_manifest()
+    install_keys = resource_keys(parse_install_manifest(text))
+    vars_doc = yaml.safe_load(HELM_ADOPT_VARS.read_text(encoding="utf-8"))
+    assert isinstance(vars_doc, dict)
+    entries = vars_doc["flux_operator_helm_adopt_resources"]
+    var_keys = frozenset(
+        (item["kind"], item.get("namespace", ""), item["name"]) for item in entries
+    )
+    assert var_keys == install_keys == FLUX_OPERATOR_CHART_0_60_0_RESOURCE_KEYS
 
 
 def test_ansible_role_stamps_helm_adoption_metadata() -> None:

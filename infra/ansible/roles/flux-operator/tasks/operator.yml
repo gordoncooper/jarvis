@@ -50,6 +50,7 @@
 
     - name: Stamp Helm adoption metadata on install objects
       ansible.builtin.import_tasks: operator_adopt.yml
+      when: not ansible_check_mode
 
     - name: Wait for FluxInstance CRD to be established
       ansible.builtin.command:
@@ -77,7 +78,9 @@
 
 - name: Ensure Helm adoption metadata when operator already installed
   ansible.builtin.import_tasks: operator_adopt.yml
-  when: flux_operator_deployed | bool
+  when:
+    - flux_operator_deployed | bool
+    - not ansible_check_mode
   tags:
     - flux-operator
     - flux-cluster
