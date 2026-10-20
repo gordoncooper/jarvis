@@ -110,8 +110,8 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "kubectl apply -f deployment.yaml",
     "helm upgrade --install demo ./chart",
     "ssh user@bench.lan",
-    "sops decrypt envs/env-01/secrets/grafana-admin.sops.yaml",
-    "sops -d envs/env-01/secrets/grafana-admin.sops.yaml",
+    "sops decrypt envs/<env>/secrets/grafana-admin.sops.yaml",
+    "sops -d envs/<env>/secrets/grafana-admin.sops.yaml",
 )
 
 # Representative reads that make verify uses; must stay allowed.
