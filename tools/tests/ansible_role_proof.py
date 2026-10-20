@@ -291,7 +291,7 @@ def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[st
         *DOCKER_PLAYBOOK_EXTRA_VARS,
         "--check",
         "--skip-tags",
-        "chrony-service,k3s,k3s-service",
+        "chrony-service,k3s,k3s-service,flux-adopt",
     ]
 
 

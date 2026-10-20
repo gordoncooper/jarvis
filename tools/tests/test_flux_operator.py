@@ -322,7 +322,7 @@ def _run_flux_operator_playbook(
         "ansible_connection=docker",
         *DOCKER_PLAYBOOK_EXTRA_VARS,
         "--skip-tags",
-        "chrony-service,k3s,k3s-service",
+        "chrony-service,k3s,k3s-service,flux-adopt",
     ]
     if extra_args:
         cmd.extend(extra_args)
