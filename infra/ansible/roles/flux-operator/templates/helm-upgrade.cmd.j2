@@ -1,0 +1,1 @@
+{{ helm_binary_path }} upgrade --install {{ flux_operator_deployment_name }} oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator --version {{ flux_operator_chart_version }} --namespace {{ flux_system_namespace }} --create-namespace --wait --timeout {{ flux_operator_helm_timeout }}

@@ -427,3 +427,4 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:
     content = (FLUX_OPERATOR_ROLE_TASKS / "sops_age.yml").read_text(encoding="utf-8")
     assert "kubectl create" in content
     assert "kubectl apply" not in content
+

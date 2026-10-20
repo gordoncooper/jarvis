@@ -1,12 +1,18 @@
 ---
-# One-time bootstrap manifest pin (R33); not env-specific — changes only by PR.
-flux_operator_version: v0.60.0
-flux_operator_install_sha256: ef5f7c2ae52810d886f6bccc66a0fed3b436f3a7797e79a59c0443f191ddd02e
+# One-time bootstrap chart pin (R33, D11); not env-specific — changes only by PR.
+flux_operator_chart_version: "0.60.0"
 flux_operator_crd_wait_timeout: 120s
 flux_operator_rollout_wait_timeout: 300s
-flux_operator_install_url: >-
-  https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/{{ flux_operator_version }}/install.yaml
+flux_operator_helm_timeout: 5m
 flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
 flux_instance_name: flux
 flux_distribution_version: "2.8.x"
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+helm_binary_path: /usr/local/bin/helm
+# Pinned Helm host CLI (must match tools/versions.env).
+helm_version: 3.16.4
+helm_archive_sha256_linux_amd64: cbdd624538954ae94d267a6372c4c706dfcadb2c5ab7045ee19b6dd4012794ed
+helm_archive_sha256_linux_arm64: 66bd1d61928d1d4fd2756d505c91b29653ffb95e993f5d35c2b14c96ce7ab803
+helm_archive_member_linux_amd64: linux-amd64/helm
+helm_archive_member_linux_arm64: linux-arm64/helm

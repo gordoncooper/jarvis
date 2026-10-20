@@ -4,10 +4,8 @@
     that:
       - jarvis_env is defined
       - jarvis_env | length > 0
-      - flux_operator_version is defined
-      - flux_operator_version | length > 0
-      - flux_operator_install_sha256 is defined
-      - flux_operator_install_sha256 | length == 64
+      - flux_operator_chart_version is defined
+      - flux_operator_chart_version | length > 0
       - flux_git_repo_url is defined
       - flux_git_repo_url | length > 0
       - flux_git_repo_url is match('^https://')

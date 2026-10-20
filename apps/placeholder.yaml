@@ -1,0 +1,8 @@
+# D9: placeholder until app hosting (jarvis-apps) is wired in P4a.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: placeholder-apps
+  namespace: default
+data:
+  reason: apps layer not deployed yet

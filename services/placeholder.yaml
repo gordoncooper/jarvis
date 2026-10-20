@@ -1,0 +1,8 @@
+# D9: placeholder until observability and Hermes land in later phases.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: placeholder-services
+  namespace: default
+data:
+  reason: services layer not deployed yet

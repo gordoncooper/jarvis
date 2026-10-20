@@ -178,7 +178,7 @@ def install_sops(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     print(f"installed sops {version} -> {dest}")
 
 
-def _install_age_binary(
+def _install_verified_binary(
     *,
     src: Path,
     dest: Path,
@@ -210,6 +210,111 @@ def gitleaks_installed_version(bin_path: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def _installed_binary_version(bin_path: Path, args: list[str]) -> str | None:
+    if not bin_path.is_file():
+        return None
+    try:
+        proc = subprocess.run(
+            [str(bin_path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout.strip() or proc.stderr.strip())
+    return match.group(1) if match else None
+
+
+def install_helm(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["helm_version"]
+    dest = dest_dir / "helm"
+    installed = _installed_binary_version(dest, ["version", "--short"])
+    if installed in {version, f"v{version}"}:
+        print(f"helm {version} already installed at {dest}")
+        return
+
+    tar_arch = "amd64" if arch == "amd64" else "arm64"
+    member = f"linux-{tar_arch}/helm"
+    sha_key = f"helm_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = f"https://get.helm.sh/helm-v{version}-linux-{tar_arch}.tar.gz"
+    with tempfile.TemporaryDirectory(prefix="jarvis-helm-") as tmp:
+        tarball = Path(tmp) / "helm.tar.gz"
+        print(f"downloading helm {version} ({tar_arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract(member, path=tmp)
+        binary = Path(tmp) / member
+        _install_verified_binary(
+            src=binary,
+            dest=dest,
+            expected_sha=expected_sha,
+            label="helm",
+            version=version,
+        )
+
+
+def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["kustomize_version"]
+    dest = dest_dir / "kustomize"
+    installed = _installed_binary_version(dest, ["version", "--short"])
+    if installed == version:
+        print(f"kustomize {version} already installed at {dest}")
+        return
+
+    sha_key = f"kustomize_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = (
+        f"https://github.com/kubernetes-sigs/kustomize/releases/download/"
+        f"kustomize%2Fv{version}/kustomize_v{version}_linux_{arch}.tar.gz"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-kustomize-") as tmp:
+        tarball = Path(tmp) / "kustomize.tar.gz"
+        print(f"downloading kustomize {version} ({arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract("kustomize", path=tmp)
+        binary = Path(tmp) / "kustomize"
+        _install_verified_binary(
+            src=binary,
+            dest=dest,
+            expected_sha=expected_sha,
+            label="kustomize",
+            version=version,
+        )
+
+
+def install_kubeconform(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["kubeconform_version"]
+    dest = dest_dir / "kubeconform"
+    installed = _installed_binary_version(dest, ["-v"])
+    if installed == version:
+        print(f"kubeconform {version} already installed at {dest}")
+        return
+
+    sha_key = f"kubeconform_linux_{arch}_sha256"
+    expected_sha = versions[sha_key]
+    url = (
+        f"https://github.com/yannh/kubeconform/releases/download/v{version}/"
+        f"kubeconform-linux-{arch}.tar.gz"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-kubeconform-") as tmp:
+        tarball = Path(tmp) / "kubeconform.tar.gz"
+        print(f"downloading kubeconform {version} ({arch})…")
+        download(url, tarball)
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extract("kubeconform", path=tmp)
+        binary = Path(tmp) / "kubeconform"
+        _install_verified_binary(
+            src=binary,
+            dest=dest,
+            expected_sha=expected_sha,
+            label="kubeconform",
+            version=version,
+        )
+
+
 def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     version = versions["gitleaks_version"]
     dest = dest_dir / "gitleaks"
@@ -232,7 +337,7 @@ def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> Non
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("gitleaks", path=tmp)
         binary = Path(tmp) / "gitleaks"
-        _install_age_binary(
+        _install_verified_binary(
             src=binary,
             dest=dest,
             expected_sha=expected_sha,
@@ -270,7 +375,7 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
         age_src = Path(tmp) / "age" / "age"
         keygen_src = Path(tmp) / "age" / "age-keygen"
         if not age_ok:
-            _install_age_binary(
+            _install_verified_binary(
                 src=age_src,
                 dest=age_dest,
                 expected_sha=age_sha,
@@ -278,7 +383,7 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
                 version=version,
             )
         if not keygen_ok:
-            _install_age_binary(
+            _install_verified_binary(
                 src=keygen_src,
                 dest=keygen_dest,
                 expected_sha=keygen_sha,
@@ -296,6 +401,9 @@ def main() -> None:
     install_sops(versions, arch, INSTALL_DIR)
     install_age(versions, arch, INSTALL_DIR)
     install_gitleaks(versions, arch, INSTALL_DIR)
+    install_kustomize(versions, arch, INSTALL_DIR)
+    install_kubeconform(versions, arch, INSTALL_DIR)
+    install_helm(versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
 
 
