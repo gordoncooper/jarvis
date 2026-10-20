@@ -187,12 +187,10 @@ def test_chrony_rescue_restores_config_on_invalid_test_var() -> None:
         bootstrap = run_playbook()
         assert bootstrap.returncode == 0, bootstrap.stdout + bootstrap.stderr
         result = run_playbook(
-            [
-                "-e",
-                "base_os_chrony_manage_service=true",
-                "-e",
-                "base_os_chrony_test_invalid=true",
-            ]
+            {
+                "base_os_chrony_manage_service": True,
+                "base_os_chrony_test_invalid": True,
+            }
         )
         output = result.stdout + result.stderr
         assert result.returncode != 0, output

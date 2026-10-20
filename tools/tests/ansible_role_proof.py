@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -24,14 +25,11 @@ SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
 # Docker CI often blocks NTS (TCP 4460); production keeps base_os_chrony_pool_nts default true.
-CONTAINER_PLAYBOOK_EXTRA_VARS = [
-    "-e",
-    "base_os_chrony_pool_nts=false",
-    "-e",
-    "base_os_chrony_enable_rtcsync=false",
-    "-e",
-    "base_os_chrony_manage_service=false",
-]
+CONTAINER_PLAYBOOK_DEFAULTS: dict[str, object] = {
+    "base_os_chrony_pool_nts": False,
+    "base_os_chrony_enable_rtcsync": False,
+    "base_os_chrony_manage_service": False,
+}
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
     """\
@@ -263,17 +261,28 @@ def playbook_cmd(extra_vars: list[str] | None = None) -> list[str]:
     return cmd
 
 
-def run_playbook(extra_vars: list[str] | None = None) -> subprocess.CompletedProcess[str]:
-    merged = list(CONTAINER_PLAYBOOK_EXTRA_VARS)
+def run_playbook(extra_vars: dict[str, object] | None = None) -> subprocess.CompletedProcess[str]:
+    variables = dict(CONTAINER_PLAYBOOK_DEFAULTS)
     if extra_vars:
-        merged.extend(extra_vars)
-    return subprocess.run(
-        playbook_cmd(merged),
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+        variables.update(extra_vars)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".json",
+        delete=False,
+        encoding="utf-8",
+    ) as handle:
+        json.dump(variables, handle)
+        vars_path = Path(handle.name)
+    try:
+        return subprocess.run(
+            playbook_cmd([f"-e@{vars_path.resolve()}"]),
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        vars_path.unlink(missing_ok=True)
 
 
 def playbook_recap_field(output: str, field: str) -> int:
