@@ -1,7 +1,7 @@
 # Flat keys for Flux postBuild substitution and Ansible (env schema: services/hermes/core/schema/CONTRACT.md).
 dns_suffix: alpha.lan
 time_zone: America/Los_Angeles
-code_delivery: github
+code_delivery: forgejo
 build_agent: cursor
 ssh_user: ubuntu
 
