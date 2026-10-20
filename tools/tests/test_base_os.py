@@ -11,13 +11,13 @@ import yaml
 from ansible_role_proof import (
     ANSIBLE_DIR,
     CHRONY_INVALID_FIXTURE,
-    CHRONY_TEMPLATE_VALIDATE,
     CONTAINER_NAME,
     EXPECTED_20_AUTO_UPGRADES,
     ansible_render_template,
     assert_20_auto_upgrades_file,
     assert_apt_timer_states,
     assert_localtime_matches_zone,
+    chrony_template_validate_command,
     cluster_vars_playbook_path,
     docker_exec,
     inventory_path,
@@ -38,6 +38,7 @@ JOURNALD_EXPECTED_BODY = textwrap.dedent(
 )
 
 CHRONY_MARKER = "JARVIS_CHRONY_VALIDATE_PRESERVE_MARKER\n"
+CHRONY_INVALID_LINE = "invalid-syntax-test-line"
 
 
 @pytest.mark.parametrize(
@@ -92,7 +93,7 @@ def test_unattended_upgrades_template_exact_content() -> None:
     assert rendered == textwrap.dedent(
         """\
         // Managed by Ansible (base-os): unattended-upgrades package present but inactive; no auto-removals.
-        // apt-daily-upgrade.timer is disabled in role tasks; Gordon runs installs/upgrades by hand.
+        // apt-daily-upgrade.timer is disabled in role tasks; upgrades are run manually by the admin.
         Unattended-Upgrade::Allowed-Origins {
         };
 
@@ -130,43 +131,13 @@ def test_site_yml_syntax_check() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def test_chronyd_rejects_invalid_config() -> None:
-    if shutil.which("chronyd") is not None:
-        check = subprocess.run(
-            ["chronyd", "-p", "-f", str(CHRONY_INVALID_FIXTURE)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    else:
-        require_docker()
-        start_systemd_container()
-        try:
-            subprocess.run(
-                [
-                    "docker",
-                    "cp",
-                    str(CHRONY_INVALID_FIXTURE),
-                    f"{CONTAINER_NAME}:/tmp/chrony-invalid.conf",
-                ],
-                check=True,
-            )
-            check = docker_exec(
-                CONTAINER_NAME,
-                "chronyd",
-                "-p",
-                "-f",
-                "/tmp/chrony-invalid.conf",
-            )
-        finally:
-            stop_systemd_container()
-    assert check.returncode != 0
-
-
 def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
     require_docker()
+    validate = chrony_template_validate_command()
     start_systemd_container()
     try:
+        prep = run_playbook()
+        assert prep.returncode == 0, prep.stdout + prep.stderr
         seed = docker_exec(
             CONTAINER_NAME,
             "bash",
@@ -187,7 +158,7 @@ def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
                 "-a",
                 (
                     f"src={CHRONY_INVALID_FIXTURE} dest=/etc/chrony/chrony.conf "
-                    f'validate="{CHRONY_TEMPLATE_VALIDATE}"'
+                    f'validate="{validate}"'
                 ),
             ],
             cwd=ANSIBLE_DIR,
@@ -195,7 +166,9 @@ def test_chrony_template_validate_leaves_existing_conf_unchanged() -> None:
             text=True,
             check=False,
         )
-        assert apply.returncode != 0, apply.stdout + apply.stderr
+        output = apply.stdout + apply.stderr
+        assert apply.returncode != 0, output
+        assert CHRONY_INVALID_LINE in output or "Invalid" in output, output
         after = docker_exec(CONTAINER_NAME, "cat", "/etc/chrony/chrony.conf")
         assert after.returncode == 0, after.stderr
         assert after.stdout == CHRONY_MARKER

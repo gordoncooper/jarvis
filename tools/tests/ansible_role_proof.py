@@ -24,14 +24,11 @@ SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
 CHRONY_INVALID_FIXTURE = REPO_ROOT / "tools/tests/fixtures/chrony-invalid.conf"
-CHRONY_TEMPLATE_VALIDATE = (
-    "/bin/sh -c 'f=/etc/chrony/.ansible-validate.conf; install -m 0644 \"$1\" \"$f\" "
-    "&& chronyd -p -f \"$f\" >/dev/null; rc=$?; rm -f \"$f\"; exit $rc' _ %s"
-)
+ROLE_TASKS = ROLE_DIR / "tasks" / "main.yml"
 
 EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
     """\
-    # Managed by Ansible (base-os): refresh package lists only; upgrades are manual (Gordon Oct 20).
+    # Managed by Ansible (base-os): refresh package lists only; upgrades are run manually by the admin.
     # Deliberate departure from framework §4 unattended upgrades until project docs are updated.
     APT::Periodic::Update-Package-Lists "1";
     APT::Periodic::Download-Upgradeable-Packages "0";
@@ -91,6 +88,23 @@ def load_cluster_vars(repo_root: Path = REPO_ROOT) -> dict[str, object]:
     return data
 
 
+def chrony_template_validate_command() -> str:
+    """Return the role's chrony.conf template validate= command (single source of truth)."""
+    tasks = yaml.safe_load(ROLE_TASKS.read_text(encoding="utf-8"))
+    assert isinstance(tasks, list)
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if task.get("name") != "Install chrony configuration with NTS":
+            continue
+        module = task.get("ansible.builtin.template")
+        assert isinstance(module, dict), task
+        validate = module.get("validate")
+        assert isinstance(validate, str) and validate
+        return validate
+    raise AssertionError("chrony template task with validate not found in role tasks")
+
+
 def ansible_render_template(template_name: str, variables: dict[str, object]) -> str:
     """Render a role template via ansible.builtin.template (same engine as the role)."""
     src = ROLE_TEMPLATES / template_name
@@ -98,10 +112,7 @@ def ansible_render_template(template_name: str, variables: dict[str, object]) ->
         dest = Path(handle.name)
     extra: list[str] = []
     for key, value in variables.items():
-        if isinstance(value, bool):
-            extra.extend(["-e", f"{key}={str(value).lower()}"])
-        else:
-            extra.extend(["-e", f"{key}={value}"])
+        extra.extend(["-e", f"{key}={value}"])
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
@@ -133,31 +144,26 @@ def ansible_render_template(template_name: str, variables: dict[str, object]) ->
 
 def build_systemd_image() -> str:
     require_docker()
-    last_build: subprocess.CompletedProcess[str] | None = None
-    for version in ("24.04", "26.04"):
-        build = subprocess.run(
-            [
-                "docker",
-                "build",
-                "--build-arg",
-                f"UBUNTU_VERSION={version}",
-                "-t",
-                SYSTEMD_IMAGE,
-                str(SYSTEMD_DOCKERFILE),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        last_build = build
-        if build.returncode == 0:
-            return SYSTEMD_IMAGE
-    if ci_mode():
-        detail = ""
-        if last_build is not None:
-            detail = f"{last_build.stdout}\n{last_build.stderr}"
-        pytest.fail(f"failed to build systemd test image:\n{detail}")
-    pytest.skip("failed to build systemd test image")
+    build = subprocess.run(
+        [
+            "docker",
+            "build",
+            "--build-arg",
+            "UBUNTU_VERSION=26.04",
+            "-t",
+            SYSTEMD_IMAGE,
+            str(SYSTEMD_DOCKERFILE),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if build.returncode != 0:
+        detail = f"{build.stdout}\n{build.stderr}"
+        if ci_mode():
+            pytest.fail(f"failed to build Ubuntu 26.04 systemd test image:\n{detail}")
+        pytest.skip(f"failed to build Ubuntu 26.04 systemd test image:\n{detail}")
+    return SYSTEMD_IMAGE
 
 
 def start_systemd_container(name: str = CONTAINER_NAME) -> str:
