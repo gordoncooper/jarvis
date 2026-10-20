@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# CI rule check: core must not name envs, DNS suffixes, or models (R3, R28).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/tools:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _core_names import format_violations, scan_core_names
+from services.hermes.core.schema.env import ValidationError
+
+repo_root = Path(".")
+
+try:
+    violations = scan_core_names(repo_root)
+except ValidationError as exc:
+    for line in exc.messages:
+        print(line, flush=True)
+    raise SystemExit(1)
+
+if violations:
+    for line in format_violations(violations):
+        print(line, flush=True)
+    raise SystemExit(1)
+PY

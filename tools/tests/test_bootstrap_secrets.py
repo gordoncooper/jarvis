@@ -80,19 +80,22 @@ def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
 
     sops_bin = _require_tool("sops")
 
-    mod.bootstrap("env-01", sops_bin=sops_bin)
-    secrets_dir = tmp_path / "envs" / "env-01" / "secrets"
+    env_name = "env-test"
+    (tmp_path / "envs" / env_name / "secrets").mkdir(parents=True)
+
+    mod.bootstrap(env_name, sops_bin=sops_bin)
+    secrets_dir = tmp_path / "envs" / env_name / "secrets"
     files = sorted(secrets_dir.glob("*.sops.yaml"))
     assert len(files) == 7
     first_bytes = {path: path.read_bytes() for path in files}
 
-    mod.bootstrap("env-01", sops_bin=sops_bin)
+    mod.bootstrap(env_name, sops_bin=sops_bin)
     for path in files:
         assert path.read_bytes() == first_bytes[path], path.name
 
     victim = files[0]
     victim.write_bytes(b"stale-content\n")
-    mod.bootstrap("env-01", sops_bin=sops_bin)
+    mod.bootstrap(env_name, sops_bin=sops_bin)
     assert victim.read_bytes() == b"stale-content\n"
 
 
@@ -103,9 +106,11 @@ def test_secret_manifest_shape(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
     sops_bin = _require_tool("sops")
-    mod.bootstrap("env-01", sops_bin=sops_bin)
+    env_name = "env-test"
+    (tmp_path / "envs" / env_name / "secrets").mkdir(parents=True)
+    mod.bootstrap(env_name, sops_bin=sops_bin)
 
-    restic_path = tmp_path / "envs/env-01/secrets/backups-restic.sops.yaml"
+    restic_path = tmp_path / "envs" / env_name / "secrets" / "backups-restic.sops.yaml"
     env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
     decrypted = subprocess.check_output([sops_bin, "-d", str(restic_path)], env=env, text=True)
     restic = yaml.safe_load(decrypted)
@@ -122,7 +127,7 @@ def test_sops_failure_leaves_no_target_file(tmp_path):
     fail_sops.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     fail_sops.chmod(0o755)
 
-    target = tmp_path / "envs/env-01/secrets/backups-restic.sops.yaml"
+    target = tmp_path / "envs/env-test/secrets/backups-restic.sops.yaml"
     doc = {
         "apiVersion": "v1",
         "kind": "Secret",

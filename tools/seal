@@ -16,7 +16,10 @@ if str(_TOOLS) not in sys.path:
 import _sops  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ENV = "env-01"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from _core_names import sole_env_directory_name  # noqa: E402
 
 
 def _repo_root() -> Path:
@@ -57,7 +60,11 @@ def seal(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", default=DEFAULT_ENV, help=f"Env under envs/ (default: {DEFAULT_ENV})")
+    parser.add_argument(
+        "--env",
+        default=None,
+        help="Env under envs/ (default: the sole env directory)",
+    )
     parser.add_argument("--name", required=True, help="Secret name (<component>-<purpose>)")
     parser.add_argument(
         "--force",
@@ -74,7 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     if not plaintext.strip():
         raise SystemExit("empty input")
 
-    path = seal(args.env, args.name, plaintext, force=args.force)
+    env = args.env or sole_env_directory_name(_repo_root())
+    path = seal(env, args.name, plaintext, force=args.force)
     print(path.relative_to(_repo_root()))
     return 0
 
