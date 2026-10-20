@@ -40,10 +40,7 @@
     owner: root
     group: root
     mode: "0644"
-    validate: >-
-      cp %s /tmp/chrony-ansible-validate.conf
-      && chmod a+r /tmp/chrony-ansible-validate.conf
-      && chronyd -p -f /tmp/chrony-ansible-validate.conf
+    validate: "cp %s /tmp/chrony-ansible-validate.conf && chmod a+r /tmp/chrony-ansible-validate.conf && chronyd -p -f /tmp/chrony-ansible-validate.conf"
 
 - name: Enable and start chrony
   ansible.builtin.service:
