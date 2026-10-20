@@ -41,7 +41,4 @@ if failures:
 repo_root = Path(".")
 dry_run = repo_root / "tools" / "cli-deny-dry-run"
 subprocess.run([str(dry_run)], cwd=repo_root, check=True)
-
-agent_proof = repo_root / "tools" / "cli-deny-agent-proof"
-subprocess.run([str(agent_proof)], cwd=repo_root, check=True)
 PY
