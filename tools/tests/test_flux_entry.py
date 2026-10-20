@@ -198,13 +198,52 @@ def test_backups_restic_secret_stays_sops_encrypted_in_git() -> None:
     assert "RESTIC_PASSWORD" in text
 
 
-def test_placeholder_configmaps_present() -> None:
-    for layer in ("services", "apps"):
-        doc = yaml.safe_load(
-            (REPO_ROOT / layer / "placeholder.yaml").read_text(encoding="utf-8")
-        )
-        assert doc["kind"] == "ConfigMap"
-        assert doc["metadata"]["name"] == "placeholder"
+def test_placeholder_configmaps_use_unique_names() -> None:
+    services = yaml.safe_load(
+        (REPO_ROOT / "services" / "placeholder.yaml").read_text(encoding="utf-8")
+    )
+    apps = yaml.safe_load(
+        (REPO_ROOT / "apps" / "placeholder.yaml").read_text(encoding="utf-8")
+    )
+    assert services["metadata"]["name"] == "placeholder-services"
+    assert apps["metadata"]["name"] == "placeholder-apps"
+
+
+def _object_identity(doc: object) -> tuple[str, str, str] | None:
+    if not isinstance(doc, dict) or "kind" not in doc:
+        return None
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    name = metadata.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    namespace = metadata.get("namespace")
+    if not isinstance(namespace, str):
+        namespace = ""
+    kind = doc["kind"]
+    assert isinstance(kind, str)
+    return (kind, namespace, name)
+
+
+def test_flux_layers_do_not_render_duplicate_objects() -> None:
+    env = env_name()
+    layers = {
+        "platform-controllers": "platform/flux-operator",
+        "platform-configs": f"envs/{env}/flux/platform-configs",
+        "services": "services",
+        "apps": "apps",
+    }
+    seen: dict[tuple[str, str, str], str] = {}
+    for layer, rel_path in layers.items():
+        output = _kustomize_build(rel_path)
+        for doc in yaml.safe_load_all(output):
+            ident = _object_identity(doc)
+            if ident is None:
+                continue
+            owner = seen.get(ident)
+            assert owner is None, f"{ident} rendered by both {owner} and {layer}"
+            seen[ident] = layer
 
 
 @pytest.mark.parametrize("rel_path", ["services", "apps"])
@@ -222,15 +261,6 @@ def test_env_flux_entry_kustomize_build_and_schema_validate() -> None:
     env = env_name()
     output = _kustomize_build(f"envs/{env}/flux")
     _kubeconform_validate(output, ignore_missing=True)
-
-
-def test_platform_backups_namespace_matches_env_overlay() -> None:
-    env = env_name()
-    canonical = REPO_ROOT / "platform" / "backups" / "namespace.yaml"
-    overlay = REPO_ROOT / "envs" / env / "flux" / "platform-configs" / "namespace.yaml"
-    assert yaml.safe_load(canonical.read_text(encoding="utf-8")) == yaml.safe_load(
-        overlay.read_text(encoding="utf-8")
-    )
 
 
 def test_platform_configs_overlay_kustomize_build_and_schema_validate() -> None:

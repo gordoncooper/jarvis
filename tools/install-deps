@@ -178,7 +178,7 @@ def install_sops(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     print(f"installed sops {version} -> {dest}")
 
 
-def _install_age_binary(
+def _install_verified_binary(
     *,
     src: Path,
     dest: Path,
@@ -247,7 +247,7 @@ def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> No
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("kustomize", path=tmp)
         binary = Path(tmp) / "kustomize"
-        _install_age_binary(
+        _install_verified_binary(
             src=binary,
             dest=dest,
             expected_sha=expected_sha,
@@ -277,7 +277,7 @@ def install_kubeconform(versions: dict[str, str], arch: str, dest_dir: Path) -> 
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("kubeconform", path=tmp)
         binary = Path(tmp) / "kubeconform"
-        _install_age_binary(
+        _install_verified_binary(
             src=binary,
             dest=dest,
             expected_sha=expected_sha,
@@ -308,7 +308,7 @@ def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> Non
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("gitleaks", path=tmp)
         binary = Path(tmp) / "gitleaks"
-        _install_age_binary(
+        _install_verified_binary(
             src=binary,
             dest=dest,
             expected_sha=expected_sha,
@@ -346,7 +346,7 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
         age_src = Path(tmp) / "age" / "age"
         keygen_src = Path(tmp) / "age" / "age-keygen"
         if not age_ok:
-            _install_age_binary(
+            _install_verified_binary(
                 src=age_src,
                 dest=age_dest,
                 expected_sha=age_sha,
@@ -354,7 +354,7 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
                 version=version,
             )
         if not keygen_ok:
-            _install_age_binary(
+            _install_verified_binary(
                 src=keygen_src,
                 dest=keygen_dest,
                 expected_sha=keygen_sha,

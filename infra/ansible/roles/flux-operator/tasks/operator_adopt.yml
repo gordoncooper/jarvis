@@ -1,0 +1,84 @@
+---
+# Stamp Helm release metadata on kubectl-applied install objects so helm-controller can adopt them.
+- name: Create staging directory for install manifest adoption
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: jarvis-flux-operator-adopt-
+  register: flux_operator_adopt_staging
+  check_mode: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Download pinned install manifest for adoption target list
+  ansible.builtin.get_url:
+    url: "{{ flux_operator_install_url }}"
+    dest: "{{ flux_operator_adopt_staging.path }}/install.yaml"
+    mode: "0600"
+    checksum: "sha256:{{ flux_operator_install_sha256 }}"
+  check_mode: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Resolve Flux Operator Helm adoption targets
+  ansible.builtin.command:
+    cmd: >-
+      python3 {{ playbook_dir }}/../../tools/flux_operator_install_targets.py
+      --manifest {{ flux_operator_adopt_staging.path }}/install.yaml
+  register: flux_operator_adopt_targets_cmd
+  changed_when: false
+  check_mode: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Set Helm adoption target facts
+  ansible.builtin.set_fact:
+    flux_operator_adopt_targets: "{{ flux_operator_adopt_targets_cmd.stdout | from_json }}"
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Label Flux Operator install objects for Helm adoption
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl
+      {% if item.namespace | length > 0 %}-n {{ item.namespace }}{% endif %}
+      {{ item.kubectl_resource }} {{ item.name }}
+      label --overwrite app.kubernetes.io/managed-by=Helm
+  loop: "{{ flux_operator_adopt_targets }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.name }}"
+  when: not ansible_check_mode
+  changed_when: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Annotate Flux Operator install objects for Helm adoption
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl
+      {% if item.namespace | length > 0 %}-n {{ item.namespace }}{% endif %}
+      {{ item.kubectl_resource }} {{ item.name }}
+      annotate --overwrite
+      meta.helm.sh/release-name={{ flux_operator_deployment_name }}
+      meta.helm.sh/release-namespace={{ flux_system_namespace }}
+  loop: "{{ flux_operator_adopt_targets }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.name }}"
+  when: not ansible_check_mode
+  changed_when: false
+  tags:
+    - flux-operator
+    - flux-cluster
+
+- name: Remove Flux Operator adoption staging directory
+  ansible.builtin.file:
+    path: "{{ flux_operator_adopt_staging.path }}"
+    state: absent
+  when: flux_operator_adopt_staging is defined and flux_operator_adopt_staging.path is defined
+  tags:
+    - flux-operator
+    - flux-cluster

@@ -48,6 +48,9 @@
           {{ k3s_binary_path }} kubectl apply -f
           {{ flux_operator_staging.path }}/install.yaml
 
+    - name: Stamp Helm adoption metadata on install objects
+      ansible.builtin.import_tasks: operator_adopt.yml
+
     - name: Wait for FluxInstance CRD to be established
       ansible.builtin.command:
         cmd: >-
@@ -71,3 +74,10 @@
         path: "{{ flux_operator_staging.path }}"
         state: absent
       when: flux_operator_staging is defined and flux_operator_staging.path is defined
+
+- name: Ensure Helm adoption metadata when operator already installed
+  ansible.builtin.import_tasks: operator_adopt.yml
+  when: flux_operator_deployed | bool
+  tags:
+    - flux-operator
+    - flux-cluster

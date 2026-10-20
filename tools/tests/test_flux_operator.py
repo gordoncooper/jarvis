@@ -427,3 +427,10 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:
     content = (FLUX_OPERATOR_ROLE_TASKS / "sops_age.yml").read_text(encoding="utf-8")
     assert "kubectl create" in content
     assert "kubectl apply" not in content
+
+
+def test_operator_apply_is_followed_by_helm_adoption() -> None:
+    content = (FLUX_OPERATOR_ROLE_TASKS / "operator.yml").read_text(encoding="utf-8")
+    apply_index = content.index("Apply Flux Operator install manifest once")
+    adopt_index = content.index("Stamp Helm adoption metadata on install objects")
+    assert apply_index < adopt_index

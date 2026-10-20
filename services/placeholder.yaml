@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: placeholder
+  name: placeholder-services
   namespace: default
 data:
   reason: services layer not deployed yet
