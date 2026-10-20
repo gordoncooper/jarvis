@@ -295,6 +295,36 @@ def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[st
     ]
 
 
+def k3s_kubeconfig_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
+    return [
+        "ansible-playbook",
+        "site.yml",
+        "-i",
+        f"{container},",
+        "-e",
+        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
+        "-e",
+        "ansible_connection=docker",
+        *DOCKER_PLAYBOOK_EXTRA_VARS,
+        "--tags",
+        "k3s-kubeconfig",
+    ]
+
+
+def sops_age_proof_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
+    return [
+        "ansible-playbook",
+        str(REPO_ROOT / "tools/tests/fixtures/sops-age-proof.yml"),
+        "-i",
+        f"{container},",
+        "-e",
+        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
+        "-e",
+        "ansible_connection=docker",
+        *DOCKER_PLAYBOOK_EXTRA_VARS,
+    ]
+
+
 def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
     return [
         "ansible-playbook",
