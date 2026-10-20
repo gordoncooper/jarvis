@@ -5,8 +5,6 @@
     - k3s
 
 - name: Require k3s cluster-vars
-  tags:
-    - k3s
   ansible.builtin.assert:
     that:
       - k3s_version is defined
@@ -18,10 +16,11 @@
       - backup_path is defined
       - local_path_data is defined
     fail_msg: k3s role requires k3s_version, k3s_sha256, CIDRs, and paths in cluster-vars.
+  tags:
+    - always
+    - k3s
 
 - name: Ensure jarvis state directories exist
-  tags:
-    - k3s
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -34,10 +33,10 @@
     - "{{ local_path_data }}"
     - "{{ backup_path }}"
     - "{{ backup_path }}/etcd-snapshots"
-
-- name: Install k3s server config
   tags:
     - k3s
+
+- name: Install k3s server config
   ansible.builtin.template:
     src: config.yaml.j2
     dest: "{{ k3s_config_path }}"
@@ -45,10 +44,12 @@
     group: root
     mode: "0600"
   notify: Restart k3s
-
-- name: Download pinned k3s binary
   tags:
     - k3s
+    - k3s-upgrade
+    - k3s-config
+
+- name: Download pinned k3s binary
   ansible.builtin.get_url:
     url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/k3s"
     dest: "{{ k3s_binary_path }}"
@@ -56,11 +57,12 @@
     owner: root
     group: root
     checksum: "sha256:{{ k3s_sha256 }}"
-  register: k3s_binary_download
-
-- name: Install k3s systemd unit
+  notify: Restart k3s
   tags:
     - k3s
+    - k3s-upgrade
+
+- name: Install k3s systemd unit
   ansible.builtin.template:
     src: k3s.service.j2
     dest: /etc/systemd/system/k3s.service
@@ -68,13 +70,9 @@
     group: root
     mode: "0644"
   notify: Restart k3s
-
-- name: Reload systemd after unit or binary change
   tags:
     - k3s
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: k3s_binary_download is changed
+    - k3s-upgrade
 
 - name: Enable and start k3s
   ansible.builtin.systemd:
@@ -90,4 +88,4 @@
   tags:
     - k3s
     - k3s-service
-    - k3s-kubeconfig
+    - kubeconfig

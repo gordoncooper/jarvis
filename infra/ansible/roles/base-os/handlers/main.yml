@@ -3,3 +3,6 @@
   ansible.builtin.service:
     name: systemd-journald
     state: restarted
+  tags:
+    - base-os
+    - journald

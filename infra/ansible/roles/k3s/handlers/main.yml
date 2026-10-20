@@ -5,4 +5,7 @@
     state: restarted
     daemon_reload: true
   tags:
+    - k3s
     - k3s-service
+    - k3s-upgrade
+    - k3s-config
