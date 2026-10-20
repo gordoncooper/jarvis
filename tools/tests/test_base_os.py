@@ -167,6 +167,8 @@ def test_chrony_rescue_restores_config_on_invalid_test_var() -> None:
     require_docker()
     start_systemd_container()
     try:
+        bootstrap = run_playbook()
+        assert bootstrap.returncode == 0, bootstrap.stdout + bootstrap.stderr
         result = run_playbook(["-e", "base_os_chrony_test_invalid=true"])
         output = result.stdout + result.stderr
         assert result.returncode != 0, output

@@ -126,7 +126,7 @@ def ansible_render_template(template_name: str, variables: dict[str, object]) ->
 def build_systemd_image() -> str:
     require_docker()
     last_build: subprocess.CompletedProcess[str] | None = None
-    for version in ("26.04", "24.04"):
+    for version in ("24.04", "26.04"):
         build = subprocess.run(
             [
                 "docker",
@@ -198,6 +198,7 @@ def start_systemd_container(name: str = CONTAINER_NAME) -> str:
         )
         state = wait.stdout.strip()
         if state in {"running", "degraded"}:
+            _prepare_container_for_ansible(name)
             return name
         time.sleep(2)
 
@@ -214,6 +215,20 @@ def start_systemd_container(name: str = CONTAINER_NAME) -> str:
             f"{logs.stdout}\n{logs.stderr}"
         )
     pytest.skip("systemd did not become ready in the test container")
+
+
+def _prepare_container_for_ansible(name: str) -> None:
+    prep = docker_exec(
+        name,
+        "bash",
+        "-lc",
+        "export DEBIAN_FRONTEND=noninteractive && apt-get update -qq",
+    )
+    if prep.returncode != 0:
+        stop_systemd_container(name)
+        if ci_mode():
+            pytest.fail(f"container apt update failed: {prep.stderr}")
+        pytest.skip(f"container apt update failed: {prep.stderr}")
 
 
 def stop_systemd_container(name: str = CONTAINER_NAME) -> None:
