@@ -12,16 +12,6 @@ from services.hermes.core.schema.env import validate_env_tree
 from test_env_schema import _write_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORE_NAMES_CHECK = REPO_ROOT / "tools" / "checks" / "core-names"
-
-
-def test_repo_tree_passes_core_names_check():
-    violations = scan_core_names(REPO_ROOT)
-    assert violations == []
-
-
-def test_core_names_check_executable_passes_in_repo():
-    subprocess.run([str(CORE_NAMES_CHECK)], cwd=REPO_ROOT, check=True)
 
 
 def test_hardcoded_dns_suffix_under_platform_fails(tmp_path: Path):

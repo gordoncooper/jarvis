@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 from _cli_permissions import (
@@ -18,16 +17,6 @@ from _cli_permissions import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_JSON = REPO_ROOT / ".cursor" / "cli.json"
-CLI_DENY_CHECK = REPO_ROOT / "tools" / "checks" / "cli-deny"
-
-
-def test_repo_cli_json_passes_dry_run():
-    failures, _ = run_dry_run(CLI_JSON)
-    assert failures == []
-
-
-def test_cli_deny_check_executable_passes_in_repo():
-    subprocess.run([str(CLI_DENY_CHECK)], cwd=REPO_ROOT, check=True)
 
 
 def test_kubectl_apply_blocked_kubectl_get_allowed():

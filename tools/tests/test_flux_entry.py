@@ -264,10 +264,3 @@ def test_all_flux_kustomization_paths_kustomize_build() -> None:
     for rel in kustomize_build_paths(env):
         _kustomize_build(rel)
 
-
-def test_core_names_passes_with_flux_tree() -> None:
-    subprocess.run(
-        [str(REPO_ROOT / "tools" / "checks" / "core-names")],
-        cwd=REPO_ROOT,
-        check=True,
-    )

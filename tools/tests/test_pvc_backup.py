@@ -2,27 +2,17 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from _pvc_backup import scan_pvc_backup
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PVC_BACKUP_CHECK = REPO_ROOT / "tools" / "checks" / "pvc-backup"
 
 
 def _write(root: Path, rel: str, content: str) -> None:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-
-
-def test_repo_tree_passes_pvc_backup_check():
-    assert scan_pvc_backup(REPO_ROOT) == []
-
-
-def test_pvc_backup_check_executable_passes_in_repo():
-    subprocess.run([str(PVC_BACKUP_CHECK)], cwd=REPO_ROOT, check=True)
 
 
 def test_pvc_with_matching_replication_source_passes(tmp_path: Path):

@@ -27,7 +27,7 @@
       "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"]
     },
     {
-      "description": "Group Helm host CLI pins (tools/versions.env + flux-operator role defaults).",
+      "description": "Group Helm host CLI pins (flux-operator Ansible role defaults).",
       "groupName": "helm-host-cli",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["helm/helm"]
@@ -43,7 +43,6 @@
         "/^platform\\/flux-operator\\/oci-repository\\.yaml$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version=(?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version: (?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nflux_operator_chart_version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""

@@ -11,7 +11,7 @@ flux_instance_name: flux
 flux_distribution_version: "2.8.x"
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 helm_binary_path: /usr/local/bin/helm
-# Pinned Helm host CLI (must match tools/versions.env). Renovate bumps helm_version only; update sha256 lines in the same PR.
+# Pinned Helm host CLI for the one-time bootstrap. Renovate bumps helm_version; update sha256 lines in the same PR.
 # renovate: datasource=github-releases depName=helm/helm versioning=semver
 helm_version: 3.16.4
 helm_linux_amd64_tarball_sha256: fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179

@@ -1,4 +1,4 @@
-"""Helpers for base-os Ansible role proof tests (container + template render)."""
+"""Helpers for Ansible container proof tests and template renders."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import textwrap
 import time
 from pathlib import Path
 
@@ -19,31 +18,15 @@ from _core_names import sole_env_directory_name
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
-ROLE_DIR = ANSIBLE_DIR / "roles" / "base-os"
 K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"
 FLUX_OPERATOR_ROLE_DIR = ANSIBLE_DIR / "roles" / "flux-operator"
 FLUX_OPERATOR_ROLE_TEMPLATES = FLUX_OPERATOR_ROLE_DIR / "templates"
 FLUX_OPERATOR_ROLE_TASKS = FLUX_OPERATOR_ROLE_DIR / "tasks"
-ROLE_TEMPLATES = ROLE_DIR / "templates"
 K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
 SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
-# site.yml sets ansible_user from ssh_user; the systemd fixture connects as root.
 DOCKER_PLAYBOOK_EXTRA_VARS: list[str] = ["-e", "ansible_user=root"]
-CHRONY_INVALID_FIXTURE = REPO_ROOT / "tools/tests/fixtures/chrony-invalid.conf"
-ROLE_TASKS = ROLE_DIR / "tasks" / "main.yml"
-
-EXPECTED_20_AUTO_UPGRADES = textwrap.dedent(
-    """\
-    # Managed by Ansible (base-os): refresh package lists only; upgrades are run manually by the admin.
-    # Deliberate departure from framework §4 unattended upgrades until project docs are updated.
-    APT::Periodic::Update-Package-Lists "1";
-    APT::Periodic::Download-Upgradeable-Packages "0";
-    APT::Periodic::AutocleanInterval "0";
-    APT::Periodic::Unattended-Upgrade "0";
-    """
-)
 
 
 def ci_mode() -> bool:
@@ -65,7 +48,7 @@ def docker_available() -> bool:
 def require_docker() -> None:
     if docker_available():
         return
-    message = "docker is required for base-os container proof tests"
+    message = "docker is required for container proof tests"
     if ci_mode():
         pytest.fail(message)
     pytest.skip(message)
@@ -96,31 +79,14 @@ def load_cluster_vars(repo_root: Path = REPO_ROOT) -> dict[str, object]:
     return data
 
 
-def chrony_template_validate_command() -> str:
-    """Return the role's chrony.conf template validate= command (single source of truth)."""
-    tasks = yaml.safe_load(ROLE_TASKS.read_text(encoding="utf-8"))
-    assert isinstance(tasks, list)
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        if task.get("name") != "Install chrony configuration with NTS":
-            continue
-        module = task.get("ansible.builtin.template")
-        assert isinstance(module, dict), task
-        validate = module.get("validate")
-        assert isinstance(validate, str) and validate
-        return validate
-    raise AssertionError("chrony template task with validate not found in role tasks")
-
-
 def ansible_render_template(
     template_name: str,
     variables: dict[str, object],
     *,
-    templates_dir: Path | None = None,
+    templates_dir: Path,
 ) -> str:
     """Render a role template via ansible.builtin.template (same engine as the role)."""
-    src = (templates_dir or ROLE_TEMPLATES) / template_name
+    src = templates_dir / template_name
     with tempfile.NamedTemporaryFile(delete=False) as handle:
         dest = Path(handle.name)
     extra: list[str] = []
@@ -262,22 +228,6 @@ def stop_systemd_container(name: str = CONTAINER_NAME) -> None:
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
 
-def playbook_cmd() -> list[str]:
-    return [
-        "ansible-playbook",
-        "site.yml",
-        "-i",
-        f"{CONTAINER_NAME},",
-        "-e",
-        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-        "-e",
-        "ansible_connection=docker",
-        *DOCKER_PLAYBOOK_EXTRA_VARS,
-        "--skip-tags",
-        "chrony-service,k3s,k3s-service,flux-cluster",
-    ]
-
-
 def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
     return [
         "ansible-playbook",
@@ -295,32 +245,6 @@ def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[st
     ]
 
 
-def sops_age_proof_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
-    return [
-        "ansible-playbook",
-        str(REPO_ROOT / "tools/tests/fixtures/sops-age-proof.yml"),
-        "-i",
-        f"{container},",
-        "-e",
-        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-        "-e",
-        "ansible_connection=docker",
-        *DOCKER_PLAYBOOK_EXTRA_VARS,
-    ]
-
-
-def kubeconfig_proof_playbook_cmd(inventory: Path | str) -> list[str]:
-    return [
-        "ansible-playbook",
-        str(REPO_ROOT / "tools/tests/fixtures/kubeconfig-proof.yml"),
-        "-i",
-        str(inventory),
-        "-e",
-        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-        *DOCKER_PLAYBOOK_EXTRA_VARS,
-    ]
-
-
 def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
     return [
         "ansible-playbook",
@@ -335,16 +259,6 @@ def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
         "--tags",
         "k3s-guard",
     ]
-
-
-def run_playbook() -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        playbook_cmd(),
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
 
 
 def playbook_recap_field(output: str, field: str) -> int:
@@ -366,46 +280,3 @@ def docker_exec(name: str, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
-
-
-def assert_apt_timer_states(container: str) -> None:
-    daily_enabled = docker_exec(container, "systemctl", "is-enabled", "apt-daily.timer")
-    assert daily_enabled.stdout.strip() == "enabled", (
-        daily_enabled.stdout + daily_enabled.stderr
-    )
-
-    upgrade_enabled = docker_exec(
-        container,
-        "systemctl",
-        "is-enabled",
-        "apt-daily-upgrade.timer",
-    )
-    assert upgrade_enabled.stdout.strip() == "disabled", (
-        upgrade_enabled.stdout + upgrade_enabled.stderr
-    )
-    upgrade_active = docker_exec(
-        container,
-        "systemctl",
-        "is-active",
-        "apt-daily-upgrade.timer",
-    )
-    assert upgrade_active.stdout.strip() in {"inactive", "failed"}, (
-        upgrade_active.stdout + upgrade_active.stderr
-    )
-
-
-def assert_20_auto_upgrades_file(container: str) -> None:
-    content = docker_exec(
-        container,
-        "cat",
-        "/etc/apt/apt.conf.d/20auto-upgrades",
-    )
-    assert content.returncode == 0, content.stderr
-    assert content.stdout == EXPECTED_20_AUTO_UPGRADES
-
-
-def assert_localtime_matches_zone(container: str, time_zone: str) -> None:
-    link = docker_exec(container, "readlink", "-f", "/etc/localtime")
-    assert link.returncode == 0, link.stderr
-    expected = f"/usr/share/zoneinfo/{time_zone}"
-    assert link.stdout.strip() == expected, link.stdout
