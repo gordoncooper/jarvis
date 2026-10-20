@@ -11,6 +11,15 @@ Rules here are prose only for what `tools/checks/` and `.cursor/cli.json` cannot
 - **R31 — Every PVC has backup coverage or `backup: none`:** `tools/checks/pvc-backup`.
 - **R25 — No plaintext secrets in Git:** `tools/checks/secret-scan`.
 
+## Stay lean
+
+- Build only what the plan step's done check needs, nothing speculative.
+- Tests check behavior or encode a rule. Don't copy templates, hard-code task lists, or re-run checks CI already runs.
+- Add container tests only when no cheaper proof exists. A live run is the proof where there is one.
+- No local tooling that duplicates a hosted service.
+- Prefer deleting code to adding it. Report any PR over about 300 changed lines (excluding deletions) and explain why.
+- Hardening ideas and edge cases go in the report as notes, not code.
+
 ## Workflow
 
 - Branch `agent/<topic>` from `main`. One PR per task, or per batch of related plan steps that touch the same area; keep unrelated or risky changes in separate PRs. No stacked PRs. Open the PR **ready for review**, not draft.

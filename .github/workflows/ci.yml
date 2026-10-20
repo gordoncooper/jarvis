@@ -17,32 +17,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Restore pinned CLIs and portable Node
+      - name: Restore pinned CLIs
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: |
-            ~/.local/bin
-            tools/.node
-            tools/renovate/node_modules
-          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps', 'tools/renovate/package-lock.json') }}
+          path: ~/.local/bin
+          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps') }}
 
-      - name: Install pinned CLIs
+      - name: Install pinned CLIs and Python test deps
         run: make deps
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-
-      - name: Install Python test deps
-        run: pip install -r requirements-dev.txt
-
-      - name: Validate renovate.json
-        run: |
-          export PATH="${HOME}/.local/bin:${PATH}"
-          renovate-config-validator
 
       - name: Run tools/checks
         run: bash tools/run-checks
@@ -50,7 +32,7 @@ jobs:
       - name: pytest (non-container)
         run: |
           export PATH="${HOME}/.local/bin:${PATH}"
-          pytest -m "not container"
+          .venv/bin/pytest -m "not container"
 
   slow:
     name: slow (${{ matrix.container_test_file }})
@@ -66,32 +48,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Restore pinned CLIs and portable Node
+      - name: Restore pinned CLIs
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: |
-            ~/.local/bin
-            tools/.node
-            tools/renovate/node_modules
-          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps', 'tools/renovate/package-lock.json') }}
+          path: ~/.local/bin
+          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps') }}
 
-      - name: Install pinned CLIs
+      - name: Install pinned CLIs and Python test deps
         run: make deps
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-
-      - name: Install Python test deps
-        run: pip install -r requirements-dev.txt
 
       - name: pytest (container)
         run: |
           export PATH="${HOME}/.local/bin:${PATH}"
-          pytest "tools/tests/${{ matrix.container_test_file }}.py" -m container
+          .venv/bin/pytest "tools/tests/${{ matrix.container_test_file }}.py" -m container
 
   ci:
     name: ci

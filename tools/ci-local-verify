@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push verification: checks, renovate validator, full pytest (including containers).
+# Pre-push verification: checks and full pytest (including containers).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -7,7 +7,6 @@ cd "$ROOT"
 
 export PATH="${HOME}/.local/bin:${PATH}"
 
-renovate-config-validator
 bash tools/run-checks
 
 if ! docker info >/dev/null 2>&1; then

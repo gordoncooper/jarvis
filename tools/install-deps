@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Install pinned sops, age, age-keygen, and gitleaks into ~/.local/bin with sha256 verification."""
+"""Install pinned sops, age, age-keygen, gitleaks, kustomize, and kubeconform into ~/.local/bin."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import platform
 import re
@@ -14,16 +13,13 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
 VERSIONS_FILE = TOOLS_DIR / "versions.env"
 INSTALL_DIR = Path.home() / ".local" / "bin"
-RENOVATE_DIR = TOOLS_DIR / "renovate"
-RENOVATE_NODE_MODULES = RENOVATE_DIR / "node_modules"
-RENOVATE_PACKAGE_LOCK = RENOVATE_DIR / "package-lock.json"
-RENOVATE_LOCK_MARKER = RENOVATE_NODE_MODULES / ".jarvis-package-lock.sha256"
-NODE_DIR = TOOLS_DIR / ".node"
 
 
 def load_versions(path: Path) -> dict[str, str]:
@@ -121,107 +117,12 @@ def require_system_tools() -> None:
         )
 
 
-def sops_installed_version(bin_path: Path) -> str | None:
+def installed_version(bin_path: Path, version_args: list[str]) -> str | None:
     if not bin_path.is_file():
         return None
     try:
         proc = subprocess.run(
-            [str(bin_path), "--version"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout)
-    return match.group(1) if match else None
-
-
-def age_installed_version(bin_path: Path) -> str | None:
-    if not bin_path.is_file():
-        return None
-    try:
-        proc = subprocess.run(
-            [str(bin_path), "--version"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout.strip())
-    return match.group(1) if match else None
-
-
-def download(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(url) as response, dest.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
-
-
-def install_sops(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
-    version = versions["sops_version"]
-    dest = dest_dir / "sops"
-    installed = sops_installed_version(dest)
-    if installed == version:
-        print(f"sops {version} already installed at {dest}")
-        return
-
-    sha_key = f"sops_linux_{arch}_binary_sha256"
-    expected_sha = versions[sha_key]
-    url = (
-        f"https://github.com/getsops/sops/releases/download/v{version}/"
-        f"sops-v{version}.linux.{arch}"
-    )
-    with tempfile.TemporaryDirectory(prefix="jarvis-sops-") as tmp:
-        binary = Path(tmp) / "sops"
-        print(f"downloading sops {version} ({arch})…")
-        download(url, binary)
-        verify_sha256(binary, expected_sha, "sops")
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(binary, dest)
-        os.chmod(dest, 0o755)
-    print(f"installed sops {version} -> {dest}")
-
-
-def _install_verified_binary(
-    *,
-    src: Path,
-    dest: Path,
-    expected_sha: str,
-    label: str,
-    version: str,
-) -> None:
-    verify_sha256(src, expected_sha, label)
-    dest_dir = dest.parent
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
-    os.chmod(dest, 0o755)
-    print(f"installed {label} {version} -> {dest}")
-
-
-def gitleaks_installed_version(bin_path: Path) -> str | None:
-    if not bin_path.is_file():
-        return None
-    try:
-        proc = subprocess.run(
-            [str(bin_path), "version"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout.strip())
-    return match.group(1) if match else None
-
-
-def _installed_binary_version(bin_path: Path, args: list[str]) -> str | None:
-    if not bin_path.is_file():
-        return None
-    try:
-        proc = subprocess.run(
-            [str(bin_path), *args],
+            [str(bin_path), *version_args],
             check=True,
             capture_output=True,
             text=True,
@@ -232,124 +133,112 @@ def _installed_binary_version(bin_path: Path, args: list[str]) -> str | None:
     return match.group(1) if match else None
 
 
-def install_helm(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
-    version = versions["helm_version"]
-    dest = dest_dir / "helm"
-    installed = _installed_binary_version(dest, ["version", "--short"])
-    if installed in {version, f"v{version}"}:
-        print(f"helm {version} already installed at {dest}")
+def download(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url) as response, dest.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+
+
+def _install_binary(src: Path, dest: Path, expected_sha: str, label: str, version: str) -> None:
+    verify_sha256(src, expected_sha, label)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    os.chmod(dest, 0o755)
+    print(f"installed {label} {version} -> {dest}")
+
+
+@dataclass(frozen=True)
+class TarballSpec:
+    version_key: str
+    version_args: tuple[str, ...]
+    url: Callable[[str, str], str]
+    member: str
+    tar_arch: Callable[[str], str] = lambda arch: arch
+
+
+TARBALL_INSTALLS: dict[str, TarballSpec] = {
+    "kustomize": TarballSpec(
+        version_key="kustomize_version",
+        version_args=("version", "--short"),
+        url=lambda v, arch: (
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/"
+            f"kustomize%2Fv{v}/kustomize_v{v}_linux_{arch}.tar.gz"
+        ),
+        member="kustomize",
+    ),
+    "kubeconform": TarballSpec(
+        version_key="kubeconform_version",
+        version_args=("-v",),
+        url=lambda v, arch: (
+            f"https://github.com/yannh/kubeconform/releases/download/v{v}/"
+            f"kubeconform-linux-{arch}.tar.gz"
+        ),
+        member="kubeconform",
+    ),
+    "gitleaks": TarballSpec(
+        version_key="gitleaks_version",
+        version_args=("version",),
+        url=lambda v, arch: (
+            f"https://github.com/gitleaks/gitleaks/releases/download/v{v}/"
+            f"gitleaks_{v}_linux_{'x64' if arch == 'amd64' else arch}.tar.gz"
+        ),
+        member="gitleaks",
+        tar_arch=lambda arch: "x64" if arch == "amd64" else arch,
+    ),
+}
+
+
+def install_sops(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["sops_version"]
+    dest = dest_dir / "sops"
+    if installed_version(dest, ["--version"]) == version:
+        print(f"sops {version} already installed at {dest}")
         return
 
-    tar_arch = "amd64" if arch == "amd64" else "arm64"
-    member = f"linux-{tar_arch}/helm"
-    sha_key = f"helm_linux_{arch}_tarball_sha256"
-    expected_sha = versions[sha_key]
-    url = f"https://get.helm.sh/helm-v{version}-linux-{tar_arch}.tar.gz"
-    with tempfile.TemporaryDirectory(prefix="jarvis-helm-") as tmp:
-        tarball = Path(tmp) / "helm.tar.gz"
-        print(f"downloading helm {version} ({tar_arch})…")
-        download(url, tarball)
-        verify_sha256(tarball, expected_sha, "helm archive")
-        with tarfile.open(tarball, "r:gz") as archive:
-            archive.extract(member, path=tmp)
-        binary = Path(tmp) / member
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(binary, dest)
-        os.chmod(dest, 0o755)
-        print(f"installed helm {version} -> {dest}")
-
-
-def install_kustomize(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
-    version = versions["kustomize_version"]
-    dest = dest_dir / "kustomize"
-    installed = _installed_binary_version(dest, ["version", "--short"])
-    if installed == version:
-        print(f"kustomize {version} already installed at {dest}")
-        return
-
-    sha_key = f"kustomize_linux_{arch}_tarball_sha256"
-    expected_sha = versions[sha_key]
+    sha_key = f"sops_linux_{arch}_binary_sha256"
     url = (
-        f"https://github.com/kubernetes-sigs/kustomize/releases/download/"
-        f"kustomize%2Fv{version}/kustomize_v{version}_linux_{arch}.tar.gz"
+        f"https://github.com/getsops/sops/releases/download/v{version}/"
+        f"sops-v{version}.linux.{arch}"
     )
-    with tempfile.TemporaryDirectory(prefix="jarvis-kustomize-") as tmp:
-        tarball = Path(tmp) / "kustomize.tar.gz"
-        print(f"downloading kustomize {version} ({arch})…")
-        download(url, tarball)
-        verify_sha256(tarball, expected_sha, "kustomize archive")
-        with tarfile.open(tarball, "r:gz") as archive:
-            archive.extract("kustomize", path=tmp)
-        binary = Path(tmp) / "kustomize"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(binary, dest)
-        os.chmod(dest, 0o755)
-        print(f"installed kustomize {version} -> {dest}")
+    with tempfile.TemporaryDirectory(prefix="jarvis-sops-") as tmp:
+        binary = Path(tmp) / "sops"
+        print(f"downloading sops {version} ({arch})…")
+        download(url, binary)
+        _install_binary(binary, dest, versions[sha_key], "sops", version)
 
 
-def install_kubeconform(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
-    version = versions["kubeconform_version"]
-    dest = dest_dir / "kubeconform"
-    installed = _installed_binary_version(dest, ["-v"])
-    if installed == version:
-        print(f"kubeconform {version} already installed at {dest}")
+def install_tarball_cli(
+    name: str, spec: TarballSpec, versions: dict[str, str], arch: str, dest_dir: Path
+) -> None:
+    version = versions[spec.version_key]
+    dest = dest_dir / name
+    if installed_version(dest, list(spec.version_args)) == version:
+        print(f"{name} {version} already installed at {dest}")
         return
 
-    sha_key = f"kubeconform_linux_{arch}_tarball_sha256"
-    expected_sha = versions[sha_key]
-    url = (
-        f"https://github.com/yannh/kubeconform/releases/download/v{version}/"
-        f"kubeconform-linux-{arch}.tar.gz"
-    )
-    with tempfile.TemporaryDirectory(prefix="jarvis-kubeconform-") as tmp:
-        tarball = Path(tmp) / "kubeconform.tar.gz"
-        print(f"downloading kubeconform {version} ({arch})…")
+    tar_arch = spec.tar_arch(arch)
+    sha_key = f"{name}_linux_{arch}_tarball_sha256"
+    url = spec.url(version, tar_arch)
+    with tempfile.TemporaryDirectory(prefix=f"jarvis-{name}-") as tmp:
+        tarball = Path(tmp) / f"{name}.tar.gz"
+        print(f"downloading {name} {version} ({tar_arch})…")
         download(url, tarball)
-        verify_sha256(tarball, expected_sha, "kubeconform archive")
+        verify_sha256(tarball, versions[sha_key], f"{name} archive")
         with tarfile.open(tarball, "r:gz") as archive:
-            archive.extract("kubeconform", path=tmp)
-        binary = Path(tmp) / "kubeconform"
+            archive.extract(spec.member, path=tmp)
+        binary = Path(tmp) / spec.member
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary, dest)
         os.chmod(dest, 0o755)
-        print(f"installed kubeconform {version} -> {dest}")
-
-
-def install_gitleaks(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
-    version = versions["gitleaks_version"]
-    dest = dest_dir / "gitleaks"
-    installed = gitleaks_installed_version(dest)
-    if installed == version:
-        print(f"gitleaks {version} already installed at {dest}")
-        return
-
-    tar_arch = "x64" if arch == "amd64" else arch
-    sha_key = f"gitleaks_linux_{arch}_tarball_sha256"
-    expected_sha = versions[sha_key]
-    url = (
-        f"https://github.com/gitleaks/gitleaks/releases/download/v{version}/"
-        f"gitleaks_{version}_linux_{tar_arch}.tar.gz"
-    )
-    with tempfile.TemporaryDirectory(prefix="jarvis-gitleaks-") as tmp:
-        tarball = Path(tmp) / "gitleaks.tar.gz"
-        print(f"downloading gitleaks {version} ({arch})…")
-        download(url, tarball)
-        verify_sha256(tarball, expected_sha, "gitleaks archive")
-        with tarfile.open(tarball, "r:gz") as archive:
-            archive.extract("gitleaks", path=tmp)
-        binary = Path(tmp) / "gitleaks"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(binary, dest)
-        os.chmod(dest, 0o755)
-        print(f"installed gitleaks {version} -> {dest}")
+        print(f"installed {name} {version} -> {dest}")
 
 
 def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     version = versions["age_version"]
     age_dest = dest_dir / "age"
     keygen_dest = dest_dir / "age-keygen"
-    age_ok = age_installed_version(age_dest) == version
-    keygen_ok = age_installed_version(keygen_dest) == version
+    age_ok = installed_version(age_dest, ["--version"]) == version
+    keygen_ok = installed_version(keygen_dest, ["--version"]) == version
     if age_ok:
         print(f"age {version} already installed at {age_dest}")
     if keygen_ok:
@@ -357,8 +246,6 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     if age_ok and keygen_ok:
         return
 
-    age_sha = versions[f"age_linux_{arch}_binary_sha256"]
-    keygen_sha = versions[f"age_keygen_linux_{arch}_binary_sha256"]
     url = (
         f"https://github.com/FiloSottile/age/releases/download/v{version}/"
         f"age-v{version}-linux-{arch}.tar.gz"
@@ -370,175 +257,22 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
         with tarfile.open(tarball, "r:gz") as archive:
             archive.extract("age/age", path=tmp)
             archive.extract("age/age-keygen", path=tmp)
-        age_src = Path(tmp) / "age" / "age"
-        keygen_src = Path(tmp) / "age" / "age-keygen"
         if not age_ok:
-            _install_verified_binary(
-                src=age_src,
-                dest=age_dest,
-                expected_sha=age_sha,
-                label="age",
-                version=version,
+            _install_binary(
+                Path(tmp) / "age" / "age",
+                age_dest,
+                versions[f"age_linux_{arch}_binary_sha256"],
+                "age",
+                version,
             )
         if not keygen_ok:
-            _install_verified_binary(
-                src=keygen_src,
-                dest=keygen_dest,
-                expected_sha=keygen_sha,
-                label="age-keygen",
-                version=version,
+            _install_binary(
+                Path(tmp) / "age" / "age-keygen",
+                keygen_dest,
+                versions[f"age_keygen_linux_{arch}_binary_sha256"],
+                "age-keygen",
+                version,
             )
-
-
-def _portable_node_bins(versions: dict[str, str]) -> tuple[Path, Path]:
-    node_version = versions["nodejs_version"]
-    arch = linux_arch()
-    node_bin = NODE_DIR / "bin" / "node"
-    npm_bin = NODE_DIR / "bin" / "npm"
-    if node_bin.is_file() and npm_bin.is_file():
-        installed = _installed_binary_version(node_bin, ["--version"])
-        if installed == node_version:
-            return node_bin, npm_bin
-
-    tar_arch = "x64" if arch == "amd64" else "arm64"
-    sha_key = f"nodejs_linux_{arch}_tarball_sha256"
-    expected_sha = versions[sha_key]
-    url = (
-        f"https://nodejs.org/dist/v{node_version}/"
-        f"node-v{node_version}-linux-{tar_arch}.tar.xz"
-    )
-    member = f"node-v{node_version}-linux-{tar_arch}"
-    print(f"downloading node.js {node_version} ({tar_arch})…")
-    with tempfile.TemporaryDirectory(prefix="jarvis-node-") as tmp:
-        tarball = Path(tmp) / "node.tar.xz"
-        download(url, tarball)
-        verify_sha256(tarball, expected_sha, "node.js archive")
-        if NODE_DIR.exists():
-            shutil.rmtree(NODE_DIR)
-        NODE_DIR.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(tarball, "r:xz") as archive:
-            archive.extractall(path=NODE_DIR)
-        extracted = NODE_DIR / member
-        for child in extracted.iterdir():
-            shutil.move(str(child), NODE_DIR / child.name)
-        shutil.rmtree(extracted)
-    if not node_bin.is_file() or not npm_bin.is_file():
-        raise SystemExit(f"portable node install failed under {NODE_DIR}")
-    return node_bin, npm_bin
-
-
-def renovate_package_version() -> str:
-    package_json = RENOVATE_DIR / "package.json"
-    try:
-        data = json.loads(package_json.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as err:
-        raise SystemExit(f"invalid {package_json}: {err}") from err
-    version = data.get("dependencies", {}).get("renovate")
-    if not isinstance(version, str) or not version:
-        raise SystemExit(f"missing dependencies.renovate in {package_json}")
-    return version
-
-
-def package_lock_sha256(lockfile: Path = RENOVATE_PACKAGE_LOCK) -> str:
-    return sha256_file(lockfile)
-
-
-def read_lock_marker(marker: Path = RENOVATE_LOCK_MARKER) -> str | None:
-    if not marker.is_file():
-        return None
-    text = marker.read_text(encoding="utf-8").strip()
-    return text or None
-
-
-def write_lock_marker(digest: str, marker: Path = RENOVATE_LOCK_MARKER) -> None:
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"{digest}\n", encoding="utf-8")
-
-
-def renovate_npm_ci_up_to_date(
-    *,
-    expected_version: str,
-    installed_version: str | None,
-    lock_sha256: str,
-    marker_sha256: str | None,
-    validator_exists: bool,
-) -> bool:
-    if installed_version != expected_version:
-        return False
-    if not validator_exists:
-        return False
-    if marker_sha256 is None:
-        return False
-    return marker_sha256 == lock_sha256
-
-
-def renovate_installed_version(modules_dir: Path) -> str | None:
-    package_json = modules_dir / "renovate" / "package.json"
-    if not package_json.is_file():
-        return None
-    try:
-        data = json.loads(package_json.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    version = data.get("version")
-    return version if isinstance(version, str) else None
-
-
-def _renovate_validator_script(modules_dir: Path) -> Path:
-    for candidate in (
-        modules_dir / "renovate" / "dist" / "config-validator.js",
-        modules_dir / "renovate" / "dist" / "config-validator",
-    ):
-        if candidate.is_file():
-            return candidate
-    raise SystemExit(f"renovate config validator not found under {modules_dir}")
-
-
-def install_renovate_config_validator(versions: dict[str, str]) -> None:
-    version = versions["renovate_version"]
-    package_version = renovate_package_version()
-    if version != package_version:
-        raise SystemExit(
-            "renovate_version in tools/versions.env "
-            f"({version}) does not match tools/renovate/package.json ({package_version})"
-        )
-    dest = INSTALL_DIR / "renovate-config-validator"
-    installed = renovate_installed_version(RENOVATE_NODE_MODULES)
-    lock_sha = package_lock_sha256()
-    if renovate_npm_ci_up_to_date(
-        expected_version=version,
-        installed_version=installed,
-        lock_sha256=lock_sha,
-        marker_sha256=read_lock_marker(),
-        validator_exists=dest.is_file(),
-    ):
-        print(f"renovate {version} already installed (renovate-config-validator at {dest})")
-        return
-
-    node_bin, npm_bin = _portable_node_bins(versions)
-
-    print(f"installing renovate {version} from {RENOVATE_DIR}/package-lock.json…")
-    env = os.environ.copy()
-    env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
-    subprocess.run(
-        [str(npm_bin), "ci", "--no-audit", "--no-fund"],
-        cwd=RENOVATE_DIR,
-        check=True,
-        env=env,
-    )
-    write_lock_marker(lock_sha)
-
-    validator_src = _renovate_validator_script(RENOVATE_NODE_MODULES)
-    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    dest.write_text(
-        f"""#!/usr/bin/env bash
-set -euo pipefail
-exec "{node_bin}" "{validator_src}" "$@"
-""",
-        encoding="utf-8",
-    )
-    os.chmod(dest, 0o755)
-    print(f"installed renovate-config-validator {version} -> {dest}")
 
 
 def main() -> None:
@@ -549,11 +283,8 @@ def main() -> None:
     arch = linux_arch()
     install_sops(versions, arch, INSTALL_DIR)
     install_age(versions, arch, INSTALL_DIR)
-    install_gitleaks(versions, arch, INSTALL_DIR)
-    install_kustomize(versions, arch, INSTALL_DIR)
-    install_kubeconform(versions, arch, INSTALL_DIR)
-    install_helm(versions, arch, INSTALL_DIR)
-    install_renovate_config_validator(versions)
+    for cli_name, spec in TARBALL_INSTALLS.items():
+        install_tarball_cli(cli_name, spec, versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
 
 
