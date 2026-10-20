@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -19,7 +20,9 @@ from _core_names import sole_env_directory_name
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
 ROLE_DIR = ANSIBLE_DIR / "roles" / "base-os"
+K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"
 ROLE_TEMPLATES = ROLE_DIR / "templates"
+K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
 SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
 SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
 CONTAINER_NAME = "jarvis-base-os-idem-test"
@@ -105,14 +108,19 @@ def chrony_template_validate_command() -> str:
     raise AssertionError("chrony template task with validate not found in role tasks")
 
 
-def ansible_render_template(template_name: str, variables: dict[str, object]) -> str:
+def ansible_render_template(
+    template_name: str,
+    variables: dict[str, object],
+    *,
+    templates_dir: Path | None = None,
+) -> str:
     """Render a role template via ansible.builtin.template (same engine as the role)."""
-    src = ROLE_TEMPLATES / template_name
+    src = (templates_dir or ROLE_TEMPLATES) / template_name
     with tempfile.NamedTemporaryFile(delete=False) as handle:
         dest = Path(handle.name)
     extra: list[str] = []
     for key, value in variables.items():
-        extra.extend(["-e", f"{key}={value}"])
+        extra.extend(["-e", f"{key}={json.dumps(value)}"])
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
@@ -260,7 +268,22 @@ def playbook_cmd() -> list[str]:
         "-e",
         "ansible_connection=docker",
         "--skip-tags",
-        "chrony-service",
+        "chrony-service,k3s",
+    ]
+
+
+def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
+    return [
+        "ansible-playbook",
+        "site.yml",
+        "-i",
+        f"{container},",
+        "-e",
+        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
+        "-e",
+        "ansible_connection=docker",
+        "--tags",
+        "k3s-guard",
     ]
 
 

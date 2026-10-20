@@ -1,0 +1,11 @@
+---
+# Populated from env cluster-vars (see services/hermes/core/schema/CONTRACT.md).
+k3s_binary_path: /usr/local/bin/k3s
+k3s_config_path: /etc/rancher/k3s/config.yaml
+k3s_service_name: k3s
+k3s_remote_kubeconfig: /etc/rancher/k3s/k3s.yaml
+k3s_data_dir: /var/lib/rancher/k3s
+jarvis_marker_path: /etc/jarvis/env
+# k3s v1.36.5+k3s1 built-in defaults (D6); snapshot dir comes from backup_path.
+k3s_etcd_snapshot_schedule_cron: "0 */12 * * *"
+k3s_etcd_snapshot_retention: 5

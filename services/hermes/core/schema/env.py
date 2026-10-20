@@ -18,6 +18,7 @@ _BUILD_AGENT_ALLOWED = ("cursor",)
 
 _CLUSTER_VARS_REQUIRED = frozenset(
     {
+        "jarvis_env",
         "dns_suffix",
         "time_zone",
         "code_delivery",
@@ -27,10 +28,14 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "backup_retention_weekly",
         "backup_retention_monthly",
         "k3s_version",
+        "k3s_sha256",
         "pod_cidr",
         "service_cidr",
+        "local_path_data",
     }
 )
+
+_SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 
 _HERMES_TOP_LEVEL = frozenset(
     {"bots", "cron", "bot_tier_map", "tier_model_map", "lane_model_map"}
@@ -114,7 +119,11 @@ def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, 
         return errors, None
 
     errors.extend(
-        _validate_cluster_vars(cluster_vars, _display_path(cluster_vars_path, repo_root))
+        _validate_cluster_vars(
+            cluster_vars,
+            _display_path(cluster_vars_path, repo_root),
+            env_name,
+        )
     )
     errors.extend(_validate_hermes(hermes, _display_path(hermes_path, repo_root)))
     errors.extend(_validate_apps(apps, _display_path(apps_path, repo_root)))
@@ -147,7 +156,9 @@ def _is_int_not_bool(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _validate_cluster_vars(data: dict[str, Any], rel_path: str) -> list[str]:
+def _validate_cluster_vars(
+    data: dict[str, Any], rel_path: str, env_name: str
+) -> list[str]:
     errors: list[str] = []
     for key in data:
         if not _SNAKE_CASE.match(key):
@@ -170,18 +181,35 @@ def _validate_cluster_vars(data: dict[str, Any], rel_path: str) -> list[str]:
     )
 
     for key in (
+        "jarvis_env",
         "dns_suffix",
         "time_zone",
         "backup_path",
         "k3s_version",
+        "k3s_sha256",
         "pod_cidr",
         "service_cidr",
+        "local_path_data",
     ):
         val = data.get(key)
         if val is not None and not isinstance(val, str):
             errors.append(f"{rel_path}: {key} must be a string")
         elif isinstance(val, str) and not val.strip():
             errors.append(f"{rel_path}: {key} must not be empty")
+
+    jarvis_env = data.get("jarvis_env")
+    if isinstance(jarvis_env, str) and jarvis_env and jarvis_env != env_name:
+        errors.append(
+            f"{rel_path}: jarvis_env must match the env directory name ({env_name})"
+        )
+
+    k3s_sha = data.get("k3s_sha256")
+    if isinstance(k3s_sha, str) and k3s_sha and not _SHA256_HEX.match(k3s_sha):
+        errors.append(f"{rel_path}: k3s_sha256 must be a 64-character lowercase hex string")
+
+    local_path = data.get("local_path_data")
+    if isinstance(local_path, str) and local_path and not local_path.startswith("/"):
+        errors.append(f"{rel_path}: local_path_data must be an absolute path")
 
     for key in (
         "backup_retention_daily",
