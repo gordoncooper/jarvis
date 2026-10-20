@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# CI rule check: Cursor CLI deny list blocks cluster writes and secret decryption (R34).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/tools:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+import json
+import subprocess
+from pathlib import Path
+
+from _cli_permissions import load_cli_permissions, run_dry_run, validate_deny_coverage
+
+cli_path = Path(".cursor/cli.json")
+if not cli_path.is_file():
+    print("missing .cursor/cli.json", flush=True)
+    raise SystemExit(1)
+
+try:
+    json.loads(cli_path.read_text(encoding="utf-8"))
+except json.JSONDecodeError as exc:
+    print(f".cursor/cli.json is not valid JSON: {exc}", flush=True)
+    raise SystemExit(1)
+
+perms = load_cli_permissions(cli_path)
+coverage_errors = validate_deny_coverage(perms["deny"])
+if coverage_errors:
+    for line in coverage_errors:
+        print(line, flush=True)
+    raise SystemExit(1)
+
+failures, _ = run_dry_run(cli_path)
+if failures:
+    for line in failures:
+        print(line, flush=True)
+    raise SystemExit(1)
+
+repo_root = Path(".")
+dry_run = repo_root / "tools" / "cli-deny-dry-run"
+subprocess.run([str(dry_run)], cwd=repo_root, check=True)
+PY

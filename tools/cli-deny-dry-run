@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Non-destructive dry-run: evaluate .cursor/cli.json against sample commands (p0a-10).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/tools:${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _cli_permissions import (
+    DRY_RUN_MUST_ALLOW,
+    DRY_RUN_MUST_BLOCK,
+    command_allowed,
+    load_cli_permissions,
+    run_dry_run,
+)
+
+path = Path(".cursor/cli.json")
+perms = load_cli_permissions(path)
+allow, deny = perms["allow"], perms["deny"]
+
+print(f"cli permissions dry-run ({path})")
+print("matching: Shell(commandBase) or Shell(command:args); globs * ? **; deny beats allow")
+print()
+
+for label, cmds in (("must BLOCK", DRY_RUN_MUST_BLOCK), ("must ALLOW", DRY_RUN_MUST_ALLOW)):
+    print(label)
+    for cmd in cmds:
+        allowed = command_allowed(allow, deny, cmd)
+        status = "ALLOW" if allowed else "BLOCK"
+        print(f"  [{status}] {cmd}")
+    print()
+
+failures, _ = run_dry_run(path)
+if failures:
+    for line in failures:
+        print(line, flush=True)
+    raise SystemExit(1)
+print("dry-run OK")
+PY
