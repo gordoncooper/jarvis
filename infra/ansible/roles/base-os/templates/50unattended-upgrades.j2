@@ -1,14 +1,13 @@
-// Managed by Ansible (base-os): Ubuntu -security pocket only; Gordon reboots after kernel updates (§8).
-// Remove-* keys match the ubuntu unattended-upgrades package defaults (24.04+ ship file).
+// Managed by Ansible (base-os): unattended-upgrades package present but inactive; no auto-removals.
+// Periodic apt and apt-daily*.timer are disabled in role tasks; Gordon runs updates by hand.
 Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}-security";
 };
 
 Unattended-Upgrade::Package-Blacklist {
 };
 
 Unattended-Upgrade::DevRelease "false";
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "false";
 Unattended-Upgrade::Remove-Unused-Dependencies "false";
 Unattended-Upgrade::Automatic-Reboot "false";

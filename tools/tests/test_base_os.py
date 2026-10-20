@@ -90,11 +90,12 @@ def test_auto_upgrades_template_exact_content() -> None:
     rendered = _render("20auto-upgrades.j2", {})
     assert rendered == textwrap.dedent(
         """\
-        # Managed by Ansible (base-os): enable unattended security upgrades (framework §4).
-        APT::Periodic::Update-Package-Lists "1";
+        # Managed by Ansible (base-os): no automatic apt activity; Gordon updates by hand (Gordon Oct 20).
+        # Deliberately overrides framework §4 unattended upgrades until project docs are updated.
+        APT::Periodic::Update-Package-Lists "0";
         APT::Periodic::Download-Upgradeable-Packages "0";
         APT::Periodic::AutocleanInterval "0";
-        APT::Periodic::Unattended-Upgrade "1";
+        APT::Periodic::Unattended-Upgrade "0";
         """
     )
 
@@ -103,18 +104,17 @@ def test_unattended_upgrades_template_exact_content() -> None:
     rendered = _render("50unattended-upgrades.j2", {})
     assert rendered == textwrap.dedent(
         """\
-        // Managed by Ansible (base-os): Ubuntu -security pocket only; Gordon reboots after kernel updates (§8).
-        // Remove-* keys match the ubuntu unattended-upgrades package defaults (24.04+ ship file).
+        // Managed by Ansible (base-os): unattended-upgrades package present but inactive; no auto-removals.
+        // Periodic apt and apt-daily*.timer are disabled in role tasks; Gordon runs updates by hand.
         Unattended-Upgrade::Allowed-Origins {
-            "${distro_id}:${distro_codename}-security";
         };
 
         Unattended-Upgrade::Package-Blacklist {
         };
 
         Unattended-Upgrade::DevRelease "false";
-        Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-        Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+        Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+        Unattended-Upgrade::Remove-New-Unused-Dependencies "false";
         Unattended-Upgrade::Remove-Unused-Dependencies "false";
         Unattended-Upgrade::Automatic-Reboot "false";
         """
@@ -190,10 +190,36 @@ def _ubuntu_image_available() -> str | None:
     return None
 
 
-def _playbook_changed_count(output: str) -> int:
-    match = re.search(r"changed=(\d+)", output)
+def _playbook_recap_changed(output: str) -> int:
+    recap_lines = [
+        line
+        for line in output.splitlines()
+        if "changed=" in line and "PLAY RECAP" not in line
+    ]
+    assert recap_lines, output
+    match = re.search(r"changed=(\d+)", recap_lines[-1])
     assert match is not None, output
     return int(match.group(1))
+
+
+def _assert_apt_timers_disabled(container: str) -> None:
+    for timer in ("apt-daily.timer", "apt-daily-upgrade.timer"):
+        enabled = subprocess.run(
+            ["docker", "exec", container, "systemctl", "is-enabled", timer],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert enabled.stdout.strip() == "disabled", enabled.stdout + enabled.stderr
+        active = subprocess.run(
+            ["docker", "exec", container, "systemctl", "is-active", timer],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert active.stdout.strip() in {"inactive", "failed"}, (
+            f"{timer}: {active.stdout}{active.stderr}"
+        )
 
 
 def test_base_os_role_idempotent_in_container() -> None:
@@ -267,8 +293,10 @@ def test_base_os_role_idempotent_in_container() -> None:
         text=True,
         check=False,
     )
-    subprocess.run(["docker", "rm", "-f", container], check=False)
 
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
-    assert _playbook_changed_count(second.stdout + second.stderr) == 0
+    _assert_apt_timers_disabled(container)
+    assert _playbook_recap_changed(second.stdout + second.stderr) == 0
+
+    subprocess.run(["docker", "rm", "-f", container], check=False)
