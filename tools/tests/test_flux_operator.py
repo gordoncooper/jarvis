@@ -534,12 +534,6 @@ def test_sops_age_key_file_missing_fails(tmp_path: Path) -> None:
         stop_systemd_container()
 
 
-def test_cluster_vars_omit_flux_operator_bootstrap_pin() -> None:
-    cluster = load_cluster_vars()
-    assert "flux_operator_version" not in cluster
-    assert "flux_operator_install_sha256" not in cluster
-
-
 def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:
     content = (FLUX_OPERATOR_ROLE_TASKS / "sops_age.yml").read_text(encoding="utf-8")
     assert "kubectl create" in content

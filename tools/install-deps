@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import platform
 import re
@@ -18,6 +19,8 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 VERSIONS_FILE = TOOLS_DIR / "versions.env"
 INSTALL_DIR = Path.home() / ".local" / "bin"
+NPM_PREFIX = TOOLS_DIR / ".npm"
+NODE_DIR = TOOLS_DIR / ".node"
 
 
 def load_versions(path: Path) -> dict[str, str]:
@@ -384,6 +387,106 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
             )
 
 
+def _portable_node_bins(versions: dict[str, str]) -> tuple[Path, Path]:
+    node_version = versions["nodejs_version"]
+    arch = linux_arch()
+    node_bin = NODE_DIR / "bin" / "node"
+    npm_bin = NODE_DIR / "bin" / "npm"
+    if node_bin.is_file() and npm_bin.is_file():
+        installed = _installed_binary_version(node_bin, ["--version"])
+        if installed == node_version:
+            return node_bin, npm_bin
+
+    tar_arch = "x64" if arch == "amd64" else "arm64"
+    sha_key = f"nodejs_linux_{arch}_tarball_sha256"
+    expected_sha = versions[sha_key]
+    url = (
+        f"https://nodejs.org/dist/v{node_version}/"
+        f"node-v{node_version}-linux-{tar_arch}.tar.xz"
+    )
+    member = f"node-v{node_version}-linux-{tar_arch}"
+    print(f"downloading node.js {node_version} ({tar_arch})…")
+    with tempfile.TemporaryDirectory(prefix="jarvis-node-") as tmp:
+        tarball = Path(tmp) / "node.tar.xz"
+        download(url, tarball)
+        verify_sha256(tarball, expected_sha, "node.js archive")
+        if NODE_DIR.exists():
+            shutil.rmtree(NODE_DIR)
+        NODE_DIR.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(tarball, "r:xz") as archive:
+            archive.extractall(path=NODE_DIR)
+        extracted = NODE_DIR / member
+        for child in extracted.iterdir():
+            shutil.move(str(child), NODE_DIR / child.name)
+        shutil.rmtree(extracted)
+    if not node_bin.is_file() or not npm_bin.is_file():
+        raise SystemExit(f"portable node install failed under {NODE_DIR}")
+    return node_bin, npm_bin
+
+
+def renovate_installed_version(prefix: Path) -> str | None:
+    package_json = prefix / "node_modules" / "renovate" / "package.json"
+    if not package_json.is_file():
+        return None
+    try:
+        data = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    version = data.get("version")
+    return version if isinstance(version, str) else None
+
+
+def _renovate_validator_script(prefix: Path) -> Path:
+    for candidate in (
+        prefix / "node_modules" / "renovate" / "dist" / "config-validator.js",
+        prefix / "node_modules" / "renovate" / "dist" / "config-validator",
+    ):
+        if candidate.is_file():
+            return candidate
+    raise SystemExit(f"renovate config validator not found under {prefix}")
+
+
+def install_renovate_config_validator(versions: dict[str, str]) -> None:
+    version = versions["renovate_version"]
+    dest = INSTALL_DIR / "renovate-config-validator"
+    installed = renovate_installed_version(NPM_PREFIX)
+    if installed == version and dest.is_file():
+        print(f"renovate {version} already installed (renovate-config-validator at {dest})")
+        return
+
+    node_bin, npm_bin = _portable_node_bins(versions)
+
+    print(f"installing renovate {version} under {NPM_PREFIX}…")
+    env = os.environ.copy()
+    env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
+    subprocess.run(
+        [
+            str(npm_bin),
+            "install",
+            "--prefix",
+            str(NPM_PREFIX),
+            "--no-save",
+            "--no-audit",
+            "--no-fund",
+            f"renovate@{version}",
+        ],
+        check=True,
+        env=env,
+    )
+
+    validator_src = _renovate_validator_script(NPM_PREFIX)
+    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+exec "{node_bin}" "{validator_src}" "$@"
+""",
+        encoding="utf-8",
+    )
+    os.chmod(dest, 0o755)
+    print(f"installed renovate-config-validator {version} -> {dest}")
+
+
 def main() -> None:
     if sys.platform != "linux":
         raise SystemExit("install-deps supports linux only")
@@ -396,6 +499,7 @@ def main() -> None:
     install_kustomize(versions, arch, INSTALL_DIR)
     install_kubeconform(versions, arch, INSTALL_DIR)
     install_helm(versions, arch, INSTALL_DIR)
+    install_renovate_config_validator(versions)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
 
 
