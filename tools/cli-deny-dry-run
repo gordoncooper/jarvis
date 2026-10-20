@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Non-destructive dry-run: evaluate .cursor/cli.json against sample commands (p0a-10).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/tools:${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _cli_permissions import (
+    DRY_RUN_MUST_ALLOW,
+    DRY_RUN_MUST_BLOCK,
+    DRY_RUN_MUST_BLOCK_READS,
+    command_allowed,
+    load_cli_permissions,
+    read_allowed,
+    run_dry_run,
+)
+
+path = Path(".cursor/cli.json")
+perms = load_cli_permissions(path)
+allow, deny = perms["allow"], perms["deny"]
+
+print(f"cli permissions dry-run ({path})")
+print(
+    "matching: Shell(commandBase) or Shell(command:args); "
+    "Read(pathOrGlob); globs * ? **; deny beats allow"
+)
+print()
+
+for label, cmds in (("must BLOCK (shell)", DRY_RUN_MUST_BLOCK),):
+    print(label)
+    for cmd in cmds:
+        allowed = command_allowed(allow, deny, cmd)
+        status = "ALLOW" if allowed else "BLOCK"
+        print(f"  [{status}] {cmd}")
+    print()
+
+print("must BLOCK (read)")
+for read_path in DRY_RUN_MUST_BLOCK_READS:
+    allowed = read_allowed(allow, deny, read_path)
+    status = "ALLOW" if allowed else "BLOCK"
+    print(f"  [{status}] Read({read_path})")
+print()
+
+print("must ALLOW (shell)")
+for cmd in DRY_RUN_MUST_ALLOW:
+    allowed = command_allowed(allow, deny, cmd)
+    status = "ALLOW" if allowed else "BLOCK"
+    print(f"  [{status}] {cmd}")
+print()
+
+failures, _ = run_dry_run(path)
+if failures:
+    for line in failures:
+        print(line, flush=True)
+    raise SystemExit(1)
+print("dry-run OK")
+PY
