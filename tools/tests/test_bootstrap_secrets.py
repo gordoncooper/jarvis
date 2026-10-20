@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
-import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = REPO_ROOT / "tools" / "bootstrap-secrets"
+TOOLS = REPO_ROOT / "tools"
 
 
 def _load_module():
@@ -26,6 +28,21 @@ def _load_module():
     sys.modules[spec.name] = mod
     loader.exec_module(mod)
     return mod
+
+
+def _load_sops():
+    if str(TOOLS) not in sys.path:
+        sys.path.insert(0, str(TOOLS))
+    import _sops
+
+    return _sops
+
+
+def _require_tool(name: str) -> str:
+    path = shutil.which(name)
+    if not path:
+        pytest.fail(f"{name} not found on PATH (required for this test)")
+    return path
 
 
 def _write_test_sops_yaml(root: Path, public_key: str) -> None:
@@ -43,27 +60,25 @@ def _write_test_sops_yaml(root: Path, public_key: str) -> None:
     )
 
 
-def _generate_throwaway_age_keypair() -> tuple[str, Path]:
-    with tempfile.TemporaryDirectory() as tmp:
-        keyfile = Path(tmp) / "key.txt"
-        subprocess.check_call(["age-keygen", "-o", str(keyfile)])
-        private = keyfile.read_text(encoding="utf-8")
-        pub_line = next(line for line in private.splitlines() if line.startswith("# public key:"))
-        public = pub_line.split(":", 1)[1].strip()
-        persist = Path(tempfile.mkstemp(suffix="-age-key.txt")[1])
-        persist.write_text(private, encoding="utf-8")
-        return public, persist
+def _generate_throwaway_age_keypair(tmp_path: Path) -> tuple[str, Path]:
+    age_keygen = _require_tool("age-keygen")
+    keyfile = tmp_path / "age-key.txt"
+    subprocess.check_call([age_keygen, "-o", str(keyfile)])
+    private = keyfile.read_text(encoding="utf-8")
+    pub_line = next(line for line in private.splitlines() if line.startswith("# public key:"))
+    public = pub_line.split(":", 1)[1].strip()
+    return public, keyfile
 
 
 def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
     mod = _load_module()
-    public, _keyfile = _generate_throwaway_age_keypair()
+    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
     _write_test_sops_yaml(tmp_path, public)
 
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
 
-    sops_bin = subprocess.check_output(["which", "sops"], text=True).strip()
+    sops_bin = _require_tool("sops")
 
     mod.bootstrap("env-01", sops_bin=sops_bin)
     secrets_dir = tmp_path / "envs" / "env-01" / "secrets"
@@ -83,16 +98,44 @@ def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
 
 def test_secret_manifest_shape(tmp_path, monkeypatch):
     mod = _load_module()
-    public, keyfile = _generate_throwaway_age_keypair()
+    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
     _write_test_sops_yaml(tmp_path, public)
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    sops_bin = subprocess.check_output(["which", "sops"], text=True).strip()
+    sops_bin = _require_tool("sops")
     mod.bootstrap("env-01", sops_bin=sops_bin)
 
     restic_path = tmp_path / "envs/env-01/secrets/backups-restic.sops.yaml"
     env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-    decrypted = subprocess.check_output(["sops", "-d", str(restic_path)], env=env, text=True)
+    decrypted = subprocess.check_output([sops_bin, "-d", str(restic_path)], env=env, text=True)
     restic = yaml.safe_load(decrypted)
     assert restic["metadata"]["namespace"] == "platform-backups"
     assert "restic_password" in restic["stringData"]
+
+
+def test_sops_failure_leaves_no_target_file(tmp_path):
+    sops_mod = _load_sops()
+    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
+    _write_test_sops_yaml(tmp_path, public)
+
+    fail_sops = tmp_path / "fail-sops"
+    fail_sops.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fail_sops.chmod(0o755)
+
+    target = tmp_path / "envs/env-01/secrets/backups-restic.sops.yaml"
+    doc = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": "backups-restic", "namespace": "platform-backups"},
+        "type": "Opaque",
+        "stringData": {"restic_password": "test"},
+    }
+
+    with pytest.raises(subprocess.CalledProcessError):
+        sops_mod.encrypt_secret_to_file(
+            repo_root=tmp_path,
+            destination=target,
+            document=doc,
+            sops_bin=str(fail_sops),
+        )
+    assert not target.exists()

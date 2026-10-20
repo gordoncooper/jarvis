@@ -2,7 +2,18 @@
 
 SOPS-encrypted Kubernetes Secrets for this env. Paths match `.sops.yaml` (`envs/*/secrets/*.sops.yaml`).
 
-Run on the bastion (Gordon's user, after the age public key is in `.sops.yaml`):
+## Bastion prerequisites (Gordon's user)
+
+Install on the bastion before running `make bootstrap-secrets`:
+
+- **sops** — [getsops/sops](https://github.com/getsops/sops) on `PATH`
+- **age** — [FiloSottile/age](https://github.com/FiloSottile/age) (SOPS age backend)
+- **openssl** — system package
+- **python3** and **PyYAML** — e.g. `python3-yaml` (Debian/Ubuntu) or `pip install PyYAML` in a venv
+
+The age **public** key must already be in the repo root `.sops.yaml`. Encryption does not need the private key; Gordon keeps the private key offline (R25).
+
+## Usage
 
 ```bash
 make bootstrap-secrets

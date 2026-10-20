@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import yaml
+
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+
+import _sops  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV = "env-01"
@@ -18,29 +21,6 @@ DEFAULT_ENV = "env-01"
 
 def _repo_root() -> Path:
     return REPO_ROOT
-
-
-def _resolve_sops() -> str:
-    # Reuse bootstrap-secrets tool discovery when available.
-    bootstrap = _repo_root() / "tools" / "bootstrap-secrets"
-    if bootstrap.is_file():
-        import importlib.machinery
-
-        loader = importlib.machinery.SourceFileLoader("bootstrap_secrets", str(bootstrap))
-        spec = importlib.util.spec_from_loader("bootstrap_secrets", loader)
-        assert spec is not None
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = mod
-        loader.exec_module(mod)
-        return mod._resolve_tools()[0]
-    for candidate in (
-        Path.home() / ".local" / "bin" / "sops",
-        Path("/usr/local/bin/sops"),
-        Path("/usr/bin/sops"),
-    ):
-        if candidate.is_file():
-            return str(candidate)
-    raise SystemExit("sops not found; run make bootstrap-secrets once to install ~/.local/bin/sops")
 
 
 def seal(
@@ -65,17 +45,13 @@ def seal(
     if out.exists() and not force:
         raise SystemExit(f"{out} exists; pass --force to replace")
 
-    sops = sops_bin or _resolve_sops()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=out.parent) as tmp:
-        yaml.safe_dump(doc, tmp, sort_keys=False)
-        tmp_path = Path(tmp.name)
-    try:
-        tmp_path.replace(out)
-        subprocess.check_call([sops, "encrypt", "--in-place", str(out)], cwd=_repo_root())
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
+    sops = sops_bin or _sops.require_sops()
+    _sops.encrypt_secret_to_file(
+        repo_root=_repo_root(),
+        destination=out,
+        document=doc,
+        sops_bin=sops,
+    )
     return out
 
 
