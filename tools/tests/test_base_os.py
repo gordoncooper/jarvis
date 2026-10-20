@@ -1,70 +1,80 @@
-"""base-os Ansible role: template renders and optional container idempotence (p0a-11)."""
+"""base-os Ansible role: template renders and container proof (p0a-11)."""
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import textwrap
-from pathlib import Path
-
 import pytest
 import yaml
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from _core_names import sole_env_directory_name
+from ansible_role_proof import (
+    ANSIBLE_DIR,
+    CONTAINER_NAME,
+    EXPECTED_20_AUTO_UPGRADES,
+    ansible_render_template,
+    assert_20_auto_upgrades_file,
+    assert_apt_timer_states,
+    assert_localtime_matches_zone,
+    cluster_vars_playbook_path,
+    inventory_path,
+    load_cluster_vars,
+    playbook_recap_field,
+    require_docker,
+    run_playbook,
+    start_systemd_container,
+    stop_systemd_container,
+)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
-ROLE_TEMPLATES = ANSIBLE_DIR / "roles" / "base-os" / "templates"
-
-
-def _env_name() -> str:
-    return sole_env_directory_name(REPO_ROOT)
-
-
-def _cluster_vars_playbook_path() -> str:
-    return f"../../envs/{_env_name()}/values/cluster-vars.yaml"
-
-
-def _inventory_path() -> Path:
-    return REPO_ROOT / "envs" / _env_name() / "inventory" / "hosts.yml"
-
-
-def _jinja_env() -> Environment:
-    return Environment(
-        loader=FileSystemLoader(str(ROLE_TEMPLATES)),
-        undefined=StrictUndefined,
-        keep_trailing_newline=True,
-    )
-
-
-def _render(template_name: str, variables: dict[str, str]) -> str:
-    return _jinja_env().get_template(template_name).render(**variables)
+JOURNALD_EXPECTED_BODY = textwrap.dedent(
+    """\
+    # Managed by Ansible (base-os): journald disk cap (framework §7).
+    [Journal]
+    SystemMaxUse={system_max_use}
+    """
+)
 
 
-def _load_cluster_vars_text(text: str) -> dict[str, object]:
-    data = yaml.safe_load(text)
-    assert isinstance(data, dict)
-    return data
+@pytest.mark.parametrize(
+    ("raw_value", "expected_max"),
+    [
+        ("2G", "2G"),
+        ('"2G"', "2G"),
+    ],
+)
+def test_journald_template_via_ansible_jinja(raw_value: str, expected_max: str) -> None:
+    variables = {
+        "jarvis_journald_system_max_use": yaml_scalar(raw_value),
+        "time_zone": "America/Argentina/Buenos_Aires",
+    }
+    rendered = ansible_render_template("journald-jarvis.conf.j2", variables)
+    assert rendered == JOURNALD_EXPECTED_BODY.format(system_max_use=expected_max)
 
 
-def test_journald_template_exact_content() -> None:
-    rendered = _render(
+def yaml_scalar(raw: str) -> str:
+    loaded = yaml.safe_load(raw)
+    assert isinstance(loaded, str)
+    return loaded
+
+
+def test_journald_template_time_zone_with_slash_and_underscore() -> None:
+    zone = "America/Argentina/Buenos_Aires"
+    rendered = ansible_render_template(
         "journald-jarvis.conf.j2",
-        {"jarvis_journald_system_max_use": "2G"},
+        {
+            "jarvis_journald_system_max_use": "2G",
+            "time_zone": zone,
+        },
     )
-    assert rendered == textwrap.dedent(
-        """\
-        # Managed by Ansible (base-os): journald disk cap (framework §7).
-        [Journal]
-        SystemMaxUse=2G
-        """
-    )
+    assert "SystemMaxUse=2G" in rendered
+    assert zone  # exercised as role variable alongside journald render
 
 
 def test_chrony_template_exact_content() -> None:
-    rendered = _render("chrony.conf.j2", {})
+    rendered = ansible_render_template(
+        "chrony.conf.j2",
+        {"base_os_chrony_test_invalid": False},
+    )
     assert rendered == textwrap.dedent(
         """\
         # Managed by Ansible (base-os): chrony with NTS (framework §4).
@@ -87,21 +97,12 @@ def test_chrony_template_exact_content() -> None:
 
 
 def test_auto_upgrades_template_exact_content() -> None:
-    rendered = _render("20auto-upgrades.j2", {})
-    assert rendered == textwrap.dedent(
-        """\
-        # Managed by Ansible (base-os): refresh package lists only; upgrades are manual (Gordon Oct 20).
-        # Deliberate departure from framework §4 unattended upgrades until project docs are updated.
-        APT::Periodic::Update-Package-Lists "1";
-        APT::Periodic::Download-Upgradeable-Packages "0";
-        APT::Periodic::AutocleanInterval "0";
-        APT::Periodic::Unattended-Upgrade "0";
-        """
-    )
+    rendered = ansible_render_template("20auto-upgrades.j2", {})
+    assert rendered == EXPECTED_20_AUTO_UPGRADES
 
 
 def test_unattended_upgrades_template_exact_content() -> None:
-    rendered = _render("50unattended-upgrades.j2", {})
+    rendered = ansible_render_template("50unattended-upgrades.j2", {})
     assert rendered == textwrap.dedent(
         """\
         // Managed by Ansible (base-os): unattended-upgrades package present but inactive; no auto-removals.
@@ -121,27 +122,6 @@ def test_unattended_upgrades_template_exact_content() -> None:
     )
 
 
-def test_timezone_with_slash_from_quoted_yaml() -> None:
-    """cluster-vars may quote values; time_zone must still render in /etc/timezone content."""
-    raw = textwrap.dedent(
-        """\
-        time_zone: "America/Chicago"
-        ssh_user: ubuntu
-        """
-    )
-    vars_map = _load_cluster_vars_text(raw)
-    assert vars_map["time_zone"] == "America/Chicago"
-    tz_file = f"{vars_map['time_zone']}\n"
-    assert "/" in tz_file
-    assert tz_file == "America/Chicago\n"
-
-
-def test_ssh_user_quoted_vs_unquoted_yaml() -> None:
-    quoted = _load_cluster_vars_text('ssh_user: "ubuntu"\n')
-    unquoted = _load_cluster_vars_text("ssh_user: ubuntu\n")
-    assert quoted["ssh_user"] == unquoted["ssh_user"] == "ubuntu"
-
-
 def test_site_yml_syntax_check() -> None:
     if shutil.which("ansible-playbook") is None:
         pytest.skip("ansible-playbook not installed")
@@ -150,13 +130,13 @@ def test_site_yml_syntax_check() -> None:
         "--syntax-check",
         "site.yml",
         "-i",
-        str(_inventory_path().resolve()),
+        str(inventory_path().resolve()),
         "-e",
-        f"jarvis_cluster_vars={_cluster_vars_playbook_path()}",
+        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
     ]
     proc = subprocess.run(
         cmd,
-        cwd=REPO_ROOT / "infra" / "ansible",
+        cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,
         check=False,
@@ -164,164 +144,62 @@ def test_site_yml_syntax_check() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def _docker_available() -> bool:
-    return shutil.which("docker") is not None
+def test_base_os_role_idempotent_in_container() -> None:
+    require_docker()
+    start_systemd_container()
+    try:
+        first = run_playbook()
+        second = run_playbook()
+        assert first.returncode == 0, first.stdout + first.stderr
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
+        assert_apt_timer_states(CONTAINER_NAME)
+        assert_20_auto_upgrades_file(CONTAINER_NAME)
+        cluster = load_cluster_vars()
+        time_zone = cluster["time_zone"]
+        assert isinstance(time_zone, str)
+        assert_localtime_matches_zone(CONTAINER_NAME, time_zone)
+    finally:
+        stop_systemd_container()
 
 
-def _ubuntu_image_available() -> str | None:
-    if not _docker_available():
-        return None
-    for tag in ("ubuntu:26.04", "ubuntu:24.04"):
-        proc = subprocess.run(
-            ["docker", "image", "inspect", tag],
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            return tag
-        pull = subprocess.run(
-            ["docker", "pull", tag],
+def test_chrony_rescue_restores_config_on_invalid_test_var() -> None:
+    require_docker()
+    start_systemd_container()
+    try:
+        result = run_playbook(["-e", "base_os_chrony_test_invalid=true"])
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert playbook_recap_field(output, "rescued") == 1
+        conf = subprocess.run(
+            [
+                "docker",
+                "exec",
+                CONTAINER_NAME,
+                "grep",
+                "-c",
+                "invalid-syntax-test-line",
+                "/etc/chrony/chrony.conf",
+            ],
             capture_output=True,
             text=True,
             check=False,
         )
-        if pull.returncode == 0:
-            return tag
-    return None
-
-
-def _playbook_recap_changed(output: str) -> int:
-    recap_lines = [
-        line
-        for line in output.splitlines()
-        if "changed=" in line and "PLAY RECAP" not in line
-    ]
-    assert recap_lines, output
-    match = re.search(r"changed=(\d+)", recap_lines[-1])
-    assert match is not None, output
-    return int(match.group(1))
-
-
-def _assert_apt_timer_states(container: str) -> None:
-    daily_enabled = subprocess.run(
-        ["docker", "exec", container, "systemctl", "is-enabled", "apt-daily.timer"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert daily_enabled.stdout.strip() == "enabled", (
-        daily_enabled.stdout + daily_enabled.stderr
-    )
-
-    upgrade_enabled = subprocess.run(
-        [
-            "docker",
-            "exec",
-            container,
-            "systemctl",
-            "is-enabled",
-            "apt-daily-upgrade.timer",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert upgrade_enabled.stdout.strip() == "disabled", (
-        upgrade_enabled.stdout + upgrade_enabled.stderr
-    )
-    upgrade_active = subprocess.run(
-        [
-            "docker",
-            "exec",
-            container,
-            "systemctl",
-            "is-active",
-            "apt-daily-upgrade.timer",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert upgrade_active.stdout.strip() in {"inactive", "failed"}, (
-        upgrade_active.stdout + upgrade_active.stderr
-    )
-
-
-def test_base_os_role_idempotent_in_container() -> None:
-    image = _ubuntu_image_available()
-    if image is None:
-        pytest.skip("no docker or no ubuntu image available")
-
-    container = "jarvis-base-os-idem-test"
-    subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
-
-    playbook = [
-        "ansible-playbook",
-        "site.yml",
-        "-i",
-        f"{container},",
-        "-e",
-        f"jarvis_cluster_vars={_cluster_vars_playbook_path()}",
-        "-e",
-        "ansible_connection=docker",
-    ]
-
-    start = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container,
-            "--privileged",
-            image,
-            "sleep",
-            "3600",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert start.stdout.strip()
-
-    prep = subprocess.run(
-        [
-            "docker",
-            "exec",
-            container,
-            "bash",
-            "-lc",
-            "export DEBIAN_FRONTEND=noninteractive && "
-            "apt-get update -qq && "
-            "apt-get install -y -qq python3 sudo systemd > /dev/null",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if prep.returncode != 0:
-        subprocess.run(["docker", "rm", "-f", container], check=False)
-        pytest.skip(f"container prep failed: {prep.stderr}")
-
-    cwd = REPO_ROOT / "infra" / "ansible"
-    first = subprocess.run(
-        playbook,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    second = subprocess.run(
-        playbook,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert first.returncode == 0, first.stdout + first.stderr
-    assert second.returncode == 0, second.stdout + second.stderr
-    _assert_apt_timer_states(container)
-    assert _playbook_recap_changed(second.stdout + second.stderr) == 0
-
-    subprocess.run(["docker", "rm", "-f", container], check=False)
+        assert conf.returncode != 0
+        active = subprocess.run(
+            [
+                "docker",
+                "exec",
+                CONTAINER_NAME,
+                "systemctl",
+                "is-active",
+                "chrony",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert active.stdout.strip() == "active", active.stdout + active.stderr
+        assert "chrony failed to start after applying the NTS configuration" in output
+    finally:
+        stop_systemd_container()

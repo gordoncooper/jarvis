@@ -1,3 +1,6 @@
 ---
 # journald cap (framework §7); cluster-vars supplies time_zone and other env keys.
 jarvis_journald_system_max_use: "2G"
+
+# Test-only: inject invalid chrony line (tools/tests/test_base_os.py rescue proof).
+base_os_chrony_test_invalid: false

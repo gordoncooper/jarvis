@@ -26,7 +26,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python test deps
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install -r requirements-dev.txt
+          ansible-galaxy collection install -r infra/ansible/collections/requirements.yml
 
       - name: Run tools/checks
         run: |

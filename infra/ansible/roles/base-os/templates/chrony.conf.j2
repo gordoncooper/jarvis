@@ -13,3 +13,7 @@ makestep 1.0 3 3
 rtcsync
 
 logdir /var/log/chrony
+{% if base_os_chrony_test_invalid | default(false) | bool -%}
+
+invalid-syntax-test-line
+{% endif -%}

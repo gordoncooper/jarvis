@@ -12,6 +12,7 @@ deps:
 	python3 tools/install-deps
 	@test -d .venv || python3 -m venv .venv
 	.venv/bin/pip install -r requirements-dev.txt
+	.venv/bin/ansible-galaxy collection install -r infra/ansible/collections/requirements.yml
 
 bootstrap-secrets:
 	@if [ -n "$(ENV)" ]; then \
