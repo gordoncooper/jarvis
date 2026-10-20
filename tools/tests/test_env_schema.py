@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from services.hermes.core.schema.core_names import sole_env_directory_name
+from _core_names import sole_env_directory_name
 from services.hermes.core.schema.env import (
     DEFAULT_SSH_USER,
     ValidationError,

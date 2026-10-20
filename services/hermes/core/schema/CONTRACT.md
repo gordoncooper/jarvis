@@ -30,12 +30,12 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `dns_suffix` | yes | Internal zone suffix for the env (env-01: `alpha.lan`). Never hardcoded in core (R3, R28). |
-| `time_zone` | yes | IANA zone for the node time zone, VolSync schedules, and Hermes cron (env-01: `America/Los_Angeles`; D21). |
+| `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). Never hardcoded in core (R3, R28). |
+| `time_zone` | yes | IANA zone for the node time zone, VolSync schedules, and Hermes cron (e.g. `<time_zone>`; D21). |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`; D34). |
 | `code_delivery` | yes | `github` only. `forgejo` is the planned second provider (§9); any other value fails validation. |
 | `build_agent` | yes | `cursor` only. `grok-build` and `opencode-local` are §9 stubs; any other value fails validation. |
-| `backup_path` | yes | Local restic repository directory for VolSync and etcd snapshots (§7; env-01 path set in `p0a-03`). |
+| `backup_path` | yes | Local restic repository directory for VolSync and etcd snapshots (§7; set per `<env>` in `p0a-03`). |
 | `backup_retention_daily` | yes | Restic keep count for daily snapshots (§7). |
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots (§7). |
 | `backup_retention_monthly` | yes | Restic keep count for monthly snapshots (§7). |
@@ -66,12 +66,12 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 Hostnames only. IPs, if needed, belong in encrypted `group_vars/*.sops.yaml` (D2, R25).
 
-### env-01 reference values (documentation)
+### Reference shape (documentation)
 
-env-01 is the one-node baseline (§6, §7): `dns_suffix: alpha.lan`, `time_zone: America/Los_Angeles`, `code_delivery: github`, `build_agent: cursor`, default `ssh_user` unless overridden.
+Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `dns_suffix`, `time_zone`, `code_delivery`, `build_agent`, and optional `ssh_user` (default `ubuntu` when omitted).
 
 ## Proven by
 
 - `tools/checks/env-schema` in the required `ci` workflow (added in `p0a-05`).
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
-- pytest in `p0a-05`: valid env-01 tree, bad `build_agent`, and `ssh_user` defaulting to `ubuntu`.
+- pytest in `p0a-05`: valid env tree, bad `build_agent`, and `ssh_user` defaulting to `ubuntu`.

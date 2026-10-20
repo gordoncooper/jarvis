@@ -1,4 +1,4 @@
-"""Detect env-specific names outside envs/ (R3, R28)."""
+"""Detect env-specific names outside envs/ (R3, R28). CI rule check helper."""
 
 from __future__ import annotations
 
@@ -18,8 +18,6 @@ _EXEMPT_PREFIXES: tuple[tuple[str, str], ...] = (
         "Docs describe contracts and may name the illustrative env; not cluster manifests.",
     ),
 )
-
-_CONTRACT_SUFFIX = "CONTRACT.md"
 
 
 @dataclass(frozen=True)
@@ -75,8 +73,6 @@ def collect_forbidden_names(repo_root: Path | str) -> ForbiddenNames:
 
 
 def exemption_reason(rel_path: str) -> str | None:
-    if rel_path.endswith(_CONTRACT_SUFFIX):
-        return "CONTRACT.md documents reference values for the illustrative env."
     for prefix, reason in _EXEMPT_PREFIXES:
         if rel_path.startswith(prefix):
             return reason

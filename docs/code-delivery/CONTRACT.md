@@ -2,7 +2,7 @@
 
 One contract for six capabilities so core, the code-factory, and app hosting depend on this file—not on a vendor name (R34). Each env selects a provider in `envs/<env>/values/cluster-vars.yaml`; only built providers pass env-schema validation. Manifests do not branch on `code_delivery` until a second provider ships (§5).
 
-**Built provider:** `github` (env-01). **Planned second provider:** Forgejo (§9); no Forgejo implementation in this repo.
+**Built provider:** `github` (per `<env>` in `cluster-vars.yaml`). **Planned second provider:** Forgejo (§9); no Forgejo implementation in this repo.
 
 ## Offers
 

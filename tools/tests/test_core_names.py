@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from services.hermes.core.schema.core_names import scan_core_names
+from _core_names import scan_core_names
 from services.hermes.core.schema.env import validate_env_tree
 from test_env_schema import _write_env
 
