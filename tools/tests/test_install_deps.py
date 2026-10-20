@@ -30,3 +30,29 @@ def test_verify_sha256_mismatch(tmp_path: Path) -> None:
     blob.write_bytes(b"not the real binary")
     with pytest.raises(SystemExit, match="sha256 mismatch"):
         mod.verify_sha256(blob, "0" * 64, "sops")
+
+
+def test_renovate_npm_ci_skip_requires_matching_lock_marker() -> None:
+    mod = _load_module()
+    lock_sha = "a" * 64
+    assert mod.renovate_npm_ci_up_to_date(
+        expected_version="44.171.2",
+        installed_version="44.171.2",
+        lock_sha256=lock_sha,
+        marker_sha256=lock_sha,
+        validator_exists=True,
+    )
+    assert not mod.renovate_npm_ci_up_to_date(
+        expected_version="44.171.2",
+        installed_version="44.171.2",
+        lock_sha256=lock_sha,
+        marker_sha256="b" * 64,
+        validator_exists=True,
+    )
+    assert not mod.renovate_npm_ci_up_to_date(
+        expected_version="44.171.2",
+        installed_version="44.171.2",
+        lock_sha256=lock_sha,
+        marker_sha256=None,
+        validator_exists=True,
+    )

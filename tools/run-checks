@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Run tools/checks with the expected-list guard (CI and make ci-verify).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+export PATH="${HOME}/.local/bin:${PATH}"
+
+expected_checks=(
+  cli-deny
+  contract-md
+  core-names
+  env-schema
+  pvc-backup
+  secret-scan
+)
+shopt -s nullglob
+found_checks=()
+for check in tools/checks/*; do
+  name="$(basename "$check")"
+  if [[ ! -f "$check" ]]; then
+    echo "missing check file: $check" >&2
+    exit 1
+  fi
+  if [[ ! -x "$check" ]]; then
+    echo "check must be executable: $check" >&2
+    exit 1
+  fi
+  found_checks+=("$name")
+done
+missing=()
+for name in "${expected_checks[@]}"; do
+  if [[ " ${found_checks[*]} " != *" ${name} "* ]]; then
+    missing+=("$name")
+  fi
+done
+if ((${#missing[@]} > 0)); then
+  echo "missing expected checks: ${missing[*]}" >&2
+  exit 1
+fi
+extra=()
+for name in "${found_checks[@]}"; do
+  if [[ " ${expected_checks[*]} " != *" ${name} "* ]]; then
+    extra+=("$name")
+  fi
+done
+if ((${#extra[@]} > 0)); then
+  echo "unexpected checks in tools/checks/: ${extra[*]}" >&2
+  exit 1
+fi
+for name in "${expected_checks[@]}"; do
+  check="tools/checks/${name}"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::group::$name"
+  fi
+  "$check"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::endgroup::"
+  fi
+done

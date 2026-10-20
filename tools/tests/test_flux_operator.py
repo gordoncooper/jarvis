@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from conftest import require_cli
 from ansible_role_proof import (
     ANSIBLE_DIR,
     CONTAINER_NAME,
@@ -166,8 +167,7 @@ def test_site_yml_role_order_and_ssh_user() -> None:
 
 
 def test_site_yml_syntax_check_includes_flux_operator() -> None:
-    if shutil.which("ansible-playbook") is None:
-        pytest.skip("ansible-playbook not installed")
+    require_cli("ansible-playbook")
     cmd = [
         "ansible-playbook",
         "--syntax-check",
@@ -422,6 +422,7 @@ def _run_flux_operator_playbook(
     )
 
 
+@pytest.mark.container
 def test_sops_age_second_run_accepts_existing_secret(tmp_path: Path) -> None:
     require_docker()
     keyfile, key_content = _generate_throwaway_age_key(tmp_path)
@@ -453,6 +454,7 @@ def test_sops_age_second_run_accepts_existing_secret(tmp_path: Path) -> None:
         stop_systemd_container()
 
 
+@pytest.mark.container
 def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
     require_docker()
     keyfile, key_content = _generate_throwaway_age_key(tmp_path)
@@ -504,6 +506,7 @@ def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
         stop_systemd_container()
 
 
+@pytest.mark.container
 def test_sops_age_key_file_unset_fails(tmp_path: Path) -> None:
     require_docker()
     start_systemd_container()
@@ -518,6 +521,7 @@ def test_sops_age_key_file_unset_fails(tmp_path: Path) -> None:
         stop_systemd_container()
 
 
+@pytest.mark.container
 def test_sops_age_key_file_missing_fails(tmp_path: Path) -> None:
     require_docker()
     missing = tmp_path / "missing-age.key"
