@@ -90,9 +90,9 @@ def test_auto_upgrades_template_exact_content() -> None:
     rendered = _render("20auto-upgrades.j2", {})
     assert rendered == textwrap.dedent(
         """\
-        # Managed by Ansible (base-os): no automatic apt activity; Gordon updates by hand (Gordon Oct 20).
-        # Deliberately overrides framework §4 unattended upgrades until project docs are updated.
-        APT::Periodic::Update-Package-Lists "0";
+        # Managed by Ansible (base-os): refresh package lists only; upgrades are manual (Gordon Oct 20).
+        # Deliberate departure from framework §4 unattended upgrades until project docs are updated.
+        APT::Periodic::Update-Package-Lists "1";
         APT::Periodic::Download-Upgradeable-Packages "0";
         APT::Periodic::AutocleanInterval "0";
         APT::Periodic::Unattended-Upgrade "0";
@@ -105,7 +105,7 @@ def test_unattended_upgrades_template_exact_content() -> None:
     assert rendered == textwrap.dedent(
         """\
         // Managed by Ansible (base-os): unattended-upgrades package present but inactive; no auto-removals.
-        // Periodic apt and apt-daily*.timer are disabled in role tasks; Gordon runs updates by hand.
+        // apt-daily-upgrade.timer is disabled in role tasks; Gordon runs installs/upgrades by hand.
         Unattended-Upgrade::Allowed-Origins {
         };
 
@@ -202,24 +202,49 @@ def _playbook_recap_changed(output: str) -> int:
     return int(match.group(1))
 
 
-def _assert_apt_timers_disabled(container: str) -> None:
-    for timer in ("apt-daily.timer", "apt-daily-upgrade.timer"):
-        enabled = subprocess.run(
-            ["docker", "exec", container, "systemctl", "is-enabled", timer],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert enabled.stdout.strip() == "disabled", enabled.stdout + enabled.stderr
-        active = subprocess.run(
-            ["docker", "exec", container, "systemctl", "is-active", timer],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert active.stdout.strip() in {"inactive", "failed"}, (
-            f"{timer}: {active.stdout}{active.stderr}"
-        )
+def _assert_apt_timer_states(container: str) -> None:
+    daily_enabled = subprocess.run(
+        ["docker", "exec", container, "systemctl", "is-enabled", "apt-daily.timer"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert daily_enabled.stdout.strip() == "enabled", (
+        daily_enabled.stdout + daily_enabled.stderr
+    )
+
+    upgrade_enabled = subprocess.run(
+        [
+            "docker",
+            "exec",
+            container,
+            "systemctl",
+            "is-enabled",
+            "apt-daily-upgrade.timer",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert upgrade_enabled.stdout.strip() == "disabled", (
+        upgrade_enabled.stdout + upgrade_enabled.stderr
+    )
+    upgrade_active = subprocess.run(
+        [
+            "docker",
+            "exec",
+            container,
+            "systemctl",
+            "is-active",
+            "apt-daily-upgrade.timer",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert upgrade_active.stdout.strip() in {"inactive", "failed"}, (
+        upgrade_active.stdout + upgrade_active.stderr
+    )
 
 
 def test_base_os_role_idempotent_in_container() -> None:
@@ -296,7 +321,7 @@ def test_base_os_role_idempotent_in_container() -> None:
 
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
-    _assert_apt_timers_disabled(container)
+    _assert_apt_timer_states(container)
     assert _playbook_recap_changed(second.stdout + second.stderr) == 0
 
     subprocess.run(["docker", "rm", "-f", container], check=False)

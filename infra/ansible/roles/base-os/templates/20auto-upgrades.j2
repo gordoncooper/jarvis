@@ -1,6 +1,6 @@
-# Managed by Ansible (base-os): no automatic apt activity; Gordon updates by hand (Gordon Oct 20).
-# Deliberately overrides framework §4 unattended upgrades until project docs are updated.
-APT::Periodic::Update-Package-Lists "0";
+# Managed by Ansible (base-os): refresh package lists only; upgrades are manual (Gordon Oct 20).
+# Deliberate departure from framework §4 unattended upgrades until project docs are updated.
+APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Download-Upgradeable-Packages "0";
 APT::Periodic::AutocleanInterval "0";
 APT::Periodic::Unattended-Upgrade "0";

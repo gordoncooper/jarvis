@@ -48,7 +48,7 @@
     state: started
     enabled: true
 
-- name: Disable all periodic apt activity
+- name: Configure periodic apt (list refresh only)
   ansible.builtin.template:
     src: 20auto-upgrades.j2
     dest: /etc/apt/apt.conf.d/20auto-upgrades
@@ -64,14 +64,17 @@
     group: root
     mode: "0644"
 
-- name: Disable and stop apt daily timers
+- name: Keep apt-daily timer enabled for package list refresh
   ansible.builtin.systemd:
-    name: "{{ item }}"
+    name: apt-daily.timer
+    enabled: true
+    state: started
+
+- name: Disable automatic package upgrades timer
+  ansible.builtin.systemd:
+    name: apt-daily-upgrade.timer
     enabled: false
     state: stopped
-  loop:
-    - apt-daily.timer
-    - apt-daily-upgrade.timer
 
 - name: Read current timezone file
   ansible.builtin.slurp:
