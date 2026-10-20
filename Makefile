@@ -3,11 +3,15 @@
 
 ENV ?= env-01
 
-.PHONY: help bootstrap-secrets seal
+.PHONY: help deps bootstrap-secrets seal
 help:
 	@echo "JARVIS Makefile — targets are added with tools/ in later P0a tasks."
+	@echo "  make deps               Install pinned sops and age into ~/.local/bin"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=$(ENV))"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=..."
+
+deps:
+	python3 tools/install-deps
 
 bootstrap-secrets:
 	python3 tools/bootstrap-secrets --env $(ENV)
