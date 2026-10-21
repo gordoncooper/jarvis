@@ -29,6 +29,9 @@
         name: [parted, e2fsprogs]
         state: present
       when: not (node_disk_ours | bool)
+    - ansible.builtin.command:
+        argv: [wipefs, -a, "{{ node_disk_path }}"]
+      when: not (node_disk_ours | bool)
     - community.general.parted:
         device: "{{ node_disk_path }}"
         label: gpt
