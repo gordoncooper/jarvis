@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>renovate/policy"],
+  "extends": ["local>gordoncooper/jarvis//renovate/policy"],
   "packageRules": [
     {
       "description": "D5: k3s host binary is pinned in cluster-vars.yaml; changes only by PR.",
