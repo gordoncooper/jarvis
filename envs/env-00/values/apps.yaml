@@ -1,0 +1,4 @@
+app_hosting_enabled: true
+apps:
+  - name: demo-example
+    size: small

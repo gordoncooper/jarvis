@@ -1,0 +1,31 @@
+# Example env: every cluster-vars schema key (D43). Not copied from env-01.
+jarvis_env: env-00
+dns_suffix: env-00.example
+time_zone: America/Los_Angeles
+code_delivery: github
+build_agent: cursor
+ssh_user: example-ssh
+
+backup_path: /var/lib/jarvis-example/backup
+backup_retention_daily: 7
+backup_retention_weekly: 4
+backup_retention_monthly: 3
+
+k3s_version: v1.36.5+k3s1
+k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
+pod_cidr: 10.42.0.0/16
+service_cidr: 10.43.0.0/16
+local_path_data: /var/lib/jarvis-example/local-path
+
+k3s_kubelet_kube_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi
+k3s_kubelet_system_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi
+k3s_kubelet_eviction_hard: memory.available<500Mi,nodefs.available<10%
+
+ntp_pools:
+  - ntp.example-00.test
+
+flux_git_repo_url: https://github.com/example-owner/jarvis-example
+apps_git_repo_url: https://github.com/example-owner/jarvis-apps-example
+flux_git_ref: refs/heads/main
+
+llm_provider_host: api.example-llm.test

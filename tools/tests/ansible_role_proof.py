@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _core_names import sole_env_directory_name
 from conftest import ci_mode
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
@@ -56,7 +56,14 @@ def require_docker() -> None:
 
 
 def env_name(repo_root: Path = REPO_ROOT) -> str:
-    return sole_env_directory_name(repo_root)
+    names = sorted(
+        p.name
+        for p in (repo_root / "envs").iterdir()
+        if p.is_dir() and p.name != "env-00"
+    )
+    if len(names) != 1:
+        pytest.fail("expected exactly one deployable env besides env-00")
+    return names[0]
 
 
 def cluster_vars_playbook_path(repo_root: Path = REPO_ROOT) -> str:

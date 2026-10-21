@@ -17,6 +17,8 @@ _TIER_VALUES = frozenset({"frontier", "mid", "cheap"})
 _CODE_DELIVERY_ALLOWED = ("github",)
 _BUILD_AGENT_ALLOWED = ("cursor",)
 
+_ENV_REFERENCE_NAME = "env-00"
+
 _CLUSTER_VARS_REQUIRED = frozenset(
     {
         "jarvis_env",
@@ -34,13 +36,18 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "service_cidr",
         "local_path_data",
         "flux_git_repo_url",
+        "apps_git_repo_url",
         "flux_git_ref",
+        "llm_provider_host",
         "ntp_pools",
         "k3s_kubelet_kube_reserved",
         "k3s_kubelet_system_reserved",
         "k3s_kubelet_eviction_hard",
     }
 )
+
+_CLUSTER_VARS_OPTIONAL = frozenset({"ssh_user"})
+_CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 
 _NTP_POOL = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 
@@ -51,6 +58,11 @@ _HERMES_TOP_LEVEL = frozenset(
 )
 
 _APPS_TOP_LEVEL = frozenset({"app_hosting_enabled", "apps"})
+
+
+def known_cluster_vars_keys() -> frozenset[str]:
+    """Allowed top-level keys in values/cluster-vars.yaml (required + optional)."""
+    return _CLUSTER_VARS_KNOWN
 
 
 class ValidationError(Exception):
@@ -83,11 +95,19 @@ def validate_env_tree(repo_root: Path | str) -> dict[str, dict[str, Any]]:
         errors.append(f"no env directories under {_display_path(envs_dir, root)}")
         raise ValidationError(errors)
 
+    env_00_cluster_vars: dict[str, Any] | None = None
+
     for env_dir in env_dirs:
-        env_errors, env_resolved = _validate_env(env_dir, root)
+        env_errors, env_resolved, raw_cluster_vars = _validate_env(env_dir, root)
         errors.extend(env_errors)
         if env_resolved is not None:
             resolved_by_env[env_dir.name] = env_resolved
+        if env_dir.name == _ENV_REFERENCE_NAME and raw_cluster_vars is not None:
+            env_00_cluster_vars = raw_cluster_vars
+
+    if not errors:
+        errors.extend(_validate_github_owner_consistency(resolved_by_env))
+        errors.extend(_validate_env_00_cluster_vars(env_00_cluster_vars, root))
 
     if errors:
         raise ValidationError(errors)
@@ -101,7 +121,9 @@ def _display_path(path: Path, repo_root: Path) -> str:
         return str(path)
 
 
-def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, Any] | None]:
+def _validate_env(
+    env_dir: Path, repo_root: Path
+) -> tuple[list[str], dict[str, Any] | None, dict[str, Any] | None]:
     errors: list[str] = []
     env_name = env_dir.name
     values = env_dir / "values"
@@ -118,14 +140,16 @@ def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, 
             )
 
     if errors:
-        return errors, None
+        return errors, None, None
 
     cluster_vars = _load_yaml(cluster_vars_path, errors, repo_root)
     hermes = _load_yaml(hermes_path, errors, repo_root)
     apps = _load_yaml(apps_path, errors, repo_root)
     hosts = _load_yaml(inventory, errors, repo_root)
     if errors or cluster_vars is None or hermes is None or apps is None or hosts is None:
-        return errors, None
+        return errors, None, None
+
+    raw_cluster_vars = dict(cluster_vars)
 
     errors.extend(
         _validate_cluster_vars(
@@ -139,8 +163,8 @@ def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, 
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
 
     if errors:
-        return errors, None
-    return [], resolve_cluster_vars(cluster_vars)
+        return errors, None, None
+    return [], resolve_cluster_vars(cluster_vars), raw_cluster_vars
 
 
 def _load_yaml(
@@ -172,6 +196,10 @@ def _validate_cluster_vars(
     for key in data:
         if not _SNAKE_CASE.match(key):
             errors.append(f"{rel_path}: key must be lowercase snake_case: {key}")
+
+    unknown = sorted(set(data) - _CLUSTER_VARS_KNOWN)
+    for key in unknown:
+        errors.append(f"{rel_path}: unknown key '{key}'")
 
     missing = sorted(_CLUSTER_VARS_REQUIRED - set(data))
     for key in missing:
@@ -208,6 +236,10 @@ def _validate_cluster_vars(
             errors.append(f"{rel_path}: {key} must not be empty")
 
     errors.extend(_validate_https_url(rel_path, "flux_git_repo_url", data.get("flux_git_repo_url")))
+    errors.extend(_validate_https_url(rel_path, "apps_git_repo_url", data.get("apps_git_repo_url")))
+    errors.extend(
+        _validate_hostname(rel_path, "llm_provider_host", data.get("llm_provider_host"))
+    )
 
     jarvis_env = data.get("jarvis_env")
     if isinstance(jarvis_env, str) and jarvis_env and jarvis_env != env_name:
@@ -264,6 +296,87 @@ def _validate_ntp_pools(rel_path: str, value: Any) -> list[str]:
             continue
         if not _NTP_POOL.match(pool.strip()):
             errors.append(f"{rel_path}: ntp_pools[{idx}] must be a hostname or pool name")
+    return errors
+
+
+def _github_owner_from_https_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return None
+    path = (parsed.path or "").strip("/")
+    if not path:
+        return None
+    return path.split("/", 1)[0]
+
+
+def _validate_hostname(rel_path: str, key: str, value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, str):
+        return [f"{rel_path}: {key} must be a string"]
+    host = value.strip()
+    if not host:
+        return [f"{rel_path}: {key} must not be empty"]
+    if "://" in host or "/" in host:
+        return [f"{rel_path}: {key} must be a hostname without a scheme or path"]
+    if not _NTP_POOL.match(host):
+        return [f"{rel_path}: {key} must be a hostname"]
+    return []
+
+
+def _validate_github_owner_consistency(
+    resolved_by_env: dict[str, dict[str, Any]],
+) -> list[str]:
+    errors: list[str] = []
+    owners_across_envs: set[str] = set()
+
+    for env_name, cluster_vars in resolved_by_env.items():
+        if env_name == _ENV_REFERENCE_NAME:
+            continue
+        flux_url = cluster_vars.get("flux_git_repo_url")
+        apps_url = cluster_vars.get("apps_git_repo_url")
+        flux_owner = (
+            _github_owner_from_https_url(flux_url) if isinstance(flux_url, str) else None
+        )
+        apps_owner = (
+            _github_owner_from_https_url(apps_url) if isinstance(apps_url, str) else None
+        )
+        if flux_owner and apps_owner and flux_owner != apps_owner:
+            errors.append(
+                f"envs/{env_name}/values/cluster-vars.yaml: "
+                f"flux_git_repo_url and apps_git_repo_url must use the same GitHub owner "
+                f"({flux_owner!r} vs {apps_owner!r})"
+            )
+        if flux_owner:
+            owners_across_envs.add(flux_owner)
+        if apps_owner:
+            owners_across_envs.add(apps_owner)
+
+    if len(owners_across_envs) > 1:
+        owners_s = ", ".join(sorted(owners_across_envs))
+        errors.append(
+            "cluster-vars: GitHub owner must match across all non-example envs "
+            f"(found: {owners_s})"
+        )
+    return errors
+
+
+def _validate_env_00_cluster_vars(
+    cluster_vars: dict[str, Any] | None, repo_root: Path
+) -> list[str]:
+    env_dir = repo_root / "envs" / _ENV_REFERENCE_NAME
+    if not env_dir.is_dir():
+        return []
+    if cluster_vars is None:
+        return [
+            f"missing env reference {_ENV_REFERENCE_NAME} under "
+            f"{_display_path(repo_root / 'envs', repo_root)}"
+        ]
+    missing = sorted(_CLUSTER_VARS_KNOWN - set(cluster_vars))
+    errors: list[str] = []
+    rel = f"envs/{_ENV_REFERENCE_NAME}/values/cluster-vars.yaml"
+    for key in missing:
+        errors.append(f"{rel}: env-00 must set every known cluster-vars key; missing: {key}")
     return errors
 
 

@@ -1,0 +1,29 @@
+bots:
+  - concierge
+  - homelab
+
+cron:
+  morning_brief:
+    enabled: true
+    schedule: "0 7 * * *"
+
+bot_tier_map:
+  concierge: mid
+  homelab: mid
+  foreman: cheap
+
+tier_model_map:
+  frontier: example-frontier-model
+  mid: example-mid-model
+  cheap: example-cheap-model
+
+lane_model_map:
+  builder:
+    model: example-builder-model
+    family: composer
+  checker:
+    model: example-checker-model
+    family: grok
+  code-factory:hard:
+    model: example-hard-model
+    family: anthropic
