@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from _core_names import OwnerNameUnset, format_violations, scan_core_names
+from services.hermes.core.schema.env import EXAMPLE_ENV, repo_owner_handle
 from test_env_schema import _valid_cluster_vars, _write_env
 
 _FIXTURE_OWNER_NAME = "Zzownername"
@@ -228,14 +229,14 @@ def test_env_name_under_platform_fails(tmp_path: Path) -> None:
 
 def test_example_env_values_are_not_sources(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
-    _write_env(tmp_path, env_name="env-00")
+    _write_env(tmp_path, env_name=EXAMPLE_ENV)
     live = _valid_cluster_vars()
     live["dns_suffix"] = "live.example"
     live["flux_git_repo_url"] = "https://github.com/live-owner/live-cluster"
     live["apps_git_repo_url"] = "https://github.com/live-owner/live-apps"
     live["ssh_user"] = "liveuser"
     _write_env(tmp_path, env_name="env-live", cluster_vars=live)
-    (tmp_path / "envs/env-00/inventory/hosts.yml").write_text(
+    (tmp_path / "envs" / EXAMPLE_ENV / "inventory" / "hosts.yml").write_text(
         "all:\n  hosts:\n    example-host:\n",
         encoding="utf-8",
     )
@@ -245,7 +246,7 @@ def test_example_env_values_are_not_sources(tmp_path: Path) -> None:
     )
     platform = tmp_path / "platform"
     platform.mkdir()
-    example_dns = _cluster(tmp_path, "env-00")["dns_suffix"]
+    example_dns = _cluster(tmp_path, EXAMPLE_ENV)["dns_suffix"]
     (platform / "ok.txt").write_text(
         f"example-host uses {example_dns}\n",
         encoding="utf-8",
@@ -288,7 +289,10 @@ def _dns_suffix(root: Path) -> str:
 
 def _owner(root: Path) -> str:
     url = _cluster(root)["flux_git_repo_url"]
-    return url.split("github.com/", 1)[1].split("/", 1)[0]
+    assert isinstance(url, str)
+    owner = repo_owner_handle(url)
+    assert isinstance(owner, str)
+    return owner
 
 
 def _cluster(root: Path, env_name: str = "env-test") -> dict:
