@@ -1,0 +1,5 @@
+---
+- name: Pick the k3s unit this host runs
+  ansible.builtin.set_fact:
+    node_disk_k3s_service: "{{ 'k3s' if 'control_plane' in group_names else 'k3s-agent' }}"
+  changed_when: false

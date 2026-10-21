@@ -5,10 +5,6 @@
       - jarvis_env is defined
       - jarvis_env | length > 0
     fail_msg: jarvis_env must be set in cluster-vars (env schema).
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Probe whether k3s service is active
   ansible.builtin.command:
@@ -16,28 +12,16 @@
   register: k3s_guard_active
   changed_when: false
   failed_when: false
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Stat k3s binary
   ansible.builtin.stat:
     path: "{{ k3s_binary_path }}"
   register: k3s_guard_binary
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Stat k3s data directory
   ansible.builtin.stat:
     path: "{{ k3s_data_dir }}"
   register: k3s_guard_data
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Determine whether k3s is present on the host
   ansible.builtin.set_fact:
@@ -45,29 +29,17 @@
       {{ (k3s_guard_active.stdout == 'active')
          or k3s_guard_binary.stat.exists
          or k3s_guard_data.stat.exists }}
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Stat jarvis env marker
   ansible.builtin.stat:
     path: "{{ jarvis_marker_path }}"
   register: k3s_guard_marker_stat
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Read jarvis env marker
   ansible.builtin.slurp:
     src: "{{ jarvis_marker_path }}"
   register: k3s_guard_marker
   when: k3s_guard_marker_stat.stat.exists
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Refuse host with foreign or unmarked k3s
   ansible.builtin.assert:
@@ -79,10 +51,6 @@
     fail_msg: >-
       k3s is already present on this host but {{ jarvis_marker_path }} is missing or does not
       contain '{{ jarvis_env }}'. Wipe the node or fix the marker before re-running this env.
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Ensure jarvis marker directory exists
   ansible.builtin.file:
@@ -91,10 +59,6 @@
     owner: root
     group: root
     mode: "0755"
-  tags:
-    - always
-    - k3s
-    - k3s-guard
 
 - name: Write jarvis env marker
   ansible.builtin.copy:
@@ -103,7 +67,3 @@
     owner: root
     group: root
     mode: "0644"
-  tags:
-    - always
-    - k3s
-    - k3s-guard

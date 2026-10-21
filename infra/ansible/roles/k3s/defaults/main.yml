@@ -1,8 +1,7 @@
 ---
 # Populated from env cluster-vars (see schema/CONTRACT.md).
-k3s_binary_path: /usr/local/bin/k3s
+# k3s_binary_path is playbook group_vars (shared with flux-operator).
 k3s_config_path: /etc/rancher/k3s/config.yaml
-k3s_service_name: k3s
 k3s_remote_kubeconfig: /etc/rancher/k3s/k3s.yaml
 k3s_data_dir: /var/lib/rancher/k3s
 jarvis_marker_path: /etc/jarvis/env

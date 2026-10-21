@@ -8,17 +8,11 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Record flux-system sops-age secret presence
   ansible.builtin.set_fact:
     flux_sops_age_present: >-
       {{ flux_sops_age_lookup.rc == 0 and (flux_sops_age_lookup.stdout | trim | length) > 0 }}
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Require SOPS_AGE_KEY_FILE on the controller
   ansible.builtin.assert:
@@ -30,9 +24,6 @@
   vars:
     sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
   no_log: true
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Require age private key file on the controller
   ansible.builtin.assert:
@@ -44,9 +35,6 @@
   vars:
     sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
   no_log: true
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Load age private key from the controller
   ansible.builtin.set_fact:
@@ -54,9 +42,6 @@
   vars:
     sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
   no_log: true
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Read existing sops-age secret data when present
   ansible.builtin.command:
@@ -68,9 +53,6 @@
   when: flux_sops_age_present | bool
   check_mode: false
   no_log: true
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Decode existing sops-age secret key when present
   ansible.builtin.set_fact:
@@ -78,9 +60,6 @@
       {{ (flux_sops_age_existing_json.stdout | from_json).data['age.agekey'] | b64decode }}
   when: flux_sops_age_present | bool
   no_log: true
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Refuse to overwrite an existing sops-age secret with different content
   ansible.builtin.assert:
@@ -95,9 +74,6 @@
       or fix SOPS_AGE_KEY_FILE before re-running site.yml.
   when: flux_sops_age_present | bool
   no_log: true
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Create flux-system sops-age secret once
   ansible.builtin.command:
@@ -105,6 +81,3 @@
     stdin: "{{ lookup('template', 'sops-age-secret.yaml.j2') }}"
   when: not (flux_sops_age_present | bool)
   no_log: true
-  tags:
-    - flux-operator
-    - flux-cluster

@@ -21,7 +21,7 @@
       "enabled": false
     },
     {
-      "description": "Group Flux Operator chart pin (Git OCIRepository + Ansible bootstrap).",
+      "description": "Group Flux Operator chart pin (platform/flux-operator/oci-repository.yaml).",
       "groupName": "flux-operator-chart",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"]
@@ -43,7 +43,6 @@
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version: (?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nflux_operator_chart_version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
     }

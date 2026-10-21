@@ -20,6 +20,7 @@ from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_TEMPLATES,
     ansible_render_template,
     cluster_vars_playbook_path,
+    control_plane_inventory,
     docker_exec,
     flux_operator_check_playbook_cmd,
     playbook_recap_field,
@@ -56,7 +57,12 @@ def _role_names(play: dict[str, object]) -> list[str]:
     for task in play.get("tasks") or []:
         if not isinstance(task, dict):
             continue
-        included = task.get("ansible.builtin.include_role") or task.get("include_role")
+        included = (
+            task.get("ansible.builtin.include_role")
+            or task.get("include_role")
+            or task.get("ansible.builtin.import_role")
+            or task.get("import_role")
+        )
         if isinstance(included, dict) and isinstance(included.get("name"), str):
             names.append(included["name"])
         elif isinstance(included, str):
@@ -71,7 +77,11 @@ def test_site_yml_role_order_and_ssh_user() -> None:
         "all",
         "all",
         "data_disk",
-        "all",
+        "control_plane",
+        "all:!control_plane",
+        "control_plane",
+        "control_plane",
+        "control_plane",
     ]
     for play in plays:
         assert play.get("become") is True
@@ -80,7 +90,18 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert plays[0].get("tags") == ["always"]
     assert _role_names(plays[1]) == ["base-os"]
     assert _role_names(plays[2]) == ["node-disk"]
-    assert _role_names(plays[3]) == ["k3s", "flux-operator"]
+    assert _role_names(plays[3]) == ["k3s"]
+    assert plays[3]["roles"][0]["vars"]["k3s_mode"] == "server"
+    assert _role_names(plays[4]) == ["k3s"]
+    assert plays[4]["roles"][0]["vars"]["k3s_mode"] == "agent"
+    assert _role_names(plays[5]) == ["k3s"]
+    assert _role_names(plays[6]) == ["kubeconfig"]
+    assert _role_names(plays[7]) == ["flux-operator"]
+    assert plays[3].get("tags") == ["k3s"]
+    assert plays[4].get("tags") == ["k3s"]
+    assert plays[5].get("tags") == ["k3s"]
+    assert plays[6].get("tags") == ["kubeconfig"]
+    assert plays[7].get("tags") == ["flux-operator"]
 
 
 def _task_documents() -> list[dict[str, object]]:
@@ -190,14 +211,14 @@ def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
                 "ansible-playbook",
                 "site.yml",
                 "-i",
-                f"{CONTAINER_NAME},",
+                control_plane_inventory(CONTAINER_NAME),
                 "-e",
                 f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
                 "-e",
                 "ansible_connection=docker",
                 *DOCKER_PLAYBOOK_EXTRA_VARS,
                 "--skip-tags",
-                "chrony-service,k3s,k3s-service,flux-cluster",
+                "chrony-service,k3s,kubeconfig,flux-operator",
             ],
             cwd=ANSIBLE_DIR,
             capture_output=True,

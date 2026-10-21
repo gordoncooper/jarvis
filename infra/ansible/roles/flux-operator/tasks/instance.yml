@@ -8,23 +8,14 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Record FluxInstance presence
   ansible.builtin.set_fact:
     flux_instance_present: >-
       {{ flux_instance_lookup.rc == 0 and (flux_instance_lookup.stdout | trim | length) > 0 }}
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Bootstrap FluxInstance when absent
   when: not (flux_instance_present | bool)
-  tags:
-    - flux-operator
-    - flux-cluster
   block:
     - name: Create staging directory for FluxInstance bootstrap
       ansible.builtin.tempfile:

@@ -243,6 +243,17 @@ def stop_systemd_container(name: str = CONTAINER_NAME) -> None:
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
 
+def control_plane_inventory(container: str) -> str:
+    """One host in control_plane so server, kubeconfig, and flux plays match."""
+    path = Path(tempfile.gettempdir()) / f"{container}-control-plane.yml"
+    path.write_text(
+        "all:\n  children:\n    control_plane:\n      hosts:\n"
+        f"        {container}:\n",
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 def _playbook_cmd(
     container: str,
     *,
@@ -252,7 +263,7 @@ def _playbook_cmd(
         "ansible-playbook",
         "site.yml",
         "-i",
-        f"{container},",
+        control_plane_inventory(container),
         "-e",
         f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
         "-e",
@@ -268,7 +279,7 @@ def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[st
         extra_args=[
             "--check",
             "--skip-tags",
-            "chrony-service,k3s,k3s-service",
+            "chrony-service,k3s,kubeconfig",
         ],
     )
 
@@ -276,7 +287,7 @@ def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[st
 def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
     return _playbook_cmd(
         container,
-        extra_args=["--tags", "k3s-guard"],
+        extra_args=["--tags", "k3s"],
     )
 
 

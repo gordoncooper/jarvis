@@ -14,23 +14,14 @@
     helm_download_url: >-
       https://get.helm.sh/helm-v{{ helm_version }}-linux-{{
       'amd64' if ansible_facts['architecture'] in ['x86_64', 'amd64'] else 'arm64' }}.tar.gz
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Check whether pinned Helm CLI is present
   ansible.builtin.stat:
     path: "{{ helm_binary_path }}"
   register: flux_operator_helm_stat
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Install pinned Helm CLI for operator bootstrap
   when: not flux_operator_helm_stat.stat.exists
-  tags:
-    - flux-operator
-    - flux-cluster
   block:
     - name: Create staging directory for Helm CLI
       ansible.builtin.tempfile:

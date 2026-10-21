@@ -1,0 +1,2 @@
+# Product path, one definition for the k3s and flux-operator plays.
+k3s_binary_path: /usr/local/bin/k3s

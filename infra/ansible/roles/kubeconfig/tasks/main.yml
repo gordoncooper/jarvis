@@ -1,9 +1,5 @@
 ---
 - name: Stage kubeconfig for the site.yml runner
-  tags:
-    - k3s
-    - k3s-service
-    - kubeconfig
   vars:
     k3s_kubeconfig_home: "{{ lookup('env', 'HOME') }}"
     k3s_kubeconfig_dir: "{{ k3s_kubeconfig_home }}/.kube"

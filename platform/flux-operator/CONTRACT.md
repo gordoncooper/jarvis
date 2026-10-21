@@ -15,7 +15,7 @@ Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-ti
 
 ## Config
 
-Chart tag in `oci-repository.yaml` must match `flux_operator_chart_version` in the flux-operator Ansible role (Renovate-managed after p0a-15). Helm values use upstream defaults unless overridden here.
+Chart tag in `oci-repository.yaml` (`spec.ref.tag`) is the one pin. The flux-operator Ansible role reads it (Renovate-managed after p0a-15). Helm values use upstream defaults unless overridden here.
 
 ## Proven by
 

@@ -1,11 +1,10 @@
 ---
-# Fact asserts run before any change. k3s and flux-operator stay on all until the agent play is split.
+# Fact asserts run before any change. Tags for k3s, kubeconfig, and flux-operator are on the plays.
 - name: Assert facts before any change
   hosts: all
   become: true
   gather_facts: false
-  tags:
-    - always
+  tags: [always]
   vars:
     ansible_user: "{{ ssh_user }}"
   vars_files:
@@ -35,13 +34,65 @@
   roles:
     - node-disk
 
-- name: Bootstrap k3s and Flux
-  hosts: all
+- name: Install k3s server
+  hosts: control_plane
   become: true
+  tags: [k3s]
   vars:
     ansible_user: "{{ ssh_user }}"
   vars_files:
     - "{{ jarvis_cluster_vars }}"
   roles:
-    - k3s
+    - role: k3s
+      vars:
+        k3s_mode: server
+
+- name: Join k3s agents
+  hosts: all:!control_plane
+  become: true
+  tags: [k3s]
+  vars:
+    ansible_user: "{{ ssh_user }}"
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  roles:
+    - role: k3s
+      vars:
+        k3s_mode: agent
+
+- name: Reconcile node labels
+  hosts: control_plane
+  become: true
+  gather_facts: false
+  tags: [k3s]
+  vars:
+    ansible_user: "{{ ssh_user }}"
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  tasks:
+    - ansible.builtin.import_role:
+        name: k3s
+        tasks_from: labels.yml
+
+- name: Install kubeconfig
+  hosts: control_plane
+  become: true
+  gather_facts: false
+  tags: [kubeconfig]
+  vars:
+    ansible_user: "{{ ssh_user }}"
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  roles:
+    - kubeconfig
+
+- name: Install Flux Operator
+  hosts: control_plane
+  become: true
+  tags: [flux-operator]
+  vars:
+    ansible_user: "{{ ssh_user }}"
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  roles:
     - flux-operator
