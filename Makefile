@@ -20,7 +20,7 @@ ci-verify: deps
 
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	python3 tools/bootstrap-secrets --env "$(ENV)"
+	@python3 tools/bootstrap-secrets --env "$(ENV)"
 
 seal:
 	@test -n "$(NAME)" || (echo "NAME is required (<component>-<purpose>)" >&2; exit 1)

@@ -17,4 +17,4 @@ lane_model_map:
     family: example
   checker:
     model: example-checker
-    family: example
+    family: example-other

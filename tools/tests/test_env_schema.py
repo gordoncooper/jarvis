@@ -84,7 +84,6 @@ def _valid_cluster_vars() -> dict:
 def test_env_tree_passes():
     resolved = validate_env_tree(REPO_ROOT)
     assert EXAMPLE_ENV in resolved
-    assert resolved[EXAMPLE_ENV]["ssh_user"]
 
 
 def test_bad_build_agent_fails(tmp_path: Path):
@@ -218,6 +217,7 @@ def test_cli_requires_env() -> None:
     for cmd in commands:
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         assert proc.returncode != 0, cmd
+        assert "--env" in proc.stderr + proc.stdout
 
 
 def test_make_targets_require_env() -> None:

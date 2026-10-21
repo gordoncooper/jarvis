@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 from conftest import ci_mode
-from services.hermes.core.schema.env import EXAMPLE_ENV
+from services.hermes.core.schema.env import EXAMPLE_ENV, is_example_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
@@ -55,9 +55,7 @@ def require_docker() -> None:
     _fail_or_skip("docker is required for container proof tests")
 
 
-def env_name(repo_root: Path = REPO_ROOT) -> str:
-    # Role proofs always use the example env. repo_root stays for callers that pass it.
-    _ = repo_root
+def env_name() -> str:
     return EXAMPLE_ENV
 
 
@@ -66,22 +64,22 @@ def non_example_env_names(repo_root: Path = REPO_ROOT) -> list[str]:
     return sorted(
         path.name
         for path in envs.iterdir()
-        if path.is_dir() and path.name != EXAMPLE_ENV
+        if path.is_dir() and not is_example_env(path.name)
     )
 
 
-def cluster_vars_playbook_path(repo_root: Path = REPO_ROOT) -> str:
-    return f"../../envs/{env_name(repo_root)}/values/cluster-vars.yaml"
+def cluster_vars_playbook_path() -> str:
+    return f"../../envs/{env_name()}/values/cluster-vars.yaml"
 
 
 def inventory_path(repo_root: Path = REPO_ROOT) -> Path:
-    return repo_root / "envs" / env_name(repo_root) / "inventory" / "hosts.yml"
+    return repo_root / "envs" / env_name() / "inventory" / "hosts.yml"
 
 
 def load_cluster_vars(
     repo_root: Path = REPO_ROOT, *, env: str | None = None
 ) -> dict[str, object]:
-    name = env_name(repo_root) if env is None else env
+    name = env_name() if env is None else env
     path = repo_root / "envs" / name / "values" / "cluster-vars.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
