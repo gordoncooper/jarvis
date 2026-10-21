@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "automerge": false,
+  "packageRules": [
+    {
+      "description": "Minor/patch: 3-day hold; flip automerge to true here after P2 exit (R33).",
+      "matchUpdateTypes": ["minor", "patch"],
+      "minimumReleaseAge": "3 days",
+      "automerge": false
+    },
+    {
+      "description": "Majors are never auto-merged (R33).",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    }
+  ]
+}
