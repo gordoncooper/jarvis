@@ -22,8 +22,6 @@
   ansible.builtin.set_fact:
     k3s_label_patches: "{{ lookup('ansible.builtin.template', 'label-patches.json.j2') | from_json }}"
   vars:
-    k3s_edge_group: "{{ groups['edge'] | default([]) }}"
-    k3s_control_plane_hosts: "{{ groups['control_plane'] }}"
     k3s_label_hosts: >-
       {{ dict(groups['all'] | zip(groups['all'] | map('extract', hostvars, 'node_roles'))) }}
     k3s_node_resources: >-

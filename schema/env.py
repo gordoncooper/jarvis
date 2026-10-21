@@ -507,6 +507,9 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
         if count != 1:
             errors.append(f"{rel_path}: expected exactly one {role} host, found {count}")
 
+    if "edge" not in declared_roles:
+        errors.append(f"{rel_path}: expected at least one edge host")
+
     if is_example_env(env_name):
         for role in sorted(_NODE_ROLES - declared_roles):
             errors.append(f"{rel_path}: {EXAMPLE_ENV} must declare every known role: {role}")

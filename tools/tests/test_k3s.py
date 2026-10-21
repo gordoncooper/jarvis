@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import textwrap
+from pathlib import Path
 
 import pytest
 import yaml
@@ -126,6 +128,24 @@ def test_agent_play_host_pattern() -> None:
         assert "hosts (0):" in _agent_play_section(env)
 
 
+def _label_inventory(edge_hosts: list[str]) -> str:
+    if edge_hosts:
+        hosts = "\n".join(f"        {name}:" for name in edge_hosts)
+        edge = f"      hosts:\n{hosts}\n"
+    else:
+        edge = "      hosts: {}\n"
+    return (
+        "all:\n"
+        "  children:\n"
+        "    edge:\n"
+        f"{edge}"
+        "    local:\n"
+        "      hosts:\n"
+        "        localhost:\n"
+        "          ansible_connection: local\n"
+    )
+
+
 def test_label_patch_reconciles_roles_and_enablelb() -> None:
     nodes = [
         {
@@ -148,23 +168,27 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
     ]
     hosts = {"cp-1": ["control_plane"], "wk-1": ["workers", "edge"]}
 
-    def render(edge: list[str]) -> list[dict[str, object]]:
-        rendered = ansible_render_template(
-            "label-patches.json.j2",
-            {
-                "dns_suffix": "env-00.example",
-                "k3s_edge_group": edge,
-                "k3s_control_plane_hosts": ["cp-1"],
-                "k3s_label_hosts": hosts,
-                "k3s_node_resources": nodes,
-            },
-            templates_dir=K3S_ROLE_TEMPLATES,
-        )
+    def render(
+        edge_hosts: list[str], node_resources: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            inventory = Path(tmp) / "hosts.yml"
+            inventory.write_text(_label_inventory(edge_hosts), encoding="utf-8")
+            rendered = ansible_render_template(
+                "label-patches.json.j2",
+                {
+                    "dns_suffix": "env-00.example",
+                    "k3s_label_hosts": hosts,
+                    "k3s_node_resources": node_resources,
+                },
+                templates_dir=K3S_ROLE_TEMPLATES,
+                inventory=inventory,
+            )
         loaded = json.loads(rendered)
         assert isinstance(loaded, list)
         return loaded
 
-    edged = {item["name"]: item["labels"] for item in render(["wk-1"])}
+    edged = {item["name"]: item["labels"] for item in render(["wk-1"], nodes)}
     assert edged["cp-1"]["role.env-00.example/workers"] is None
     assert edged["cp-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
     assert "role.env-00.example/control_plane" not in edged["cp-1"]
@@ -188,20 +212,9 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
             }
         },
     ]
-    rendered = ansible_render_template(
-        "label-patches.json.j2",
-        {
-            "dns_suffix": "env-00.example",
-            "k3s_edge_group": [],
-            "k3s_control_plane_hosts": ["cp-1"],
-            "k3s_label_hosts": hosts,
-            "k3s_node_resources": bare,
-        },
-        templates_dir=K3S_ROLE_TEMPLATES,
-    )
-    fallback = {item["name"]: item["labels"] for item in json.loads(rendered)}
-    assert fallback["cp-1"]["svccontroller.k3s.cattle.io/enablelb"] == "true"
-    assert fallback["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
+    no_edge = {item["name"]: item["labels"] for item in render([], bare)}
+    assert "svccontroller.k3s.cattle.io/enablelb" not in no_edge["cp-1"]
+    assert no_edge["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
 
 
 def _install_fake_k3s_service(container: str) -> None:

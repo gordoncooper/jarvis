@@ -81,12 +81,12 @@ Each host is a mapping with `node_roles` and, when that host has a data disk, `d
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. The same host may include both. No role implies another. |
+| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
 | `data_disk` | no | Mapping with `id` and `wipe_confirmed` only. `id` is a whole-disk `/dev/disk/by-id/<id>` path, not a kernel name (`/dev/nvmeXnY`, `/dev/sdX`) and not a `-partN` partition. `wipe_confirmed` is a boolean. `true` does not authorize a wipe. |
 
 ### Node roles and labels
 
-`infra/inventory/roles.yml` is the one constructed inventory. Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is not a role.
+`infra/inventory/roles.yml` is the one constructed inventory. Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`.
 
 Kubernetes labels are `role.<dns_suffix>/<role>=true` for each role on the node. The `role.<dns_suffix>/` prefix is reserved for them. The task that sets and removes them is `p0a-12`. This schema does not apply labels.
 
@@ -124,7 +124,7 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, and `ssh_user` defaulting to `ubuntu`.
 - A drift test fails when the known-key set gains a key the example env does not set.
-- Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
+- Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
 - A drift test fails when the known role set gains a role the example env does not declare.
 - `ansible-inventory --graph` on the example env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles.yml`.
 - `tools/checks/core-names` rejects identity values on the scanned paths and fails when `OWNER_NAME` is unset.
