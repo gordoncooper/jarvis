@@ -30,9 +30,9 @@ def test_non_component_directory_ignored(tmp_path: Path):
 
 
 def test_parent_path_with_only_nested_root_ignored(tmp_path: Path):
-    schema = tmp_path / "services" / "hermes" / "core" / "schema"
-    schema.mkdir(parents=True)
-    (schema / "CONTRACT.md").write_text("# CONTRACT: schema\n", encoding="utf-8")
+    sandbox = tmp_path / "services" / "hermes" / "deploy" / "code-factory" / "sandbox"
+    sandbox.mkdir(parents=True)
+    (sandbox / "CONTRACT.md").write_text("# CONTRACT: sandbox\n", encoding="utf-8")
 
     assert missing_contract_roots(tmp_path) == []
 

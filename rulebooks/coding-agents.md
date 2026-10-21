@@ -5,7 +5,7 @@ Rules here are prose only for what `tools/checks/` and `.cursor/cli.json` cannot
 ## Automated guards (do not duplicate)
 
 - **R34 — Git is the source of truth; no direct cluster or secret tooling:** `tools/checks/cli-deny` and `.cursor/cli.json`.
-- **R3 / R28 — Core stays env-agnostic and identity-free:** `tools/checks/core-names`. Its spec is the identity section of `services/hermes/core/schema/CONTRACT.md`; read it there, not here.
+- **R3 / R28 — Core stays env-agnostic and identity-free:** `tools/checks/core-names`. Its spec is the identity section of `schema/CONTRACT.md`; read it there, not here.
 - **Env schema (values under `envs/<env>/`):** `tools/checks/env-schema`.
 - **R2 — Each component folder has `CONTRACT.md`:** `tools/checks/contract-md`.
 - **R25 — No plaintext secrets in Git:** `tools/checks/secret-scan`.

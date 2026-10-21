@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# §6 docs/ and services/ roots (D7 nested paths included). platform/* is discovered at scan time.
+# §6 contract paths. platform/* is discovered at scan time.
+# services/hermes/core and its profile schema return with p2-01 and p2-04.
 EXPLICIT_COMPONENT_ROOTS: tuple[str, ...] = (
     "docs/code-delivery",
     "docs/build-agent",
-    "services/hermes/core",
-    "services/hermes/core/schema",
+    "schema",
     "services/hermes/deploy/code-factory",
     "services/hermes/deploy/code-factory/sandbox",
     "services/hermes/deploy/ops",

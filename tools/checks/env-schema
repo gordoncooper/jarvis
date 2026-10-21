@@ -10,7 +10,7 @@ export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 python3 - <<'PY'
 from pathlib import Path
 
-from services.hermes.core.schema.env import ValidationError, validate_env_tree
+from schema.env import ValidationError, validate_env_tree
 
 try:
     validate_env_tree(Path("."))

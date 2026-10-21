@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-import services.hermes.core.schema.env as env_schema
-from services.hermes.core.schema.env import (
+import schema.env as env_schema
+from schema.env import (
     DEFAULT_SSH_USER,
     EXAMPLE_ENV,
     ValidationError,
