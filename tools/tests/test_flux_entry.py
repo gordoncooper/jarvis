@@ -214,6 +214,7 @@ def test_flux_layers_do_not_render_duplicate_objects(env: str) -> None:
             owner = seen.get(ident)
             assert owner is None, f"{ident} rendered by both {owner} and {layer}"
             seen[ident] = layer
+    assert len(seen) > 0, "no Flux objects found"
 
 
 def _validate_platform_configs_without_sops_secrets(manifests: str) -> None:
