@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 from conftest import ci_mode
-from services.hermes.core.schema.env import EXAMPLE_ENV, is_example_env
+from schema.env import EXAMPLE_ENV, is_example_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"

@@ -1,6 +1,6 @@
 # CONTRACT: Env schema
 
-Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic (R3); env specifics live only under `envs/` (R4). Bot tiers and model names live only in env values (R23). Profile schema is a later section of this file (`p2-04`).
+Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic (R3); env specifics live only under `envs/` (R4). Bot tiers and model names live only in env values (R23). The profile schema is its own contract, `services/hermes/core/schema/CONTRACT.md`, added in `p2-04`.
 
 ## Offers
 
@@ -94,7 +94,7 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env. `EXAMPLE_ENV` in `services/hermes/core/schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR (D43, D45). It has no `secrets/`, SOPS file, or `flux/`.
+`envs/env-00` is the never-deployed example env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR (D43, D45). It has no `secrets/`, SOPS file, or `flux/`.
 
 ### Explicit env
 
@@ -104,7 +104,7 @@ The example env declares every known role. A new known role is declared on that 
 
 `tools/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user`, `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
 
-Scanned paths are `infra/`, `platform/`, `services/`, `tools/`, `docs/`, `rulebooks/`, `.github/` except `CODEOWNERS`, and every `README` / `README.md`. Env names may appear under `envs/**` and `docs/**`. Hostnames, `dns_suffix`, the owner handle, and `ssh_user` forms may appear only under the `envs/<env>/` they were read from. The personal name may appear nowhere.
+Scanned paths are `infra/`, `platform/`, `schema/`, `services/`, `tools/`, `docs/`, `rulebooks/`, `.github/` except `CODEOWNERS`, and every `README` / `README.md`. Env names may appear under `envs/**` and `docs/**`. Hostnames, `dns_suffix`, the owner handle, and `ssh_user` forms may appear only under the `envs/<env>/` they were read from. The personal name may appear nowhere.
 
 Matching is case-insensitive, on tokens made of letters, digits, underscores, and hyphens. A dot is a boundary, so a DNS suffix inside a longer hostname fails, and a value inside a longer token passes. `ssh_user` matches only as `/home/<user>`, `<user>@<host>`, or `~<user>`.
 

@@ -30,7 +30,7 @@ Callers may rely on these six capabilities from the active provider:
 
 ## Expects
 
-- `code_delivery: github` in `values/cluster-vars.yaml`, validated by the env schema (`services/hermes/core/schema/CONTRACT.md`).
+- `code_delivery: github` in `values/cluster-vars.yaml`, validated by the env schema (`schema/CONTRACT.md`).
 - Both repos exist on the provider before env values reference them (D1).
 - Flux reconciles cluster state from Git only; no hand-edited cluster copies of what Git should hold (R34).
 - Credentials live outside CI where R25/R42 require (lane job: Cursor key and read-only GitHub token; publish job: short-lived App token; no push creds on the builder).

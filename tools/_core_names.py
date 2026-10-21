@@ -6,7 +6,7 @@ handle match is a whole token, so the URL fails with the handle. Bare repo
 names stay allowed.
 
 Product rules (the word bastion, and any /home/ path) are not applied to
-this file or to services/hermes/core/schema/CONTRACT.md. Those two paths
+this file or to schema/CONTRACT.md. Those two paths
 are the one exemption: both have to spell the tokens. Identity values are
 still checked there.
 """
@@ -22,19 +22,20 @@ from typing import Iterable
 
 import yaml
 
-from services.hermes.core.schema.env import is_example_env, repo_owner_handle, validate_env_tree
+from schema.env import is_example_env, repo_owner_handle, validate_env_tree
 
 # One exemption, two paths: files that state the product-rule tokens.
 _PRODUCT_RULE_EXEMPT = frozenset(
     {
         "tools/_core_names.py",
-        "services/hermes/core/schema/CONTRACT.md",
+        "schema/CONTRACT.md",
     }
 )
 
 _SCAN_ROOTS = (
     "infra/",
     "platform/",
+    "schema/",
     "services/",
     "tools/",
     "docs/",

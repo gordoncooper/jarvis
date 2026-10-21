@@ -11,7 +11,7 @@ python3 - <<'PY'
 from pathlib import Path
 
 from _core_names import OwnerNameUnset, format_violations, scan_core_names
-from services.hermes.core.schema.env import ValidationError
+from schema.env import ValidationError
 
 repo_root = Path(".")
 

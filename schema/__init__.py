@@ -1,6 +1,6 @@
-"""Hermes core schema validators (env and, later, profile)."""
+"""Env schema validator for a deployment target under envs/<env>/."""
 
-from services.hermes.core.schema.env import (
+from schema.env import (
     DEFAULT_SSH_USER,
     EXAMPLE_ENV,
     ValidationError,

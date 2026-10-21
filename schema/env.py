@@ -1,4 +1,4 @@
-"""Env schema validation for envs/<env>/ (CONTRACT: services/hermes/core/schema/CONTRACT.md)."""
+"""Env schema validation for envs/<env>/ (CONTRACT: schema/CONTRACT.md)."""
 
 from __future__ import annotations
 

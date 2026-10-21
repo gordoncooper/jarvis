@@ -1,5 +1,5 @@
 ---
-# Populated from env cluster-vars (see services/hermes/core/schema/CONTRACT.md).
+# Populated from env cluster-vars (see schema/CONTRACT.md).
 k3s_binary_path: /usr/local/bin/k3s
 k3s_config_path: /etc/rancher/k3s/config.yaml
 k3s_service_name: k3s
