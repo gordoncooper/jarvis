@@ -17,7 +17,7 @@ Ensure `~/.local/bin` is on `PATH` on that machine. The age **public** key must 
 ## Usage
 
 ```bash
-make deps && make bootstrap-secrets
+make deps && make bootstrap-secrets ENV=<env>
 ```
 
 Creates missing files only; a second run changes nothing. Commit the generated `*.sops.yaml` files; do not commit the age private key.

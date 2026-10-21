@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from services.hermes.core.schema.env import validate_env_tree
+from services.hermes.core.schema.env import EXAMPLE_ENV, repo_owner_handle, validate_env_tree
 
 # Whole-file scan exemptions (documented; not per-rule).
 _FILE_SCAN_EXEMPT: tuple[tuple[str, str], ...] = (
@@ -57,37 +57,30 @@ class CoreNameViolation:
     value: str
 
 
-def sole_env_directory_name(repo_root: Path | str) -> str:
-    """Return the only env directory name, or raise if ambiguous."""
-    root = Path(repo_root).resolve()
-    names = sorted(p.name for p in (root / "envs").iterdir() if p.is_dir())
-    if len(names) != 1:
-        raise SystemExit(
-            "expected exactly one directory under envs/; pass --env explicitly"
-        )
-    return names[0]
-
-
 def collect_forbidden_names(repo_root: Path | str) -> ForbiddenNames:
     """Derive forbidden strings from envs/*/ (after env-schema validation)."""
     root = Path(repo_root).resolve()
     resolved = validate_env_tree(root)
 
-    env_names: set[str] = set(resolved)
+    env_names: set[str] = set()
     dns_suffixes: set[str] = set()
     github_owners: set[str] = set()
     inventory_hostnames: set[str] = set()
     ssh_users: set[str] = set()
 
     for env_name, cluster_vars in resolved.items():
+        if env_name == EXAMPLE_ENV:
+            continue
+        env_names.add(env_name)
         dns_suffixes.add(cluster_vars["dns_suffix"])
         ssh_users.add(cluster_vars["ssh_user"])
 
-        repo_url = cluster_vars["flux_git_repo_url"]
-        if isinstance(repo_url, str) and repo_url.strip():
-            owner = _github_owner_from_https_url(repo_url)
-            if owner:
-                github_owners.add(owner)
+        for key in ("flux_git_repo_url", "apps_git_repo_url"):
+            repo_url = cluster_vars[key]
+            if isinstance(repo_url, str) and repo_url.strip():
+                owner = _github_owner_from_https_url(repo_url)
+                if owner:
+                    github_owners.add(owner)
 
         inventory_hostnames.update(
             _inventory_hostnames(root / "envs" / env_name / "inventory" / "hosts.yml"),
@@ -154,13 +147,10 @@ def _git_tracked_files(repo_root: Path) -> list[str]:
 
 def _github_owner_from_https_url(url: str) -> str | None:
     parsed = urlparse(url.strip())
-    if parsed.scheme != "https":
-        return None
     host = parsed.netloc.lower()
     if host not in {"github.com", "www.github.com"}:
         return None
-    parts = [part for part in parsed.path.strip("/").split("/") if part]
-    return parts[0] if parts else None
+    return repo_owner_handle(url)
 
 
 def _inventory_hostnames(hosts_path: Path) -> set[str]:

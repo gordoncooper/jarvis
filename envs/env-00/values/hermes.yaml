@@ -1,0 +1,20 @@
+bots:
+  - example-bot
+
+cron: {}
+
+bot_tier_map:
+  example-bot: cheap
+
+tier_model_map:
+  frontier: example-frontier
+  mid: example-mid
+  cheap: example-cheap
+
+lane_model_map:
+  builder:
+    model: example-builder
+    family: example
+  checker:
+    model: example-checker
+    family: example
