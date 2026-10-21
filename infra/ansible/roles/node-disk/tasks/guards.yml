@@ -3,6 +3,11 @@
     node_disk_device_re: "^{{ node_disk_path | regex_escape }}({{ 'p[0-9]+' if node_disk_path is match('.*[0-9]$') else '[0-9]+' }})?$"
 - ansible.builtin.set_fact:
     node_disk_ours: "{{ node_disk_labeled | select('match', node_disk_device_re) | list | length > 0 }}"
+- name: Refuse multiple devices with jarvis-data label
+  ansible.builtin.assert:
+    that:
+      - node_disk_labeled | length <= 1
+    fail_msg: "multiple devices carry the jarvis-data label: {{ node_disk_labeled }}"
 - name: Refuse the root disk
   ansible.builtin.assert:
     that:

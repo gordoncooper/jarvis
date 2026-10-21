@@ -29,6 +29,9 @@
         name: [parted, e2fsprogs]
         state: present
       when: not (node_disk_ours | bool)
+    - ansible.builtin.command:
+        argv: [wipefs, -a, "{{ node_disk_path }}"]
+      when: not (node_disk_ours | bool)
     - community.general.parted:
         device: "{{ node_disk_path }}"
         label: gpt
@@ -39,6 +42,10 @@
         part_end: 100%
         fs_type: "{{ node_disk_fstype }}"
       when: not (node_disk_ours | bool)
+    - ansible.builtin.command:
+        argv: [udevadm, settle]
+      when: not (node_disk_ours | bool)
+      changed_when: false
     - community.general.filesystem:
         fstype: "{{ node_disk_fstype }}"
         dev: "{{ node_disk_path ~ ('p1' if node_disk_path is match('.*[0-9]$') else '1') }}"

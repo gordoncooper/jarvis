@@ -6,7 +6,7 @@ code_delivery: github
 build_agent: cursor
 ssh_user: example
 
-backup_path: /var/lib/example/backup
+backup_path: /var/lib/jarvis/backup
 backup_retention_daily: 1
 backup_retention_weekly: 2
 backup_retention_monthly: 3
@@ -15,7 +15,7 @@ k3s_version: v0.0.0-example
 k3s_sha256: abababababababababababababababababababababababababababababababab
 pod_cidr: 10.80.0.0/16
 service_cidr: 10.81.0.0/16
-local_path_data: /var/lib/example/local-path
+local_path_data: /var/lib/jarvis/local-path
 
 k3s_kubelet_kube_reserved: cpu=100m,memory=128Mi
 k3s_kubelet_system_reserved: cpu=100m,memory=128Mi

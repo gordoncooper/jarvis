@@ -57,16 +57,12 @@ def _role_names(play: dict[str, object]) -> list[str]:
     for task in play.get("tasks") or []:
         if not isinstance(task, dict):
             continue
-        included = (
-            task.get("ansible.builtin.include_role")
-            or task.get("include_role")
-            or task.get("ansible.builtin.import_role")
-            or task.get("import_role")
-        )
-        if isinstance(included, dict) and isinstance(included.get("name"), str):
-            names.append(included["name"])
-        elif isinstance(included, str):
-            names.append(included)
+        for key in ("ansible.builtin.include_role", "include_role", "ansible.builtin.import_role", "import_role"):
+            included = task.get(key)
+            if isinstance(included, dict) and isinstance(included.get("name"), str):
+                names.append(included["name"])
+            elif isinstance(included, str):
+                names.append(included)
     return names
 
 

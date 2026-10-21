@@ -16,7 +16,7 @@
 
     - name: Fetch kubeconfig from node
       ansible.builtin.fetch:
-        src: "{{ k3s_remote_kubeconfig }}"
+        src: "{{ k3s_kubeconfig_path }}"
         dest: "{{ k3s_kubeconfig_staging.path }}/k3s.yaml"
         flat: true
       changed_when: false
