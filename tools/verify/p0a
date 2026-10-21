@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Read-only P0a exit check (make verify PHASE=p0a ENV=<env>)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from subprocess import CompletedProcess
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FLUX_RESOURCES = (
+    "kustomizations.kustomize.toolkit.fluxcd.io",
+    "gitrepositories.source.toolkit.fluxcd.io",
+    "helmreleases.helm.toolkit.fluxcd.io",
+)
+SECRET_NAMESPACE = "platform-backups"
+SECRET_NAME = "backups-restic"
+ENABLELB = "svccontroller.k3s.cattle.io/enablelb"
+Kubectl = Callable[[Sequence[str]], CompletedProcess[str]]
+
+
+def _line(text: str) -> None:
+    print(text, flush=True)
+
+
+def _kubectl(args: Sequence[str]) -> CompletedProcess[str]:
+    return subprocess.run(["kubectl", *args], capture_output=True, text=True, check=False)
+
+
+def _reason(proc: CompletedProcess[str]) -> str:
+    return (proc.stderr or proc.stdout or "kubectl failed").strip().splitlines()[0]
+
+
+def _check_flux(kubectl: Kubectl) -> int:
+    ready: list[str] = []
+    for resource in FLUX_RESOURCES:
+        proc = kubectl(["get", resource, "-A", "-o", "json"])
+        if proc.returncode != 0:
+            _line(f"FAIL flux Ready: {_reason(proc)}")
+            return 1
+        if json.loads(proc.stdout)["items"]:
+            ready.append(resource)
+    if not ready:
+        _line("FAIL flux Ready: no Kustomization, GitRepository, or HelmRelease")
+        return 1
+    for resource in ready:
+        proc = kubectl(["wait", "--for=condition=Ready", "--all", "-A", resource])
+        if proc.returncode != 0:
+            _line(f"FAIL flux Ready: {resource}: {_reason(proc)}")
+            return 1
+    _line("PASS flux Ready")
+    return 0
+
+
+def _check_secret(kubectl: Kubectl) -> int:
+    label = f"secret {SECRET_NAMESPACE}/{SECRET_NAME}"
+    proc = kubectl(["get", "secret", SECRET_NAME, "-n", SECRET_NAMESPACE, "-o", "json"])
+    if proc.returncode != 0:
+        err = proc.stderr.strip()
+        _line(f"FAIL {label}: {err.splitlines()[0] if err else 'kubectl failed'}")
+        return 1
+    keys = sorted(json.loads(proc.stdout)["data"])
+    if not keys:
+        _line(f"FAIL {label}: no data keys")
+        return 1
+    _line(f"PASS {label} keys={','.join(keys)}")
+    return 0
+
+
+def _load(repo_root: Path, env: str, kubectl: Kubectl):
+    proc = subprocess.run(
+        ["ansible-inventory", "-i", f"envs/{env}/inventory", "--list"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    hostvars = json.loads(proc.stdout)["_meta"]["hostvars"]
+    roles = {name: set(host["node_roles"]) for name, host in hostvars.items()}
+    values = repo_root / "envs" / env / "values" / "cluster-vars.yaml"
+    suffix = yaml.safe_load(values.read_text(encoding="utf-8"))["dns_suffix"]
+    nodes_proc = kubectl(["get", "nodes", "-o", "json"])
+    nodes_proc.check_returncode()
+    nodes = {
+        item["metadata"]["name"]: item["metadata"]["labels"]
+        for item in json.loads(nodes_proc.stdout)["items"]
+    }
+    return roles, suffix, nodes
+
+
+def _check_node_roles(nodes: dict[str, dict[str, str]], roles: dict[str, set[str]], dns_suffix: str) -> int:
+    if set(nodes) != set(roles):
+        missing = sorted(set(roles) - set(nodes))
+        extra = sorted(set(nodes) - set(roles))
+        _line(f"FAIL node roles: inventory hosts {missing} cluster nodes {extra}")
+        return 1
+    prefix = f"role.{dns_suffix}/"
+    for name, expected in sorted(roles.items()):
+        got = {
+            key.removeprefix(prefix): value
+            for key, value in nodes[name].items()
+            if key.startswith(prefix)
+        }
+        if set(got) != expected or any(value != "true" for value in got.values()):
+            _line(f"FAIL node roles: {name} labels {sorted(got)} != node_roles {sorted(expected)}")
+            return 1
+    _line("PASS node roles")
+    return 0
+
+
+def _check_enablelb(nodes: dict[str, dict[str, str]], roles: dict[str, set[str]]) -> int:
+    edge = {name for name, host_roles in roles.items() if "edge" in host_roles}
+    present = {name for name, labels in nodes.items() if ENABLELB in labels}
+    labeled = {name for name in present if nodes[name][ENABLELB] == "true"}
+    if present != edge or labeled != present:
+        _line(f"FAIL enablelb: labeled {sorted(labeled)} != edge hosts {sorted(edge)}")
+        return 1
+    _line("PASS enablelb")
+    return 0
+
+
+def _print_checklist() -> None:
+    _line("Owner checklist:")
+    _line("- second site.yml output (nothing changed):")
+    _line("- second make bootstrap-secrets output (nothing changed):")
+    for name in (REPO_ROOT / "tools/ci-rule-checks.txt").read_text(encoding="utf-8").split():
+        _line(f"- seeded bad PR for {name}:")
+    _line("- Renovate PR:")
+    _line("- p0a-16 rollback-drill log:")
+
+
+def run(repo_root: Path, env: str, kubectl: Kubectl) -> int:
+    failed = _check_flux(kubectl) + _check_secret(kubectl)
+    roles, suffix, nodes = _load(repo_root, env, kubectl)
+    failed += _check_node_roles(nodes, roles, suffix) + _check_enablelb(nodes, roles)
+    _print_checklist()
+    return 1 if failed else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env", required=True, help="Env under envs/")
+    return run(REPO_ROOT, parser.parse_args(argv).env, _kubectl)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

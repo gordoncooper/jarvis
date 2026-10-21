@@ -242,7 +242,7 @@ def test_example_env_values_are_not_sources(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (tmp_path / "envs/env-live/inventory/hosts.yml").write_text(
-        "all:\n  hosts:\n    live-host:\n      node_roles: [control_plane, backup]\n",
+        "all:\n  hosts:\n    live-host:\n      node_roles: [control_plane, backup, edge]\n",
         encoding="utf-8",
     )
     platform = tmp_path / "platform"

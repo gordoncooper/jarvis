@@ -105,6 +105,7 @@ def ansible_render_template(
     variables: dict[str, object],
     *,
     templates_dir: Path,
+    inventory: Path | None = None,
 ) -> str:
     """Render a role template via ansible.builtin.template (same engine as the role)."""
     src = templates_dir / template_name
@@ -113,13 +114,11 @@ def ansible_render_template(
     extra: list[str] = []
     if variables:
         extra.extend(["-e", json.dumps(variables)])
-    env = os.environ.copy()
-    env["ANSIBLE_BECOME"] = "false"
-    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
-    run = subprocess.run(
+    cmd = ["ansible", "localhost"]
+    if inventory is not None:
+        cmd.extend(["-i", str(inventory)])
+    cmd.extend(
         [
-            "ansible",
-            "localhost",
             "-c",
             "local",
             "-m",
@@ -127,7 +126,13 @@ def ansible_render_template(
             "-a",
             f"src={src} dest={dest}",
             *extra,
-        ],
+        ]
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    run = subprocess.run(
+        cmd,
         cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,

@@ -29,7 +29,7 @@ def _default_hosts() -> str:
             all:
               hosts:
                 node.example:
-                  node_roles: [control_plane, backup]
+                  node_roles: [control_plane, backup, edge]
             """
         ).strip()
         + "\n"
@@ -207,6 +207,23 @@ def _hosts(body: str) -> str:
     return textwrap.dedent(body).strip() + "\n"
 
 
+def test_env_without_edge_host_fails(tmp_path: Path):
+    _write_env(
+        tmp_path,
+        hosts_yml=_hosts(
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup]
+            """
+        ),
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "at least one edge host" in "\n".join(excinfo.value.messages)
+
+
 def test_unknown_role_fails(tmp_path: Path):
     _write_env(
         tmp_path,
@@ -372,6 +389,7 @@ def test_make_targets_require_env() -> None:
     commands = (
         ["make", "bootstrap-secrets"],
         ["make", "seal", "NAME=example"],
+        ["make", "verify", "PHASE=p0a"],
     )
     for cmd in commands:
         proc = subprocess.run(
