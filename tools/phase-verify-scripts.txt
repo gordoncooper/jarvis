@@ -1,2 +1,0 @@
-# Phase verify scripts under tools/checks/ (not CI rule checks). Keep in sync with Makefile verify targets.
-verify-p0a.sh

@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from _core_names import sole_env_directory_name
+from conftest import ci_mode
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
@@ -29,8 +30,11 @@ CONTAINER_NAME = "jarvis-base-os-idem-test"
 DOCKER_PLAYBOOK_EXTRA_VARS: list[str] = ["-e", "ansible_user=root"]
 
 
-def ci_mode() -> bool:
-    return os.environ.get("CI", "").lower() in {"1", "true", "yes"}
+def _fail_or_skip(message: str, detail: str = "") -> None:
+    text = f"{message}:\n{detail}" if detail else message
+    if ci_mode():
+        pytest.fail(text)
+    pytest.skip(text)
 
 
 def docker_available() -> bool:
@@ -48,10 +52,7 @@ def docker_available() -> bool:
 def require_docker() -> None:
     if docker_available():
         return
-    message = "docker is required for container proof tests"
-    if ci_mode():
-        pytest.fail(message)
-    pytest.skip(message)
+    _fail_or_skip("docker is required for container proof tests")
 
 
 def env_name(repo_root: Path = REPO_ROOT) -> str:
@@ -138,10 +139,10 @@ def build_systemd_image() -> str:
         check=False,
     )
     if build.returncode != 0:
-        detail = f"{build.stdout}\n{build.stderr}"
-        if ci_mode():
-            pytest.fail(f"failed to build Ubuntu 26.04 systemd test image:\n{detail}")
-        pytest.skip(f"failed to build Ubuntu 26.04 systemd test image:\n{detail}")
+        _fail_or_skip(
+            "failed to build Ubuntu 26.04 systemd test image",
+            f"{build.stdout}\n{build.stderr}",
+        )
     return SYSTEMD_IMAGE
 
 
@@ -170,9 +171,7 @@ def start_systemd_container(name: str = CONTAINER_NAME) -> str:
         check=False,
     )
     if run.returncode != 0:
-        if ci_mode():
-            pytest.fail(f"docker run failed: {run.stderr}")
-        pytest.skip(f"docker run failed: {run.stderr}")
+        _fail_or_skip("docker run failed", run.stderr)
 
     deadline = time.time() + 120
     while time.time() < deadline:
@@ -202,12 +201,10 @@ def start_systemd_container(name: str = CONTAINER_NAME) -> str:
         check=False,
     )
     subprocess.run(["docker", "rm", "-f", name], check=False)
-    if ci_mode():
-        pytest.fail(
-            "systemd did not reach running/degraded in time:\n"
-            f"{logs.stdout}\n{logs.stderr}"
-        )
-    pytest.skip("systemd did not become ready in the test container")
+    _fail_or_skip(
+        "systemd did not reach running/degraded in time",
+        f"{logs.stdout}\n{logs.stderr}",
+    )
 
 
 def _prepare_container_for_ansible(name: str) -> None:
@@ -219,16 +216,18 @@ def _prepare_container_for_ansible(name: str) -> None:
     )
     if prep.returncode != 0:
         stop_systemd_container(name)
-        if ci_mode():
-            pytest.fail(f"container apt update failed: {prep.stderr}")
-        pytest.skip(f"container apt update failed: {prep.stderr}")
+        _fail_or_skip("container apt update failed", prep.stderr)
 
 
 def stop_systemd_container(name: str = CONTAINER_NAME) -> None:
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
 
-def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
+def _playbook_cmd(
+    container: str,
+    *,
+    extra_args: list[str],
+) -> list[str]:
     return [
         "ansible-playbook",
         "site.yml",
@@ -239,26 +238,26 @@ def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[st
         "-e",
         "ansible_connection=docker",
         *DOCKER_PLAYBOOK_EXTRA_VARS,
-        "--check",
-        "--skip-tags",
-        "chrony-service,k3s,k3s-service",
+        *extra_args,
     ]
+
+
+def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
+    return _playbook_cmd(
+        container,
+        extra_args=[
+            "--check",
+            "--skip-tags",
+            "chrony-service,k3s,k3s-service",
+        ],
+    )
 
 
 def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
-    return [
-        "ansible-playbook",
-        "site.yml",
-        "-i",
-        f"{container},",
-        "-e",
-        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-        "-e",
-        "ansible_connection=docker",
-        *DOCKER_PLAYBOOK_EXTRA_VARS,
-        "--tags",
-        "k3s-guard",
-    ]
+    return _playbook_cmd(
+        container,
+        extra_args=["--tags", "k3s-guard"],
+    )
 
 
 def playbook_recap_field(output: str, field: str) -> int:

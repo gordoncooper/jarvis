@@ -36,9 +36,8 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Datasource comments in versions.env, Ansible defaults, and Flux OCIRepository.",
+      "description": "Datasource comments in Ansible defaults and Flux OCIRepository.",
       "managerFilePatterns": [
-        "/^tools\\/versions\\.env$/",
         "/^infra\\/ansible\\/roles\\/flux-operator\\/defaults\\/main\\.yml$/",
         "/^platform\\/flux-operator\\/oci-repository\\.yaml$/"
       ],

@@ -83,7 +83,7 @@ def _missing_apt_packages() -> list[str]:
     else:
         if not _python_probe(code="import yaml"):
             missing.append("python3-yaml")
-        if not _python_probe(code="import venv"):
+        if not _python_probe(code="import ensurepip"):
             missing.append("python3-venv")
     return missing
 

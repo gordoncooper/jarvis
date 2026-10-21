@@ -4,7 +4,7 @@
 
 ## Operator tags
 
-Narrow runs use `--tags` from the playbook controller. Guard tasks and cluster-vars asserts are tagged `always` so they still run. CI skip tags (`chrony-service`, `k3s-service`, `flux-cluster`) are unchanged.
+Narrow runs use `--tags` from the playbook controller. Guard tasks and cluster-vars asserts are tagged `always` so they still run. Container proof tests skip heavy service tags (`chrony-service`, `k3s-service`, `flux-cluster`) where noted in pytest.
 
 | Tag | Purpose | Example |
 | --- | --- | --- |

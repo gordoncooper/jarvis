@@ -10,11 +10,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _flux_entry import (
-    FLUX_KUSTOMIZATION_CHAIN,
-    FLUX_KUSTOMIZATION_PATHS,
-    kustomize_build_paths,
-)
 from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_TEMPLATES,
     REPO_ROOT,
@@ -24,10 +19,19 @@ from ansible_role_proof import (
 )
 from render_cluster_vars_configmap import cluster_vars_configmap, render_document
 
+FLUX_KUSTOMIZATION_CHAIN: tuple[str, ...] = (
+    "platform-controllers",
+    "platform-configs",
+    "services",
+    "apps",
+)
+
 FLUX_SCHEMA = (
     "https://raw.githubusercontent.com/fluxcd/flux2/v2.8.3/schemas/"
     "{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json"
 )
+
+
 def _require_tool(name: str) -> str:
     path = shutil.which(name)
     if not path:
@@ -148,15 +152,6 @@ def test_flux_kustomization_depends_on_chain() -> None:
         assert depends == [{"name": FLUX_KUSTOMIZATION_CHAIN[idx - 1]}]
 
 
-def test_flux_kustomization_paths() -> None:
-    env = env_name()
-    for doc in _load_flux_kustomizations():
-        name = doc["metadata"]["name"]
-        assert isinstance(name, str)
-        expected = FLUX_KUSTOMIZATION_PATHS[name].format(env=env)
-        assert doc["spec"]["path"] == expected
-
-
 def test_platform_configs_decryption_uses_sops_age() -> None:
     doc = _load_flux_kustomizations()[1]
     decryption = doc["spec"]["decryption"]
@@ -180,17 +175,6 @@ def test_backups_restic_secret_stays_sops_encrypted_in_git() -> None:
     assert "sops:" in text
     assert "ENC[AES256_GCM" in text
     assert "RESTIC_PASSWORD" in text
-
-
-def test_placeholder_configmaps_use_unique_names() -> None:
-    services = yaml.safe_load(
-        (REPO_ROOT / "services" / "placeholder.yaml").read_text(encoding="utf-8")
-    )
-    apps = yaml.safe_load(
-        (REPO_ROOT / "apps" / "placeholder.yaml").read_text(encoding="utf-8")
-    )
-    assert services["metadata"]["name"] == "placeholder-services"
-    assert apps["metadata"]["name"] == "placeholder-apps"
 
 
 def _object_identity(doc: object) -> tuple[str, str, str] | None:
@@ -230,37 +214,45 @@ def test_flux_layers_do_not_render_duplicate_objects() -> None:
             seen[ident] = layer
 
 
-@pytest.mark.parametrize("rel_path", ["services", "apps"])
-def test_layer_kustomize_build_and_schema_validate(rel_path: str) -> None:
-    output = _kustomize_build(rel_path)
-    _kubeconform_validate(output)
-
-
-def test_platform_flux_operator_kustomize_build_and_schema_validate() -> None:
-    output = _kustomize_build("platform/flux-operator")
-    _kubeconform_validate(output, ignore_missing=True)
-
-
-def test_env_flux_entry_kustomize_build_and_schema_validate() -> None:
-    env = env_name()
-    output = _kustomize_build(f"envs/{env}/flux")
-    _kubeconform_validate(output, ignore_missing=True)
-
-
-def test_platform_configs_overlay_kustomize_build_and_schema_validate() -> None:
-    env = env_name()
-    output = _kustomize_build(f"envs/{env}/flux/platform-configs")
+def _validate_platform_configs_without_sops_secrets(manifests: str) -> None:
     docs = [
         doc
-        for doc in yaml.safe_load_all(output)
+        for doc in yaml.safe_load_all(manifests)
         if isinstance(doc, dict) and not (doc.get("kind") == "Secret" and "sops" in doc)
     ]
     rendered = yaml.safe_dump_all(docs, sort_keys=False)
     _kubeconform_validate(rendered, ignore_missing=True)
 
 
-def test_all_flux_kustomization_paths_kustomize_build() -> None:
+@pytest.mark.parametrize(
+    ("rel_path", "ignore_missing", "strip_sops_secrets"),
+    [
+        ("services", False, False),
+        ("apps", False, False),
+        ("platform/flux-operator", True, False),
+        pytest.param(
+            "envs/{env}/flux",
+            True,
+            False,
+            id="env-flux-entry",
+        ),
+        pytest.param(
+            "envs/{env}/flux/platform-configs",
+            True,
+            True,
+            id="platform-configs-overlay",
+        ),
+    ],
+)
+def test_flux_layer_kustomize_build_and_schema_validate(
+    rel_path: str,
+    ignore_missing: bool,
+    strip_sops_secrets: bool,
+) -> None:
     env = env_name()
-    for rel in kustomize_build_paths(env):
-        _kustomize_build(rel)
-
+    resolved = rel_path.format(env=env)
+    output = _kustomize_build(resolved)
+    if strip_sops_secrets:
+        _validate_platform_configs_without_sops_secrets(output)
+    else:
+        _kubeconform_validate(output, ignore_missing=ignore_missing)

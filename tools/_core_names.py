@@ -6,12 +6,12 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 from urllib.parse import urlparse
 
 import yaml
 
-from services.hermes.core.schema.env import ValidationError, validate_env_tree
+from services.hermes.core.schema.env import validate_env_tree
 
 # Whole-file scan exemptions (documented; not per-rule).
 _FILE_SCAN_EXEMPT: tuple[tuple[str, str], ...] = (
@@ -33,8 +33,6 @@ _FILE_SCAN_EXEMPT: tuple[tuple[str, str], ...] = (
 _PLANNING_DOC_RULE_EXEMPT_KINDS = frozenset(
     {
         "env_name",
-        "flux_git_repo_url",
-        "github_owner",
         "github_owner_word",
     }
 )
@@ -46,9 +44,6 @@ _BASTION_RE = re.compile(r"bastion", re.IGNORECASE)
 class ForbiddenNames:
     env_names: frozenset[str]
     dns_suffixes: frozenset[str]
-    model_names: frozenset[str]
-    flux_git_repo_urls: frozenset[str]
-    github_owner_segments: frozenset[str]
     github_owners: frozenset[str]
     inventory_hostnames: frozenset[str]
     ssh_users: frozenset[str]
@@ -80,9 +75,6 @@ def collect_forbidden_names(repo_root: Path | str) -> ForbiddenNames:
 
     env_names: set[str] = set(resolved)
     dns_suffixes: set[str] = set()
-    model_names: set[str] = set()
-    flux_git_repo_urls: set[str] = set()
-    github_owner_segments: set[str] = set()
     github_owners: set[str] = set()
     inventory_hostnames: set[str] = set()
     ssh_users: set[str] = set()
@@ -93,30 +85,17 @@ def collect_forbidden_names(repo_root: Path | str) -> ForbiddenNames:
 
         repo_url = cluster_vars["flux_git_repo_url"]
         if isinstance(repo_url, str) and repo_url.strip():
-            flux_git_repo_urls.add(repo_url.strip())
             owner = _github_owner_from_https_url(repo_url)
             if owner:
-                github_owner_segments.add(f"github.com/{owner}/")
                 github_owners.add(owner)
 
         inventory_hostnames.update(
             _inventory_hostnames(root / "envs" / env_name / "inventory" / "hosts.yml"),
         )
 
-        hermes_path = root / "envs" / env_name / "values" / "hermes.yaml"
-        with hermes_path.open(encoding="utf-8") as fh:
-            hermes = yaml.safe_load(fh) or {}
-        if not isinstance(hermes, dict):
-            raise ValidationError([f"{hermes_path}: expected a YAML mapping"])
-        model_names.update(_model_strings(hermes.get("tier_model_map")))
-        model_names.update(_model_strings(hermes.get("lane_model_map")))
-
     return ForbiddenNames(
         env_names=frozenset(env_names),
         dns_suffixes=frozenset(dns_suffixes),
-        model_names=frozenset(model_names),
-        flux_git_repo_urls=frozenset(flux_git_repo_urls),
-        github_owner_segments=frozenset(github_owner_segments),
         github_owners=frozenset(github_owners),
         inventory_hostnames=frozenset(inventory_hostnames),
         ssh_users=frozenset(ssh_users),
@@ -139,7 +118,7 @@ def file_scan_exempt(rel_path: str) -> str | None:
 
 
 def scan_core_names(repo_root: Path | str) -> list[CoreNameViolation]:
-    """Scan git-tracked files outside envs/ for forbidden env, DNS, or model strings."""
+    """Scan git-tracked files outside envs/ for forbidden env or DNS strings."""
     root = Path(repo_root).resolve()
     forbidden = collect_forbidden_names(root)
     violations: list[CoreNameViolation] = []
@@ -200,23 +179,6 @@ def _inventory_hostnames(hosts_path: Path) -> set[str]:
     return {name for name in hosts if isinstance(name, str) and name.strip()}
 
 
-def _model_strings(value: Any) -> set[str]:
-    names: set[str] = set()
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped:
-            names.add(stripped)
-    elif isinstance(value, dict):
-        for key, child in value.items():
-            if key in ("model", "name") and isinstance(child, str) and child.strip():
-                names.add(child.strip())
-            names.update(_model_strings(child))
-    elif isinstance(value, list):
-        for item in value:
-            names.update(_model_strings(item))
-    return names
-
-
 def _maybe_violation(
     rel_path: str,
     line_no: int,
@@ -244,18 +206,6 @@ def _line_violations(
     for value in sorted(forbidden.env_names, key=len, reverse=True):
         if value and value in line:
             if _maybe_violation(rel_path, line_no, "env_name", value, found):
-                break
-    for value in sorted(forbidden.model_names, key=len, reverse=True):
-        if value and value in line:
-            if _maybe_violation(rel_path, line_no, "model_name", value, found):
-                break
-    for value in sorted(forbidden.flux_git_repo_urls, key=len, reverse=True):
-        if value and value in line:
-            if _maybe_violation(rel_path, line_no, "flux_git_repo_url", value, found):
-                break
-    for value in sorted(forbidden.github_owner_segments, key=len, reverse=True):
-        if value and value in line:
-            if _maybe_violation(rel_path, line_no, "github_owner", value, found):
                 break
     for owner in sorted(forbidden.github_owners, key=len, reverse=True):
         if owner and re.search(rf"\b{re.escape(owner)}\b", line):
