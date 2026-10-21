@@ -4,34 +4,18 @@
     path: "{{ data_disk.id }}"
   register: node_disk_id_stat
 
-- name: Read block devices and mounts
-  ansible.builtin.setup:
-    gather_subset:
-      - "!all"
-      - devices
-      - mounts
-  register: node_disk_setup
-
-- name: Read the mount table
-  ansible.builtin.slurp:
-    src: /proc/mounts
-  register: node_disk_proc_mounts
-
-- name: Read filesystem labels
+- name: Read the block device tree
   ansible.builtin.command:
-    argv: [blkid, -o, export]
-  register: node_disk_blkid
+    argv:
+      - lsblk
+      - --json
+      # udev stops at an empty label when it has not scanned the filesystem.
+      - --properties-by
+      - blkid
+      - -o
+      - NAME,KNAME,PATH,TYPE,SIZE,MODEL,LABEL,MOUNTPOINTS,PARTN
+  register: node_disk_lsblk
   changed_when: false
-  failed_when: node_disk_blkid.rc not in [0, 2]
-
-- name: Stat mount sources
-  ansible.builtin.stat:
-    path: "{{ item.device }}"
-  loop: "{{ node_disk_setup.ansible_facts.ansible_mounts }}"
-  loop_control:
-    label: "{{ item.mount }}"
-  register: node_disk_mount_stats
-  when: item.device is match("^/dev/")
 
 - name: Stat the jarvis mount point
   ansible.builtin.stat:
@@ -49,7 +33,10 @@
     - node_disk_mountpoint_stat.stat.exists | default(false)
     - node_disk_mountpoint_stat.stat.isdir | default(false)
 
-- name: Record data disk facts
-  ansible.builtin.set_fact:
-    node_disk: "{{ lookup('ansible.builtin.template', 'node_disk_fact.j2') | from_json }}"
-  changed_when: false
+- name: Derive data disk facts
+  ansible.builtin.import_tasks: derive.yml
+  vars:
+    node_disk_tree: "{{ node_disk_lsblk.stdout | from_json }}"
+    node_disk_stat: "{{ node_disk_id_stat.stat }}"
+    node_disk_mount_stat: "{{ node_disk_mountpoint_stat.stat }}"
+    node_disk_mount_entries: "{{ node_disk_mountpoint_entries.matched | default(0) }}"

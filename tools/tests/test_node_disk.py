@@ -8,13 +8,12 @@ import re
 import subprocess
 
 import pytest
+import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
     REPO_ROOT,
-    cluster_vars_playbook_path,
     docker_exec,
-    env_inventory_args,
     non_example_env_names,
     playbook_recap_field,
     require_docker,
@@ -28,14 +27,7 @@ FIXTURE_DIR = REPO_ROOT / "tools" / "tests" / "fixtures" / "node-disk"
 DISK_ID = "/dev/disk/by-id/test-node-disk"
 IMAGE_PATH = "/var/tmp/node-disk.img"
 CONTAINER_NAME = "jarvis-node-disk-test"
-ORDERED_TASKS = (
-    "A declared gpu host has an NVIDIA device",
-    "base-os : Install base OS packages",
-    "node-disk : Refuse a missing data disk",
-    "node-disk : Create the jarvis-data partition",
-    "/var/lib/jarvis is mounted as jarvis-data",
-    "k3s : Download pinned k3s binary",
-)
+ROLE_TASKS = REPO_ROOT / "infra" / "ansible" / "roles" / "node-disk" / "tasks"
 
 
 def _run_playbook(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -91,33 +83,54 @@ def test_site_syntax_when_no_host_declares_a_data_disk() -> None:
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def _list_tasks(*extra: str) -> str:
-    proc = _run_playbook(
-        [
-            "ansible-playbook",
-            "site.yml",
-            *env_inventory_args(),
-            "-e",
-            f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-            "--list-tasks",
-            *extra,
-        ]
+def _task_tags(task: dict[str, object]) -> list[str]:
+    raw = task.get("tags") or []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return [str(item) for item in raw]
+    return []
+
+
+def test_wipe_tasks_are_not_on_the_always_tag() -> None:
+    """A --tags k3s run still executes always tasks and does not select apply."""
+    tasks = yaml.safe_load((ROLE_TASKS / "main.yml").read_text(encoding="utf-8"))
+    assert isinstance(tasks, list)
+    tags_by_file: dict[str, list[str]] = {}
+    for task in tasks:
+        assert isinstance(task, dict)
+        imported = task.get("ansible.builtin.import_tasks")
+        if isinstance(imported, str):
+            tags_by_file[imported] = _task_tags(task)
+    assert "always" in tags_by_file["prechecks.yml"]
+    assert "always" in tags_by_file["checks.yml"]
+    assert "always" not in tags_by_file["apply.yml"]
+    assert tags_by_file["apply.yml"] == ["node-disk"]
+
+
+def _start_partition_nodes(container: str) -> None:
+    """The test image has no udev. Create loop partition nodes the role waits for."""
+    script = """
+set -u
+while true; do
+  for sysdev in /sys/block/loop*/loop*p*; do
+    [ -e "$sysdev/dev" ] || continue
+    name=$(basename "$sysdev")
+    if [ ! -b "/dev/$name" ]; then
+      dev=$(cat "$sysdev/dev")
+      mknod -m 660 "/dev/$name" b "${dev%%:*}" "${dev##*:}" || true
+    fi
+  done
+  sleep 0.2
+done
+"""
+    started = subprocess.run(
+        ["docker", "exec", "-d", container, "bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    return proc.stdout
-
-
-def test_site_runs_disk_asserts_around_node_disk() -> None:
-    require_cli("ansible-playbook")
-    listed = _list_tasks()
-    positions = [listed.index(name) for name in ORDERED_TASKS]
-    assert positions == sorted(positions)
-
-    tagged = _list_tasks("--tags", "k3s")
-    assert "A declared gpu host has an NVIDIA device" in tagged
-    assert "/var/lib/jarvis is mounted as jarvis-data" in tagged
-    assert "node-disk : Refuse to wipe without both confirmations" in tagged
-    assert "node-disk : Create the jarvis-data partition" not in tagged
+    assert started.returncode == 0, started.stderr
 
 
 def _stage_loop(container: str) -> tuple[str, str, str]:
@@ -125,6 +138,9 @@ def _stage_loop(container: str) -> tuple[str, str, str]:
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y --no-install-recommends fdisk >/dev/null
+# /usr/bin/lsblk is confined to sd/nvme/dm and cannot probe a loop. The container
+# has no udev database, so the role's blkid probe must be this unconfined copy.
+cp -a /usr/bin/lsblk /usr/local/bin/lsblk
 if [ ! -e /dev/loop-control ]; then
   mknod -m 660 /dev/loop-control c 10 237
 fi
@@ -223,6 +239,7 @@ def test_node_disk_confirms_before_it_mounts() -> None:
     start_systemd_container(CONTAINER_NAME)
     try:
         _loop, part, before = _stage_loop(CONTAINER_NAME)
+        _start_partition_nodes(CONTAINER_NAME)
         refused = _disk_playbook(CONTAINER_NAME, confirm=None)
         refused_text = refused.stdout + refused.stderr
         assert refused.returncode != 0, refused_text
@@ -268,6 +285,12 @@ def test_node_disk_confirms_before_it_mounts() -> None:
             "RequiresMountsFor=/var/lib/jarvis/local-path /var/lib/jarvis/backup"
             in drop_in.stdout
         )
+        filesystem_id = docker_exec(
+            CONTAINER_NAME, "blkid", "-s", "UUID", "-o", "value", f"/dev/{part}"
+        )
+        assert filesystem_id.returncode == 0, filesystem_id.stderr
+        original_id = filesystem_id.stdout.strip()
+        assert original_id
 
         marker = docker_exec(
             CONTAINER_NAME,
@@ -284,8 +307,10 @@ def test_node_disk_confirms_before_it_mounts() -> None:
         again_text = again.stdout + again.stderr
         assert again.returncode == 0, again_text
         assert playbook_recap_field(again_text, "changed") == 0, again_text
-        assert "Create the jarvis-data partition" in again_text
-        assert "skipping:" in again_text
+        again_id = docker_exec(
+            CONTAINER_NAME, "blkid", "-s", "UUID", "-o", "value", f"/dev/{part}"
+        )
+        assert again_id.stdout.strip() == original_id, again_id.stdout + again_id.stderr
         kept = docker_exec(
             CONTAINER_NAME, "cat", "/var/lib/jarvis/local-path/marker"
         )

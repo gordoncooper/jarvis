@@ -25,3 +25,16 @@
       - backup_path is string
       - backup_path is match('^/')
     fail_msg: node-disk requires absolute local_path_data and backup_path from cluster-vars.
+
+- name: Refuse data paths outside the data disk mount
+  ansible.builtin.assert:
+    that:
+      - >-
+        local_path_data == node_disk_mount
+        or local_path_data.startswith(node_disk_mount ~ '/')
+      - >-
+        backup_path == node_disk_mount
+        or backup_path.startswith(node_disk_mount ~ '/')
+    fail_msg: >-
+      refusing {{ inventory_hostname }}: local_path_data {{ local_path_data }}
+      and backup_path {{ backup_path }} must both be on {{ node_disk_mount }}.

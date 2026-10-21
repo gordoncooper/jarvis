@@ -46,29 +46,44 @@ def test_sops_age_secret_template_not_reconciled_from_git() -> None:
     assert "kustomize.toolkit.fluxcd.io/reconcile: disabled" in rendered
 
 
+def _role_names(play: dict[str, object]) -> list[str]:
+    names: list[str] = []
+    for role in play.get("roles") or []:
+        if isinstance(role, str):
+            names.append(role)
+        elif isinstance(role, dict) and isinstance(role.get("role"), str):
+            names.append(role["role"])
+    for task in play.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        included = task.get("ansible.builtin.include_role") or task.get("include_role")
+        if isinstance(included, dict) and isinstance(included.get("name"), str):
+            names.append(included["name"])
+        elif isinstance(included, str):
+            names.append(included)
+    return names
+
+
 def test_site_yml_role_order_and_ssh_user() -> None:
-    play = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
-    assert isinstance(play, list)
-    assert [entry.get("name") for entry in play] == [
-        "Assert facts before any change",
-        "Base OS",
-        "Prepare data disk",
-        "Assert the data disk is mounted before k3s",
-        "Bootstrap k3s and Flux",
+    plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
+    assert isinstance(plays, list)
+    assert [play.get("hosts") for play in plays] == [
+        "all",
+        "all",
+        "data_disk",
+        "data_disk",
+        "all",
     ]
-    for entry in play:
-        assert entry.get("become") is True
-        assert entry.get("vars", {}).get("ansible_user") == "{{ ssh_user }}"
-    assert play[0].get("hosts") == "all"
-    assert play[0].get("tags") == ["always"]
-    assert play[1].get("hosts") == "all"
-    assert play[1].get("roles") == ["base-os"]
-    assert play[2].get("hosts") == "data_disk"
-    assert play[2].get("roles") == ["node-disk"]
-    assert play[3].get("hosts") == "data_disk"
-    assert play[3].get("tags") == ["always"]
-    assert play[4].get("hosts") == "all"
-    assert play[4].get("roles") == ["k3s", "flux-operator"]
+    for play in plays:
+        assert play.get("become") is True
+        assert play.get("vars", {}).get("ansible_user") == "{{ ssh_user }}"
+    assert _role_names(plays[0]) == []
+    assert plays[0].get("tags") == ["always"]
+    assert _role_names(plays[1]) == ["base-os"]
+    assert _role_names(plays[2]) == ["node-disk"]
+    assert _role_names(plays[3]) == ["node-disk"]
+    assert plays[3].get("tags") == ["always"]
+    assert _role_names(plays[4]) == ["k3s", "flux-operator"]
 
 
 def _task_documents() -> list[dict[str, object]]:

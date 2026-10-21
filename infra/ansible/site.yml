@@ -12,30 +12,8 @@
   vars_files:
     - "{{ jarvis_cluster_vars }}"
   tasks:
-    - name: Find PCI vendor files
-      ansible.builtin.find:
-        paths: /sys/bus/pci/devices
-        patterns: vendor
-        recurse: true
-        file_type: file
-      register: node_pci_vendors
-      when: "'gpu' in group_names"
-
-    - name: Read PCI vendor ids
-      ansible.builtin.slurp:
-        src: "{{ item.path }}"
-      loop: "{{ node_pci_vendors.files | default([]) }}"
-      loop_control:
-        label: "{{ item.path }}"
-      register: node_pci_vendor_ids
-      when: "'gpu' in group_names"
-
-    - name: A declared gpu host has an NVIDIA device
-      ansible.builtin.assert:
-        that:
-          - node_pci_vendor_ids.results | default([]) | map(attribute="content") | map("b64decode") | map("trim") | map("lower") | select("equalto", "0x10de") | list | length > 0
-        fail_msg: "gpu host {{ inventory_hostname }} has no NVIDIA device."
-      when: "'gpu' in group_names"
+    - name: Assert a declared gpu host has an NVIDIA device
+      ansible.builtin.import_tasks: tasks/assert-gpu.yml
 
 - name: Base OS
   hosts: all
@@ -69,38 +47,12 @@
   vars_files:
     - "{{ jarvis_cluster_vars }}"
   tasks:
-    - name: Read mounts
-      ansible.builtin.setup:
-        gather_subset:
-          - "!all"
-          - mounts
-      register: jarvis_mount_setup
-
-    - name: Select the /var/lib/jarvis mount
-      ansible.builtin.set_fact:
-        jarvis_data_mounts: >-
-          {{ jarvis_mount_setup.ansible_facts.ansible_mounts
-             | selectattr('mount', 'equalto', '/var/lib/jarvis')
-             | list }}
-      changed_when: false
-
-    - name: Read the /var/lib/jarvis filesystem
-      ansible.builtin.command:
-        argv:
-          - blkid
-          - -o
-          - export
-          - "{{ jarvis_data_mounts[0].device if (jarvis_data_mounts | length == 1) else '/dev/null' }}"
-      register: jarvis_data_blkid
-      changed_when: false
-      when: jarvis_data_mounts | length == 1
-
-    - name: /var/lib/jarvis is mounted as jarvis-data
-      ansible.builtin.assert:
-        that:
-          - jarvis_data_mounts | length == 1
-          - "'LABEL=jarvis-data' in (jarvis_data_blkid.stdout | default(''))"
-        fail_msg: "/var/lib/jarvis on {{ inventory_hostname }} is not mounted as jarvis-data."
+    - name: Assert the data disk mount
+      ansible.builtin.include_role:
+        name: node-disk
+        tasks_from: assert-mounted.yml
+      tags:
+        - always
 
 - name: Bootstrap k3s and Flux
   hosts: all

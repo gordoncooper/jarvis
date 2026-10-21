@@ -54,39 +54,11 @@
     - name: Wait for the jarvis-data partition node
       ansible.builtin.stat:
         path: "{{ node_disk.partition_path }}"
-      register: node_disk_partition_stat
-      until: node_disk_partition_stat.stat.exists | default(false)
-      retries: 5
+      register: node_disk_partition_ready
+      until: node_disk_partition_ready.stat.exists | default(false)
+      retries: 15
       delay: 1
       failed_when: false
-
-    - name: Read the jarvis-data partition device numbers
-      ansible.builtin.slurp:
-        src: "/sys/block/{{ node_disk.kernel }}/{{ node_disk.partition_path | basename }}/dev"
-      register: node_disk_partition_dev
-      when: not (node_disk_partition_stat.stat.exists | default(false))
-
-    - name: Add the jarvis-data partition device node
-      ansible.builtin.command:
-        argv:
-          - mknod
-          - -m
-          - "660"
-          - "{{ node_disk.partition_path }}"
-          - b
-          - "{{ node_disk_partition_numbers[0] }}"
-          - "{{ node_disk_partition_numbers[1] }}"
-      vars:
-        # Skipped tasks are still templated. MDow is "0:0", and this task is skipped in that case.
-        node_disk_partition_numbers: >-
-          {{ ((node_disk_partition_dev.content | default('MDow') | b64decode | trim).split(':') + ['0'])[:2] }}
-      changed_when: true
-      when: not (node_disk_partition_stat.stat.exists | default(false))
-
-    - name: The jarvis-data partition node exists
-      ansible.builtin.stat:
-        path: "{{ node_disk.partition_path }}"
-      register: node_disk_partition_ready
 
     - name: Refuse to format without a partition node
       ansible.builtin.assert:
@@ -131,7 +103,6 @@
     - "{{ backup_path }}/restic"
   loop_control:
     label: "{{ item }}"
-  when: item == node_disk_mount or item.startswith(node_disk_mount ~ "/")
 
 - name: Ensure the k3s drop-in directory exists
   ansible.builtin.file:
