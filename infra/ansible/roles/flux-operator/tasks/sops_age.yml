@@ -81,4 +81,3 @@
     stdin: "{{ lookup('template', 'sops-age-secret.yaml.j2') }}"
   when: not (flux_sops_age_present | bool)
   no_log: true
-

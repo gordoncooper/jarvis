@@ -4,6 +4,7 @@
   hosts: all
   become: true
   gather_facts: false
+  tags: [always]
   vars:
     ansible_user: "{{ ssh_user }}"
   vars_files:

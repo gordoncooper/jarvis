@@ -87,7 +87,7 @@ def test_site_yml_role_order_and_ssh_user() -> None:
         assert play.get("become") is True
         assert play.get("vars", {}).get("ansible_user") == "{{ ssh_user }}"
     assert _role_names(plays[0]) == []
-    assert "tags" not in plays[0]
+    assert plays[0].get("tags") == ["always"]
     assert _role_names(plays[1]) == ["base-os"]
     assert _role_names(plays[2]) == ["node-disk"]
     assert _role_names(plays[3]) == ["k3s"]

@@ -7,7 +7,6 @@ flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
 flux_instance_name: flux
 flux_distribution_version: "2.8.x"
-k3s_binary_path: /usr/local/bin/k3s
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 helm_binary_path: /usr/local/bin/helm
 # Pinned Helm host CLI for the one-time bootstrap. Renovate bumps helm_version; update sha256 lines in the same PR.
