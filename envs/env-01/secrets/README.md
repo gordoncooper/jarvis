@@ -1,8 +1,8 @@
 # env-01 secrets
 
-SOPS-encrypted Kubernetes Secrets for this env. Paths match `.sops.yaml` (`envs/*/secrets/*.sops.yaml`).
+SOPS-encrypted Kubernetes Secrets for this env. Paths match `.sops.yaml` (`envs/env-01/secrets/*.sops.yaml`).
 
-## Prerequisites (Gordon's user)
+## Prerequisites (the owner)
 
 On the machine you run this on, install pinned **sops** and **age** plus system packages:
 
@@ -12,12 +12,12 @@ make deps
 
 `make deps` installs [getsops/sops](https://github.com/getsops/sops) and [FiloSottile/age](https://github.com/FiloSottile/age) into `~/.local/bin` (pinned in `tools/versions.env`). It also needs **openssl** and **python3** with **PyYAML**; on Debian/Ubuntu it installs missing `openssl` / `python3-yaml` packages when `sudo` and `apt-get` are available, otherwise it prints the exact `apt-get` command and exits.
 
-Ensure `~/.local/bin` is on `PATH` on that machine. The age **public** key must already be in the repo root `.sops.yaml`. Encryption does not need the private key; Gordon keeps the private key offline (R25).
+Ensure `~/.local/bin` is on `PATH` on that machine. The age **public** key must already be in the repo root `.sops.yaml`. Encryption does not need the private key; the owner keeps the private key offline (R25).
 
 ## Usage
 
 ```bash
-make deps && make bootstrap-secrets ENV=<env>
+make deps && make bootstrap-secrets ENV=env-01
 ```
 
 Creates missing files only; a second run changes nothing. Commit the generated `*.sops.yaml` files; do not commit the age private key.

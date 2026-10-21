@@ -73,8 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     if not plaintext.strip():
         raise SystemExit("empty input")
 
-    env = args.env
-    path = seal(env, args.name, plaintext, force=args.force)
+    path = seal(args.env, args.name, plaintext, force=args.force)
     print(path.relative_to(_repo_root()))
     return 0
 

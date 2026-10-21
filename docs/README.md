@@ -2,7 +2,7 @@
 
 Authoritative planning lives outside this repo:
 
-- [jarvis-alphacut framework, plan, and decisions](https://github.com/gordoncooper/project-plans/tree/main/jarvis-alphacut/)
+- [jarvis-alphacut framework, plan, and decisions](https://github.com/<owner>/project-plans/tree/main/jarvis-alphacut/)
 
 Do not copy those documents into `jarvis`; link here instead.
 

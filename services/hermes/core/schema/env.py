@@ -13,6 +13,11 @@ import yaml
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
 
+
+def is_example_env(name: str) -> bool:
+    """True for the never-deployed example env, which is not an identity source."""
+    return name == EXAMPLE_ENV
+
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 _HOSTNAME = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _TIER_VALUES = frozenset({"frontier", "mid", "cheap"})
@@ -95,7 +100,7 @@ def validate_env_tree(repo_root: Path | str) -> dict[str, dict[str, Any]]:
         errors.extend(env_errors)
         if env_resolved is not None:
             resolved_by_env[env_dir.name] = env_resolved
-        if owner and env_dir.name != EXAMPLE_ENV:
+        if owner and not is_example_env(env_dir.name):
             owners_by_env[env_dir.name] = owner
 
     errors.extend(_cross_env_owner_errors(owners_by_env))
@@ -192,7 +197,7 @@ def _validate_cluster_vars(
     for key in missing:
         errors.append(f"{rel_path}: missing required key: {key}")
 
-    if env_name == EXAMPLE_ENV:
+    if is_example_env(env_name):
         for key in sorted(_CLUSTER_VARS_KNOWN - set(data)):
             errors.append(f"{rel_path}: {EXAMPLE_ENV} must set every known key: {key}")
 
