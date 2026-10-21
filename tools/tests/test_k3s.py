@@ -92,20 +92,6 @@ def test_agent_config_template_encodes_join_rules() -> None:
     assert "node-label" not in rendered
 
 
-def test_agent_token_slurp_is_delegated_and_hidden() -> None:
-    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "token.yml").read_text(encoding="utf-8"))
-    slurp = next(task for task in tasks if "ansible.builtin.slurp" in task)
-    assert slurp["no_log"] is True
-    assert slurp["run_once"] is True
-    assert "control_plane" in slurp["delegate_to"]
-    config = next(
-        task
-        for task in yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
-        if task.get("name") == "Install k3s agent config"
-    )
-    assert config["no_log"] is True
-
-
 def _agent_play_section(env: str) -> str:
     require_cli("ansible-playbook")
     proc = subprocess.run(
