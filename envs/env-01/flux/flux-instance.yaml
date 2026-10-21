@@ -24,3 +24,12 @@ spec:
     url: "https://github.com/gordoncooper/jarvis"
     ref: "refs/heads/main"
     path: "envs/env-01/flux"
+  kustomize:
+    patches:
+      - patch: |
+          - op: add
+            path: /spec/template/spec/containers/0/args/-
+            value: --feature-gates=StrictPostBuildSubstitutions=true
+        target:
+          kind: Deployment
+          name: kustomize-controller

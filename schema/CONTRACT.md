@@ -100,6 +100,10 @@ The example env declares every known role. A new known role is declared on that 
 
 `bootstrap-secrets`, `seal`, and the cluster-vars renderer require `--env`. The Makefile targets `bootstrap-secrets` and `seal` require `ENV=`. Each fails when the env is omitted (D45).
 
+### postBuild substitution
+
+The FluxInstance sets kustomize-controller `StrictPostBuildSubstitutions=true`. A missing postBuild variable fails the reconcile. `$${...}` escapes a literal `${...}`.
+
 ### Identity values and product rules
 
 `tools/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user`, `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.

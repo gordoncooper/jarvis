@@ -8,6 +8,14 @@
     node_disk_path: "{{ case.path }}"
     node_disk_root: "{{ case.root }}"
     node_disk_labeled: "{{ case.labeled | to_json | from_json }}"
+    ansible_facts:
+      devices:
+        nvme1n1:
+          model: fixture-model
+          size: 1.00 TB
+          partitions:
+            nvme1n1p1:
+              size: 1.00 TB
   block:
     - ansible.builtin.include_role:
         name: node-disk

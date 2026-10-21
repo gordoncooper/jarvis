@@ -24,3 +24,12 @@ spec:
     url: "{{ flux_git_repo_url }}"
     ref: "{{ flux_git_ref }}"
     path: "envs/{{ jarvis_env }}/flux"
+  kustomize:
+    patches:
+      - patch: |
+          - op: add
+            path: /spec/template/spec/containers/0/args/-
+            value: --feature-gates=StrictPostBuildSubstitutions=true
+        target:
+          kind: Deployment
+          name: kustomize-controller
