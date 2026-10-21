@@ -9,7 +9,7 @@ from ansible_role_proof import (
     ANSIBLE_DIR,
     ansible_render_template,
     cluster_vars_playbook_path,
-    inventory_path,
+    env_inventory_args,
     load_cluster_vars,
 )
 
@@ -51,8 +51,7 @@ def test_site_yml_syntax_check() -> None:
         "ansible-playbook",
         "--syntax-check",
         "site.yml",
-        "-i",
-        str(inventory_path().resolve()),
+        *env_inventory_args(),
         "-e",
         f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
     ]

@@ -76,6 +76,20 @@ def inventory_path(repo_root: Path = REPO_ROOT) -> Path:
     return repo_root / "envs" / env_name() / "inventory" / "hosts.yml"
 
 
+def roles_inventory_path(repo_root: Path = REPO_ROOT) -> Path:
+    return repo_root / "infra" / "inventory" / "roles.yml"
+
+
+def env_inventory_args(repo_root: Path = REPO_ROOT) -> list[str]:
+    """Env hosts first, then the constructed role groups. Order is required."""
+    return [
+        "-i",
+        str(inventory_path(repo_root).resolve()),
+        "-i",
+        str(roles_inventory_path(repo_root).resolve()),
+    ]
+
+
 def load_cluster_vars(
     repo_root: Path = REPO_ROOT, *, env: str | None = None
 ) -> dict[str, object]:

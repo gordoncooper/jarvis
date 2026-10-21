@@ -8,7 +8,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
-  - `inventory/hosts.yml` — hostnames only (no IPs in plain inventory; R25).
+  - `inventory/hosts.yml` — one block per host: `node_roles` and an optional `data_disk` (no IPs; R25, D42).
 - Rejection of unknown `code_delivery` and `build_agent` values (only built providers are accepted; §9 alternatives are named as stubs, not valid values).
 - Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`.
 - Default `ssh_user: ubuntu` when omitted (D34). The example env still sets `ssh_user`.
@@ -75,7 +75,22 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 ### `inventory/hosts.yml`
 
-Hostnames only. Inventory is not encrypted and does not need the age key (D2, D42, R25).
+Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key (D2, D42, R25).
+
+Each host is a mapping with `node_roles` and, when that host has a data disk, `data_disk`. No other host keys.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. The same host may include both. No role implies another. |
+| `data_disk` | no | Mapping with `id` and `wipe_confirmed` only. `id` is a whole-disk `/dev/disk/by-id/<id>` path, not a kernel name (`/dev/nvmeXnY`, `/dev/sdX`) and not a `-partN` partition. `wipe_confirmed` is a boolean. `true` does not authorize a wipe. |
+
+### Node roles and labels
+
+`infra/inventory/roles.yml` is the one constructed inventory. Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is not a role.
+
+Kubernetes labels are `role.<dns_suffix>/<role>=true` for each role on the node. The `role.<dns_suffix>/` prefix is reserved for them. The task that sets and removes them is `p0a-12`. This schema does not apply labels.
+
+The example env declares every known role. A new known role is declared on that env in the same PR (D43, D45).
 
 ### Example env
 
@@ -109,4 +124,7 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, and `ssh_user` defaulting to `ubuntu`.
 - A drift test fails when the known-key set gains a key the example env does not set.
+- Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
+- A drift test fails when the known role set gains a role the example env does not declare.
+- `ansible-inventory --graph` on the example env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles.yml`.
 - `tools/checks/core-names` rejects identity values on the scanned paths and fails when `OWNER_NAME` is unset.

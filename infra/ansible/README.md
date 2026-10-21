@@ -2,6 +2,15 @@
 
 `site.yml` applies `base-os`, then `k3s`, then `flux-operator`, reading settings from the env `cluster-vars.yaml` via `jarvis_cluster_vars`.
 
+Every env run passes the env hosts file, then the constructed role groups. The second file lives in core and is not copied into an env. `node_roles` become groups of the same name. Hosts with `data_disk` set are the `data_disk` group.
+
+```bash
+ansible-playbook site.yml \
+  -i ../../envs/<env>/inventory/hosts.yml \
+  -i ../inventory/roles.yml \
+  -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml
+```
+
 ## Operator tags
 
 Narrow runs use `--tags` from the playbook controller. Guard tasks and cluster-vars asserts are tagged `always` so they still run. Container proof tests skip heavy service tags (`chrony-service`, `k3s-service`, `flux-cluster`) where noted in pytest.

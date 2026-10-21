@@ -22,12 +22,27 @@ from services.hermes.core.schema.env import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _default_hosts() -> str:
+    return (
+        textwrap.dedent(
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup]
+            """
+        ).strip()
+        + "\n"
+    )
+
+
 def _write_env(
     root: Path,
     env_name: str = "env-test",
     *,
     cluster_vars: dict | None = None,
     omit_ssh_user: bool = False,
+    hosts_yml: str | None = None,
 ) -> Path:
     env = root / "envs" / env_name
     (env / "values").mkdir(parents=True)
@@ -61,14 +76,7 @@ def _write_env(
         encoding="utf-8",
     )
     (env / "inventory" / "hosts.yml").write_text(
-        textwrap.dedent(
-            """
-            all:
-              hosts:
-                node.example:
-            """
-        ).strip()
-        + "\n",
+        hosts_yml if hosts_yml is not None else _default_hosts(),
         encoding="utf-8",
     )
     return env
@@ -193,6 +201,144 @@ def test_owner_handle_must_match_across_non_example_envs(tmp_path: Path):
     assert "non-example envs" in msg
     assert "owner-a" in msg
     assert "owner-b" in msg
+
+
+def _hosts(body: str) -> str:
+    return textwrap.dedent(body).strip() + "\n"
+
+
+def test_unknown_role_fails(tmp_path: Path):
+    _write_env(
+        tmp_path,
+        hosts_yml=_hosts(
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup, database]
+            """
+        ),
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "unknown role" in msg
+    assert "database" in msg
+
+
+@pytest.mark.parametrize(
+    ("hosts_body", "role"),
+    [
+        (
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [backup]
+            """,
+            "control_plane",
+        ),
+        (
+            """
+            all:
+              hosts:
+                a.example:
+                  node_roles: [control_plane, backup]
+                b.example:
+                  node_roles: [control_plane]
+            """,
+            "control_plane",
+        ),
+        (
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane]
+            """,
+            "backup",
+        ),
+        (
+            """
+            all:
+              hosts:
+                a.example:
+                  node_roles: [control_plane, backup]
+                b.example:
+                  node_roles: [backup]
+            """,
+            "backup",
+        ),
+    ],
+)
+def test_singleton_role_must_be_exactly_one(tmp_path: Path, hosts_body: str, role: str):
+    _write_env(tmp_path, hosts_yml=_hosts(hosts_body))
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert f"exactly one {role} host" in "\n".join(excinfo.value.messages)
+
+
+def test_unknown_host_key_fails(tmp_path: Path):
+    _write_env(
+        tmp_path,
+        hosts_yml=_hosts(
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup]
+                  ansible_host: node.example
+            """
+        ),
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "unknown key" in msg
+    assert "ansible_host" in msg
+
+
+@pytest.mark.parametrize(
+    "disk_id",
+    [
+        "/dev/nvme0n1",
+        "/dev/sda",
+        "/dev/disk/by-path/pci-0000:01:00.0-nvme-1",
+        "/dev/disk/by-id/example-disk-part1",
+        "/dev/disk/by-id/nvme-example-part2",
+    ],
+)
+def test_data_disk_id_must_be_whole_disk_by_id(tmp_path: Path, disk_id: str):
+    _write_env(
+        tmp_path,
+        hosts_yml=_hosts(
+            f"""
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup]
+                  data_disk:
+                    id: {disk_id}
+                    wipe_confirmed: false
+            """
+        ),
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "whole-disk /dev/disk/by-id path" in "\n".join(excinfo.value.messages)
+
+
+def test_example_env_must_declare_a_new_known_role(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        env_schema,
+        "_NODE_ROLES",
+        env_schema._NODE_ROLES | {"drift_role"},
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(REPO_ROOT)
+    msg = "\n".join(excinfo.value.messages)
+    assert msg.count("drift_role") == 1
+    assert f"{EXAMPLE_ENV} must declare every known role: drift_role" in msg
 
 
 def test_example_env_must_set_a_new_known_key(monkeypatch: pytest.MonkeyPatch):

@@ -63,6 +63,15 @@ _HERMES_TOP_LEVEL = frozenset(
 
 _APPS_TOP_LEVEL = frozenset({"app_hosting_enabled", "apps"})
 
+_NODE_ROLES = frozenset(
+    {"control_plane", "workers", "storage", "backup", "gpu", "edge"}
+)
+_HOST_KEYS = frozenset({"node_roles", "data_disk"})
+_DATA_DISK_KEYS = frozenset({"id", "wipe_confirmed"})
+_SINGLETON_ROLES = ("control_plane", "backup")
+_DISK_ID = re.compile(r"^/dev/disk/by-id/[A-Za-z0-9][A-Za-z0-9._+-]*$")
+_DISK_PARTITION = re.compile(r"-part[0-9]+$")
+
 
 class ValidationError(Exception):
     """One or more env schema violations."""
@@ -435,10 +444,16 @@ def _validate_apps(data: dict[str, Any], rel_path: str) -> list[str]:
 
 def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[str]:
     errors: list[str] = []
+    for key in sorted(set(data) - {"all"}):
+        errors.append(f"{rel_path}: unknown key '{key}' (allowed: all)")
+
     all_group = data.get("all")
     if not isinstance(all_group, dict):
         errors.append(f"{rel_path}: expected top-level 'all' mapping")
         return errors
+
+    for key in sorted(set(all_group) - {"hosts"}):
+        errors.append(f"{rel_path}: unknown key '{key}' under all (allowed: hosts)")
 
     hosts = all_group.get("hosts")
     if not isinstance(hosts, dict):
@@ -448,30 +463,85 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
     if not hosts:
         errors.append(f"{env_name}: inventory must list at least one host")
 
-    for hostname, host_vars in hosts.items():
-        if _looks_like_ip(hostname):
-            errors.append(f"{rel_path}: host key must be a hostname, not an IP: {hostname}")
-        if host_vars is None:
-            continue
-        if not isinstance(host_vars, dict):
-            errors.append(f"{rel_path}: host {hostname}: vars must be a mapping if present")
-            continue
-        if "ansible_host" in host_vars:
-            ah = host_vars["ansible_host"]
-            if isinstance(ah, str) and _looks_like_ip(ah):
-                errors.append(
-                    f"{rel_path}: host {hostname}: ansible_host must not be a plain IP"
-                )
-        for key, val in host_vars.items():
-            if isinstance(val, str) and _looks_like_ip(val) and key in (
-                "ansible_host",
-                "ip",
-                "ansible_ssh_host",
-            ):
-                errors.append(
-                    f"{rel_path}: host {hostname}: {key} must not be a plain IP in inventory"
-                )
+    role_counts = {role: 0 for role in _SINGLETON_ROLES}
+    declared_roles: set[str] = set()
+    allowed_keys = ", ".join(sorted(_HOST_KEYS))
+    allowed_roles = ", ".join(sorted(_NODE_ROLES))
 
+    for hostname, host_vars in hosts.items():
+        if not isinstance(hostname, str) or _looks_like_ip(hostname):
+            errors.append(f"{rel_path}: host key must be a hostname, not an IP: {hostname}")
+        if not isinstance(host_vars, dict):
+            errors.append(f"{rel_path}: host {hostname}: node_roles is required")
+            continue
+
+        for key in sorted(set(host_vars) - _HOST_KEYS):
+            errors.append(
+                f"{rel_path}: host {hostname}: unknown key '{key}' (allowed: {allowed_keys})"
+            )
+
+        roles = host_vars.get("node_roles")
+        if not isinstance(roles, list) or not roles:
+            errors.append(f"{rel_path}: host {hostname}: node_roles must be a non-empty list")
+        else:
+            seen: set[str] = set()
+            for role in roles:
+                if not isinstance(role, str) or role not in _NODE_ROLES:
+                    errors.append(
+                        f"{rel_path}: host {hostname}: unknown role '{role}' "
+                        f"(allowed: {allowed_roles})"
+                    )
+                    continue
+                if role in seen:
+                    errors.append(f"{rel_path}: host {hostname}: duplicate role '{role}'")
+                    continue
+                seen.add(role)
+                declared_roles.add(role)
+                if role in role_counts:
+                    role_counts[role] += 1
+
+        if "data_disk" in host_vars:
+            errors.extend(_validate_data_disk(host_vars["data_disk"], rel_path, str(hostname)))
+
+    for role, count in role_counts.items():
+        if count != 1:
+            errors.append(f"{rel_path}: expected exactly one {role} host, found {count}")
+
+    if is_example_env(env_name):
+        for role in sorted(_NODE_ROLES - declared_roles):
+            errors.append(f"{rel_path}: {EXAMPLE_ENV} must declare every known role: {role}")
+
+    return errors
+
+
+def _validate_data_disk(disk: Any, rel_path: str, hostname: str) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(disk, dict):
+        errors.append(f"{rel_path}: host {hostname}: data_disk must be a mapping")
+        return errors
+
+    allowed = ", ".join(sorted(_DATA_DISK_KEYS))
+    for key in sorted(set(disk) - _DATA_DISK_KEYS):
+        errors.append(
+            f"{rel_path}: host {hostname}: data_disk unknown key '{key}' (allowed: {allowed})"
+        )
+    for key in sorted(_DATA_DISK_KEYS - set(disk)):
+        errors.append(f"{rel_path}: host {hostname}: data_disk missing required key: {key}")
+
+    disk_id = disk.get("id")
+    if "id" in disk and (
+        not isinstance(disk_id, str)
+        or _DISK_ID.match(disk_id) is None
+        or _DISK_PARTITION.search(disk_id) is not None
+    ):
+        errors.append(
+            f"{rel_path}: host {hostname}: data_disk.id must be a whole-disk /dev/disk/by-id path"
+        )
+
+    if "wipe_confirmed" in disk and not isinstance(disk.get("wipe_confirmed"), bool):
+        errors.append(
+            f"{rel_path}: host {hostname}: data_disk.wipe_confirmed must be a boolean"
+        )
     return errors
 
 
