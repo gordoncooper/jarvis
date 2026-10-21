@@ -1,6 +1,20 @@
 ---
-# §8 step 4 order: base-os → k3s → flux-operator (cluster-vars via jarvis_cluster_vars).
-- name: Bootstrap jarvis node
+# Fact asserts run before any change. k3s and flux-operator stay on all until the agent play is split.
+- name: Assert facts before any change
+  hosts: all
+  become: true
+  gather_facts: false
+  tags:
+    - always
+  vars:
+    ansible_user: "{{ ssh_user }}"
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  tasks:
+    - name: Assert a declared gpu host has an NVIDIA device
+      ansible.builtin.import_tasks: tasks/assert-gpu.yml
+
+- name: Base OS
   hosts: all
   become: true
   vars:
@@ -9,5 +23,25 @@
     - "{{ jarvis_cluster_vars }}"
   roles:
     - base-os
+
+- name: Prepare data disk
+  hosts: data_disk
+  become: true
+  gather_facts: false
+  vars:
+    ansible_user: "{{ ssh_user }}"
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  roles:
+    - node-disk
+
+- name: Bootstrap k3s and Flux
+  hosts: all
+  become: true
+  vars:
+    ansible_user: "{{ ssh_user }}"
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  roles:
     - k3s
     - flux-operator

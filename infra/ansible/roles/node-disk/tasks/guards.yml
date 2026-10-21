@@ -1,0 +1,17 @@
+---
+- ansible.builtin.set_fact:
+    node_disk_device_re: "^{{ node_disk_path | regex_escape }}({{ 'p[0-9]+' if node_disk_path is match('.*[0-9]$') else '[0-9]+' }})?$"
+- ansible.builtin.set_fact:
+    node_disk_ours: "{{ node_disk_labeled | select('match', node_disk_device_re) | list | length > 0 }}"
+- name: Refuse the root disk
+  ansible.builtin.assert:
+    that:
+      - not (node_disk_root is match(node_disk_device_re))
+    fail_msg: "{{ data_disk.id }} is the root disk ({{ node_disk_root }})."
+- name: Refuse to format without both confirmations
+  when: not (node_disk_ours | bool)
+  ansible.builtin.assert:
+    that:
+      - data_disk.wipe_confirmed is sameas true
+      - (jarvis_wipe_confirm | default('')) == (inventory_hostname ~ ':' ~ data_disk.id)
+    fail_msg: "refusing to wipe {{ inventory_hostname }} {{ data_disk.id }} given {{ jarvis_wipe_confirm | default('') }}"

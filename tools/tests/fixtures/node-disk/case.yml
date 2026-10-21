@@ -1,0 +1,23 @@
+---
+- ansible.builtin.set_fact:
+    got_failure: false
+    got_message: ""
+- vars:
+    data_disk: "{{ case.data_disk | to_json | from_json }}"
+    jarvis_wipe_confirm: "{{ case.confirm | default('') }}"
+    node_disk_path: "{{ case.path }}"
+    node_disk_root: "{{ case.root }}"
+    node_disk_labeled: "{{ case.labeled | to_json | from_json }}"
+  block:
+    - ansible.builtin.include_role:
+        name: node-disk
+        tasks_from: guards.yml
+  rescue:
+    - ansible.builtin.set_fact:
+        got_failure: true
+        got_message: "{{ ansible_failed_result.msg | default('') }}"
+- ansible.builtin.assert:
+    that:
+      - (got_failure | bool) == ((case.expect | default('')) | length > 0)
+      - case.expect | default('') in got_message
+    fail_msg: "{{ case.name }}: {{ got_message }}"

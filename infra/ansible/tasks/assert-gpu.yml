@@ -1,0 +1,31 @@
+---
+# /sys/bus/pci/devices entries are symlinks. follow is required or vendor is never seen.
+- name: Find PCI vendor files
+  ansible.builtin.find:
+    paths: "{{ node_pci_devices_path | default('/sys/bus/pci/devices') }}"
+    patterns: vendor
+    recurse: true
+    follow: true
+    depth: 2
+    file_type: file
+  register: node_pci_vendors
+  when: "'gpu' in group_names"
+
+- name: Read PCI vendor ids
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ node_pci_vendors.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: node_pci_vendor_ids
+  when: "'gpu' in group_names"
+
+- name: A declared gpu host has an NVIDIA device
+  ansible.builtin.assert:
+    that:
+      - >-
+        node_pci_vendor_ids.results | default([])
+        | map(attribute='content') | map('b64decode') | map('trim') | map('lower')
+        | select('equalto', '0x10de') | list | length > 0
+    fail_msg: "gpu host {{ inventory_hostname }} has no NVIDIA device."
+  when: "'gpu' in group_names"

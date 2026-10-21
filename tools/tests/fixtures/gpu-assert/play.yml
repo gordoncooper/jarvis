@@ -1,0 +1,8 @@
+---
+- name: Assert a gpu host
+  hosts: all
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Run the gpu assert
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../infra/ansible/tasks/assert-gpu.yml"
