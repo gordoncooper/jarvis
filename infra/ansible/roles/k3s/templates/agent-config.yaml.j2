@@ -2,3 +2,7 @@
 server: {{ k3s_server_url }}
 token: {{ k3s_token }}
 node-name: {{ inventory_hostname }}
+kubelet-arg:
+  - "kube-reserved={{ k3s_kubelet_kube_reserved }}"
+  - "system-reserved={{ k3s_kubelet_system_reserved }}"
+  - "eviction-hard={{ k3s_kubelet_eviction_hard }}"

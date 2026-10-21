@@ -56,6 +56,7 @@ _CLUSTER_VARS_OPTIONAL = frozenset({"ssh_user"})
 _CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 
 _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
+_ENV_GIT_PATH = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/")
 
 _HERMES_TOP_LEVEL = frozenset(
     {"bots", "cron", "bot_tier_map", "tier_model_map", "lane_model_map"}
@@ -163,6 +164,7 @@ def _validate_env(
     errors.extend(_validate_hermes(hermes, _display_path(hermes_path, repo_root)))
     errors.extend(_validate_apps(apps, _display_path(apps_path, repo_root)))
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
+    errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
 
     if errors:
         return errors, None, owner
@@ -240,6 +242,9 @@ def _validate_cluster_vars(
         elif isinstance(val, str) and not val.strip():
             errors.append(f"{rel_path}: {key} must not be empty")
 
+    for key in ("pod_cidr", "service_cidr"):
+        errors.extend(_validate_cidr(rel_path, key, data.get(key)))
+
     flux_errors, flux_owner = _validate_repo_url(
         rel_path, "flux_git_repo_url", data.get("flux_git_repo_url")
     )
@@ -302,6 +307,37 @@ def _validate_cluster_vars(
             errors.append(f"{rel_path}: {key} must be a non-empty string")
 
     return errors, owner
+
+
+def _validate_cidr(rel_path: str, key: str, value: Any) -> list[str]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    try:
+        ipaddress.ip_network(value.strip(), strict=True)
+    except ValueError:
+        return [f"{rel_path}: {key} must be a CIDR"]
+    return []
+
+
+def _validate_flux_env_paths(env_dir: Path, repo_root: Path, env_name: str) -> list[str]:
+    if is_example_env(env_name):
+        return []
+    flux = env_dir / "flux"
+    if not flux.is_dir():
+        return []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for path in sorted(item for item in flux.rglob("*") if item.is_file()):
+        rel = _display_path(path, repo_root)
+        text = path.read_text(encoding="utf-8")
+        for found in _ENV_GIT_PATH.findall(text):
+            if found == env_name:
+                continue
+            message = f"{rel}: envs/{found}/ must use this env's name ({env_name})"
+            if message not in seen:
+                seen.add(message)
+                errors.append(message)
+    return errors
 
 
 def _validate_ntp_pools(rel_path: str, value: Any) -> list[str]:

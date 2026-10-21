@@ -34,7 +34,7 @@ def test_dropin_unit_follows_host_group() -> None:
 def test_disk_refusal_cases() -> None:
     require_cli("ansible-playbook")
     proc = subprocess.run(
-        ["ansible-playbook", str(FIXTURE / "refusals.yml"), "-i", "wk-2,", "-e", "ansible_connection=local"],
+        ["ansible-playbook", str(FIXTURE / "refusals.yml"), "-i", "wk-2,wk-3,", "-e", "ansible_connection=local"],
         cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,

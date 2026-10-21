@@ -15,4 +15,12 @@ env-01 values live only under `envs/env-01/`; core stays env-agnostic (R3).
 - Routine jarvis changes: agent PRs merge on green `ci` until the P2 exit; then `admin-gate` applies to protected paths (R36).
 - Infra Ansible (`infra/`): the admin re-runs `site.yml` on the controller node after merge (§8).
 - Hermes image bumps: the admin merges; soak between code-factory and ops deploys (R33).
-- New envs: copy this folder when hardware exists; do not retarget env-01 casually.
+## New env
+
+Create the env empty. Do not copy this folder or its secrets, and do not retarget env-01.
+
+1. Add `envs/<env>/values/` (`cluster-vars.yaml`, `hermes.yaml`, `apps.yaml`) and `envs/<env>/inventory/hosts.yml` with that env's own values and hosts.
+2. Add an age creation rule in the repo root `.sops.yaml` for `envs/<env>/secrets/`.
+3. `make bootstrap-secrets ENV=<env>`
+4. Render the ConfigMap with `python3 tools/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`.
+5. Add a `flux/` tree whose git paths use `envs/<env>/`.

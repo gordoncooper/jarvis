@@ -14,6 +14,12 @@
     flux_sops_age_present: >-
       {{ flux_sops_age_lookup.rc == 0 and (flux_sops_age_lookup.stdout | trim | length) > 0 }}
 
+- name: Record SOPS_AGE_KEY_FILE from the controller
+  ansible.builtin.set_fact:
+    sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+  no_log: true
+  changed_when: false
+
 - name: Require SOPS_AGE_KEY_FILE on the controller
   ansible.builtin.assert:
     that:
@@ -21,8 +27,7 @@
     fail_msg: >-
       Set SOPS_AGE_KEY_FILE to the age private key path on the controller before
       running flux-operator (bootstrap secret flux-system/sops-age).
-  vars:
-    sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+  when: (sops_age_key_file | length > 0) or not (flux_sops_age_present | bool)
   no_log: true
 
 - name: Require age private key file on the controller
@@ -32,15 +37,13 @@
     fail_msg: >-
       SOPS_AGE_KEY_FILE must point at an existing age private key file on the
       controller.
-  vars:
-    sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+  when: (sops_age_key_file | length > 0) or not (flux_sops_age_present | bool)
   no_log: true
 
 - name: Load age private key from the controller
   ansible.builtin.set_fact:
     flux_sops_age_key_content: "{{ lookup('file', sops_age_key_file) }}"
-  vars:
-    sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+  when: (sops_age_key_file | length > 0) or not (flux_sops_age_present | bool)
   no_log: true
 
 - name: Read existing sops-age secret data when present
@@ -50,7 +53,7 @@
       get secret sops-age -o json
   register: flux_sops_age_existing_json
   changed_when: false
-  when: flux_sops_age_present | bool
+  when: (flux_sops_age_present | bool) and (sops_age_key_file | length > 0)
   check_mode: false
   no_log: true
 
@@ -58,7 +61,7 @@
   ansible.builtin.set_fact:
     flux_sops_age_existing_key_content: >-
       {{ (flux_sops_age_existing_json.stdout | from_json).data['age.agekey'] | b64decode }}
-  when: flux_sops_age_present | bool
+  when: (flux_sops_age_present | bool) and (sops_age_key_file | length > 0)
   no_log: true
 
 - name: Refuse to overwrite an existing sops-age secret with different content
@@ -72,7 +75,7 @@
     fail_msg: >-
       flux-system/sops-age already exists with different content; remove it manually
       or fix SOPS_AGE_KEY_FILE before re-running site.yml.
-  when: flux_sops_age_present | bool
+  when: (flux_sops_age_present | bool) and (sops_age_key_file | length > 0)
   no_log: true
 
 - name: Create flux-system sops-age secret once

@@ -28,6 +28,7 @@ from ansible_role_proof import (
     start_systemd_container,
     stop_systemd_container,
 )
+from conftest import require_cli
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
 
@@ -245,6 +246,66 @@ def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
         assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
     finally:
         stop_systemd_container()
+
+
+def test_existing_sops_age_skips_key_when_unset(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    binary.write_text(
+        "#!/bin/bash\n"
+        f"printf '%s\\n' \"$*\" >> {log}\n"
+        'if [[ "$*" == *"get secret sops-age -o name" ]]; then\n'
+        "  echo secret/sops-age\n"
+        "  exit 0\n"
+        "fi\n"
+        'echo "unexpected k3s: $*" >&2\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    play = tmp_path / "play.yml"
+    play.write_text(
+        textwrap.dedent(
+            """\
+            ---
+            - name: Re-run sops-age without the private key
+              hosts: localhost
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_role:
+                    name: flux-operator
+                    tasks_from: sops_age.yml
+            """
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.pop("SOPS_AGE_KEY_FILE", None)
+    env["ANSIBLE_BECOME"] = "false"
+    proc = subprocess.run(
+        [
+            "ansible-playbook",
+            str(play),
+            "-i",
+            "localhost,",
+            "-e",
+            "ansible_connection=local",
+            "-e",
+            f"k3s_binary_path={binary}",
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    invocations = log.read_text(encoding="utf-8")
+    assert "get secret sops-age -o name" in invocations
+    assert "-o json" not in invocations
+    assert "create" not in invocations
 
 
 def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:

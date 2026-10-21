@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import textwrap
@@ -78,20 +79,77 @@ def test_k3s_config_template_encodes_p0a12_rules() -> None:
 
 
 def test_agent_config_template_encodes_join_rules() -> None:
+    cluster = load_cluster_vars()
     rendered = ansible_render_template(
         "agent-config.yaml.j2",
         {
             "k3s_server_url": "https://cp-1:6443",
             "k3s_token": "fixture-token",
             "inventory_hostname": "wk-1",
+            "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
+            "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
+            "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
         },
         templates_dir=K3S_ROLE_TEMPLATES,
     )
     assert "server: https://cp-1:6443" in rendered
     assert "token: fixture-token" in rendered
     assert "node-name: wk-1" in rendered
+    assert f"kube-reserved={cluster['k3s_kubelet_kube_reserved']}" in rendered
+    assert f"system-reserved={cluster['k3s_kubelet_system_reserved']}" in rendered
+    assert f"eviction-hard={cluster['k3s_kubelet_eviction_hard']}" in rendered
     assert "cluster-init" not in rendered
     assert "node-label" not in rendered
+
+
+def test_agent_fails_when_control_plane_name_does_not_resolve(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text(
+        textwrap.dedent(
+            """\
+            all:
+              children:
+                control_plane:
+                  hosts:
+                    cp.invalid:
+                agents:
+                  hosts:
+                    wk-1:
+                      ansible_connection: local
+            """
+        ),
+        encoding="utf-8",
+    )
+    play = tmp_path / "play.yml"
+    token_tasks = K3S_ROLE_DIR / "tasks" / "token.yml"
+    play.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - name: Agent join preconditions
+              hosts: wk-1
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_tasks: {token_tasks}
+            """
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    proc = subprocess.run(
+        ["ansible-playbook", str(play), "-i", str(inventory)],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert "cp.invalid does not resolve on wk-1" in output
 
 
 def _agent_play_section(env: str) -> str:

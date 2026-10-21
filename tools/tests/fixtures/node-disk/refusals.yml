@@ -25,3 +25,22 @@
       loop: "{{ cases }}"
       loop_control:
         loop_var: case
+
+- name: Each host accepts its own pair from one list
+  hosts: wk-2,wk-3
+  gather_facts: false
+  become: false
+  tasks:
+    - ansible.builtin.set_fact:
+        pair_case:
+          name: own pair in a two-host list
+          path: /dev/nvme1n1
+          root: /dev/nvme0n1p3
+          labeled: []
+          data_disk:
+            id: "/dev/disk/by-id/example-{{ inventory_hostname }}"
+            wipe_confirmed: true
+          confirm: "wk-2:/dev/disk/by-id/example-wk-2,wk-3:/dev/disk/by-id/example-wk-3"
+    - ansible.builtin.include_tasks: case.yml
+      vars:
+        case: "{{ pair_case }}"
