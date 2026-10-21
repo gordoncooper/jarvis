@@ -1,0 +1,204 @@
+---
+- name: Require nodes from env values
+  ansible.builtin.assert:
+    that:
+      - nodes is mapping
+      - inventory_hostname in nodes
+    fail_msg: nodes.yaml must list every inventory host (D42).
+  tags: [node-disk]
+
+- name: Resolve node spec
+  ansible.builtin.set_fact:
+    jarvis_node_spec: "{{ nodes[inventory_hostname] }}"
+  tags: [node-disk]
+
+- name: Skip node-disk when this host has no data disk
+  ansible.builtin.meta: end_host
+  when: jarvis_node_spec.data_disk is not defined
+  tags: [node-disk]
+
+- name: Set data disk path
+  ansible.builtin.set_fact:
+    jarvis_data_disk_id: "{{ jarvis_node_spec.data_disk.id }}"
+  tags: [node-disk]
+
+- name: Refuse data disk without by-id path
+  ansible.builtin.assert:
+    that:
+      - jarvis_data_disk_id is match('^/dev/disk/by-id/')
+    fail_msg: data_disk.id must be a stable /dev/disk/by-id/ path (D42).
+  tags: [node-disk]
+
+- name: Refuse missing data disk
+  ansible.builtin.stat:
+    path: "{{ jarvis_data_disk_id }}"
+  register: jarvis_data_disk_stat
+  failed_when: not jarvis_data_disk_stat.stat.exists
+  tags: [node-disk]
+
+- name: Refuse when data disk is the root disk
+  ansible.builtin.shell: |
+    set -euo pipefail
+    root_dev="$(readlink -f "$(findmnt -n -o SOURCE --target / | head -n1)")"
+    data_dev="$(readlink -f "{{ jarvis_data_disk_id }}")"
+    test "${root_dev}" != "${data_dev}"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  check_mode: false
+  tags: [node-disk]
+
+- name: Probe data disk mount and jarvis mark
+  ansible.builtin.command:
+    cmd: findmnt -n -S {{ jarvis_data_disk_id }}
+  register: jarvis_disk_mount
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [node-disk]
+
+- name: Stat jarvis env mark on data disk
+  ansible.builtin.stat:
+    path: "{{ jarvis_data_mark_file }}"
+  register: jarvis_data_mark_stat
+  tags: [node-disk]
+
+- name: Read jarvis env mark on data disk
+  ansible.builtin.slurp:
+    src: "{{ jarvis_data_mark_file }}"
+  register: jarvis_data_mark
+  when: jarvis_data_mark_stat.stat.exists
+  tags: [node-disk]
+
+- name: Set whether data disk already belongs to this env
+  ansible.builtin.set_fact:
+    jarvis_disk_is_marked: >-
+      {{ jarvis_data_mark_stat.stat.exists
+         and (jarvis_data_mark.content | b64decode | trim) == jarvis_env }}
+  tags: [node-disk]
+
+- name: Refuse foreign mounted data disk
+  ansible.builtin.fail:
+    msg: >-
+      {{ jarvis_data_disk_id }} is already mounted ({{ jarvis_disk_mount.stdout | trim }})
+      and is not marked for {{ jarvis_env }} (D42).
+  when:
+    - jarvis_disk_mount.rc == 0
+    - jarvis_disk_mount.stdout | trim | length > 0
+    - not (jarvis_disk_is_marked | bool)
+  check_mode: false
+  tags: [node-disk]
+
+- name: Stat jarvis data mount for non-empty check
+  ansible.builtin.stat:
+    path: "{{ jarvis_data_mount }}"
+  register: jarvis_data_mount_stat
+  when: not (jarvis_disk_is_marked | bool)
+  tags: [node-disk]
+
+- name: Refuse mount over non-empty jarvis data directory
+  ansible.builtin.find:
+    paths: "{{ jarvis_data_mount }}"
+    file_type: any
+    hidden: true
+  register: jarvis_data_mount_entries
+  when:
+    - not (jarvis_disk_is_marked | bool)
+    - jarvis_data_mount_stat.stat.exists | default(false)
+    - jarvis_data_mount_stat.stat.isdir | default(false)
+  tags: [node-disk]
+
+- name: Refuse non-empty jarvis data directory without mark
+  ansible.builtin.fail:
+    msg: >-
+      {{ jarvis_data_mount }} is not empty. Empty it or fix the mount before re-running (D42).
+  when:
+    - jarvis_data_mount_entries is defined
+    - (jarvis_data_mount_entries.matched | default(0) | int) > 0
+  tags: [node-disk]
+
+- name: Gather disk identity before wipe decision
+  ansible.builtin.shell: |
+    set -euo pipefail
+    lsblk -dn -o MODEL,SIZE,TYPE {{ jarvis_data_disk_id }}
+    lsblk -n {{ jarvis_data_disk_id }}
+  args:
+    executable: /bin/bash
+  register: jarvis_disk_identity
+  changed_when: false
+  check_mode: false
+  when: not (jarvis_disk_is_marked | bool)
+  tags: [node-disk]
+
+- name: Refuse wipe without two-key confirmation
+  ansible.builtin.fail:
+    msg: |
+      Refusing to wipe {{ jarvis_data_disk_id }} on {{ inventory_hostname }} (D42).
+      Disk identity:
+      {{ jarvis_disk_identity.stdout | default('(run without --check to collect disk identity)') }}
+      Set wipe_confirmed: true in nodes.yaml and pass
+      -e jarvis_wipe_confirm={{ inventory_hostname }}:{{ jarvis_data_disk_id }}
+  when:
+    - not (jarvis_disk_is_marked | bool)
+    - not (
+        jarvis_node_spec.data_disk.wipe_confirmed | default(false) | bool
+        and (jarvis_wipe_confirm | default('')) == (inventory_hostname ~ ':' ~ jarvis_data_disk_id)
+      )
+  check_mode: false
+  tags: [node-disk]
+
+- name: Wipe and format data disk
+  when: not (jarvis_disk_is_marked | bool)
+  block:
+    - name: Wipe filesystem signatures from data disk
+      ansible.builtin.command:
+        cmd: wipefs -a {{ jarvis_data_disk_id }}
+      tags: [node-disk]
+
+    - name: Create ext4 filesystem on data disk
+      community.general.filesystem:
+        fstype: "{{ jarvis_data_fs }}"
+        dev: "{{ jarvis_data_disk_id }}"
+        opts: "-L {{ jarvis_data_label }}"
+      tags: [node-disk]
+  tags: [node-disk]
+
+- name: Mount jarvis data disk and lay out paths
+  block:
+    - name: Ensure jarvis data mount directory exists
+      ansible.builtin.file:
+        path: "{{ jarvis_data_mount }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Mount jarvis data disk
+      ansible.posix.mount:
+        path: "{{ jarvis_data_mount }}"
+        src: "{{ jarvis_data_disk_id }}"
+        fstype: "{{ jarvis_data_fs }}"
+        opts: defaults
+        state: mounted
+
+    - name: Write jarvis env mark on data disk
+      ansible.builtin.copy:
+        dest: "{{ jarvis_data_mark_file }}"
+        content: "{{ jarvis_env }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Ensure jarvis data subdirectories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ local_path_data }}"
+        - "{{ backup_path }}"
+        - "{{ backup_path }}/etcd-snapshots"
+        - "{{ backup_path }}/restic"
+  tags: [node-disk]

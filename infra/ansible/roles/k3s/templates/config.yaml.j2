@@ -13,3 +13,9 @@ kubelet-arg:
   - "kube-reserved={{ k3s_kubelet_kube_reserved }}"
   - "system-reserved={{ k3s_kubelet_system_reserved }}"
   - "eviction-hard={{ k3s_kubelet_eviction_hard }}"
+{% if nodes is defined and inventory_hostname in nodes and nodes[inventory_hostname].roles is defined %}
+node-label:
+{% for role in nodes[inventory_hostname].roles %}
+  - "role.jarvis.lan/{{ role }}=true"
+{% endfor %}
+{% endif %}

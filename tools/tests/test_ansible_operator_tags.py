@@ -12,9 +12,11 @@ LIST_TASKS_INVENTORY = (
     REPO_ROOT / "tools/tests/fixtures/ansible-list-tasks/hosts.yml"
 )
 CLUSTER_VARS_REL = f"../../envs/{env_name()}/values/cluster-vars.yaml"
+NODES_VARS_REL = f"../../envs/{env_name()}/values/nodes.yaml"
 
 OPERATOR_TAGS = (
     "base-os",
+    "node-disk",
     "kubeconfig",
     "k3s-upgrade",
     "k3s-config",
@@ -44,6 +46,8 @@ def list_tasks_for_tag(tag: str) -> str:
             str(LIST_TASKS_INVENTORY),
             "-e",
             f"jarvis_cluster_vars={CLUSTER_VARS_REL}",
+            "-e",
+            f"jarvis_nodes_vars={NODES_VARS_REL}",
             "--list-tasks",
             "--tags",
             tag,

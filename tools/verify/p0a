@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# P0a exit checklist (D17): live reads and evidence links; not run in CI.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+need_gordon() {
+  printf 'NEEDS GORDON: %s\n' "$*"
+}
+
+echo "=== P0a verify ($(date -u +%Y-%m-%dT%H:%M:%SZ)) ==="
+echo "Repo: ${repo_root}"
+echo
+
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "kubectl not found; cluster checks skipped (run from controller with kubeconfig)" >&2
+  exit 1
+fi
+
+echo "--- Flux objects (expect every Kustomization / GitRepository Ready) ---"
+kubectl get kustomizations,gitrepositories -A
+not_ready="$(kubectl get kustomizations,gitrepositories -A --no-headers 2>/dev/null | awk '$3 != "True" {print}')"
+if [[ -n "${not_ready}" ]]; then
+  echo "Flux objects not Ready:" >&2
+  echo "${not_ready}" >&2
+  exit 1
+fi
+echo
+
+echo "--- SOPS decrypt proof (restic Secret present; value not printed) ---"
+kubectl get secret -n platform-backups -o name | grep -q restic || {
+  echo "missing restic Secret in platform-backups" >&2
+  exit 1
+}
+kubectl get secret -n platform-backups -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+echo
+
+echo "--- Node role labels (role.jarvis.lan/*=true) ---"
+kubectl get nodes --show-labels
+echo
+
+echo "--- CI rule checks (evidence: seeded bad PRs on main) ---"
+echo "Attach links to seed PRs for core-names, env-schema, secret-scan, contract-md, and cli-deny."
+echo
+
+echo "--- Renovate ---"
+echo "Attach the Renovate onboarding or dependency PR for jarvis and jarvis-apps."
+echo
+
+echo "--- Rollback drill log ---"
+echo "(attach Gordon's revert log from the throwaway ConfigMap drill; kept outside the repo)"
+echo
+
+need_gordon "Second full site.yml run (idempotence); paste PLAY RECAP showing changed=0."
+need_gordon "Second make bootstrap-secrets run; paste output showing no new secrets."
+echo
+echo "P0a verify complete."

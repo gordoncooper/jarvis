@@ -2,11 +2,12 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help deps ci-verify bootstrap-secrets seal
+.PHONY: help deps ci-verify verify bootstrap-secrets seal
 help:
 	@echo "JARVIS Makefile"
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
 	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
+	@echo "  make verify PHASE=<ph>  Live phase checklist (tools/verify/<ph>; not CI)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (optional ENV=<env>)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (optional ENV=<env>)"
 
@@ -17,6 +18,10 @@ deps:
 
 ci-verify: deps
 	@bash tools/ci-local-verify
+
+verify:
+	@test -n "$(PHASE)" || (echo "PHASE is required (example: make verify PHASE=p0a)" >&2; exit 1)
+	@bash "tools/verify/$(PHASE)"
 
 bootstrap-secrets:
 	@if [ -n "$(ENV)" ]; then \

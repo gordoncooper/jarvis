@@ -6,13 +6,9 @@ Rules here are prose only for what `tools/checks/` and `.cursor/cli.json` cannot
 
 - **R34 — Git is the source of truth; no direct cluster or secret tooling:** `tools/checks/cli-deny` and `.cursor/cli.json`.
 - **R3 / R28 — Core stays env-agnostic (no env names, DNS suffixes, or operator-specific strings in core):** `tools/checks/core-names`.
-
-**Model names in core (R28):** re-add to `tools/checks/core-names` in **p2-23** when `tier_model_map` / `lane_model_map` are populated; lean pass 2 dropped that scan while the maps are empty.
-- **Env schema (values under `envs/<env>/`):** `tools/checks/env-schema`.
+- **Env schema (values under `envs/<env>/`, including `values/nodes.yaml`):** `tools/checks/env-schema`.
 - **R2 — Each component folder has `CONTRACT.md`:** `tools/checks/contract-md`.
 - **R25 — No plaintext secrets in Git:** `tools/checks/secret-scan`.
-
-**R31 (PVC backup coverage):** re-add `tools/checks/pvc-backup` with the first real PVC in **p0b-09** (VolSync test volume); deferred in lean pass 2 because no PVC exists in Git yet.
 
 ## Stay lean
 
@@ -23,14 +19,21 @@ Rules here are prose only for what `tools/checks/` and `.cursor/cli.json` cannot
 - Prefer deleting code to adding it. Report any PR over about 300 changed lines (excluding deletions) and explain why.
 - Hardening ideas and edge cases go in the report as notes, not code.
 
+## Review
+
+- One fix round per PR; after that, only real bugs block, and everything else becomes a note.
+- Reviewers also block an unexplained file move and the removal of a check for a rule already in force.
+- Small low-risk PRs merge on reviewer approval plus green CI.
+- Docs, plan, design, infra, and risky PRs go to Gordon first (R36 adds `admin-gate` from the P2 exit).
+
 ## Workflow
 
 - Branch `agent/<topic>` from `main`. One PR per task, or per batch of related plan steps that touch the same area; keep unrelated or risky changes in separate PRs. No stacked PRs. Open the PR **ready for review**, not draft.
-- Merging follows R36. In addition, merge only after the Ready to merge boxes are ticked, and if a task brief says to leave the PR unmerged, do that.
+- Merging follows R36 and the review rules above. Merge only after the Ready to merge boxes are ticked; if a task brief says to leave the PR unmerged, do that.
 - Never touch real hosts: no SSH, no secret decryption, no reading the age private key (deny list blocks many of these; still treat this as a hard stop).
-- Env-specific values (hostnames, owner/repo names, repo URLs, the node SSH user `ssh_user` per D34) live only in `envs/<env>/values/`, validated by `tools/checks/env-schema`. Inventory hostnames live only in `envs/<env>/inventory/`. Never put them in core or roles, and no role defaults for them (core-level defaults the schema documents, like D34's, are fine).
+- Env-specific values (hostnames, node roles, data disk by-id paths, owner/repo names, repo URLs, the node SSH user `ssh_user` per D34) live only in `envs/<env>/values/` and inventory under `envs/<env>/`. Never put them in core or role defaults.
 - LAN IPs and user IDs never appear in plaintext, envs/ included. Keep them out, or encrypt them under `envs/<env>/secrets/` (R25).
-- Names and home paths of whoever runs the tooling (operator, controller or agent accounts) never appear anywhere in the repo; the repo must work from any controller node. `tools/checks/core-names` flags home-directory paths.
+- Names and home paths of whoever runs the tooling never appear anywhere in the repo; the repo must work from any controller node. `tools/checks/core-names` flags home-directory paths.
 - Before every push, run `make ci-verify` locally (full suite, container tests included, nothing skipped). Push once when it is green — no probe pushes to see what CI says. Squash WIP into one commit per push. After two failures on the same problem, stop and report.
 - If the task timebox passes before the done checks pass, stop and report the task as failed, with what's done and what's left (R35).
 - Before reporting done, review the **whole** diff for leftovers from earlier attempts (debug prints, commented experiments, wrong env literals).

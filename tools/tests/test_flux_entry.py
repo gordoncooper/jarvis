@@ -18,13 +18,7 @@ from ansible_role_proof import (
     load_cluster_vars,
 )
 from render_cluster_vars_configmap import cluster_vars_configmap, render_document
-
-FLUX_KUSTOMIZATION_CHAIN: tuple[str, ...] = (
-    "platform-controllers",
-    "platform-configs",
-    "services",
-    "apps",
-)
+from _flux_entry import flux_kustomization_docs, flux_kustomization_layer_paths
 
 FLUX_SCHEMA = (
     "https://raw.githubusercontent.com/fluxcd/flux2/v2.8.3/schemas/"
@@ -84,14 +78,16 @@ def _kubeconform_validate(manifests: str, *, ignore_missing: bool = False) -> No
 
 
 def _load_flux_kustomizations() -> list[dict[str, object]]:
-    env = env_name()
-    docs: list[dict[str, object]] = []
-    for name in FLUX_KUSTOMIZATION_CHAIN:
-        path = REPO_ROOT / "envs" / env / "flux" / "kustomizations" / f"{name}.yaml"
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert isinstance(doc, dict)
-        docs.append(doc)
-    return docs
+    return flux_kustomization_docs(REPO_ROOT)
+
+
+def _flux_kustomization_chain() -> tuple[str, ...]:
+    return tuple(
+        doc["metadata"]["name"]
+        for doc in _load_flux_kustomizations()
+        if isinstance(doc.get("metadata"), dict)
+        and isinstance(doc["metadata"].get("name"), str)
+    )
 
 
 def test_cluster_vars_configmap_matches_render_script() -> None:
@@ -144,12 +140,13 @@ def test_git_flux_instance_matches_ansible_template() -> None:
 
 
 def test_flux_kustomization_depends_on_chain() -> None:
+    chain = _flux_kustomization_chain()
     docs = _load_flux_kustomizations()
-    assert docs[0]["metadata"]["name"] == "platform-controllers"
+    assert chain[0] == "platform-controllers"
     assert docs[0].get("spec", {}).get("dependsOn") in (None, [])
-    for idx in range(1, len(FLUX_KUSTOMIZATION_CHAIN)):
+    for idx in range(1, len(chain)):
         depends = docs[idx].get("spec", {}).get("dependsOn")
-        assert depends == [{"name": FLUX_KUSTOMIZATION_CHAIN[idx - 1]}]
+        assert depends == [{"name": chain[idx - 1]}]
 
 
 def test_platform_configs_decryption_uses_sops_age() -> None:
@@ -195,13 +192,7 @@ def _object_identity(doc: object) -> tuple[str, str, str] | None:
 
 
 def test_flux_layers_do_not_render_duplicate_objects() -> None:
-    env = env_name()
-    layers = {
-        "platform-controllers": "platform/flux-operator",
-        "platform-configs": f"envs/{env}/flux/platform-configs",
-        "services": "services",
-        "apps": "apps",
-    }
+    layers = flux_kustomization_layer_paths(REPO_ROOT)
     seen: dict[tuple[str, str, str], str] = {}
     for layer, rel_path in layers.items():
         output = _kustomize_build(rel_path)

@@ -1,6 +1,6 @@
 # Ansible (node bootstrap)
 
-`site.yml` applies `base-os`, then `k3s`, then `flux-operator`, reading settings from the env `cluster-vars.yaml` via `jarvis_cluster_vars`.
+`site.yml` applies `base-os`, then `node-disk`, then `k3s`, then `flux-operator`, reading `cluster-vars.yaml` via `jarvis_cluster_vars` and `nodes.yaml` via `jarvis_nodes_vars`.
 
 ## Operator tags
 
@@ -9,6 +9,7 @@ Narrow runs use `--tags` from the playbook controller. Guard tasks and cluster-v
 | Tag | Purpose | Example |
 | --- | --- | --- |
 | `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone) | `ansible-playbook site.yml --tags base-os` |
+| `node-disk` | Optional data disk prepare (D42; after base-os, before k3s) | `ansible-playbook site.yml --tags node-disk` |
 | `k3s` | Full k3s role (install, service, kubeconfig) | `ansible-playbook site.yml --tags k3s` |
 | `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `ansible-playbook site.yml --tags flux-operator` |
 | `kubeconfig` | Fetch and install kubeconfig for the playbook runner | `ansible-playbook site.yml --tags kubeconfig` |
@@ -20,4 +21,4 @@ Narrow runs use `--tags` from the playbook controller. Guard tasks and cluster-v
 
 `k3s-config`, `k3s-upgrade`, and `journald` restart their services through handlers; handlers do not appear in `ansible-playbook --list-tasks`.
 
-Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
+Pass the env inventory, `jarvis_cluster_vars`, and `jarvis_nodes_vars` as you would for a normal run.

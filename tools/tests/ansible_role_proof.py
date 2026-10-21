@@ -63,6 +63,10 @@ def cluster_vars_playbook_path(repo_root: Path = REPO_ROOT) -> str:
     return f"../../envs/{env_name(repo_root)}/values/cluster-vars.yaml"
 
 
+def nodes_vars_playbook_path(repo_root: Path = REPO_ROOT) -> str:
+    return f"../../envs/{env_name(repo_root)}/values/nodes.yaml"
+
+
 def inventory_path(repo_root: Path = REPO_ROOT) -> Path:
     return repo_root / "envs" / env_name(repo_root) / "inventory" / "hosts.yml"
 
@@ -235,6 +239,8 @@ def _playbook_cmd(
         f"{container},",
         "-e",
         f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
+        "-e",
+        f"jarvis_nodes_vars={nodes_vars_playbook_path()}",
         "-e",
         "ansible_connection=docker",
         *DOCKER_PLAYBOOK_EXTRA_VARS,

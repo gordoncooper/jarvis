@@ -52,6 +52,17 @@ _HERMES_TOP_LEVEL = frozenset(
 
 _APPS_TOP_LEVEL = frozenset({"app_hosting_enabled", "apps"})
 
+_NODE_ROLES_ALLOWED = frozenset(
+    {"control-plane", "worker", "storage", "backup", "gpu"}
+)
+_DISK_BY_ID = re.compile(r"^/dev/disk/by-id/[a-zA-Z0-9_.-]+$")
+_DISK_ID_PLACEHOLDER_MARKERS = (
+    "PLACEHOLDER",
+    "SET-AT-WIPE",
+    "REPLACE-ME",
+    "UNSET",
+)
+
 
 class ValidationError(Exception):
     """One or more env schema violations."""
@@ -110,8 +121,9 @@ def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, 
     cluster_vars_path = values / "cluster-vars.yaml"
     hermes_path = values / "hermes.yaml"
     apps_path = values / "apps.yaml"
+    nodes_path = values / "nodes.yaml"
 
-    for path in (cluster_vars_path, hermes_path, apps_path, inventory):
+    for path in (cluster_vars_path, hermes_path, apps_path, nodes_path, inventory):
         if not path.is_file():
             errors.append(
                 f"{env_name}: missing required file {_display_path(path, repo_root)}"
@@ -123,9 +135,19 @@ def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, 
     cluster_vars = _load_yaml(cluster_vars_path, errors, repo_root)
     hermes = _load_yaml(hermes_path, errors, repo_root)
     apps = _load_yaml(apps_path, errors, repo_root)
+    nodes_doc = _load_yaml(nodes_path, errors, repo_root)
     hosts = _load_yaml(inventory, errors, repo_root)
-    if errors or cluster_vars is None or hermes is None or apps is None or hosts is None:
+    if (
+        errors
+        or cluster_vars is None
+        or hermes is None
+        or apps is None
+        or nodes_doc is None
+        or hosts is None
+    ):
         return errors, None
+
+    inventory_hostnames = _inventory_hostnames_from_hosts(hosts)
 
     errors.extend(
         _validate_cluster_vars(
@@ -137,6 +159,13 @@ def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, 
     errors.extend(_validate_hermes(hermes, _display_path(hermes_path, repo_root)))
     errors.extend(_validate_apps(apps, _display_path(apps_path, repo_root)))
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
+    errors.extend(
+        _validate_nodes(
+            nodes_doc,
+            _display_path(nodes_path, repo_root),
+            inventory_hostnames,
+        )
+    )
 
     if errors:
         return errors, None
@@ -345,6 +374,105 @@ def _validate_apps(data: dict[str, Any], rel_path: str) -> list[str]:
     apps = data.get("apps", [])
     if not isinstance(apps, list):
         errors.append(f"{rel_path}: apps must be a list")
+
+    return errors
+
+
+def _inventory_hostnames_from_hosts(data: dict[str, Any]) -> set[str]:
+    all_group = data.get("all")
+    if not isinstance(all_group, dict):
+        return set()
+    hosts = all_group.get("hosts")
+    if not isinstance(hosts, dict):
+        return set()
+    return {name for name in hosts if isinstance(name, str) and name.strip()}
+
+
+def _validate_nodes(
+    data: dict[str, Any],
+    rel_path: str,
+    inventory_hostnames: set[str],
+) -> list[str]:
+    errors: list[str] = []
+    nodes = data.get("nodes")
+    if not isinstance(nodes, dict) or not nodes:
+        errors.append(f"{rel_path}: expected top-level 'nodes' mapping with at least one host")
+        return errors
+
+    control_plane_hosts = 0
+    backup_hosts = 0
+
+    for hostname, spec in nodes.items():
+        if not isinstance(hostname, str) or not hostname.strip():
+            errors.append(f"{rel_path}: node keys must be non-empty hostnames")
+            continue
+        if hostname not in inventory_hostnames:
+            errors.append(
+                f"{rel_path}: node '{hostname}' is not listed in inventory/hosts.yml"
+            )
+        if not isinstance(spec, dict):
+            errors.append(f"{rel_path}: nodes.{hostname} must be a mapping")
+            continue
+
+        roles = spec.get("roles")
+        if not isinstance(roles, list) or not roles:
+            errors.append(f"{rel_path}: nodes.{hostname}.roles must be a non-empty list")
+            continue
+        for role in roles:
+            if not isinstance(role, str) or role not in _NODE_ROLES_ALLOWED:
+                allowed = ", ".join(sorted(_NODE_ROLES_ALLOWED))
+                errors.append(
+                    f"{rel_path}: nodes.{hostname}.roles: unknown role '{role}' "
+                    f"(allowed: {allowed})"
+                )
+            if role == "control-plane":
+                control_plane_hosts += 1
+            if role == "backup":
+                backup_hosts += 1
+
+        data_disk = spec.get("data_disk")
+        if data_disk is None:
+            continue
+        if not isinstance(data_disk, dict):
+            errors.append(f"{rel_path}: nodes.{hostname}.data_disk must be a mapping")
+            continue
+        disk_id = data_disk.get("id")
+        if not isinstance(disk_id, str) or not disk_id.strip():
+            errors.append(
+                f"{rel_path}: nodes.{hostname}.data_disk.id must be a by-id path"
+            )
+            continue
+        disk_id = disk_id.strip()
+        if not disk_id.startswith("/dev/disk/by-id/"):
+            errors.append(
+                f"{rel_path}: nodes.{hostname}.data_disk.id must use /dev/disk/by-id/ "
+                "(never /dev/nvmeXnY)"
+            )
+        elif not _DISK_BY_ID.match(disk_id):
+            errors.append(
+                f"{rel_path}: nodes.{hostname}.data_disk.id has invalid by-id shape"
+            )
+        elif any(marker in disk_id.upper() for marker in _DISK_ID_PLACEHOLDER_MARKERS):
+            errors.append(
+                f"{rel_path}: nodes.{hostname}.data_disk.id is a placeholder; "
+                "set the real by-id path from the node before merge or wipe"
+            )
+        if "wipe_confirmed" in data_disk and not isinstance(
+            data_disk.get("wipe_confirmed"), bool
+        ):
+            errors.append(
+                f"{rel_path}: nodes.{hostname}.data_disk.wipe_confirmed must be a boolean"
+            )
+
+    if control_plane_hosts != 1:
+        errors.append(
+            f"{rel_path}: exactly one node must have the control-plane role "
+            f"(found {control_plane_hosts})"
+        )
+    if backup_hosts != 1:
+        errors.append(
+            f"{rel_path}: exactly one node must have the backup role (found {backup_hosts})"
+        )
 
     return errors
 

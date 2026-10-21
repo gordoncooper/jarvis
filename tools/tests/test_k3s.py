@@ -12,6 +12,7 @@ from ansible_role_proof import (
     ANSIBLE_DIR,
     CONTAINER_NAME,
     K3S_ROLE_TEMPLATES,
+    REPO_ROOT,
     ansible_render_template,
     cluster_vars_playbook_path,
     docker_exec,
@@ -33,6 +34,17 @@ def inventory_hostname() -> str:
     return next(iter(all_hosts))
 
 
+def load_nodes() -> dict[str, object]:
+    from ansible_role_proof import env_name
+
+    path = REPO_ROOT / "envs" / env_name() / "values" / "nodes.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    nodes = data.get("nodes")
+    assert isinstance(nodes, dict)
+    return nodes
+
+
 def render_k3s_config(variables: dict[str, object]) -> str:
     return ansible_render_template(
         K3S_CONFIG_TEMPLATE,
@@ -43,12 +55,15 @@ def render_k3s_config(variables: dict[str, object]) -> str:
 
 def test_k3s_config_template_encodes_p0a12_rules() -> None:
     cluster = load_cluster_vars()
+    hostname = inventory_hostname()
+    nodes = load_nodes()
     variables = {
         "pod_cidr": cluster["pod_cidr"],
         "service_cidr": cluster["service_cidr"],
         "local_path_data": cluster["local_path_data"],
         "backup_path": cluster["backup_path"],
-        "inventory_hostname": inventory_hostname(),
+        "inventory_hostname": hostname,
+        "nodes": nodes,
         "k3s_etcd_snapshot_schedule_cron": "0 */12 * * *",
         "k3s_etcd_snapshot_retention": 5,
         "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
@@ -65,6 +80,12 @@ def test_k3s_config_template_encodes_p0a12_rules() -> None:
     assert "system-reserved=" in rendered
     assert "eviction-hard=" in rendered
     assert not any(line.strip().startswith("INSTALL_K3S_") for line in rendered.splitlines())
+    node_spec = nodes[hostname]
+    assert isinstance(node_spec, dict)
+    roles = node_spec.get("roles")
+    assert isinstance(roles, list)
+    for role in roles:
+        assert f'role.jarvis.lan/{role}=true' in rendered
 
 
 def _install_fake_k3s_service(container: str) -> None:

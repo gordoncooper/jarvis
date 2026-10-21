@@ -4,17 +4,18 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 
 ## Offers
 
-- A single validation contract for four files per env:
+- A single validation contract for five files per env:
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings (inventory keeps hostnames only; sensitive vars stay in SOPS group_vars).
   - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
+  - `values/nodes.yaml` — per-node roles and optional data disk (`data_disk.id` must be a `/dev/disk/by-id/` path; D42).
   - `inventory/hosts.yml` — hostnames only (no IPs in plain inventory; R25).
 - Rejection of unknown `code_delivery` and `build_agent` values (only built providers are accepted; §9 alternatives are named as stubs, not valid values).
 - Default `ssh_user: ubuntu` when omitted (D34).
 
 ## Expects
 
-- One folder per env: `envs/<env>/` with the four files above present when that env is active.
+- One folder per env: `envs/<env>/` with the five files above present when that env is active.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file (R4).
 
 ## Health

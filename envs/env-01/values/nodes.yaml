@@ -1,0 +1,10 @@
+# Per-node roles and optional data disk (D42). Ansible only; validated by env-schema.
+nodes:
+  bench.lan:
+    roles:
+      - control-plane
+      - worker
+      - storage
+      - backup
+    # data_disk: add before wipe-and-rebuild with the Corsair MP600 Mini by-id path from
+    # `ls -l /dev/disk/by-id/` on bench.lan and wipe_confirmed: false until Gordon confirms.

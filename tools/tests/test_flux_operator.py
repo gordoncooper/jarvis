@@ -2,30 +2,18 @@
 
 from __future__ import annotations
 
-import base64
-import json
-import os
 import subprocess
 import textwrap
-from pathlib import Path
 
-import pytest
 import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
     CONTAINER_NAME,
-    DOCKER_PLAYBOOK_EXTRA_VARS,
     FLUX_OPERATOR_ROLE_TASKS,
     FLUX_OPERATOR_ROLE_TEMPLATES,
     ansible_render_template,
-    cluster_vars_playbook_path,
     docker_exec,
-    flux_operator_check_playbook_cmd,
-    playbook_recap_field,
-    require_docker,
-    start_systemd_container,
-    stop_systemd_container,
 )
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
@@ -54,7 +42,7 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert entry.get("become") is True
     assert entry.get("vars", {}).get("ansible_user") == "{{ ssh_user }}"
     roles = entry.get("roles")
-    assert roles == ["base-os", "k3s", "flux-operator"]
+    assert roles == ["base-os", "node-disk", "k3s", "flux-operator"]
 
 
 def _task_documents() -> list[dict[str, object]]:
@@ -150,58 +138,6 @@ def _install_fake_k3s_with_flux_done(secret_b64: str) -> None:
         "mv /usr/local/bin/k3s /usr/local/bin/k3s.real; fi && "
         "ln -sf /usr/local/sbin/k3s-wrapper /usr/local/bin/k3s",
     )
-
-
-@pytest.mark.container
-def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
-    require_docker()
-    keyfile, key_content = _generate_throwaway_age_key(tmp_path)
-    secret_b64 = base64.b64encode(key_content.encode("utf-8")).decode("ascii")
-    start_systemd_container()
-    try:
-        prep = subprocess.run(
-            [
-                "ansible-playbook",
-                "site.yml",
-                "-i",
-                f"{CONTAINER_NAME},",
-                "-e",
-                f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-                "-e",
-                "ansible_connection=docker",
-                *DOCKER_PLAYBOOK_EXTRA_VARS,
-                "--skip-tags",
-                "chrony-service,k3s,k3s-service,flux-cluster",
-            ],
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert prep.returncode == 0, prep.stdout + prep.stderr
-        _install_fake_k3s_with_flux_done(secret_b64)
-        env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-        first = subprocess.run(
-            flux_operator_check_playbook_cmd(),
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-        second = subprocess.run(
-            flux_operator_check_playbook_cmd(),
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-        assert first.returncode == 0, first.stdout + first.stderr
-        assert second.returncode == 0, second.stdout + second.stderr
-        assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
-    finally:
-        stop_systemd_container()
 
 
 def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:

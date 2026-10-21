@@ -1,0 +1,5 @@
+---
+jarvis_data_mount: /var/lib/jarvis
+jarvis_data_label: jarvis-data
+jarvis_data_mark_file: "{{ jarvis_data_mount }}/.jarvis-env"
+jarvis_data_fs: ext4

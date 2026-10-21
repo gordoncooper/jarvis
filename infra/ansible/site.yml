@@ -1,5 +1,5 @@
 ---
-# §8 step 4 order: base-os → k3s → flux-operator (cluster-vars via jarvis_cluster_vars).
+# §8 step 4 order: base-os → node-disk → k3s → flux-operator.
 - name: Bootstrap jarvis node
   hosts: all
   become: true
@@ -7,7 +7,9 @@
     ansible_user: "{{ ssh_user }}"
   vars_files:
     - "{{ jarvis_cluster_vars }}"
+    - "{{ jarvis_nodes_vars }}"
   roles:
     - base-os
+    - node-disk
     - k3s
     - flux-operator

@@ -63,6 +63,19 @@ def _write_env(
         + "\n",
         encoding="utf-8",
     )
+    (env / "values" / "nodes.yaml").write_text(
+        textwrap.dedent(
+            """
+            nodes:
+              node.example:
+                roles:
+                  - control-plane
+                  - backup
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
     return env
 
 
@@ -151,6 +164,103 @@ def test_bad_k3s_sha256_fails(tmp_path: Path):
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "k3s_sha256" in "\n".join(excinfo.value.messages)
+
+
+def test_unknown_node_role_fails(tmp_path: Path):
+    _write_env(tmp_path)
+    nodes_path = tmp_path / "envs/env-test/values/nodes.yaml"
+    nodes_path.write_text(
+        textwrap.dedent(
+            """
+            nodes:
+              node.example:
+                roles:
+                  - control-plane
+                  - backup
+                  - gpu-node
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "unknown role" in "\n".join(excinfo.value.messages)
+
+
+def test_node_not_in_inventory_fails(tmp_path: Path):
+    _write_env(tmp_path)
+    nodes_path = tmp_path / "envs/env-test/values/nodes.yaml"
+    nodes_path.write_text(
+        "nodes:\n  other.example:\n    roles:\n      - control-plane\n      - backup\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "not listed in inventory" in "\n".join(excinfo.value.messages)
+
+
+def test_data_disk_without_by_id_fails(tmp_path: Path):
+    _write_env(tmp_path)
+    nodes_path = tmp_path / "envs/env-test/values/nodes.yaml"
+    nodes_path.write_text(
+        textwrap.dedent(
+            """
+            nodes:
+              node.example:
+                roles:
+                  - control-plane
+                  - backup
+                data_disk:
+                  id: /dev/nvme0n1
+                  wipe_confirmed: false
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "by-id" in msg
+
+
+def test_placeholder_disk_id_fails(tmp_path: Path):
+    _write_env(tmp_path)
+    nodes_path = tmp_path / "envs/env-test/values/nodes.yaml"
+    nodes_path.write_text(
+        textwrap.dedent(
+            """
+            nodes:
+              node.example:
+                roles:
+                  - control-plane
+                  - backup
+                data_disk:
+                  id: /dev/disk/by-id/PLACEHOLDER-disk
+                  wipe_confirmed: false
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "placeholder" in "\n".join(excinfo.value.messages).lower()
+
+
+def test_requires_one_control_plane_and_backup(tmp_path: Path):
+    _write_env(tmp_path)
+    nodes_path = tmp_path / "envs/env-test/values/nodes.yaml"
+    nodes_path.write_text(
+        "nodes:\n  node.example:\n    roles:\n      - worker\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "control-plane" in msg
+    assert "backup" in msg
 
 
 def test_bad_code_delivery_fails(tmp_path: Path):
