@@ -9,6 +9,27 @@ need_gordon() {
   printf 'NEEDS GORDON: %s\n' "$*"
 }
 
+flux_not_ready() {
+  kubectl get kustomizations,gitrepositories -A -o json | python3 -c "
+import json
+import sys
+
+doc = json.load(sys.stdin)
+for item in doc.get('items', []):
+    ready = False
+    for cond in item.get('status', {}).get('conditions') or []:
+        if cond.get('type') == 'Ready' and cond.get('status') == 'True':
+            ready = True
+            break
+    if not ready:
+        meta = item.get('metadata', {})
+        kind = item.get('kind', '')
+        ns = meta.get('namespace', '')
+        name = meta.get('name', '')
+        print(f'{kind} {ns}/{name}')
+"
+}
+
 echo "=== P0a verify ($(date -u +%Y-%m-%dT%H:%M:%SZ)) ==="
 echo "Repo: ${repo_root}"
 echo
@@ -20,7 +41,7 @@ fi
 
 echo "--- Flux objects (expect every Kustomization / GitRepository Ready) ---"
 kubectl get kustomizations,gitrepositories -A
-not_ready="$(kubectl get kustomizations,gitrepositories -A --no-headers 2>/dev/null | awk '$3 != "True" {print}')"
+not_ready="$(flux_not_ready || true)"
 if [[ -n "${not_ready}" ]]; then
   echo "Flux objects not Ready:" >&2
   echo "${not_ready}" >&2

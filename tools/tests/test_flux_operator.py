@@ -17,6 +17,17 @@ from ansible_role_proof import (
 )
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
+NODE_DISK_TASKS = ANSIBLE_DIR / "roles" / "node-disk" / "tasks" / "main.yml"
+
+
+def _role_names(roles: list[object]) -> list[str]:
+    names: list[str] = []
+    for role in roles:
+        if isinstance(role, dict):
+            names.append(str(role["role"]))
+        else:
+            names.append(str(role))
+    return names
 
 
 def test_sops_age_secret_template_not_reconciled_from_git() -> None:
@@ -42,7 +53,16 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert entry.get("become") is True
     assert entry.get("vars", {}).get("ansible_user") == "{{ ssh_user }}"
     roles = entry.get("roles")
-    assert roles == ["base-os", "node-disk", "k3s", "flux-operator"]
+    assert _role_names(roles) == ["base-os", "node-disk", "k3s", "flux-operator"]
+
+
+def test_site_yml_skips_node_disk_without_end_host() -> None:
+    play = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
+    roles = play[0]["roles"]
+    node_disk = next(role for role in roles if _role_names([role])[0] == "node-disk")
+    assert isinstance(node_disk, dict)
+    assert node_disk["when"] == "nodes[inventory_hostname].data_disk is defined"
+    assert "meta: end_host" not in NODE_DISK_TASKS.read_text(encoding="utf-8")
 
 
 def _task_documents() -> list[dict[str, object]]:

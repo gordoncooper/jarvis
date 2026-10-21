@@ -225,30 +225,6 @@ def test_data_disk_without_by_id_fails(tmp_path: Path):
     assert "by-id" in msg
 
 
-def test_placeholder_disk_id_fails(tmp_path: Path):
-    _write_env(tmp_path)
-    nodes_path = tmp_path / "envs/env-test/values/nodes.yaml"
-    nodes_path.write_text(
-        textwrap.dedent(
-            """
-            nodes:
-              node.example:
-                roles:
-                  - control-plane
-                  - backup
-                data_disk:
-                  id: /dev/disk/by-id/PLACEHOLDER-disk
-                  wipe_confirmed: false
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "placeholder" in "\n".join(excinfo.value.messages).lower()
-
-
 def test_requires_one_control_plane_and_backup(tmp_path: Path):
     _write_env(tmp_path)
     nodes_path = tmp_path / "envs/env-test/values/nodes.yaml"

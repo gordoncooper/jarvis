@@ -10,6 +10,7 @@
     - "{{ jarvis_nodes_vars }}"
   roles:
     - base-os
-    - node-disk
+    - role: node-disk
+      when: nodes[inventory_hostname].data_disk is defined
     - k3s
     - flux-operator

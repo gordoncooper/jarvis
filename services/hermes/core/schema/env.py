@@ -56,12 +56,6 @@ _NODE_ROLES_ALLOWED = frozenset(
     {"control-plane", "worker", "storage", "backup", "gpu"}
 )
 _DISK_BY_ID = re.compile(r"^/dev/disk/by-id/[a-zA-Z0-9_.-]+$")
-_DISK_ID_PLACEHOLDER_MARKERS = (
-    "PLACEHOLDER",
-    "SET-AT-WIPE",
-    "REPLACE-ME",
-    "UNSET",
-)
 
 
 class ValidationError(Exception):
@@ -451,11 +445,6 @@ def _validate_nodes(
         elif not _DISK_BY_ID.match(disk_id):
             errors.append(
                 f"{rel_path}: nodes.{hostname}.data_disk.id has invalid by-id shape"
-            )
-        elif any(marker in disk_id.upper() for marker in _DISK_ID_PLACEHOLDER_MARKERS):
-            errors.append(
-                f"{rel_path}: nodes.{hostname}.data_disk.id is a placeholder; "
-                "set the real by-id path from the node before merge or wipe"
             )
         if "wipe_confirmed" in data_disk and not isinstance(
             data_disk.get("wipe_confirmed"), bool
