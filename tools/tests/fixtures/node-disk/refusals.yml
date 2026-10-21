@@ -1,0 +1,193 @@
+---
+- name: Disk refusal checks
+  hosts: wk-2
+  gather_facts: false
+  become: false
+  vars:
+    local_path_data: /var/lib/jarvis/local-path
+    backup_path: /var/lib/jarvis/backup
+    disk_ok: &disk_ok
+      exists: true
+      kernel: nvme1n1
+      is_whole: true
+      is_partition: false
+      saw_root: true
+      is_root: false
+      root_mount_device: /dev/nvme0n1p3
+      mounted_elsewhere: []
+      mounted_here: false
+      label_elsewhere: false
+      mountpoint_foreign: false
+      mountpoint_nonempty: false
+      ours: false
+      model: Corsair MP600
+      size: 931.51 GB
+      partitions:
+        - nvme1n1p1
+    disk_id: &disk_id /dev/disk/by-id/example-wk-2
+    cases:
+      - name: no id
+        data_disk:
+          wipe_confirmed: false
+        node_disk:
+          <<: *disk_ok
+        expect_all:
+          - has no id
+      - name: wipe_confirmed is not a boolean
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: "true"
+        node_disk:
+          <<: *disk_ok
+        expect_all:
+          - must be a boolean
+      - name: missing disk
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: false
+        node_disk:
+          <<: *disk_ok
+          exists: false
+        expect_all:
+          - does not exist
+      - name: partition
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: false
+        node_disk:
+          <<: *disk_ok
+          kernel: nvme1n1p1
+          is_whole: false
+          is_partition: true
+        expect_all:
+          - not a whole disk
+      - name: root mount unknown
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: false
+        node_disk:
+          <<: *disk_ok
+          saw_root: false
+        expect_all:
+          - cannot see the / mount
+      - name: root disk
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        node_disk:
+          <<: *disk_ok
+          is_root: true
+        expect_all:
+          - is the root disk
+          - /dev/nvme0n1p3
+      - name: mounted elsewhere
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        node_disk:
+          <<: *disk_ok
+          mounted_elsewhere:
+            - /mnt/other
+        expect_all:
+          - mounted at /mnt/other
+      - name: second label
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        node_disk:
+          <<: *disk_ok
+          label_elsewhere: true
+        expect_all:
+          - another disk already has the label
+      - name: non-empty mount point
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        node_disk:
+          <<: *disk_ok
+          mountpoint_nonempty: true
+        expect_all:
+          - it is not empty
+      - name: foreign mount
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        node_disk:
+          <<: *disk_ok
+          mountpoint_foreign: true
+        expect_all:
+          - it is already a mount
+      - name: mounted without the label
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        node_disk:
+          <<: *disk_ok
+          mounted_here: true
+        expect_all:
+          - without the jarvis-data label
+      - name: unconfirmed wipe
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: false
+        node_disk:
+          <<: *disk_ok
+        expect_all:
+          - refusing to wipe
+          - Corsair MP600
+          - 931.51 GB
+          - nvme1n1p1
+      - name: wrong node
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        confirm: wk-1:/dev/disk/by-id/example-wk-2
+        node_disk:
+          <<: *disk_ok
+        expect_all:
+          - refusing to wipe
+          - wk-1:/dev/disk/by-id/example-wk-2
+          - wk-2:/dev/disk/by-id/example-wk-2
+      - name: wrong id
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        confirm: wk-2:/dev/disk/by-id/other
+        node_disk:
+          <<: *disk_ok
+        expect_all:
+          - refusing to wipe
+          - wk-2:/dev/disk/by-id/other
+          - wk-2:/dev/disk/by-id/example-wk-2
+      - name: label adoption
+        ok: true
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: false
+        node_disk:
+          <<: *disk_ok
+          ours: true
+      - name: label adoption ignores confirmations
+        ok: true
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        confirm: wk-2:/dev/disk/by-id/example-wk-2
+        node_disk:
+          <<: *disk_ok
+          ours: true
+      - name: both confirmations
+        ok: true
+        data_disk:
+          id: *disk_id
+          wipe_confirmed: true
+        confirm: wk-2:/dev/disk/by-id/example-wk-2
+        node_disk:
+          <<: *disk_ok
+  tasks:
+    - name: Check one refusal case
+      ansible.builtin.include_tasks: case.yml
+      loop: "{{ cases }}"
+      loop_control:
+        loop_var: case
+        label: "{{ case.name }}"

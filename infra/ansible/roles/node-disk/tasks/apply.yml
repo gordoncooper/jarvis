@@ -1,0 +1,151 @@
+---
+- name: Wipe and format a foreign data disk
+  when:
+    - not (node_disk.ours | bool)
+    - data_disk.wipe_confirmed is sameas true
+    - (jarvis_wipe_confirm | default("")) == (inventory_hostname ~ ":" ~ data_disk.id)
+  block:
+    - name: Install partitioning tools
+      ansible.builtin.apt:
+        name:
+          - parted
+          - e2fsprogs
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Refuse a partition whose number cannot be read
+      ansible.builtin.assert:
+        that:
+          - node_disk.partition_numbers | length == node_disk.partitions | length
+        fail_msg: >-
+          refusing to wipe {{ inventory_hostname }} {{ data_disk.id }}:
+          partition numbers {{ node_disk.partition_numbers }} do not match
+          {{ node_disk.partitions | join(', ') }}.
+
+    - name: Remove existing data disk partitions
+      community.general.parted:
+        device: "/dev/{{ node_disk.kernel }}"
+        number: "{{ item }}"
+        state: absent
+      loop: "{{ node_disk.partition_numbers | reverse | list }}"
+      loop_control:
+        label: "{{ node_disk.kernel }} partition {{ item }}"
+
+    - name: Create the jarvis-data partition
+      community.general.parted:
+        device: "/dev/{{ node_disk.kernel }}"
+        label: gpt
+        name: "{{ node_disk_label }}"
+        number: 1
+        state: present
+        # 1MiB is the aligned GPT start. The module's KiB unit treats 0% as exact, and parted refuses that.
+        part_start: 1MiB
+        part_end: 100%
+        fs_type: "{{ node_disk_fstype }}"
+
+    - name: Reload the data disk partition table
+      ansible.builtin.command:
+        argv:
+          - partprobe
+          - "/dev/{{ node_disk.kernel }}"
+      changed_when: true
+
+    - name: Wait for the jarvis-data partition node
+      ansible.builtin.stat:
+        path: "{{ node_disk.partition_path }}"
+      register: node_disk_partition_stat
+      until: node_disk_partition_stat.stat.exists | default(false)
+      retries: 5
+      delay: 1
+      failed_when: false
+
+    - name: Read the jarvis-data partition device numbers
+      ansible.builtin.slurp:
+        src: "/sys/block/{{ node_disk.kernel }}/{{ node_disk.partition_path | basename }}/dev"
+      register: node_disk_partition_dev
+      when: not (node_disk_partition_stat.stat.exists | default(false))
+
+    - name: Add the jarvis-data partition device node
+      ansible.builtin.command:
+        argv:
+          - mknod
+          - -m
+          - "660"
+          - "{{ node_disk.partition_path }}"
+          - b
+          - "{{ node_disk_partition_numbers[0] }}"
+          - "{{ node_disk_partition_numbers[1] }}"
+      vars:
+        # Skipped tasks are still templated. MDow is "0:0", and this task is skipped in that case.
+        node_disk_partition_numbers: >-
+          {{ ((node_disk_partition_dev.content | default('MDow') | b64decode | trim).split(':') + ['0'])[:2] }}
+      changed_when: true
+      when: not (node_disk_partition_stat.stat.exists | default(false))
+
+    - name: The jarvis-data partition node exists
+      ansible.builtin.stat:
+        path: "{{ node_disk.partition_path }}"
+      register: node_disk_partition_ready
+
+    - name: Refuse to format without a partition node
+      ansible.builtin.assert:
+        that:
+          - node_disk_partition_ready.stat.exists | default(false)
+        fail_msg: "partition {{ node_disk.partition_path }} did not appear."
+
+    - name: Create the jarvis-data filesystem
+      community.general.filesystem:
+        fstype: "{{ node_disk_fstype }}"
+        dev: "{{ node_disk.partition_path }}"
+        force: true
+        opts: "-L {{ node_disk_label }}"
+
+- name: Install the jarvis-data fstab entry
+  ansible.posix.mount:
+    path: "{{ node_disk_mount }}"
+    src: "LABEL={{ node_disk_label }}"
+    fstype: "{{ node_disk_fstype }}"
+    opts: defaults,nofail
+    state: present
+
+- name: Mount the jarvis-data filesystem
+  ansible.posix.mount:
+    path: "{{ node_disk_mount }}"
+    src: "LABEL={{ node_disk_label }}"
+    fstype: "{{ node_disk_fstype }}"
+    opts: defaults,nofail
+    state: ephemeral
+  when: not (node_disk.mounted_here | bool)
+
+- name: Create data layout directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ local_path_data }}"
+    - "{{ backup_path }}/etcd-snapshots"
+    - "{{ backup_path }}/restic"
+  loop_control:
+    label: "{{ item }}"
+  when: item == node_disk_mount or item.startswith(node_disk_mount ~ "/")
+
+- name: Ensure the k3s drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/k3s.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the k3s data-disk mount dependency
+  ansible.builtin.template:
+    src: k3s-mount.conf.j2
+    dest: /etc/systemd/system/k3s.service.d/jarvis-mount.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd

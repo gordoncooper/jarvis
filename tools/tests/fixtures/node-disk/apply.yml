@@ -1,0 +1,10 @@
+---
+- name: Prepare data disk
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    local_path_data: /var/lib/jarvis/local-path
+    backup_path: /var/lib/jarvis/backup
+  roles:
+    - node-disk

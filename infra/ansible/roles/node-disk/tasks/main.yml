@@ -1,0 +1,23 @@
+---
+- name: Check the data disk declaration
+  ansible.builtin.import_tasks: prechecks.yml
+  tags:
+    - always
+    - node-disk
+
+- name: Discover the data disk
+  ansible.builtin.import_tasks: discover.yml
+  tags:
+    - always
+    - node-disk
+
+- name: Check the data disk is safe to use
+  ansible.builtin.import_tasks: checks.yml
+  tags:
+    - always
+    - node-disk
+
+- name: Prepare and mount the data disk
+  ansible.builtin.import_tasks: apply.yml
+  tags:
+    - node-disk

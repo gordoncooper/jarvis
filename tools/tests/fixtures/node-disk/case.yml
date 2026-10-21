@@ -1,0 +1,40 @@
+---
+- name: Reset case result
+  ansible.builtin.set_fact:
+    got_failure: false
+    got_message: ""
+
+- name: Run disk checks
+  vars:
+    data_disk: "{{ case.data_disk }}"
+    node_disk: "{{ case.node_disk }}"
+    jarvis_wipe_confirm: "{{ case.confirm | default('') }}"
+  block:
+    - name: Check the declaration
+      ansible.builtin.include_role:
+        name: node-disk
+        tasks_from: prechecks.yml
+    - name: Check the disk
+      ansible.builtin.include_role:
+        name: node-disk
+        tasks_from: checks.yml
+  rescue:
+    - name: Record the refusal
+      ansible.builtin.set_fact:
+        got_failure: true
+        got_message: "{{ ansible_failed_result.msg | default('') }}"
+
+- name: "{{ case.name }} is refused"
+  when: not (case.ok | default(false) | bool)
+  ansible.builtin.assert:
+    that:
+      - got_failure | bool
+      - case.expect_all | reject("in", got_message) | list | length == 0
+    fail_msg: "case {{ case.name }}: {{ got_message }}"
+
+- name: "{{ case.name }} is allowed"
+  when: case.ok | default(false) | bool
+  ansible.builtin.assert:
+    that:
+      - not (got_failure | bool)
+    fail_msg: "case {{ case.name }} refused: {{ got_message }}"

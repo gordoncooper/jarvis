@@ -1,0 +1,27 @@
+---
+- name: Refuse a data disk with no id
+  ansible.builtin.assert:
+    that:
+      - data_disk is mapping
+      - data_disk.id is defined
+      - data_disk.id is string
+      - data_disk.id | length > 0
+    fail_msg: "data disk on {{ inventory_hostname }} has no id."
+
+- name: Refuse a data disk whose wipe_confirmed is not a boolean
+  ansible.builtin.assert:
+    that:
+      - data_disk.wipe_confirmed is defined
+      - data_disk.wipe_confirmed is boolean
+    fail_msg: "data disk {{ data_disk.id | default('') }} wipe_confirmed must be a boolean."
+
+- name: Require data path settings
+  ansible.builtin.assert:
+    that:
+      - local_path_data is defined
+      - local_path_data is string
+      - local_path_data is match('^/')
+      - backup_path is defined
+      - backup_path is string
+      - backup_path is match('^/')
+    fail_msg: node-disk requires absolute local_path_data and backup_path from cluster-vars.
