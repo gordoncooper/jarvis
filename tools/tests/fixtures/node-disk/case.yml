@@ -1,50 +1,23 @@
 ---
-- name: Reset case result
-  ansible.builtin.set_fact:
+- ansible.builtin.set_fact:
     got_failure: false
     got_message: ""
-
-- name: Run disk checks
-  vars:
-    data_disk: "{{ case.data_disk }}"
-    local_path_data: "{{ case.local_path_data | default('/var/lib/jarvis/local-path') }}"
-    backup_path: "{{ case.backup_path | default('/var/lib/jarvis/backup') }}"
+- vars:
+    data_disk: "{{ case.data_disk | to_json | from_json }}"
     jarvis_wipe_confirm: "{{ case.confirm | default('') }}"
+    node_disk_path: "{{ case.path }}"
+    node_disk_root: "{{ case.root }}"
+    node_disk_labeled: "{{ case.labeled | to_json | from_json }}"
   block:
-    - name: Check the declaration
-      ansible.builtin.include_role:
+    - ansible.builtin.include_role:
         name: node-disk
-        tasks_from: prechecks.yml
-    - name: Derive disk facts
-      ansible.builtin.include_role:
-        name: node-disk
-        tasks_from: derive.yml
-      vars:
-        node_disk_tree: "{{ case.tree | default(tree_ok) }}"
-        node_disk_stat: "{{ case.stat | default(stat_disk) }}"
-        node_disk_mount_stat: "{{ case.mount_stat | default(mount_empty) }}"
-        node_disk_mount_entries: "{{ case.entries | default(0) }}"
-    - name: Check the disk
-      ansible.builtin.include_role:
-        name: node-disk
-        tasks_from: checks.yml
+        tasks_from: guards.yml
   rescue:
-    - name: Record the refusal
-      ansible.builtin.set_fact:
+    - ansible.builtin.set_fact:
         got_failure: true
         got_message: "{{ ansible_failed_result.msg | default('') }}"
-
-- name: "{{ case.name }} is refused"
-  when: not (case.ok | default(false) | bool)
-  ansible.builtin.assert:
+- ansible.builtin.assert:
     that:
-      - got_failure | bool
-      - case.expect_all | reject("in", got_message) | list | length == 0
-    fail_msg: "case {{ case.name }}: {{ got_message }}"
-
-- name: "{{ case.name }} is allowed"
-  when: case.ok | default(false) | bool
-  ansible.builtin.assert:
-    that:
-      - not (got_failure | bool)
-    fail_msg: "case {{ case.name }} refused: {{ got_message }}"
+      - (got_failure | bool) == ((case.expect | default('')) | length > 0)
+      - case.expect | default('') in got_message
+    fail_msg: "{{ case.name }}: {{ got_message }}"

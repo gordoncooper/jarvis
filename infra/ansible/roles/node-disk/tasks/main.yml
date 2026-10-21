@@ -1,23 +1,67 @@
 ---
-- name: Check the data disk declaration
-  ansible.builtin.import_tasks: prechecks.yml
-  tags:
-    - always
-    - node-disk
+- name: Check the data disk
+  tags: [always, node-disk]
+  block:
+    - ansible.builtin.command:
+        argv: [readlink, -f, "{{ data_disk.id }}"]
+      register: node_disk_resolved
+      changed_when: false
+    - ansible.builtin.command:
+        argv: [findmnt, -no, SOURCE, /]
+      register: node_disk_root_src
+      changed_when: false
+    - ansible.builtin.command:
+        argv: [blkid, -o, device, -t, "LABEL={{ node_disk_label }}"]
+      register: node_disk_label_dev
+      changed_when: false
+      failed_when: false
+    - ansible.builtin.set_fact:
+        node_disk_path: "{{ node_disk_resolved.stdout }}"
+        node_disk_root: "{{ node_disk_root_src.stdout }}"
+        node_disk_labeled: "{{ node_disk_label_dev.stdout_lines }}"
+    - ansible.builtin.import_tasks: guards.yml
+      tags: [always, node-disk]
 
-- name: Discover the data disk
-  ansible.builtin.import_tasks: discover.yml
-  tags:
-    - always
-    - node-disk
-
-- name: Check the data disk is safe to use
-  ansible.builtin.import_tasks: checks.yml
-  tags:
-    - always
-    - node-disk
-
-- name: Prepare and mount the data disk
-  ansible.builtin.import_tasks: apply.yml
-  tags:
-    - node-disk
+- name: Mount the data disk
+  tags: [node-disk]
+  block:
+    - ansible.builtin.apt:
+        name: [parted, e2fsprogs]
+        state: present
+      when: not (node_disk_ours | bool)
+    - community.general.parted:
+        device: "{{ node_disk_path }}"
+        label: gpt
+        name: "{{ node_disk_label }}"
+        number: 1
+        state: present
+        part_start: 1MiB
+        part_end: 100%
+        fs_type: "{{ node_disk_fstype }}"
+      when: not (node_disk_ours | bool)
+    - community.general.filesystem:
+        fstype: "{{ node_disk_fstype }}"
+        dev: "{{ node_disk_path ~ ('p1' if node_disk_path is match('.*[0-9]$') else '1') }}"
+        force: true
+        opts: "-L {{ node_disk_label }}"
+      when: not (node_disk_ours | bool)
+    - ansible.posix.mount:
+        path: "{{ node_disk_mount }}"
+        src: "LABEL={{ node_disk_label }}"
+        fstype: "{{ node_disk_fstype }}"
+        opts: defaults,nofail
+        state: mounted
+    - ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ local_path_data }}"
+        - "{{ backup_path }}/etcd-snapshots"
+        - "{{ backup_path }}/restic"
+        - /etc/systemd/system/k3s.service.d
+    - ansible.builtin.template:
+        src: k3s-mount.conf.j2
+        dest: /etc/systemd/system/k3s.service.d/jarvis-mount.conf
+        mode: "0644"
+      notify: Reload systemd

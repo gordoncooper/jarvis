@@ -1,6 +1,5 @@
 ---
-# Fact asserts run before any change, and again after node-disk, before k3s (D42).
-# k3s and flux-operator stay on all until the agent play is split.
+# Fact asserts run before any change. k3s and flux-operator stay on all until the agent play is split.
 - name: Assert facts before any change
   hosts: all
   become: true
@@ -35,24 +34,6 @@
     - "{{ jarvis_cluster_vars }}"
   roles:
     - node-disk
-
-- name: Assert the data disk is mounted before k3s
-  hosts: data_disk
-  become: true
-  gather_facts: false
-  tags:
-    - always
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
-  tasks:
-    - name: Assert the data disk mount
-      ansible.builtin.include_role:
-        name: node-disk
-        tasks_from: assert-mounted.yml
-      tags:
-        - always
 
 - name: Bootstrap k3s and Flux
   hosts: all

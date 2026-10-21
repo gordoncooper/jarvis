@@ -2,5 +2,4 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
-  tags:
-    - node-disk
+  tags: [node-disk]

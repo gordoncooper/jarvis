@@ -71,7 +71,6 @@ def test_site_yml_role_order_and_ssh_user() -> None:
         "all",
         "all",
         "data_disk",
-        "data_disk",
         "all",
     ]
     for play in plays:
@@ -81,9 +80,7 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert plays[0].get("tags") == ["always"]
     assert _role_names(plays[1]) == ["base-os"]
     assert _role_names(plays[2]) == ["node-disk"]
-    assert _role_names(plays[3]) == ["node-disk"]
-    assert plays[3].get("tags") == ["always"]
-    assert _role_names(plays[4]) == ["k3s", "flux-operator"]
+    assert _role_names(plays[3]) == ["k3s", "flux-operator"]
 
 
 def _task_documents() -> list[dict[str, object]]:
