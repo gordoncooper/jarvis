@@ -10,6 +10,19 @@
   vars_files:
     - "{{ jarvis_cluster_vars }}"
   tasks:
+    - name: Assert exactly one control_plane host
+      ansible.builtin.assert:
+        that:
+          - groups['control_plane'] | default([]) | length == 1
+        fail_msg: >-
+          control_plane has {{ groups['control_plane'] | default([]) | length }} hosts;
+          expected exactly one.
+          Pass both inventories, as in infra/ansible/README.md:
+          ansible-playbook site.yml
+          -i ../../envs/<env>/inventory/hosts.yml
+          -i ../inventory/roles.yml
+          -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml
+
     - name: Assert a declared gpu host has an NVIDIA device
       ansible.builtin.import_tasks: tasks/assert-gpu.yml
 
