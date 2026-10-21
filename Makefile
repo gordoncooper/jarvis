@@ -23,7 +23,7 @@ verify:
 	@test -n "$(PHASE)" || (echo "PHASE is required" >&2; exit 1)
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@case "$(PHASE)" in \
-	  p0a) python3 tools/verify/p0a ;; \
+	  p0a) python3 tools/verify/p0a --env "$(ENV)" ;; \
 	  *) echo "unknown PHASE=$(PHASE)" >&2; exit 1 ;; \
 	esac
 
