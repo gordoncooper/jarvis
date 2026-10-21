@@ -10,9 +10,11 @@ from urllib.parse import urlparse
 
 import yaml
 
+EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
 
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
+_HOSTNAME = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _TIER_VALUES = frozenset({"frontier", "mid", "cheap"})
 _CODE_DELIVERY_ALLOWED = ("github",)
 _BUILD_AGENT_ALLOWED = ("cursor",)
@@ -34,15 +36,19 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "service_cidr",
         "local_path_data",
         "flux_git_repo_url",
+        "apps_git_repo_url",
         "flux_git_ref",
         "ntp_pools",
         "k3s_kubelet_kube_reserved",
         "k3s_kubelet_system_reserved",
         "k3s_kubelet_eviction_hard",
+        "llm_provider_host",
     }
 )
 
-_NTP_POOL = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
+_CLUSTER_VARS_OPTIONAL = frozenset({"ssh_user"})
+
+_CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 
 _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 
@@ -78,16 +84,21 @@ def validate_env_tree(repo_root: Path | str) -> dict[str, dict[str, Any]]:
 
     errors: list[str] = []
     resolved_by_env: dict[str, dict[str, Any]] = {}
+    owners_by_env: dict[str, str] = {}
     env_dirs = sorted(p for p in envs_dir.iterdir() if p.is_dir())
     if not env_dirs:
         errors.append(f"no env directories under {_display_path(envs_dir, root)}")
         raise ValidationError(errors)
 
     for env_dir in env_dirs:
-        env_errors, env_resolved = _validate_env(env_dir, root)
+        env_errors, env_resolved, owner = _validate_env(env_dir, root)
         errors.extend(env_errors)
         if env_resolved is not None:
             resolved_by_env[env_dir.name] = env_resolved
+        if owner and env_dir.name != EXAMPLE_ENV:
+            owners_by_env[env_dir.name] = owner
+
+    errors.extend(_cross_env_owner_errors(owners_by_env))
 
     if errors:
         raise ValidationError(errors)
@@ -101,7 +112,9 @@ def _display_path(path: Path, repo_root: Path) -> str:
         return str(path)
 
 
-def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, Any] | None]:
+def _validate_env(
+    env_dir: Path, repo_root: Path
+) -> tuple[list[str], dict[str, Any] | None, str | None]:
     errors: list[str] = []
     env_name = env_dir.name
     values = env_dir / "values"
@@ -118,29 +131,28 @@ def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, 
             )
 
     if errors:
-        return errors, None
+        return errors, None, None
 
     cluster_vars = _load_yaml(cluster_vars_path, errors, repo_root)
     hermes = _load_yaml(hermes_path, errors, repo_root)
     apps = _load_yaml(apps_path, errors, repo_root)
     hosts = _load_yaml(inventory, errors, repo_root)
     if errors or cluster_vars is None or hermes is None or apps is None or hosts is None:
-        return errors, None
+        return errors, None, None
 
-    errors.extend(
-        _validate_cluster_vars(
-            cluster_vars,
-            _display_path(cluster_vars_path, repo_root),
-            env_name,
-        )
+    cluster_errors, owner = _validate_cluster_vars(
+        cluster_vars,
+        _display_path(cluster_vars_path, repo_root),
+        env_name,
     )
+    errors.extend(cluster_errors)
     errors.extend(_validate_hermes(hermes, _display_path(hermes_path, repo_root)))
     errors.extend(_validate_apps(apps, _display_path(apps_path, repo_root)))
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
 
     if errors:
-        return errors, None
-    return [], resolve_cluster_vars(cluster_vars)
+        return errors, None, owner
+    return [], resolve_cluster_vars(cluster_vars), owner
 
 
 def _load_yaml(
@@ -167,15 +179,22 @@ def _is_int_not_bool(value: Any) -> bool:
 
 def _validate_cluster_vars(
     data: dict[str, Any], rel_path: str, env_name: str
-) -> list[str]:
+) -> tuple[list[str], str | None]:
     errors: list[str] = []
+    allowed = ", ".join(sorted(_CLUSTER_VARS_KNOWN))
     for key in data:
         if not _SNAKE_CASE.match(key):
             errors.append(f"{rel_path}: key must be lowercase snake_case: {key}")
+        elif key not in _CLUSTER_VARS_KNOWN:
+            errors.append(f"{rel_path}: unknown key '{key}' (allowed: {allowed})")
 
     missing = sorted(_CLUSTER_VARS_REQUIRED - set(data))
     for key in missing:
         errors.append(f"{rel_path}: missing required key: {key}")
+
+    if env_name == EXAMPLE_ENV:
+        for key in sorted(_CLUSTER_VARS_KNOWN - set(data)):
+            errors.append(f"{rel_path}: {EXAMPLE_ENV} must set every known key: {key}")
 
     if "ssh_user" in data and not isinstance(data["ssh_user"], str):
         errors.append(f"{rel_path}: ssh_user must be a string")
@@ -207,7 +226,26 @@ def _validate_cluster_vars(
         elif isinstance(val, str) and not val.strip():
             errors.append(f"{rel_path}: {key} must not be empty")
 
-    errors.extend(_validate_https_url(rel_path, "flux_git_repo_url", data.get("flux_git_repo_url")))
+    flux_errors, flux_owner = _validate_repo_url(
+        rel_path, "flux_git_repo_url", data.get("flux_git_repo_url")
+    )
+    apps_errors, apps_owner = _validate_repo_url(
+        rel_path, "apps_git_repo_url", data.get("apps_git_repo_url")
+    )
+    errors.extend(flux_errors)
+    errors.extend(apps_errors)
+    owner: str | None = None
+    if flux_owner and apps_owner:
+        if flux_owner != apps_owner:
+            errors.append(
+                f"{rel_path}: flux_git_repo_url and apps_git_repo_url must use the same owner handle"
+            )
+        else:
+            owner = flux_owner
+
+    errors.extend(
+        _validate_bare_hostname(rel_path, "llm_provider_host", data.get("llm_provider_host"))
+    )
 
     jarvis_env = data.get("jarvis_env")
     if isinstance(jarvis_env, str) and jarvis_env and jarvis_env != env_name:
@@ -249,7 +287,7 @@ def _validate_cluster_vars(
         if not isinstance(val, str) or not val.strip():
             errors.append(f"{rel_path}: {key} must be a non-empty string")
 
-    return errors
+    return errors, owner
 
 
 def _validate_ntp_pools(rel_path: str, value: Any) -> list[str]:
@@ -262,9 +300,50 @@ def _validate_ntp_pools(rel_path: str, value: Any) -> list[str]:
         if not isinstance(pool, str) or not pool.strip():
             errors.append(f"{rel_path}: ntp_pools[{idx}] must be a non-empty string")
             continue
-        if not _NTP_POOL.match(pool.strip()):
+        if not _HOSTNAME.match(pool.strip()):
             errors.append(f"{rel_path}: ntp_pools[{idx}] must be a hostname or pool name")
     return errors
+
+
+def repo_owner_handle(url: str) -> str | None:
+    """Return the first path segment when url is https and names owner/repo."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme != "https" or not parsed.netloc:
+        return None
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 2:
+        return None
+    return parts[0]
+
+
+def _validate_repo_url(rel_path: str, key: str, value: Any) -> tuple[list[str], str | None]:
+    errors = _validate_https_url(rel_path, key, value)
+    if errors or not isinstance(value, str) or not value.strip():
+        return errors, None
+    owner = repo_owner_handle(value)
+    if owner is None:
+        errors.append(f"{rel_path}: {key} must include an owner and a repo")
+        return errors, None
+    return errors, owner
+
+
+def _validate_bare_hostname(rel_path: str, key: str, value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, str):
+        return [f"{rel_path}: {key} must be a string"]
+    if not value.strip():
+        return [f"{rel_path}: {key} must not be empty"]
+    if _looks_like_ip(value) or not _HOSTNAME.match(value):
+        return [f"{rel_path}: {key} must be a bare hostname"]
+    return []
+
+
+def _cross_env_owner_errors(owners_by_env: dict[str, str]) -> list[str]:
+    if len(set(owners_by_env.values())) <= 1:
+        return []
+    detail = ", ".join(f"{name}={owners_by_env[name]}" for name in sorted(owners_by_env))
+    return [f"repo owner handle must be the same across non-example envs: {detail}"]
 
 
 def _validate_https_url(rel_path: str, key: str, value: Any) -> list[str]:
@@ -376,7 +455,7 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
             ah = host_vars["ansible_host"]
             if isinstance(ah, str) and _looks_like_ip(ah):
                 errors.append(
-                    f"{rel_path}: host {hostname}: ansible_host must not be a plain IP (use group_vars SOPS)"
+                    f"{rel_path}: host {hostname}: ansible_host must not be a plain IP"
                 )
         for key, val in host_vars.items():
             if isinstance(val, str) and _looks_like_ip(val) and key in (

@@ -65,29 +65,18 @@ def render_document(cluster_vars_path: Path) -> str:
     return header + body
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--env",
-        help="Env name (default: sole directory under envs/)",
-    )
+    parser.add_argument("--env", required=True, help="Env name under envs/")
     parser.add_argument(
         "--output",
         type=Path,
         help="Write file instead of stdout",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    envs_dir = REPO_ROOT / "envs"
-    if args.env:
-        env_name = args.env
-    else:
-        names = sorted(p.name for p in envs_dir.iterdir() if p.is_dir())
-        if len(names) != 1:
-            raise SystemExit("pass --env or keep exactly one directory under envs/")
-        env_name = names[0]
-
-    cluster_vars_path = envs_dir / env_name / "values" / "cluster-vars.yaml"
+    env_name = args.env
+    cluster_vars_path = REPO_ROOT / "envs" / env_name / "values" / "cluster-vars.yaml"
     if not cluster_vars_path.is_file():
         raise SystemExit(f"missing {cluster_vars_path}")
 

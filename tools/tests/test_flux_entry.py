@@ -16,6 +16,7 @@ from ansible_role_proof import (
     ansible_render_template,
     env_name,
     load_cluster_vars,
+    non_example_env_names,
 )
 from render_cluster_vars_configmap import cluster_vars_configmap, render_document
 
@@ -83,8 +84,7 @@ def _kubeconform_validate(manifests: str, *, ignore_missing: bool = False) -> No
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def _load_flux_kustomizations() -> list[dict[str, object]]:
-    env = env_name()
+def _load_flux_kustomizations(env: str) -> list[dict[str, object]]:
     docs: list[dict[str, object]] = []
     for name in FLUX_KUSTOMIZATION_CHAIN:
         path = REPO_ROOT / "envs" / env / "flux" / "kustomizations" / f"{name}.yaml"
@@ -94,8 +94,8 @@ def _load_flux_kustomizations() -> list[dict[str, object]]:
     return docs
 
 
-def test_cluster_vars_configmap_matches_render_script() -> None:
-    env = env_name()
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_cluster_vars_configmap_matches_render_script(env: str) -> None:
     cluster_path = REPO_ROOT / "envs" / env / "values" / "cluster-vars.yaml"
     generated_path = (
         REPO_ROOT / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
@@ -115,15 +115,15 @@ def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
     assert data["ntp_pools"] == json.dumps(raw["ntp_pools"], separators=(",", ":"))
 
 
-def test_git_flux_instance_matches_ansible_template() -> None:
-    env = env_name()
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_git_flux_instance_matches_ansible_template(env: str) -> None:
     git_path = REPO_ROOT / "envs" / env / "flux" / "flux-instance.yaml"
     git_text = git_path.read_text(encoding="utf-8")
     if git_text.startswith("#"):
         git_text = "\n".join(
             line for line in git_text.splitlines() if not line.startswith("#")
         ).lstrip()
-    cluster = load_cluster_vars()
+    cluster = load_cluster_vars(env=env)
     variables = {
         "flux_instance_name": "flux",
         "flux_system_namespace": "flux-system",
@@ -143,8 +143,9 @@ def test_git_flux_instance_matches_ansible_template() -> None:
     assert yaml.safe_load(git_text) == yaml.safe_load(rendered_no_comment)
 
 
-def test_flux_kustomization_depends_on_chain() -> None:
-    docs = _load_flux_kustomizations()
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_flux_kustomization_depends_on_chain(env: str) -> None:
+    docs = _load_flux_kustomizations(env)
     assert docs[0]["metadata"]["name"] == "platform-controllers"
     assert docs[0].get("spec", {}).get("dependsOn") in (None, [])
     for idx in range(1, len(FLUX_KUSTOMIZATION_CHAIN)):
@@ -152,8 +153,9 @@ def test_flux_kustomization_depends_on_chain() -> None:
         assert depends == [{"name": FLUX_KUSTOMIZATION_CHAIN[idx - 1]}]
 
 
-def test_platform_configs_decryption_uses_sops_age() -> None:
-    doc = _load_flux_kustomizations()[1]
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_platform_configs_decryption_uses_sops_age(env: str) -> None:
+    doc = _load_flux_kustomizations(env)[1]
     decryption = doc["spec"]["decryption"]
     assert decryption["provider"] == "sops"
     assert decryption["secretRef"]["name"] == "sops-age"
@@ -168,8 +170,8 @@ def test_helmrelease_substitute_disabled() -> None:
     )
 
 
-def test_backups_restic_secret_stays_sops_encrypted_in_git() -> None:
-    env = env_name()
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_backups_restic_secret_stays_sops_encrypted_in_git(env: str) -> None:
     secret_path = REPO_ROOT / "envs" / env / "secrets" / "backups-restic.sops.yaml"
     text = secret_path.read_text(encoding="utf-8")
     assert "sops:" in text
@@ -194,8 +196,8 @@ def _object_identity(doc: object) -> tuple[str, str, str] | None:
     return (kind, namespace, name)
 
 
-def test_flux_layers_do_not_render_duplicate_objects() -> None:
-    env = env_name()
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_flux_layers_do_not_render_duplicate_objects(env: str) -> None:
     layers = {
         "platform-controllers": "platform/flux-operator",
         "platform-configs": f"envs/{env}/flux/platform-configs",
@@ -224,6 +226,7 @@ def _validate_platform_configs_without_sops_secrets(manifests: str) -> None:
     _kubeconform_validate(rendered, ignore_missing=True)
 
 
+@pytest.mark.parametrize("env", non_example_env_names())
 @pytest.mark.parametrize(
     ("rel_path", "ignore_missing", "strip_sops_secrets"),
     [
@@ -248,8 +251,8 @@ def test_flux_layer_kustomize_build_and_schema_validate(
     rel_path: str,
     ignore_missing: bool,
     strip_sops_secrets: bool,
+    env: str,
 ) -> None:
-    env = env_name()
     resolved = rel_path.format(env=env)
     output = _kustomize_build(resolved)
     if strip_sops_secrets:

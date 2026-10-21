@@ -5,12 +5,15 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 ## Offers
 
 - A single validation contract for four files per env:
-  - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings (inventory keeps hostnames only; sensitive vars stay in SOPS group_vars).
+  - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
   - `inventory/hosts.yml` — hostnames only (no IPs in plain inventory; R25).
 - Rejection of unknown `code_delivery` and `build_agent` values (only built providers are accepted; §9 alternatives are named as stubs, not valid values).
-- Default `ssh_user: ubuntu` when omitted (D34).
+- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`.
+- Default `ssh_user: ubuntu` when omitted (D34). The example env still sets `ssh_user`.
+- `apps_git_repo_url` required and https, validated like `flux_git_repo_url`. Both URLs use one owner handle, and that handle is the same across every non-example env (D45).
+- `llm_provider_host` required, a bare hostname with no scheme or path (D45).
 
 ## Expects
 
@@ -44,14 +47,14 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `pod_cidr` | yes | Pod network CIDR; set once per env (D4). |
 | `service_cidr` | yes | Service network CIDR; set once per env (D4). |
 | `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
-| `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; R25). |
+| `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; R25). |
+| `apps_git_repo_url` | yes | https Git remote for the apps repo. Same owner handle as `flux_git_repo_url`. That handle is the same across every non-example env (D45). |
 | `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
+| `llm_provider_host` | yes | AI provider API hostname, with no scheme, path, or port (D45). |
 | `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4 nts` line. |
 | `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
 | `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
 | `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. |
-| `ingress_class` | when ingress exists | Ingress class from bundled Traefik (D32). |
-| Feature toggles and sizing | per env | Role labels map roles to nodes; sizes and enabled platform features are env-specific patches, not core logic. |
 
 ### `values/hermes.yaml`
 
@@ -72,7 +75,15 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 ### `inventory/hosts.yml`
 
-Hostnames only. IPs, if needed, belong in encrypted `group_vars/*.sops.yaml` (D2, R25).
+Hostnames only. Inventory is not encrypted and does not need the age key (D2, D42, R25).
+
+### Example env
+
+`envs/env-00` is the never-deployed example env. `EXAMPLE_ENV` in `services/hermes/core/schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR (D43, D45). It has no `secrets/`, SOPS file, or `flux/`.
+
+### Explicit env
+
+`bootstrap-secrets`, `seal`, and the cluster-vars renderer require `--env`. The Makefile targets `bootstrap-secrets` and `seal` require `ENV=`. Each fails when the env is omitted (D45).
 
 ### Reference shape (documentation)
 
@@ -83,3 +94,4 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - `tools/checks/env-schema` in the required `ci` workflow (added in `p0a-05`).
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, and `ssh_user` defaulting to `ubuntu`.
+- A drift test fails when the known-key set gains a key the example env does not set.

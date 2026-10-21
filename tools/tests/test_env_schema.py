@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
 import pytest
 import yaml
 
-from _core_names import sole_env_directory_name
+import services.hermes.core.schema.env as env_schema
 from services.hermes.core.schema.env import (
     DEFAULT_SSH_USER,
+    EXAMPLE_ENV,
     ValidationError,
     validate_env_tree,
 )
@@ -32,8 +36,12 @@ def _write_env(
     cv = cluster_vars if cluster_vars is not None else _valid_cluster_vars()
     if omit_ssh_user:
         cv = {k: v for k, v in cv.items() if k != "ssh_user"}
+    if cv.get("jarvis_env") in (None, EXAMPLE_ENV):
+        cv["jarvis_env"] = env_name
 
-    (env / "values" / "cluster-vars.yaml").write_text(yaml.safe_dump(cv, sort_keys=False), encoding="utf-8")
+    (env / "values" / "cluster-vars.yaml").write_text(
+        yaml.safe_dump(cv, sort_keys=False), encoding="utf-8"
+    )
     (env / "values" / "hermes.yaml").write_text(
         textwrap.dedent(
             """
@@ -67,38 +75,16 @@ def _write_env(
 
 
 def _valid_cluster_vars() -> dict:
-    env_name = sole_env_directory_name(REPO_ROOT)
-    cluster_vars_path = REPO_ROOT / "envs" / env_name / "values" / "cluster-vars.yaml"
+    cluster_vars_path = REPO_ROOT / "envs" / EXAMPLE_ENV / "values" / "cluster-vars.yaml"
     reference = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8"))
-    return {
-        "jarvis_env": "env-test",
-        "dns_suffix": reference["dns_suffix"],
-        "time_zone": "America/Los_Angeles",
-        "code_delivery": "github",
-        "build_agent": "cursor",
-        "ssh_user": "ubuntu",
-        "backup_path": "/var/lib/jarvis/backup",
-        "backup_retention_daily": 7,
-        "backup_retention_weekly": 4,
-        "backup_retention_monthly": 3,
-        "k3s_version": "v1.36.5+k3s1",
-        "k3s_sha256": "d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313",
-        "pod_cidr": "10.42.0.0/16",
-        "service_cidr": "10.43.0.0/16",
-        "local_path_data": "/var/lib/jarvis/local-path",
-        "ntp_pools": reference["ntp_pools"],
-        "k3s_kubelet_kube_reserved": reference["k3s_kubelet_kube_reserved"],
-        "k3s_kubelet_system_reserved": reference["k3s_kubelet_system_reserved"],
-        "k3s_kubelet_eviction_hard": reference["k3s_kubelet_eviction_hard"],
-        "flux_git_repo_url": reference["flux_git_repo_url"],
-        "flux_git_ref": reference["flux_git_ref"],
-    }
+    assert isinstance(reference, dict)
+    return dict(reference)
 
 
-def test_env_01_in_repo_passes():
+def test_env_tree_passes():
     resolved = validate_env_tree(REPO_ROOT)
-    env_name = sole_env_directory_name(REPO_ROOT)
-    assert resolved[env_name]["ssh_user"] == DEFAULT_SSH_USER
+    assert EXAMPLE_ENV in resolved
+    assert resolved[EXAMPLE_ENV]["ssh_user"]
 
 
 def test_bad_build_agent_fails(tmp_path: Path):
@@ -162,3 +148,88 @@ def test_bad_code_delivery_fails(tmp_path: Path):
     msg = "\n".join(excinfo.value.messages)
     assert "code_delivery" in msg
     assert "github" in msg
+
+
+def test_unknown_cluster_var_fails(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["extra_setting"] = "nope"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "unknown key" in msg
+    assert "extra_setting" in msg
+
+
+def test_llm_provider_host_must_be_bare_hostname(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["llm_provider_host"] = "https://llm.example/v1"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "llm_provider_host" in "\n".join(excinfo.value.messages)
+
+
+def test_repo_urls_must_share_owner_handle(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["apps_git_repo_url"] = "https://github.com/other-owner/example-apps"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "owner handle" in "\n".join(excinfo.value.messages)
+
+
+def test_owner_handle_must_match_across_non_example_envs(tmp_path: Path):
+    first = _valid_cluster_vars()
+    first["flux_git_repo_url"] = "https://github.com/owner-a/cluster"
+    first["apps_git_repo_url"] = "https://github.com/owner-a/apps"
+    second = _valid_cluster_vars()
+    second["flux_git_repo_url"] = "https://github.com/owner-b/cluster"
+    second["apps_git_repo_url"] = "https://github.com/owner-b/apps"
+    _write_env(tmp_path, "env-a", cluster_vars=first)
+    _write_env(tmp_path, "env-b", cluster_vars=second)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "non-example envs" in msg
+    assert "owner-a" in msg
+    assert "owner-b" in msg
+
+
+def test_example_env_must_set_a_new_known_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        env_schema,
+        "_CLUSTER_VARS_KNOWN",
+        env_schema._CLUSTER_VARS_KNOWN | {"drift_key"},
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(REPO_ROOT)
+    msg = "\n".join(excinfo.value.messages)
+    assert msg.count("drift_key") == 1
+    assert f"{EXAMPLE_ENV} must set every known key: drift_key" in msg
+
+
+def test_cli_requires_env() -> None:
+    commands = (
+        [sys.executable, "tools/bootstrap-secrets"],
+        [sys.executable, "tools/seal", "--name", "example"],
+        [sys.executable, "tools/render_cluster_vars_configmap.py"],
+    )
+    for cmd in commands:
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+        assert proc.returncode != 0, cmd
+
+
+def test_make_targets_require_env() -> None:
+    env = os.environ.copy()
+    env.pop("ENV", None)
+    commands = (
+        ["make", "bootstrap-secrets"],
+        ["make", "seal", "NAME=example"],
+    )
+    for cmd in commands:
+        proc = subprocess.run(
+            cmd, cwd=REPO_ROOT, capture_output=True, text=True, env=env
+        )
+        assert proc.returncode != 0, cmd
+        assert "ENV is required" in proc.stderr

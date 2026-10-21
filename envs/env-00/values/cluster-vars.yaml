@@ -1,0 +1,31 @@
+# Example env. Invented values. Nothing here is copied from a real env.
+jarvis_env: env-00
+dns_suffix: env-00.example
+time_zone: Etc/UTC
+code_delivery: github
+build_agent: cursor
+ssh_user: example
+
+backup_path: /var/lib/example/backup
+backup_retention_daily: 1
+backup_retention_weekly: 2
+backup_retention_monthly: 3
+
+k3s_version: v0.0.0-example
+k3s_sha256: abababababababababababababababababababababababababababababababab
+pod_cidr: 10.80.0.0/16
+service_cidr: 10.81.0.0/16
+local_path_data: /var/lib/example/local-path
+
+k3s_kubelet_kube_reserved: cpu=100m,memory=128Mi
+k3s_kubelet_system_reserved: cpu=100m,memory=128Mi
+k3s_kubelet_eviction_hard: memory.available<100Mi
+
+ntp_pools:
+  - time.example
+
+flux_git_repo_url: https://github.com/example-owner/example-cluster
+apps_git_repo_url: https://github.com/example-owner/example-apps
+flux_git_ref: refs/heads/example
+
+llm_provider_host: llm.example
