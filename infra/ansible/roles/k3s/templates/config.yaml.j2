@@ -1,4 +1,5 @@
 # Managed by Ansible (k3s role): server config (framework §8 step 4; not the k3s install script).
+node-name: {{ inventory_hostname }}
 cluster-init: true
 secrets-encryption: true
 cluster-cidr: {{ pod_cidr }}

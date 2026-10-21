@@ -1,0 +1,17 @@
+---
+- name: Read the server node token
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: k3s_node_token_slurp
+  delegate_to: "{{ groups['control_plane'] | first }}"
+  run_once: true
+  no_log: true
+  changed_when: false
+
+- name: Share the node token
+  ansible.builtin.set_fact:
+    k3s_token: >-
+      {{ hostvars[ansible_play_hosts | first].k3s_node_token_slurp.content | b64decode | trim }}
+    k3s_server_url: "https://{{ groups['control_plane'] | first }}:6443"
+  no_log: true
+  changed_when: false

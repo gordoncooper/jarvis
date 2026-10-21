@@ -1,4 +1,4 @@
-# D11: stale chart pin; Renovate bumps with flux_operator_chart_version (p0a-15).
+# D11: the one chart pin. The flux-operator Ansible role reads spec.ref.tag.
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:

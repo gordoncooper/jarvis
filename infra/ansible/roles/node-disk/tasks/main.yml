@@ -1,6 +1,6 @@
 ---
 - name: Check the data disk
-  tags: [always, node-disk]
+  tags: [node-disk]
   block:
     - ansible.builtin.command:
         argv: [readlink, -f, "{{ data_disk.id }}"]
@@ -20,7 +20,7 @@
         node_disk_root: "{{ node_disk_root_src.stdout }}"
         node_disk_labeled: "{{ node_disk_label_dev.stdout_lines }}"
     - ansible.builtin.import_tasks: guards.yml
-      tags: [always, node-disk]
+      tags: [node-disk]
 
 - name: Mount the data disk
   tags: [node-disk]
@@ -51,6 +51,7 @@
         fstype: "{{ node_disk_fstype }}"
         opts: defaults,nofail
         state: mounted
+    - ansible.builtin.import_tasks: k3s-service.yml
     - ansible.builtin.file:
         path: "{{ item }}"
         state: directory
@@ -59,9 +60,9 @@
         - "{{ local_path_data }}"
         - "{{ backup_path }}/etcd-snapshots"
         - "{{ backup_path }}/restic"
-        - /etc/systemd/system/k3s.service.d
+        - "/etc/systemd/system/{{ node_disk_k3s_service }}.service.d"
     - ansible.builtin.template:
         src: k3s-mount.conf.j2
-        dest: /etc/systemd/system/k3s.service.d/jarvis-mount.conf
+        dest: "/etc/systemd/system/{{ node_disk_k3s_service }}.service.d/jarvis-mount.conf"
         mode: "0644"
       notify: Reload systemd

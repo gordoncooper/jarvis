@@ -1,0 +1,48 @@
+---
+- name: Install the Kubernetes Python client
+  ansible.builtin.apt:
+    name: python3-kubernetes
+    state: present
+
+- name: Wait until every inventory node exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Node
+    kubeconfig: "{{ k3s_remote_kubeconfig }}"
+  register: k3s_nodes
+  retries: 30
+  delay: 5
+  until: >-
+    groups['all']
+    | difference(k3s_nodes.resources | default([]) | map(attribute='metadata.name') | list)
+    | length == 0
+  changed_when: false
+
+- name: Build node label patches
+  ansible.builtin.set_fact:
+    k3s_label_patches: "{{ lookup('ansible.builtin.template', 'label-patches.json.j2') | from_json }}"
+  vars:
+    k3s_edge_group: "{{ groups['edge'] | default([]) }}"
+    k3s_control_plane_hosts: "{{ groups['control_plane'] }}"
+    k3s_label_hosts: >-
+      {{ dict(groups['all'] | zip(groups['all'] | map('extract', hostvars, 'node_roles'))) }}
+    k3s_node_resources: >-
+      {{ k3s_nodes.resources | selectattr('metadata.name', 'in', groups['all']) | list }}
+  changed_when: false
+
+- name: Reconcile role and enablelb labels
+  kubernetes.core.k8s:
+    state: patched
+    merge_type:
+      - merge
+    api_version: v1
+    kind: Node
+    name: "{{ item.name }}"
+    kubeconfig: "{{ k3s_remote_kubeconfig }}"
+    definition:
+      metadata:
+        labels: "{{ item.labels }}"
+  loop: "{{ k3s_label_patches }}"
+  when: item.labels | length > 0
+  loop_control:
+    label: "{{ item.name }}"

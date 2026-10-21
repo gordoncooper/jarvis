@@ -1,7 +1,5 @@
 ---
-# One-time bootstrap chart pin (R33, D11); not env-specific — Renovate bumps with oci-repository.yaml.
-# renovate: datasource=docker depName=ghcr.io/controlplaneio-fluxcd/charts/flux-operator versioning=semver
-flux_operator_chart_version: "0.60.0"
+# Chart pin is spec.ref.tag in platform/flux-operator/oci-repository.yaml (chart_pin.yml).
 flux_operator_crd_wait_timeout: 120s
 flux_operator_rollout_wait_timeout: 300s
 flux_operator_helm_timeout: 5m
@@ -9,6 +7,7 @@ flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
 flux_instance_name: flux
 flux_distribution_version: "2.8.x"
+k3s_binary_path: /usr/local/bin/k3s
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 helm_binary_path: /usr/local/bin/helm
 # Pinned Helm host CLI for the one-time bootstrap. Renovate bumps helm_version; update sha256 lines in the same PR.

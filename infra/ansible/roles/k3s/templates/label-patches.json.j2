@@ -1,0 +1,29 @@
+{% set prefix = 'role.' ~ dns_suffix ~ '/' %}
+{% set enablelb = 'svccontroller.k3s.cattle.io/enablelb' %}
+{% set edge = k3s_edge_group | default([]) %}
+{% set edge_hosts = edge if (edge | length > 0) else k3s_control_plane_hosts %}
+{% set out = namespace(items=[]) %}
+{% for node in k3s_node_resources %}
+{% set name = node.metadata.name %}
+{% set current = node.metadata.labels | default({}) %}
+{% set desired = namespace(labels={}) %}
+{% for role in k3s_label_hosts[name] %}
+{% set _ = desired.labels.update({prefix ~ role: 'true'}) %}
+{% endfor %}
+{% if name in edge_hosts %}
+{% set _ = desired.labels.update({enablelb: 'true'}) %}
+{% endif %}
+{% set patch = namespace(labels={}) %}
+{% for key, value in desired.labels.items() %}
+{% if current[key] | default('') != value %}
+{% set _ = patch.labels.update({key: value}) %}
+{% endif %}
+{% endfor %}
+{% for key in current %}
+{% if (key.startswith(prefix) and key not in desired.labels) or (key == enablelb and name not in edge_hosts) %}
+{% set _ = patch.labels.update({key: none}) %}
+{% endif %}
+{% endfor %}
+{% set _ = out.items.append({'name': name, 'labels': patch.labels | combine({})}) %}
+{% endfor %}
+{{ out.items | to_json }}

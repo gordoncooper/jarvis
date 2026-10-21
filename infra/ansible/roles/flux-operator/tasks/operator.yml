@@ -8,24 +8,15 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Record Flux Operator deployment presence
   ansible.builtin.set_fact:
     flux_operator_deployed: >-
       {{ flux_operator_deploy_lookup.rc == 0
          and (flux_operator_deploy_lookup.stdout | trim | length) > 0 }}
-  tags:
-    - flux-operator
-    - flux-cluster
 
 - name: Bootstrap Flux Operator when absent
   when: not (flux_operator_deployed | bool)
-  tags:
-    - flux-operator
-    - flux-cluster
   block:
     - name: Ensure Helm CLI for chart bootstrap
       ansible.builtin.import_tasks: helm_cli.yml

@@ -1,8 +1,16 @@
 ---
+- name: Require k3s mode
+  ansible.builtin.assert:
+    that: k3s_mode in ['server', 'agent']
+    fail_msg: k3s role requires k3s_mode server or agent.
+
+- name: Set the k3s service name
+  ansible.builtin.set_fact:
+    k3s_service_name: "{{ 'k3s' if k3s_mode == 'server' else 'k3s-agent' }}"
+  changed_when: false
+
 - name: k3s guard and env marker
   ansible.builtin.import_tasks: guard.yml
-  tags:
-    - k3s
 
 - name: Require k3s cluster-vars
   ansible.builtin.assert:
@@ -16,9 +24,15 @@
       - backup_path is defined
       - local_path_data is defined
     fail_msg: k3s role requires k3s_version, k3s_sha256, CIDRs, and paths in cluster-vars.
-  tags:
-    - always
-    - k3s
+
+- name: Require an amd64 host
+  ansible.builtin.assert:
+    that: ansible_facts['architecture'] == 'x86_64'
+    fail_msg: k3s role supports only amd64 hosts.
+
+- name: Read the server node token
+  ansible.builtin.import_tasks: token.yml
+  when: k3s_mode == 'agent'
 
 - name: Ensure jarvis state directories exist
   ansible.builtin.file:
@@ -33,8 +47,6 @@
     - "{{ local_path_data }}"
     - "{{ backup_path }}"
     - "{{ backup_path }}/etcd-snapshots"
-  tags:
-    - k3s
 
 - name: Install k3s server config
   ansible.builtin.template:
@@ -43,11 +55,19 @@
     owner: root
     group: root
     mode: "0600"
+  when: k3s_mode == 'server'
   notify: Restart k3s
-  tags:
-    - k3s
-    - k3s-upgrade
-    - k3s-config
+
+- name: Install k3s agent config
+  ansible.builtin.template:
+    src: agent-config.yaml.j2
+    dest: "{{ k3s_config_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: k3s_mode == 'agent'
+  no_log: true
+  notify: Restart k3s
 
 - name: Download pinned k3s binary
   ansible.builtin.get_url:
@@ -58,34 +78,19 @@
     group: root
     checksum: "sha256:{{ k3s_sha256 }}"
   notify: Restart k3s
-  tags:
-    - k3s
-    - k3s-upgrade
 
 - name: Install k3s systemd unit
   ansible.builtin.template:
     src: k3s.service.j2
-    dest: /etc/systemd/system/k3s.service
+    dest: "/etc/systemd/system/{{ k3s_service_name }}.service"
     owner: root
     group: root
     mode: "0644"
   notify: Restart k3s
-  tags:
-    - k3s
-    - k3s-upgrade
 
 - name: Enable and start k3s
   ansible.builtin.systemd:
     name: "{{ k3s_service_name }}"
     enabled: true
     state: started
-  tags:
-    - k3s
-    - k3s-service
-
-- name: Install kubeconfig for the site.yml runner
-  ansible.builtin.include_tasks: kubeconfig.yml
-  tags:
-    - k3s
-    - k3s-service
-    - kubeconfig
+    daemon_reload: true
