@@ -90,7 +90,7 @@ Each host is a mapping with `node_roles` and, when that host has a data disk, `d
 
 Kubernetes labels are `role.<dns_suffix>/<role>=true` for each role on the node. The `role.<dns_suffix>/` prefix is reserved for them. The task that sets and removes them is `p0a-12`. This schema does not apply labels.
 
-The example env declares every known role. A new known role is declared on that env in the same PR (D43, D45).
+The example env declares every known role. A new known role is declared on that env in the same PR (D43, D45). A role is added only in the same PR as the first service that schedules by it. `workers` is the general role for app nodes, and a role does not depend on another.
 
 ### Example env
 
