@@ -3,6 +3,40 @@
     node_disk_device_re: "^{{ node_disk_path | regex_escape }}({{ 'p[0-9]+' if node_disk_path is match('.*[0-9]$') else '[0-9]+' }})?$"
 - ansible.builtin.set_fact:
     node_disk_ours: "{{ node_disk_labeled | select('match', node_disk_device_re) | list | length > 0 }}"
+- name: Strip a btrfs subvolume suffix from the root source
+  ansible.builtin.set_fact:
+    node_disk_root_dev: "{{ node_disk_root | regex_replace('\\[[^\\]]*\\]$', '') | trim }}"
+- name: Resolve the root source path
+  when: node_disk_root_lsblk_override is not defined
+  ansible.builtin.command:
+    argv: [readlink, -f, "{{ node_disk_root_dev }}"]
+  register: node_disk_root_resolved
+  changed_when: false
+- name: Record the resolved root source
+  ansible.builtin.set_fact:
+    node_disk_root_follow: "{{ (node_disk_root_resolved.stdout | default(node_disk_root_dev, true)) | trim }}"
+- name: List devices under the root mount
+  when: node_disk_root_lsblk_override is not defined
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - -nso
+      - NAME,TYPE
+      - "{{ node_disk_root_follow }}"
+  register: node_disk_root_lsblk_cmd
+  changed_when: false
+  failed_when: false
+- name: Record lsblk lines for the root mount
+  ansible.builtin.set_fact:
+    node_disk_root_lsblk_lines: "{{ (node_disk_root_lsblk_override | default(node_disk_root_lsblk_cmd.stdout_lines | default([]))) | to_json | from_json }}"
+- name: Record whether root device lookup failed
+  ansible.builtin.set_fact:
+    node_disk_root_lsblk_failed: "{{ node_disk_root_lsblk_override is not defined and ((node_disk_root_lsblk_cmd.rc | default(0) | int) != 0) }}"
+- name: Record disks under the root mount
+  vars:
+    node_disk_root_rows: "{{ node_disk_root_lsblk_lines | map('trim') | map('regex_replace', '^[^A-Za-z0-9]+', '') | map('regex_replace', ' +', ' ') | list }}"
+  ansible.builtin.set_fact:
+    node_disk_root_disks: "{{ (node_disk_root_rows | select('match', '^[^ ]+ disk$') | map('regex_replace', ' disk$', '') | map('regex_replace', '^.*/', '') | map('regex_replace', '^', '/dev/') | unique | list) | to_json | from_json }}"
 - name: Refuse multiple devices with jarvis-data label
   ansible.builtin.assert:
     that:
@@ -11,8 +45,16 @@
 - name: Refuse the root disk
   ansible.builtin.assert:
     that:
-      - not (node_disk_root is match(node_disk_device_re))
+      - not (node_disk_root_dev is match(node_disk_device_re))
+      - not (node_disk_root_follow is match(node_disk_device_re))
+      - node_disk_path not in node_disk_root_disks
     fail_msg: "{{ data_disk.id }} is the root disk ({{ node_disk_root }})."
+- name: Refuse when the root disk cannot be resolved
+  when: node_disk_root_dev is match('^/dev/')
+  ansible.builtin.assert:
+    that:
+      - not (node_disk_root_lsblk_failed | bool)
+    fail_msg: "could not resolve the disk under {{ node_disk_root }}."
 - name: Gather device facts
   when: not (node_disk_ours | bool)
   ansible.builtin.setup:
@@ -35,3 +77,8 @@
       - data_disk.wipe_confirmed is sameas true
       - (inventory_hostname ~ ':' ~ data_disk.id) in ((jarvis_wipe_confirm | default('')) | split(',') | map('trim') | list)
     fail_msg: "refusing to wipe {{ inventory_hostname }} {{ data_disk.id }} model={{ node_disk_model }} size={{ node_disk_size }} partitions={{ node_disk_partitions }} given {{ jarvis_wipe_confirm | default('') }}"
+- name: Refuse a jarvis-data label on another device
+  ansible.builtin.assert:
+    that:
+      - node_disk_labeled | reject('match', node_disk_device_re) | list | length == 0
+    fail_msg: "jarvis-data label is not on {{ node_disk_path }}: {{ node_disk_labeled }}"

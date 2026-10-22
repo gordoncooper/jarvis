@@ -155,10 +155,26 @@ def read_allowed(allow: list[str], deny: list[str], file_path: str) -> bool:
 
 DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "kubectl apply -f deployment.yaml",
+    "kubectl get secret -n flux-system sops-age",
+    "kubectl get secrets -A",
+    "bash -c 'kubectl get secret -n flux-system sops-age'",
     "helm upgrade --install demo ./chart",
+    "bash -c 'helm list'",
     "ssh user@node.example",
+    "bash -c 'ssh user@node.example'",
+    "bash -c 'scp file.yaml user@node.example:'",
     "sops decrypt envs/<env>/secrets/grafana-admin.sops.yaml",
     "sops -d envs/<env>/secrets/grafana-admin.sops.yaml",
+    "sops secrets.yaml",
+    "sops envs/<env>/secrets/grafana-admin.sops.yaml",
+    "sops --config .sops.yaml -d envs/<env>/secrets/grafana-admin.sops.yaml",
+    "sops exec-env VAR envs/<env>/secrets/grafana-admin.sops.yaml printenv",
+    "sops exec-file envs/<env>/secrets/grafana-admin.sops.yaml cat",
+    "sops edit envs/<env>/secrets/grafana-admin.sops.yaml",
+    "bash -c 'sops -d envs/<env>/secrets/grafana-admin.sops.yaml'",
+    "bash -c 'sops envs/<env>/secrets/grafana-admin.sops.yaml'",
+    "cat ~/.config/sops/age/keys.txt",
+    "cat /tmp/host.agekey",
     "flux bootstrap github",
     "flux install",
     "flux suspend kustomization demo",
@@ -178,6 +194,11 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "flux tree kustomization demo",
     "flux events --for Kustomization/demo",
     "flux reconcile kustomization demo --with-source",
+    "sops encrypt envs/<env>/secrets/grafana-admin.sops.yaml",
+    "sops -e envs/<env>/secrets/grafana-admin.sops.yaml",
+    "sops --encrypt envs/<env>/secrets/grafana-admin.sops.yaml",
+    "bash -c 'sops encrypt envs/<env>/secrets/grafana-admin.sops.yaml'",
+    "bash -c 'sops -e envs/<env>/secrets/grafana-admin.sops.yaml'",
 )
 
 

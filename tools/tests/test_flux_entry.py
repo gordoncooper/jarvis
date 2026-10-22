@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from ansible_role_proof import (
+    FLUX_OPERATOR_ROLE_DIR,
     FLUX_OPERATOR_ROLE_TEMPLATES,
     REPO_ROOT,
     ansible_render_template,
@@ -115,6 +116,17 @@ def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
     assert data["ntp_pools"] == json.dumps(raw["ntp_pools"], separators=(",", ":"))
 
 
+def _flux_distribution_version() -> str:
+    defaults = yaml.safe_load(
+        (FLUX_OPERATOR_ROLE_DIR / "defaults" / "main.yml").read_text(encoding="utf-8")
+    )
+    assert isinstance(defaults, dict)
+    version = defaults["flux_distribution_version"]
+    parts = version.split(".") if isinstance(version, str) else []
+    assert len(parts) == 3 and all(part.isdigit() for part in parts)
+    return version
+
+
 @pytest.mark.parametrize("env", non_example_env_names())
 def test_git_flux_instance_matches_ansible_template(env: str) -> None:
     git_path = REPO_ROOT / "envs" / env / "flux" / "flux-instance.yaml"
@@ -127,7 +139,7 @@ def test_git_flux_instance_matches_ansible_template(env: str) -> None:
     variables = {
         "flux_instance_name": "flux",
         "flux_system_namespace": "flux-system",
-        "flux_distribution_version": "2.8.x",
+        "flux_distribution_version": _flux_distribution_version(),
         "flux_git_repo_url": cluster["flux_git_repo_url"],
         "flux_git_ref": cluster["flux_git_ref"],
         "jarvis_env": env,
