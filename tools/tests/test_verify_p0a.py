@@ -61,7 +61,9 @@ def _kubectl(node_labels: dict[str, str], *, flux: bool):
         if argv[:3] == ["get", "secret", "backups-restic"]:
             return _completed(argv, json.dumps({"data": {"RESTIC_PASSWORD": SECRET_VALUE}}))
         if argv[0] == "get" and "-A" in argv:
-            items = [flux_item] if flux and argv[1].startswith("kustomizations.") else []
+            # flux=False is the first-boot partial: Kustomizations exist, HelmRelease does not.
+            has_items = flux or not argv[1].startswith("helmreleases.")
+            items = [flux_item] if has_items else []
             return _completed(argv, json.dumps({"items": items}))
         if argv[:2] == ["wait", "--for=condition=Ready"] and "--all" in argv:
             return _completed(argv, "condition met\n")
@@ -75,7 +77,7 @@ def test_verify_p0a_wrong_role_and_no_flux_objects(tmp_path: Path, capsys: pytes
     env = _write_env(tmp_path)
     matched = _kubectl(_labels("control_plane", "edge"), flux=True)
     wrong = _kubectl(_labels("control_plane", "edge", "workers"), flux=True)
-    empty = _kubectl(_labels("control_plane", "edge"), flux=False)
+    partial = _kubectl(_labels("control_plane", "edge"), flux=False)
 
     assert verify_p0a.run(tmp_path, env, matched, budget_s=0) == 0
     matched_out = capsys.readouterr().out
@@ -88,8 +90,10 @@ def test_verify_p0a_wrong_role_and_no_flux_objects(tmp_path: Path, capsys: pytes
     wrong_out = capsys.readouterr().out
     assert SECRET_VALUE not in wrong_out
 
-    assert verify_p0a.run(tmp_path, env, empty, budget_s=0) != 0
-    assert SECRET_VALUE not in capsys.readouterr().out
+    assert verify_p0a.run(tmp_path, env, partial, budget_s=0) != 0
+    partial_out = capsys.readouterr().out
+    assert "FAIL flux Ready: missing helmreleases.helm.toolkit.fluxcd.io" in partial_out
+    assert SECRET_VALUE not in partial_out
 
 
 def test_missing_binary_prints_deps_hint(capsys: pytest.CaptureFixture[str]) -> None:

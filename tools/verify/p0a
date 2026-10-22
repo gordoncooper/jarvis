@@ -73,36 +73,45 @@ def _seconds_left(deadline: float) -> int:
     return max(0, int(deadline - time.monotonic()))
 
 
-def _flux_snapshot(kubectl: Kubectl) -> tuple[list[str], str, bool]:
-    found: list[str] = []
+def _flux_snapshot(kubectl: Kubectl) -> tuple[list[str], str | None, str | None]:
+    missing: list[str] = []
+    get_reason: str | None = None
     for resource in FLUX_RESOURCES:
         proc = kubectl(["get", resource, "-A", "-o", "json"])
         if proc.returncode != 0:
-            return [], _reason(proc), True
+            missing.append(resource)
+            if get_reason is None:
+                get_reason = _reason(proc)
+            continue
         try:
             items = json.loads(proc.stdout)["items"]
         except (json.JSONDecodeError, KeyError, TypeError):
-            return [], f"{resource}: invalid kubectl JSON", False
+            return [], None, f"{resource}: invalid kubectl JSON"
         if not isinstance(items, list):
-            return [], f"{resource}: invalid kubectl JSON", False
-        if items:
-            found.append(resource)
-    if not found:
-        return [], "no Kustomization, GitRepository, or HelmRelease", True
-    return found, "", True
+            return [], None, f"{resource}: invalid kubectl JSON"
+        if not items:
+            missing.append(resource)
+    return missing, get_reason, None
 
 
 def _check_flux(kubectl: Kubectl, *, budget_s: float) -> int:
     deadline = time.monotonic() + budget_s
+    told = False
     while True:
-        found, reason, retry = _flux_snapshot(kubectl)
-        if found:
+        missing, get_reason, fatal = _flux_snapshot(kubectl)
+        if fatal is not None:
+            _line(f"FAIL flux Ready: {fatal}")
+            return 1
+        if not missing:
             break
-        if not retry or time.monotonic() >= deadline:
-            _line(f"FAIL flux Ready: {reason}")
+        if get_reason is not None and not told:
+            _line(get_reason)
+            told = True
+        if time.monotonic() >= deadline:
+            _line(f"FAIL flux Ready: missing {', '.join(missing)}")
             return 1
         time.sleep(min(_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
-    for resource in found:
+    for resource in FLUX_RESOURCES:
         proc = kubectl(
             [
                 "wait",
