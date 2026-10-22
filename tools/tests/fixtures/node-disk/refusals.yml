@@ -20,6 +20,41 @@
       - {name: wipe flag false, path: /dev/nvme1n1, root: /dev/nvme0n1p3, labeled: [], data_disk: *unconfirmed, confirm: *confirm, expect: "model=fixture-model size=1.00 TB partitions=nvme1n1p1"}
       - {name: adopt label, path: /dev/nvme1n1, root: /dev/nvme0n1p3, labeled: [/dev/nvme1n1p1], data_disk: *unconfirmed}
       - {name: label on another disk, path: /dev/nvme1n1, root: /dev/nvme0n1p3, labeled: [/dev/nvme0n1p1], data_disk: *unconfirmed, expect: "model=fixture-model size=1.00 TB partitions=nvme1n1p1"}
+      - name: lvm root
+        path: /dev/nvme0n1
+        root: /dev/mapper/ubuntu--vg-ubuntu--lv
+        labeled: []
+        data_disk: *confirmed
+        confirm: *confirm
+        lsblk:
+          - "ubuntu--vg-ubuntu--lv lvm"
+          - "└─nvme0n1p3 part"
+          - "  └─nvme0n1 disk"
+        expect: is the root disk
+      - name: dev root
+        path: /dev/nvme0n1
+        root: /dev/root
+        labeled: []
+        data_disk: *confirmed
+        confirm: *confirm
+        lsblk:
+          - "nvme0n1p2 part"
+          - "└─nvme0n1 disk"
+        expect: is the root disk
+      - name: btrfs subvol root
+        path: /dev/nvme0n1
+        root: /dev/nvme0n1p2[/]
+        labeled: []
+        data_disk: *confirmed
+        confirm: *confirm
+        expect: is the root disk
+      - name: foreign label with confirmations
+        path: /dev/nvme1n1
+        root: /dev/nvme0n1p3
+        labeled: [/dev/sdb1]
+        data_disk: *confirmed
+        confirm: *confirm
+        expect: jarvis-data label is not on
   tasks:
     - ansible.builtin.include_tasks: case.yml
       loop: "{{ cases }}"

@@ -49,12 +49,12 @@ def test_age_key_path_read_blocked():
     assert matches_read("Read(**/.config/sops/age/**)", ".config/sops/age/alphacut.txt")
 
 
-def test_sops_decrypt_blocked_sops_encrypt_not_denied_by_decrypt_rules():
+def test_sops_commands_blocked():
     perms = load_cli_permissions(CLI_JSON)
     deny = perms["deny"]
     assert command_blocked_by_deny(deny, "sops -d file.yaml")
     assert command_blocked_by_deny(deny, "sops decrypt file.yaml")
-    assert not command_blocked_by_deny(deny, "sops -e file.yaml")
+    assert command_blocked_by_deny(deny, "sops -e file.yaml")
 
 
 def test_matches_shell_command_args_split():
@@ -79,11 +79,19 @@ def test_minimal_deny_list_in_tmp(tmp_path: Path):
                 "permissions": {
                     "deny": [
                         "Shell(kubectl:apply*)",
+                        "Shell(kubectl:get secret*)",
+                        "Shell(*kubectl*get*secret*)",
                         "Shell(helm)",
+                        "Shell(*helm *)",
                         "Shell(ssh)",
-                        "Shell(sops:decrypt*)",
-                        "Shell(sops:-d*)",
+                        "Shell(*ssh *)",
                         "Shell(scp)",
+                        "Shell(*scp *)",
+                        "Shell(sops)",
+                        "Shell(sops:*)",
+                        "Shell(*sops *)",
+                        "Shell(*.config/sops/age*)",
+                        "Shell(*.agekey*)",
                         "Shell(flux:bootstrap*)",
                         "Shell(flux:install*)",
                         "Shell(flux:suspend*)",

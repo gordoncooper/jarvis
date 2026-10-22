@@ -3,6 +3,14 @@
     node_disk_device_re: "^{{ node_disk_path | regex_escape }}({{ 'p[0-9]+' if node_disk_path is match('.*[0-9]$') else '[0-9]+' }})?$"
 - ansible.builtin.set_fact:
     node_disk_ours: "{{ node_disk_labeled | select('match', node_disk_device_re) | list | length > 0 }}"
+- name: Strip a btrfs subvolume suffix from the root source
+  ansible.builtin.set_fact:
+    node_disk_root_dev: "{{ node_disk_root | regex_replace('\\[[^\\]]*\\]$', '') | trim }}"
+- name: Record disks under the root mount
+  vars:
+    node_disk_root_rows: "{{ node_disk_root_lsblk_lines | map('trim') | map('regex_replace', '^[^A-Za-z0-9]+', '') | map('regex_replace', ' +', ' ') | list }}"
+  ansible.builtin.set_fact:
+    node_disk_root_disks: "{{ (node_disk_root_rows | select('match', '^[^ ]+ disk$') | map('regex_replace', ' disk$', '') | map('regex_replace', '^.*/', '') | map('regex_replace', '^', '/dev/') | unique | list) | to_json | from_json }}"
 - name: Refuse multiple devices with jarvis-data label
   ansible.builtin.assert:
     that:
@@ -11,7 +19,9 @@
 - name: Refuse the root disk
   ansible.builtin.assert:
     that:
-      - not (node_disk_root is match(node_disk_device_re))
+      - not (node_disk_root_dev is match(node_disk_device_re))
+      - not (node_disk_root_follow is match(node_disk_device_re))
+      - node_disk_path not in node_disk_root_disks
     fail_msg: "{{ data_disk.id }} is the root disk ({{ node_disk_root }})."
 - name: Gather device facts
   when: not (node_disk_ours | bool)
@@ -35,3 +45,8 @@
       - data_disk.wipe_confirmed is sameas true
       - (inventory_hostname ~ ':' ~ data_disk.id) in ((jarvis_wipe_confirm | default('')) | split(',') | map('trim') | list)
     fail_msg: "refusing to wipe {{ inventory_hostname }} {{ data_disk.id }} model={{ node_disk_model }} size={{ node_disk_size }} partitions={{ node_disk_partitions }} given {{ jarvis_wipe_confirm | default('') }}"
+- name: Refuse a jarvis-data label on another device
+  ansible.builtin.assert:
+    that:
+      - node_disk_labeled | reject('match', node_disk_device_re) | list | length == 0
+    fail_msg: "jarvis-data label is not on {{ node_disk_path }}: {{ node_disk_labeled }}"

@@ -20,6 +20,7 @@
         dest: "{{ k3s_kubeconfig_staging.path }}/k3s.yaml"
         flat: true
       changed_when: false
+      no_log: true
 
     - name: Point kubeconfig server at inventory hostname
       ansible.builtin.replace:
@@ -29,6 +30,7 @@
       delegate_to: localhost
       become: false
       changed_when: false
+      no_log: true
 
     - name: Ensure .kube directory exists for site.yml runner
       ansible.builtin.file:
@@ -45,6 +47,7 @@
         mode: "0600"
       delegate_to: localhost
       become: false
+      no_log: true
   always:
     - name: Remove kubeconfig staging directory
       ansible.builtin.file:

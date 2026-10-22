@@ -6,7 +6,7 @@ flux_operator_helm_timeout: 5m
 flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
 flux_instance_name: flux
-flux_distribution_version: "2.8.x"
+flux_distribution_version: "2.8.8"
 helm_binary_path: /usr/local/bin/helm
 # Pinned Helm host CLI for the one-time bootstrap. Renovate bumps helm_version; update sha256 lines in the same PR.
 # renovate: datasource=github-releases depName=helm/helm versioning=semver
