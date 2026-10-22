@@ -18,7 +18,7 @@
           control_plane has {{ groups['control_plane'] | default([]) | length }} hosts;
           expected exactly one.
           Pass both inventories, as in infra/ansible/README.md:
-          ansible-playbook site.yml
+          ../../.venv/bin/ansible-playbook site.yml
           -i ../../envs/<env>/inventory/hosts.yml
           -i ../inventory/roles.yml
           -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml

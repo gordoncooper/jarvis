@@ -33,5 +33,5 @@
   ansible.builtin.assert:
     that:
       - data_disk.wipe_confirmed is sameas true
-      - (jarvis_wipe_confirm | default('')) == (inventory_hostname ~ ':' ~ data_disk.id)
+      - (inventory_hostname ~ ':' ~ data_disk.id) in ((jarvis_wipe_confirm | default('')) | split(',') | map('trim') | list)
     fail_msg: "refusing to wipe {{ inventory_hostname }} {{ data_disk.id }} model={{ node_disk_model }} size={{ node_disk_size }} partitions={{ node_disk_partitions }} given {{ jarvis_wipe_confirm | default('') }}"

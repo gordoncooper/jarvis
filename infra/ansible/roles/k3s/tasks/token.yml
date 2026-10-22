@@ -1,4 +1,22 @@
 ---
+- name: Resolve the control-plane name on this agent
+  ansible.builtin.command:
+    argv:
+      - getent
+      - hosts
+      - "{{ groups['control_plane'] | first }}"
+  changed_when: false
+  failed_when: false
+  register: k3s_control_plane_lookup
+
+- name: Fail when the control-plane name does not resolve on this agent
+  ansible.builtin.assert:
+    that:
+      - k3s_control_plane_lookup.rc == 0
+    fail_msg: >-
+      {{ groups['control_plane'] | first }} does not resolve on {{ inventory_hostname }}.
+      Every inventory hostname must resolve on this node before the agent starts.
+
 - name: Read the server node token
   ansible.builtin.slurp:
     src: /var/lib/rancher/k3s/server/node-token

@@ -44,8 +44,8 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `jarvis_env` | yes | Env name for `/etc/jarvis/env` marker and guards; must match `envs/<env>/` (p0a-12). |
 | `k3s_version` | yes | Host binary version; changes only by PR (R33, D5). |
 | `k3s_sha256` | yes | SHA-256 of the pinned `k3s` amd64 release binary (verified on install). |
-| `pod_cidr` | yes | Pod network CIDR; set once per env (D4). |
-| `service_cidr` | yes | Service network CIDR; set once per env (D4). |
+| `pod_cidr` | yes | Pod network CIDR; an IP network, set once per env (D4). |
+| `service_cidr` | yes | Service network CIDR; an IP network, set once per env (D4). |
 | `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
 | `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; R25). |
 | `apps_git_repo_url` | yes | https Git remote for the apps repo. Same owner handle as `flux_git_repo_url`. That handle is the same across every non-example env (D45). |
@@ -86,7 +86,7 @@ Each host is a mapping with `node_roles` and, when that host has a data disk, `d
 
 ### Node roles and labels
 
-`infra/inventory/roles.yml` is the one constructed inventory. Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`.
+`infra/inventory/roles.yml` is the one constructed inventory. Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
 
 Kubernetes labels are `role.<dns_suffix>/<role>=true` for each role on the node. The `role.<dns_suffix>/` prefix is reserved for them. The task that sets and removes them is `p0a-12`. This schema does not apply labels.
 
@@ -94,7 +94,7 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR (D43, D45). It has no `secrets/`, SOPS file, or `flux/`.
+`envs/env-00` is the never-deployed example env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR (D43, D45). It has no `secrets/`, SOPS file, or `flux/`. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
 ### Explicit env
 

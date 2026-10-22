@@ -137,6 +137,33 @@ def test_bad_flux_git_repo_url_fails(tmp_path: Path):
     assert "flux_git_repo_url" in "\n".join(excinfo.value.messages)
 
 
+def test_cluster_cidrs_must_be_cidrs(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["pod_cidr"] = "not-a-pod-cidr"
+    cv["service_cidr"] = "not-a-service-cidr"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "pod_cidr must be a CIDR" in msg
+    assert "service_cidr must be a CIDR" in msg
+
+
+def test_flux_paths_must_use_own_env_name(tmp_path: Path):
+    env = _write_env(tmp_path, "env-test")
+    flux = env / "flux"
+    flux.mkdir()
+    (flux / "flux-instance.yaml").write_text(
+        'path: "envs/env-other/flux"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "envs/env-other/" in msg
+    assert "env-test" in msg
+
+
 def test_bad_k3s_sha256_fails(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["k3s_sha256"] = "not-a-checksum"
