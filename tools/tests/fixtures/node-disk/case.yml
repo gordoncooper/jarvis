@@ -7,8 +7,9 @@
     jarvis_wipe_confirm: "{{ case.confirm | default('') }}"
     node_disk_path: "{{ case.path }}"
     node_disk_root: "{{ case.root }}"
+    node_disk_root_follow: "{{ case.root }}"
     node_disk_labeled: "{{ case.labeled | to_json | from_json }}"
-    node_disk_root_lsblk_override: "{{ case.lsblk | default([]) | to_json | from_json }}"
+    node_disk_root_lsblk_lines: "{{ case.lsblk | default([]) | to_json | from_json }}"
     ansible_facts:
       devices:
         nvme1n1:

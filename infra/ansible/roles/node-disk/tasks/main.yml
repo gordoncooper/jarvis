@@ -19,6 +19,25 @@
         node_disk_path: "{{ node_disk_resolved.stdout }}"
         node_disk_root: "{{ node_disk_root_src.stdout }}"
         node_disk_labeled: "{{ node_disk_label_dev.stdout_lines }}"
+    - ansible.builtin.command:
+        argv:
+          - readlink
+          - -f
+          - "{{ node_disk_root | regex_replace('\\[[^\\]]*\\]$', '') | trim }}"
+      register: node_disk_root_resolved
+      changed_when: false
+    - ansible.builtin.set_fact:
+        node_disk_root_follow: "{{ node_disk_root_resolved.stdout | trim }}"
+    - ansible.builtin.command:
+        argv:
+          - lsblk
+          - -nso
+          - NAME,TYPE
+          - "{{ node_disk_root_follow }}"
+      register: node_disk_root_lsblk_cmd
+      changed_when: false
+    - ansible.builtin.set_fact:
+        node_disk_root_lsblk_lines: "{{ node_disk_root_lsblk_cmd.stdout_lines }}"
     - ansible.builtin.import_tasks: guards.yml
       tags: [node-disk]
 
