@@ -77,14 +77,23 @@ def test_verify_p0a_wrong_role_and_no_flux_objects(tmp_path: Path, capsys: pytes
     wrong = _kubectl(_labels("control_plane", "edge", "workers"), flux=True)
     empty = _kubectl(_labels("control_plane", "edge"), flux=False)
 
-    assert verify_p0a.run(tmp_path, env, matched) == 0
+    assert verify_p0a.run(tmp_path, env, matched, budget_s=0) == 0
     matched_out = capsys.readouterr().out
     assert "Owner checklist:" in matched_out
+    assert "PLAY RECAP shows changed=0 and failed=0" in matched_out
+    assert "data_disk and agent plays skip on an env with none" in matched_out
     assert SECRET_VALUE not in matched_out
 
-    assert verify_p0a.run(tmp_path, env, wrong) != 0
+    assert verify_p0a.run(tmp_path, env, wrong, budget_s=0) != 0
     wrong_out = capsys.readouterr().out
     assert SECRET_VALUE not in wrong_out
 
-    assert verify_p0a.run(tmp_path, env, empty) != 0
+    assert verify_p0a.run(tmp_path, env, empty, budget_s=0) != 0
     assert SECRET_VALUE not in capsys.readouterr().out
+
+
+def test_missing_binary_prints_deps_hint(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as raised:
+        verify_p0a._run(["jarvis-missing-binary"])
+    assert raised.value.code == 1
+    assert capsys.readouterr().out == "run make deps\n"
