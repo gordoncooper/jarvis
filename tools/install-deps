@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install pinned sops, age, age-keygen, gitleaks, kustomize, and kubeconform into ~/.local/bin."""
+"""Install pinned sops, age, age-keygen, gitleaks, kustomize, kubeconform, and kubectl into ~/.local/bin."""
 
 from __future__ import annotations
 
@@ -236,6 +236,22 @@ def install_tarball_cli(
         print(f"installed {name} {version} -> {dest}")
 
 
+def install_kubectl(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    version = versions["kubectl_version"]
+    dest = dest_dir / "kubectl"
+    if installed_version(dest, ["version", "--client"]) == version:
+        print(f"kubectl {version} already installed at {dest}")
+        return
+
+    sha_key = f"kubectl_linux_{arch}_binary_sha256"
+    url = f"https://dl.k8s.io/release/v{version}/bin/linux/{arch}/kubectl"
+    with tempfile.TemporaryDirectory(prefix="jarvis-kubectl-") as tmp:
+        binary = Path(tmp) / "kubectl"
+        print(f"downloading kubectl {version} ({arch})…")
+        download(url, binary)
+        _install_binary(binary, dest, versions[sha_key], "kubectl", version)
+
+
 def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
     version = versions["age_version"]
     age_dest = dest_dir / "age"
@@ -286,6 +302,7 @@ def main() -> None:
     arch = linux_arch()
     install_sops(versions, arch, INSTALL_DIR)
     install_age(versions, arch, INSTALL_DIR)
+    install_kubectl(versions, arch, INSTALL_DIR)
     for cli_name, spec in TARBALL_INSTALLS.items():
         install_tarball_cli(cli_name, spec, versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
