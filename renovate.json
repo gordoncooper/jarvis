@@ -90,6 +90,15 @@
       "matchStrings": [
         "image: (?<depName>quay.io/backube/volsync)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "restic rest-server image digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/backups\\/rest-server\\.yaml$/"],
+      "matchStrings": [
+        "image: (?<depName>restic/rest-server)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ]
     }
   ]
 }
