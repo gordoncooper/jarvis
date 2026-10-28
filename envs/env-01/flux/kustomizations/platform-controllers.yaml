@@ -9,11 +9,7 @@ spec:
   timeout: 15m
   path: ./platform/flux-operator
   prune: true
-  healthChecks:
-    - apiVersion: helm.toolkit.fluxcd.io/v2
-      kind: HelmRelease
-      name: volsync
-      namespace: flux-system
+  # A HelmRelease healthCheck would stall platform-configs on a public chart pull.
   sourceRef:
     kind: GitRepository
     name: flux-system

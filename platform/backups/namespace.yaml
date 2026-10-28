@@ -3,7 +3,7 @@ kind: Namespace
 metadata:
   name: platform-backups
   annotations:
-    # Restores and backups of a root-owned host path need the mover to run as
-    # root. VolSync allows that only with this annotation.
+    # A hostPath repo ignores fsGroup, so the mover runs as root. This
+    # annotation applies to every mover in the namespace. Revisit at the NFS target.
     # https://volsync.readthedocs.io/en/stable/usage/permissionmodel.html
     volsync.backube/privileged-movers: "true"

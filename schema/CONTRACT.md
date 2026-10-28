@@ -40,7 +40,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
 | `code_delivery` | yes | `github` only. `forgejo` is the planned second provider (§9); any other value fails validation. |
 | `build_agent` | yes | `cursor` only. `grok-build` and `opencode-local` are §9 stubs; any other value fails validation. |
-| `backup_path` | yes | Local restic repository directory for VolSync and etcd snapshots (§7; set per `<env>` in `p0a-03`). |
+| `backup_path` | yes | Parent of `backup_path/etcd-snapshots` and of one restic repository per PVC (`backup_path/<volume>`). |
 | `backup_retention_daily` | yes | Restic keep count for daily snapshots (§7). |
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots (§7). |
 | `backup_retention_monthly` | yes | Restic keep count for monthly snapshots (§7). |

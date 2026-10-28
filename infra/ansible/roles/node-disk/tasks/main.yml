@@ -85,7 +85,6 @@
       loop:
         - "{{ local_path_data }}"
         - "{{ backup_path }}/etcd-snapshots"
-        - "{{ backup_path }}/restic"
         - "/etc/systemd/system/{{ node_disk_k3s_service }}.service.d"
     - ansible.builtin.template:
         src: k3s-mount.conf.j2

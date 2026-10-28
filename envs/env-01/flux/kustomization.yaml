@@ -5,9 +5,5 @@ resources:
   - flux-instance.yaml
   - kustomizations/platform-controllers.yaml
   - kustomizations/platform-configs.yaml
-  - kustomizations/platform-backups-test-prep.yaml
-  - kustomizations/platform-backups-test-backup.yaml
-  - kustomizations/platform-backups-test-restore.yaml
-  - kustomizations/platform-backups-test-verify.yaml
   - kustomizations/services.yaml
   - kustomizations/apps.yaml
