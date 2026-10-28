@@ -99,6 +99,35 @@ def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
     assert victim.read_bytes() == b"stale-content\n"
 
 
+def test_openssl_stderr_is_shown_only_on_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mod = _load_module()
+    key = tmp_path / "ca.key"
+    out = mod._run_openssl(
+        [
+            "genpkey",
+            "-algorithm",
+            "RSA",
+            "-pkeyopt",
+            "rsa_keygen_bits:2048",
+            "-out",
+            str(key),
+        ]
+    )
+    quiet = capsys.readouterr()
+    assert quiet.out == ""
+    assert quiet.err == ""
+    assert out == b""
+    assert key.is_file()
+
+    with pytest.raises(subprocess.CalledProcessError):
+        mod._run_openssl(["genpkey", "-algorithm", "not-a-real-algorithm"])
+    failed = capsys.readouterr()
+    assert failed.out == ""
+    assert failed.err.strip()
+
+
 def test_secret_manifest_shape(tmp_path, monkeypatch):
     mod = _load_module()
     public, keyfile = _generate_throwaway_age_keypair(tmp_path)

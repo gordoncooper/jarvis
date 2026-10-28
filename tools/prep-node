@@ -22,6 +22,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+_TOOLS_DIR = REPO_ROOT / "tools"
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+
+from render_cluster_vars_configmap import render_document  # noqa: E402
+
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 _TOOLS = ("ssh", "ssh-keygen", "git", "make")
 _PUB_NAMES = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
@@ -655,7 +663,7 @@ def proof(user: str, host: str, public: Path) -> None:
     sudo = batch_ssh(user, host, "sudo -n true", public)
     dns = batch_ssh(user, host, "getent hosts " + shlex.quote(host), public)
     checks = (
-        ("key-only login", login.returncode == 0, login),
+        ("key login works", login.returncode == 0, login),
         ("passwordless sudo", sudo.returncode == 0, sudo),
         ("inventory name resolves on the node", dns.returncode == 0 and bool(dns.stdout.strip()), dns),
     )
@@ -793,6 +801,7 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
         inventory.write_text(new_inv, encoding="utf-8")
     if new_cv != cluster.read_text(encoding="utf-8"):
         cluster.write_text(new_cv, encoding="utf-8")
+    _render_cluster_vars_configmap(repo, env)
 
 
 def age_key_path(configured: str | None) -> Path:
@@ -827,8 +836,13 @@ def create_age_key(path: Path) -> str:
     """Create path with age-keygen. Never overwrites. Returns the public key."""
     if path.exists():
         raise PrepError("age key already exists; not overwriting")
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    parent = path.parent
+    parent_existed = parent.is_dir()
+    parent_mode = parent.stat().st_mode & 0o777 if parent_existed else None
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent.chmod(0o700)
+    if parent_existed and parent_mode != 0o700:
+        print(f"Set {parent} to 0700.")
     result = subprocess.run(
         ["age-keygen", "-o", str(path)],
         capture_output=True,
@@ -893,12 +907,27 @@ def delete_env_secrets(repo: Path, env: str) -> None:
         path.unlink()
 
 
+def _render_cluster_vars_configmap(repo: Path, env: str) -> None:
+    """Rewrite the Flux ConfigMap from cluster-vars when that generated file exists."""
+    generated = repo / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
+    if not generated.is_file():
+        return
+    source = repo / "envs" / env / "values" / "cluster-vars.yaml"
+    try:
+        rendered = render_document(source)
+    except SystemExit as exc:
+        raise PrepError(str(exc) or "cluster-vars render failed") from exc
+    if generated.read_text(encoding="utf-8") != rendered:
+        generated.write_text(rendered, encoding="utf-8")
+
+
 def sync_age_key(repo: Path, env: str) -> None:
     cluster = repo / "envs" / env / "values" / "cluster-vars.yaml"
     text = cluster.read_text(encoding="utf-8")
     path = age_key_path(_yaml_scalar(text, "age_key_file"))
     public: str | None
-    if path.exists():
+    key_existed = path.exists()
+    if key_existed:
         public = age_public_key(path)
         print(f"Age public key: {public}")
     elif confirm("Age key file is missing. Create it?"):
@@ -911,6 +940,7 @@ def sync_age_key(repo: Path, env: str) -> None:
     updated = set_yaml_scalar(text, "age_key_file", age_key_config_value(path))
     if updated != text:
         cluster.write_text(updated, encoding="utf-8")
+    _render_cluster_vars_configmap(repo, env)
     if public is None:
         return
     sops_path = repo / ".sops.yaml"
@@ -925,6 +955,12 @@ def sync_age_key(repo: Path, env: str) -> None:
     if current is None:
         print(f"No age recipient for envs/{env}/secrets/; .sops.yaml was not changed.")
         return
+    if key_existed:
+        print(
+            f"Warning: {path} public key does not match the .sops.yaml recipient"
+            f" for envs/{env}/secrets/ ({current})."
+        )
+        print("This key may belong to another env. Set SOPS_AGE_KEY_FILE to a per-env key file.")
     print(f"Age recipient in .sops.yaml: {current}")
     if not confirm("Set the recipient to this public key and delete this env's encrypted secrets?"):
         return
@@ -951,10 +987,12 @@ def show_git_diff(repo: Path, env: str) -> None:
     subprocess.run(
         [
             "git",
+            "--no-pager",
             "diff",
             "--",
             f"envs/{env}/inventory/hosts.yml",
             f"envs/{env}/values/cluster-vars.yaml",
+            f"envs/{env}/flux/generated/cluster-vars-configmap.yaml",
             f"envs/{env}/secrets",
             ".sops.yaml",
         ],

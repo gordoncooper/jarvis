@@ -93,6 +93,34 @@ def test_env_update_renames_host_and_keeps_comments(tmp_path: Path) -> None:
     assert cluster.stat().st_mtime_ns == cluster_mtime
 
 
+def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
+    module = _load()
+    env = tmp_path / "envs" / "env-test"
+    inventory = env / "inventory" / "hosts.yml"
+    cluster = env / "values" / "cluster-vars.yaml"
+    generated = env / "flux" / "generated" / "cluster-vars-configmap.yaml"
+    inventory.parent.mkdir(parents=True)
+    cluster.parent.mkdir(parents=True)
+    generated.parent.mkdir(parents=True)
+    inventory.write_text(_HOSTS, encoding="utf-8")
+    cluster.write_text(_CLUSTER, encoding="utf-8")
+    generated.write_text("stale\n", encoding="utf-8")
+
+    module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "ops")
+
+    from render_cluster_vars_configmap import render_document
+
+    rendered = render_document(cluster)
+    assert "ssh_user: ops" in rendered
+    assert generated.read_text(encoding="utf-8") == rendered
+    generated_mtime = generated.stat().st_mtime_ns
+
+    module.apply_env_edits(tmp_path, "env-test", "node-a", "node-a", "ops")
+
+    assert generated.read_text(encoding="utf-8") == rendered
+    assert generated.stat().st_mtime_ns == generated_mtime
+
+
 def _ssh_snapshot() -> tuple[tuple[str, ...], bytes | None, int | None]:
     directory = Path.home() / ".ssh"
     if not directory.exists():
@@ -247,3 +275,109 @@ def test_age_key_create_and_recipient_swap(tmp_path: Path, monkeypatch: pytest.M
     module.delete_env_secrets(repo, "env-test")
     assert not secret.exists()
     assert kept.read_text(encoding="utf-8") == "sops: {}\n"
+
+
+def test_show_git_diff_does_not_page(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    module = _load()
+    seen: dict[str, list[str]] = {}
+
+    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen["argv"] = list(argv)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    module.show_git_diff(tmp_path, "env-test")
+    assert seen["argv"][:3] == ["git", "--no-pager", "diff"]
+    assert "envs/env-test/flux/generated/cluster-vars-configmap.yaml" in seen["argv"]
+
+
+def test_create_age_key_prints_when_it_tightens_an_existing_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    require_cli("age-keygen")
+    module = _load()
+    parent = tmp_path / "age"
+    parent.mkdir()
+    parent.chmod(0o755)
+    public = module.create_age_key(parent / "keys.txt")
+    assert public.startswith("age1")
+    assert parent.stat().st_mode & 0o777 == 0o700
+    assert f"Set {parent} to 0700." in capsys.readouterr().out
+
+
+def test_existing_age_key_mismatch_warns_and_keeps_swap_default_no(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    require_cli("age-keygen")
+    module = _load()
+    parent = tmp_path / "age"
+    parent.mkdir(mode=0o700)
+    key = parent / "keys.txt"
+    public = module.create_age_key(key)
+    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key))
+    repo = tmp_path / "repo"
+    env = repo / "envs" / "env-test"
+    (env / "values").mkdir(parents=True)
+    (env / "secrets").mkdir()
+    secret = env / "secrets" / "app.sops.yaml"
+    secret.write_text("sops: {}\n", encoding="utf-8")
+    cluster = env / "values" / "cluster-vars.yaml"
+    cluster.write_text("ssh_user: ops\nage_key_file: ~/.config/sops/age/keys.txt\n", encoding="utf-8")
+    generated = env / "flux" / "generated" / "cluster-vars-configmap.yaml"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("stale\n", encoding="utf-8")
+    sops = repo / ".sops.yaml"
+    sops.write_text(
+        "creation_rules:\n"
+        "  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$\n"
+        "    age: age1old\n",
+        encoding="utf-8",
+    )
+    prompts: list[tuple[str, bool]] = []
+
+    def fake_confirm(question: str, default_yes: bool = False) -> bool:
+        prompts.append((question, default_yes))
+        return False
+
+    monkeypatch.setattr(module, "confirm", fake_confirm)
+    module.sync_age_key(repo, "env-test")
+    out = capsys.readouterr().out
+    assert "another env" in out
+    assert "SOPS_AGE_KEY_FILE" in out
+    assert prompts == [
+        ("Set the recipient to this public key and delete this env's encrypted secrets?", False)
+    ]
+    assert "age: age1old" in sops.read_text(encoding="utf-8")
+    assert secret.read_text(encoding="utf-8") == "sops: {}\n"
+    assert public.startswith("age1")
+    from render_cluster_vars_configmap import render_document
+
+    assert generated.read_text(encoding="utf-8") == render_document(cluster)
+
+
+def test_matching_age_key_does_not_warn_about_another_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    require_cli("age-keygen")
+    module = _load()
+    parent = tmp_path / "age"
+    parent.mkdir(mode=0o700)
+    key = parent / "keys.txt"
+    public = module.create_age_key(key)
+    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key))
+    repo = tmp_path / "repo"
+    env = repo / "envs" / "env-test"
+    (env / "values").mkdir(parents=True)
+    cluster = env / "values" / "cluster-vars.yaml"
+    cluster.write_text("age_key_file: ~/.config/sops/age/keys.txt\n", encoding="utf-8")
+    sops = repo / ".sops.yaml"
+    sops.write_text(
+        "creation_rules:\n"
+        f"  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$\n    age: {public}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: pytest.fail("confirm called"))
+    module.sync_age_key(repo, "env-test")
+    out = capsys.readouterr().out
+    assert "another env" not in out
+    assert "Age recipient already matches." in out

@@ -88,7 +88,7 @@ Each host is a mapping with `node_roles` and, when that host has a data disk, `d
 
 ### Node roles and labels
 
-`infra/inventory/roles.yml` is the one constructed inventory. Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
+`infra/inventory/roles.yml` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is always present, including when no host sets `data_disk`. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
 
 Kubernetes labels are `role.<dns_suffix>/<role>=true` for each role on the node. The `role.<dns_suffix>/` prefix is reserved for them. The task that sets and removes them is `p0a-12`. This schema does not apply labels.
 
