@@ -31,45 +31,22 @@ jobs:
           OWNER_NAME: ${{ vars.OWNER_NAME }}
         run: bash tools/run-checks
 
-      - name: pytest (non-container)
+      - name: pytest
         run: |
           export PATH="${HOME}/.local/bin:${PATH}"
-          .venv/bin/pytest -m "not container"
-
-  slow:
-    name: slow
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Restore pinned CLIs
-        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
-        with:
-          path: ~/.local/bin
-          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps') }}
-
-      - name: Install pinned CLIs and Python test deps
-        run: make deps
-
-      - name: pytest (container)
-        run: |
-          export PATH="${HOME}/.local/bin:${PATH}"
-          .venv/bin/pytest -m container
+          .venv/bin/pytest -ra
 
   ci:
     name: ci
     runs-on: ubuntu-latest
     needs:
       - fast
-      - slow
     if: ${{ always() }}
     steps:
-      - name: Require fast and slow
+      - name: Require fast
         run: |
           set -euo pipefail
           echo "fast: ${{ needs.fast.result }}"
-          echo "slow: ${{ needs.slow.result }}"
-          if [[ "${{ needs.fast.result }}" != "success" || "${{ needs.slow.result }}" != "success" ]]; then
+          if [[ "${{ needs.fast.result }}" != "success" ]]; then
             exit 1
           fi

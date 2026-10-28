@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,10 +29,14 @@ FLUX_KUSTOMIZATION_CHAIN: tuple[str, ...] = (
     "apps",
 )
 
+# datreeio/CRDs-catalog commit. Tags through v0.0.12 omit these Flux CRDs.
+_FLUX_SCHEMA_REF = "3eb90d47aba8d61919d4419dd38301536e32a94b"
 FLUX_SCHEMA = (
-    "https://raw.githubusercontent.com/fluxcd/flux2/v2.8.3/schemas/"
-    "{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json"
+    "https://raw.githubusercontent.com/datreeio/CRDs-catalog/"
+    f"{_FLUX_SCHEMA_REF}/"
+    "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
+_KUBECONFORM_SKIPPED = re.compile(r"Skipped:\s*(\d+)")
 
 
 def _require_tool(name: str) -> str:
@@ -60,29 +65,30 @@ def _kustomize_build(rel_path: str) -> str:
     return proc.stdout
 
 
-def _kubeconform_validate(manifests: str, *, ignore_missing: bool = False) -> None:
+def _kubeconform_validate(manifests: str) -> None:
     kubeconform = _require_tool("kubeconform")
-    cmd = [
-        kubeconform,
-        "-strict",
-        "-summary",
-        "-kubernetes-version",
-        "1.31.0",
-        "-schema-location",
-        "default",
-        "-schema-location",
-        FLUX_SCHEMA,
-    ]
-    if ignore_missing:
-        cmd.append("-ignore-missing-schemas")
     proc = subprocess.run(
-        cmd,
+        [
+            kubeconform,
+            "-strict",
+            "-summary",
+            "-kubernetes-version",
+            "1.31.0",
+            "-schema-location",
+            "default",
+            "-schema-location",
+            FLUX_SCHEMA,
+        ],
         input=manifests,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    skipped = _KUBECONFORM_SKIPPED.search(output)
+    assert skipped is not None, output
+    assert int(skipped.group(1)) == 0, output
 
 
 def _load_flux_kustomizations(env: str) -> list[dict[str, object]]:
@@ -153,6 +159,7 @@ def test_git_flux_instance_matches_ansible_template(env: str) -> None:
         line for line in rendered.splitlines() if not line.startswith("#")
     ).lstrip()
     assert yaml.safe_load(git_text) == yaml.safe_load(rendered_no_comment)
+    assert "--feature-gates=StrictPostBuildSubstitutions=true" in rendered_no_comment
 
 
 @pytest.mark.parametrize("env", non_example_env_names())
@@ -182,13 +189,73 @@ def test_helmrelease_substitute_disabled() -> None:
     )
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_backups_restic_secret_stays_sops_encrypted_in_git(env: str) -> None:
-    secret_path = REPO_ROOT / "envs" / env / "secrets" / "backups-restic.sops.yaml"
-    text = secret_path.read_text(encoding="utf-8")
-    assert "sops:" in text
-    assert "ENC[AES256_GCM" in text
-    assert "RESTIC_PASSWORD" in text
+def _assert_sops_leaf(path: Path, section: str, node: object) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            _assert_sops_leaf(path, f"{section}.{key}", value)
+        return
+    if isinstance(node, list):
+        for index, value in enumerate(node):
+            _assert_sops_leaf(path, f"{section}[{index}]", value)
+        return
+    if isinstance(node, str) and node.startswith("ENC["):
+        return
+    raise AssertionError(f"{path}: {section} is not an ENC value")
+
+
+def test_sops_secret_leaves_stay_encrypted() -> None:
+    paths = sorted(REPO_ROOT.glob("envs/*/secrets/*.sops.yaml"))
+    assert paths
+    for path in paths:
+        docs = [
+            doc
+            for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+            if doc is not None
+        ]
+        assert docs, path
+        for doc in docs:
+            assert isinstance(doc, dict), path
+            assert isinstance(doc.get("sops"), dict), path
+            sections = [key for key in ("data", "stringData") if key in doc]
+            assert sections, path
+            for key in sections:
+                _assert_sops_leaf(path, key, doc[key])
+
+
+def test_secret_scan_rejects_planted_age_key(tmp_path: Path) -> None:
+    gitleaks = Path.home() / ".local" / "bin" / "gitleaks"
+    age_keygen = shutil.which("age-keygen")
+    if not gitleaks.is_file() or age_keygen is None:
+        pytest.fail("gitleaks and age-keygen are required (run make deps)")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        [age_keygen, "-o", str(tmp_path / "key.txt")],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "add", "key.txt"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=fixture@example.com",
+            "-c",
+            "user.name=fixture",
+            "commit",
+            "-m",
+            "plant",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    proc = subprocess.run(
+        [str(gitleaks), "detect", "--source", str(tmp_path), "--redact"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
 
 
 def _object_identity(doc: object) -> tuple[str, str, str] | None:
@@ -208,26 +275,6 @@ def _object_identity(doc: object) -> tuple[str, str, str] | None:
     return (kind, namespace, name)
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_flux_layers_do_not_render_duplicate_objects(env: str) -> None:
-    layers = {
-        "platform-controllers": "platform/flux-operator",
-        "platform-configs": f"envs/{env}/flux/platform-configs",
-        "services": "services",
-        "apps": "apps",
-    }
-    seen: dict[tuple[str, str, str], str] = {}
-    for layer, rel_path in layers.items():
-        output = _kustomize_build(rel_path)
-        for doc in yaml.safe_load_all(output):
-            ident = _object_identity(doc)
-            if ident is None:
-                continue
-            owner = seen.get(ident)
-            assert owner is None, f"{ident} rendered by both {owner} and {layer}"
-            seen[ident] = layer
-
-
 def _validate_platform_configs_without_sops_secrets(manifests: str) -> None:
     docs = [
         doc
@@ -235,39 +282,38 @@ def _validate_platform_configs_without_sops_secrets(manifests: str) -> None:
         if isinstance(doc, dict) and not (doc.get("kind") == "Secret" and "sops" in doc)
     ]
     rendered = yaml.safe_dump_all(docs, sort_keys=False)
-    _kubeconform_validate(rendered, ignore_missing=True)
+    _kubeconform_validate(rendered)
+
+
+def _record_object_identities(
+    output: str, layer: str, seen: dict[tuple[str, str, str], str]
+) -> None:
+    for doc in yaml.safe_load_all(output):
+        ident = _object_identity(doc)
+        if ident is None:
+            continue
+        owner = seen.get(ident)
+        assert owner is None, f"{ident} rendered by both {owner} and {layer}"
+        seen[ident] = layer
 
 
 @pytest.mark.parametrize("env", non_example_env_names())
-@pytest.mark.parametrize(
-    ("rel_path", "ignore_missing", "strip_sops_secrets"),
-    [
-        ("services", False, False),
-        ("apps", False, False),
-        ("platform/flux-operator", True, False),
-        pytest.param(
-            "envs/{env}/flux",
-            True,
-            False,
-            id="env-flux-entry",
-        ),
-        pytest.param(
-            "envs/{env}/flux/platform-configs",
-            True,
-            True,
-            id="platform-configs-overlay",
-        ),
-    ],
-)
-def test_flux_layer_kustomize_build_and_schema_validate(
-    rel_path: str,
-    ignore_missing: bool,
-    strip_sops_secrets: bool,
-    env: str,
-) -> None:
-    resolved = rel_path.format(env=env)
-    output = _kustomize_build(resolved)
-    if strip_sops_secrets:
-        _validate_platform_configs_without_sops_secrets(output)
-    else:
-        _kubeconform_validate(output, ignore_missing=ignore_missing)
+def test_flux_layer_kustomize_build_and_schema_validate(env: str) -> None:
+    # layer, path, strip sops secrets, count toward the cross-layer identity check.
+    # The env flux entry is schema-checked and is not one of those four layers.
+    layers = (
+        ("services", "services", False, True),
+        ("apps", "apps", False, True),
+        ("platform-controllers", "platform/flux-operator", False, True),
+        ("platform-configs", f"envs/{env}/flux/platform-configs", True, True),
+        ("env-flux-entry", f"envs/{env}/flux", False, False),
+    )
+    seen: dict[tuple[str, str, str], str] = {}
+    for layer, rel_path, strip_sops_secrets, track_identity in layers:
+        output = _kustomize_build(rel_path)
+        if track_identity:
+            _record_object_identities(output, layer, seen)
+        if strip_sops_secrets:
+            _validate_platform_configs_without_sops_secrets(output)
+        else:
+            _kubeconform_validate(output)

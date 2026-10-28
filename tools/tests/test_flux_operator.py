@@ -2,31 +2,20 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import os
 import subprocess
 import textwrap
 from pathlib import Path
 
-import pytest
 import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
-    CONTAINER_NAME,
-    DOCKER_PLAYBOOK_EXTRA_VARS,
     FLUX_OPERATOR_ROLE_TASKS,
     FLUX_OPERATOR_ROLE_TEMPLATES,
     ansible_render_template,
-    cluster_vars_playbook_path,
-    control_plane_inventory,
-    docker_exec,
-    flux_operator_check_playbook_cmd,
+    load_cluster_vars,
     playbook_recap_field,
-    require_docker,
-    start_systemd_container,
-    stop_systemd_container,
 )
 from conftest import require_cli
 
@@ -130,122 +119,114 @@ def test_sops_age_tasks_use_no_log() -> None:
         assert task.get("no_log") is True, task.get("name", task)
 
 
-def _generate_throwaway_age_key(tmp_path: Path) -> tuple[Path, str]:
-    key_body = textwrap.dedent(
-        """\
-        # created: 2026-01-01T00:00:00Z
-        # public key: age1prooffixture000000000000000000000000000000000000000000
-        AGE-SECRET-KEY-1PROOF00000000000000000000000000000000000000000000000000
-        """
-    )
-    keyfile = tmp_path / "age.key"
-    keyfile.write_text(key_body, encoding="utf-8")
-    return keyfile, key_body
+def _ansible_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    env.pop("SOPS_AGE_KEY_FILE", None)
+    return env
 
 
-def _install_fake_k3s_with_flux_done(secret_b64: str) -> None:
-    secret_json = json.dumps(
-        {
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "metadata": {"name": "sops-age", "namespace": "flux-system"},
-            "data": {"age.agekey": secret_b64},
-        },
-        separators=(",", ":"),
-    )
-    script = textwrap.dedent(
-        f"""\
-        #!/bin/bash
-        set -euo pipefail
-        if [[ "${{1:-}}" == "kubectl" ]]; then
-          shift
-          joined="$*"
-          case "$joined" in
-            *"get deployment flux-operator"*)
-              echo "deployment.apps/flux-operator"
-              exit 0
-              ;;
-            *"get fluxinstance flux"*)
-              echo "fluxinstance.fluxcd.controlplane.io/flux"
-              exit 0
-              ;;
-            *"get secret sops-age"*" -o json"*)
-              printf '%s' '{secret_json}'
-              exit 0
-              ;;
-            *"get secret sops-age"*)
-              echo "secret/sops-age"
-              exit 0
-              ;;
-          esac
-        fi
-        echo "unexpected k3s invocation: $*" >&2
-        exit 1
-        """
-    )
-    docker_exec(
-        CONTAINER_NAME,
-        "bash",
-        "-lc",
-        "install -d /usr/local/bin && "
-        f"cat > /usr/local/sbin/k3s-wrapper <<'EOF'\n{script}\nEOF\n"
-        "chmod 0755 /usr/local/sbin/k3s-wrapper && "
-        "if [[ -x /usr/local/bin/k3s && ! -f /usr/local/bin/k3s.real ]]; then "
-        "mv /usr/local/bin/k3s /usr/local/bin/k3s.real; fi && "
-        "ln -sf /usr/local/sbin/k3s-wrapper /usr/local/bin/k3s",
+def _write_executable(path: Path, body: str) -> None:
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _flux_operator_extra(binary: Path) -> list[str]:
+    cluster = load_cluster_vars()
+    return [
+        "-e",
+        f"k3s_binary_path={binary}",
+        "-e",
+        f"jarvis_env={cluster['jarvis_env']}",
+        "-e",
+        f"flux_git_repo_url={cluster['flux_git_repo_url']}",
+        "-e",
+        f"flux_git_ref={cluster['flux_git_ref']}",
+    ]
+
+
+def _run_localhost_role(
+    play_text: str,
+    tmp_path: Path,
+    extra: list[str],
+    *,
+    env: dict[str, str],
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    play = tmp_path / "play.yml"
+    play.write_text(play_text, encoding="utf-8")
+    cmd = [
+        "ansible-playbook",
+        str(play),
+        "-i",
+        "localhost,",
+        "-e",
+        "ansible_connection=local",
+        *extra,
+    ]
+    if check:
+        cmd.append("--check")
+    return subprocess.run(
+        cmd,
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
     )
 
 
-@pytest.mark.container
 def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
-    require_docker()
-    keyfile, key_content = _generate_throwaway_age_key(tmp_path)
-    secret_b64 = base64.b64encode(key_content.encode("utf-8")).decode("ascii")
-    start_systemd_container()
-    try:
-        prep = subprocess.run(
-            [
-                "ansible-playbook",
-                "site.yml",
-                "-i",
-                control_plane_inventory(CONTAINER_NAME),
-                "-e",
-                f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-                "-e",
-                "ansible_connection=docker",
-                *DOCKER_PLAYBOOK_EXTRA_VARS,
-                "--skip-tags",
-                "chrony-service,k3s,kubeconfig,flux-operator",
-            ],
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert prep.returncode == 0, prep.stdout + prep.stderr
-        _install_fake_k3s_with_flux_done(secret_b64)
-        env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-        first = subprocess.run(
-            flux_operator_check_playbook_cmd(),
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-        second = subprocess.run(
-            flux_operator_check_playbook_cmd(),
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-        assert first.returncode == 0, first.stdout + first.stderr
-        assert second.returncode == 0, second.stdout + second.stderr
-        assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
-    finally:
-        stop_systemd_container()
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    _write_executable(
+        binary,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            set -euo pipefail
+            printf '%s\\n' "$*" >> {log}
+            joined="$*"
+            case "$joined" in
+              *"get deployment flux-operator"*)
+                echo "deployment.apps/flux-operator"
+                exit 0
+                ;;
+              *"get fluxinstance flux"*)
+                echo "fluxinstance.fluxcd.controlplane.io/flux"
+                exit 0
+                ;;
+              *"get secret sops-age"*)
+                echo "secret/sops-age"
+                exit 0
+                ;;
+            esac
+            echo "unexpected k3s invocation: $*" >&2
+            exit 1
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: Flux operator already installed
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+        """
+    )
+    extra = _flux_operator_extra(binary)
+    env = _ansible_env()
+    first = _run_localhost_role(play, tmp_path, extra, env=env, check=True)
+    second = _run_localhost_role(play, tmp_path, extra, env=env, check=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
 
 
 def test_existing_sops_age_skips_key_when_unset(tmp_path: Path) -> None:
@@ -308,7 +289,47 @@ def test_existing_sops_age_skips_key_when_unset(tmp_path: Path) -> None:
     assert "create" not in invocations
 
 
-def test_sops_age_secret_task_uses_kubectl_create_not_apply() -> None:
-    content = (FLUX_OPERATOR_ROLE_TASKS / "sops_age.yml").read_text(encoding="utf-8")
-    assert "kubectl create" in content
-    assert "kubectl apply" not in content
+def test_sops_age_secret_task_uses_kubectl_create_not_apply(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    keyfile = tmp_path / "age.key"
+    keyfile.write_text("fixture-age-key\n", encoding="utf-8")
+    _write_executable(
+        binary,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            printf '%s\\n' "$*" >> {log}
+            joined="$*"
+            if [[ "$joined" == *"get secret sops-age -o name"* ]]; then
+              exit 1
+            fi
+            if [[ "$joined" == *"kubectl create"* ]]; then
+              exit 0
+            fi
+            echo "unexpected k3s invocation: $*" >&2
+            exit 1
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: Create sops-age secret
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: sops_age.yml
+        """
+    )
+    env = _ansible_env()
+    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+    proc = _run_localhost_role(play, tmp_path, ["-e", f"k3s_binary_path={binary}"], env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    invocations = log.read_text(encoding="utf-8")
+    assert "kubectl create" in invocations
+    assert "kubectl apply" not in invocations

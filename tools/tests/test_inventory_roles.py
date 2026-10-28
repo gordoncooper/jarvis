@@ -5,24 +5,31 @@ from __future__ import annotations
 import re
 import subprocess
 
+import yaml
+
 from ansible_role_proof import (
     ANSIBLE_DIR,
     REPO_ROOT,
     env_inventory_args,
+    inventory_path,
     non_example_env_names,
     playbook_recap_field,
 )
 from conftest import require_cli
 
-_EXPECTED_GROUPS = {
-    "control_plane": {"cp-1"},
-    "workers": {"wk-1", "wk-2", "wk-3", "wk-4"},
-    "gpu": {"wk-2", "wk-3"},
-    "edge": {"wk-1"},
-    "storage": {"st-1"},
-    "backup": {"bk-1"},
-    "data_disk": {"cp-1", "wk-1", "wk-2", "wk-3", "st-1", "bk-1"},
-}
+
+def _expected_role_groups() -> dict[str, set[str]]:
+    """Role groups from the example inventory: node_roles, plus data_disk is defined."""
+    doc = yaml.safe_load(inventory_path().read_text(encoding="utf-8"))
+    hosts = doc["all"]["hosts"]
+    groups: dict[str, set[str]] = {}
+    for hostname, host_vars in hosts.items():
+        host_vars = host_vars or {}
+        for role in host_vars.get("node_roles") or []:
+            groups.setdefault(role, set()).add(hostname)
+        if "data_disk" in host_vars:
+            groups.setdefault("data_disk", set()).add(hostname)
+    return groups
 
 
 def _parse_graph(text: str) -> dict[str, set[str]]:
@@ -51,8 +58,9 @@ def test_env_00_inventory_graph_shows_role_groups() -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     groups = _parse_graph(proc.stdout)
-    assert set(_EXPECTED_GROUPS) <= set(groups)
-    for name, hosts in _EXPECTED_GROUPS.items():
+    expected = _expected_role_groups()
+    assert set(expected) <= set(groups)
+    for name, hosts in expected.items():
         assert groups[name] == hosts, name
     assert not any(name.startswith("_") for name in groups)
 

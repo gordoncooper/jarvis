@@ -114,10 +114,60 @@ def validate_env_tree(repo_root: Path | str) -> dict[str, dict[str, Any]]:
             owners_by_env[env_dir.name] = owner
 
     errors.extend(_cross_env_owner_errors(owners_by_env))
+    errors.extend(
+        _validate_sops_creation_rules(root, [env_dir.name for env_dir in env_dirs])
+    )
 
     if errors:
         raise ValidationError(errors)
     return resolved_by_env
+
+
+def _validate_sops_creation_rules(repo_root: Path, env_names: list[str]) -> list[str]:
+    """One age creation rule per non-example env, and none for the example env."""
+    path = repo_root / ".sops.yaml"
+    if not path.is_file():
+        rules: list[dict[str, Any]] = []
+    else:
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            return [f".sops.yaml: invalid YAML: {exc}"]
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            return [".sops.yaml: expected a YAML mapping"]
+        raw = data.get("creation_rules", [])
+        if not isinstance(raw, list):
+            return [".sops.yaml: creation_rules must be a list"]
+        rules = [rule for rule in raw if isinstance(rule, dict)]
+
+    def keyed(env_name: str) -> list[dict[str, Any]]:
+        needle = f"envs/{env_name}/secrets/"
+        return [
+            rule
+            for rule in rules
+            if isinstance(rule.get("path_regex"), str) and needle in rule["path_regex"]
+        ]
+
+    errors: list[str] = []
+    names = list(env_names)
+    if EXAMPLE_ENV not in names:
+        names.append(EXAMPLE_ENV)
+    for env_name in names:
+        count = len(keyed(env_name))
+        if is_example_env(env_name):
+            if count:
+                errors.append(
+                    f".sops.yaml: {env_name} must not have a creation rule, found {count}"
+                )
+            continue
+        if count != 1:
+            errors.append(
+                f".sops.yaml: expected exactly one creation rule for "
+                f"envs/{env_name}/secrets/, found {count}"
+            )
+    return errors
 
 
 def _display_path(path: Path, repo_root: Path) -> str:
