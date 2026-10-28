@@ -342,9 +342,6 @@ class Session:
             raise PrepError(detail or f"sudo failed ({result.returncode})")
         return result
 
-    def tty(self, remote: str) -> int:
-        return ssh(self.dest, remote, control=self.control, tty=True).returncode
-
 
 def open_session(login: str, host: str) -> Session:
     directory = Path(tempfile.mkdtemp(prefix="pn"))
@@ -614,12 +611,15 @@ def configure_network(session: Session, user: str, host: str, public: Path) -> N
         print("Left the interface on DHCP.")
         return
     session.sudo_bash(_WRITE_NETPLAN, [render_netplan(iface, address, gateway, dns.split())])
-    if session.tty("sudo -n netplan try --timeout 120") != 0:
+    tried = batch_ssh(user, host, "sudo -n netplan try --timeout 120", public, tty=True)
+    if tried.returncode != 0:
         session.sudo_bash(_RESTORE_NETPLAN, [])
         raise PrepError("netplan try did not keep the static config")
     if batch_ssh(user, host, "true", public).returncode != 0:
         session.sudo_bash(_RESTORE_NETPLAN, [])
-        raise PrepError("SSH failed after netplan try")
+        raise PrepError(
+            "SSH failed after netplan try. Restored the netplan files; run netplan apply to use them."
+        )
     print("Static netplan kept; SSH still works.")
 
 
@@ -635,8 +635,16 @@ def batch_ssh(
     host: str,
     remote: str,
     public: Path,
+    *,
+    tty: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    return ssh(f"{user}@{host}", remote, batch=True, identity=_private_key(public))
+    return ssh(
+        f"{user}@{host}",
+        remote,
+        batch=True,
+        tty=tty,
+        identity=_private_key(public),
+    )
 
 
 def proof(user: str, host: str, public: Path) -> None:
