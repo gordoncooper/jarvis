@@ -27,10 +27,10 @@
       "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"]
     },
     {
-      "description": "Group Helm host CLI pins (flux-operator Ansible role defaults).",
-      "groupName": "helm-host-cli",
+      "description": "Helm host CLI version and sha256 are bumped together by PR.",
       "matchManagers": ["custom.regex"],
-      "matchDepNames": ["helm/helm"]
+      "matchDepNames": ["helm/helm"],
+      "enabled": false
     }
   ],
   "customManagers": [

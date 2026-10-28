@@ -88,8 +88,10 @@
           - (flux_sops_age_existing_json.stdout | from_json).data['age.agekey'] | length > 0
           - (flux_sops_age_existing_key_content | trim) == (flux_sops_age_key_content | trim)
         fail_msg: >-
-          flux-system/sops-age already exists with different content; remove it
-          manually or point SOPS_AGE_KEY_FILE or age_key_file at the original key.
+          flux-system/sops-age already exists with different content and may be
+          the only copy of the age key. Do not delete it. Point SOPS_AGE_KEY_FILE
+          or age_key_file at the original key, or copy age.agekey from the secret
+          back to that path first (infra/ansible/README.md, Recovery).
       when: flux_sops_age_present | bool
       no_log: true
 

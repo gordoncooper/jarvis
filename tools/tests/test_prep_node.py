@@ -209,6 +209,69 @@ def test_render_netplan_pins_the_current_address() -> None:
     )
 
 
+def test_netplan_try_is_accepted_only_when_the_output_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load()
+    netplan = tmp_path / "netplan"
+    scripts: list[str] = []
+
+    class _Session:
+        def bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+            assert script == module._DETECT_NET
+            text = (
+                "iface=eth0\naddress=192.0.2.10/24\ngateway=192.0.2.1\n"
+                "dns=192.0.2.53\ndhcp=yes\n"
+            )
+            return subprocess.CompletedProcess([], 0, text, "")
+
+        def sudo_bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+            scripts.append(script)
+            return subprocess.CompletedProcess([], 0, "", "")
+
+    def install(body: str) -> None:
+        netplan.write_text(body, encoding="utf-8")
+        netplan.chmod(0o755)
+
+    def fake_batch(
+        user: str,
+        host: str,
+        remote: str,
+        public: Path,
+        *,
+        tty: bool = False,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        if remote == "sudo -n netplan try --timeout 120":
+            assert tty is True
+            return subprocess.run(
+                [str(netplan), "try", "--timeout", "120"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        assert "192.0.2.10/24" in remote
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module, "batch_ssh", fake_batch)
+    public = tmp_path / "id_ed25519.pub"
+
+    install("#!/bin/sh\nprintf '%s\\n' 'Configuration accepted.'\n")
+    relayed = module._relay_output([str(netplan), "try", "--timeout", "120"])
+    assert module.netplan_try_accepted(relayed)
+    module.configure_network(_Session(), "user", "host.example", public)
+    assert scripts == [module._WRITE_NETPLAN]
+
+    install("#!/bin/sh\nprintf '%s\\n' 'Reverting.'\nexit 0\n")
+    relayed = module._relay_output([str(netplan), "try", "--timeout", "120"])
+    assert not module.netplan_try_accepted(relayed)
+    scripts.clear()
+    with pytest.raises(module.PrepError, match="netplan try did not keep the static config"):
+        module.configure_network(_Session(), "user", "host.example", public)
+    assert scripts == [module._WRITE_NETPLAN, module._RESTORE_NETPLAN]
+
+
 def test_sshd_dropin_turns_off_password_login_only() -> None:
     module = _load()
     text = module.sshd_password_off()
@@ -221,6 +284,24 @@ def test_clock_synced_is_yes_only() -> None:
     assert module.clock_synced("yes\n")
     assert not module.clock_synced("no\n")
     assert not module.clock_synced("")
+
+
+def test_unsynced_clock_prompt_defaults_to_no(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load()
+    prompts: list[tuple[str, bool]] = []
+
+    def fake_batch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], 0, "no\n", "")
+
+    def fake_confirm(question: str, default_yes: bool = False) -> bool:
+        prompts.append((question, default_yes))
+        return False
+
+    monkeypatch.setattr(module, "batch_ssh", fake_batch)
+    monkeypatch.setattr(module, "confirm", fake_confirm)
+    with pytest.raises(module.PrepError, match="clock is not synced"):
+        module.check_clock("user", "host.example", Path("/tmp/id_ed25519.pub"))
+    assert prompts == [("Continue with the clock unsynced?", False)]
 
 
 def test_inventory_name_keeps_the_connected_domain() -> None:
