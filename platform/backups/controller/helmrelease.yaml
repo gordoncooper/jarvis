@@ -27,8 +27,8 @@ spec:
       retries: 3
   # The chart has no env hook. robfig/cron reads time.Local, and the image
   # has no tzdata, so mount the node zoneinfo that base-os installs.
-  # ${time_zone} is filled by the platform-controllers postBuild. A literal
-  # $ in this file must be written $$.
+  # platform-controllers postBuild fills ${time_zone}. Double any other
+  # dollar sign so substitution leaves one.
   postRenderers:
     - kustomize:
         patches:

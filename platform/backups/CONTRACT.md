@@ -25,10 +25,10 @@ Namespace exists; Secret `backups-restic` is present (value not logged); Service
 ## Config
 
 - VolSync 0.17, restic mover, `copyMethod: Direct`. The controller installs the VolumeSnapshot CRD and no snapshot controller. etcd snapshots stay at `backup_path/etcd-snapshots` and are for same-node rollback only.
-- rest-server data is the hostPath `backup_path/restic`, pinned to the backup-role node. One repository per PVC is the directory `backup_path/restic/<namespace>/<pvc>`.
-- A volume's repository URL is `rest:http://restic.platform-backups.svc.cluster.local:8000/<namespace>/<pvc>`. The password stays out of the URL.
+- rest-server data is the hostPath `backup_path/restic`, pinned to the backup-role node. One repository per PVC is the directory `backup_path/restic/ns-<namespace>/pvc-<pvc>`.
+- A volume's repository URL is `rest:http://restic.platform-backups.svc.cluster.local:8000/ns-<namespace>/pvc-<pvc>`. The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names (`data`, `index`, `keys`, `locks`, `snapshots`, `config`). The password stays out of the URL.
 - Secret `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the server prefix `rest:http://restic.platform-backups.svc.cluster.local:8000/`), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`. A volume secret sets `RESTIC_REPOSITORY` to that volume's URL and copies the password and `RESTIC_REST_*` keys. VolSync 0.17 passes those two keys into the mover.
-- The process runs with htpasswd auth and without `--append-only` or `--private-repos`. The mover forgets on every backup and prunes with the same credentials. Repository paths are `<namespace>/<pvc>`.
+- The process runs with htpasswd auth and without `--append-only` or `--private-repos`. The mover forgets on every backup and prunes with the same credentials. Repository paths are `ns-<namespace>/pvc-<pvc>`.
 - Retention is 7 daily, 4 weekly, and 3 monthly (`backup_retention_daily`, `backup_retention_weekly`, `backup_retention_monthly`). A ReplicationSource copies those into `restic.retain` and sets `pruneIntervalDays: 7`.
 - The VolSync controller pod's `TZ` is `time_zone`. The 0.17 cron parser uses the process local zone and has no timezone field. The chart has no env hook, so a HelmRelease postRenderer sets `TZ` and mounts the node zoneinfo directory.
 - `platform-backups` does not set `volsync.backube/privileged-movers`. No mover in this namespace mounts a hostPath. The rest-server runs as root so it can write that hostPath.
