@@ -8,7 +8,7 @@ spec:
   trigger:
     manual: "test-1"
   restic:
-    repository: volsync-test-restic
+    repository: backups-restic
     copyMethod: Direct
     moverResources:
       requests:

@@ -4,7 +4,6 @@ resources:
   - repo-pv.yaml
   - volumes.yaml
   - seed-job.yaml
-  - repo-secret-job.yaml
 labels:
   - pairs:
       app.kubernetes.io/name: volsync-test

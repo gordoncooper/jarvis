@@ -30,7 +30,7 @@ Namespace exists; Secret `backups-restic` is present (value not logged). A delet
   2. Apply a `ReplicationDestination` that restores the restic snapshot from `backup_path` into the target PVC.
   3. When that destination is complete, compare the checksum to the original.
 - Until the live result is recorded here, restore is a `ReplicationDestination`.
-- OQ7 test bundle, removed after that result is read: `platform/backups/test/`. Flux applies it as four leaf Kustomizations, `platform-backups-test-prep`, `platform-backups-test-backup`, `platform-backups-test-restore`, and `platform-backups-test-verify`. They depend on `platform-configs` and then on each other, outside the configs-to-services chain. `prep` substitutes `backup_path` from cluster-vars onto a hostPath volume. The controller path installs the VolumeSnapshot CRD so VolSync can start, and does not install a snapshot controller. VolSync mounts that volume with `moverVolumes` at `/mnt/repo` and reads the password from Secret `backups-restic`. Namespace `platform-backups` carries `volsync.backube/privileged-movers: "true"` so the mover can write the root-owned host path. Read the result with read-only kubectl:
+- OQ7 test bundle, removed after that result is read: `platform/backups/test/`. Flux applies it as four leaf Kustomizations, `platform-backups-test-prep`, `platform-backups-test-backup`, `platform-backups-test-restore`, and `platform-backups-test-verify`. They depend on `platform-configs` and then on each other, outside the configs-to-services chain. `prep` substitutes `backup_path` from cluster-vars onto a hostPath volume. The controller path installs the VolumeSnapshot CRD so VolSync can start, and does not install a snapshot controller. One shared Secret `backups-restic` holds the restic password and `RESTIC_REPOSITORY=/mnt/repo`. Each PVC's own repo folder is mounted there via `moverVolumes`. Namespace `platform-backups` carries `volsync.backube/privileged-movers: "true"` so the mover can write the root-owned host path. Read the result with read-only kubectl:
 
   ```
   kubectl -n flux-system get kustomization platform-backups-test-prep platform-backups-test-backup platform-backups-test-restore platform-backups-test-verify
@@ -40,7 +40,7 @@ Namespace exists; Secret `backups-restic` is present (value not logged). A delet
   kubectl -n platform-backups get replicationsource/volsync-test replicationdestination/volsync-test
   ```
 
-  The seed log and the verify log each print one sha256. They match when the restored bytes match the source. Delete the test directory and those four Flux Kustomizations to remove the bundle. The host directory under `backup_path` stays on the node. The assembled Secret `volsync-test-restic` is owned by Job `volsync-test-repo-secret`, so pruning that Job deletes it.
+  The seed log and the verify log each print one sha256. They match when the restored bytes match the source. Delete the test directory and those four Flux Kustomizations to remove the bundle. Removing the bundle leaves `${backup_path}/volsync-test` on the host (Retain + hostPath); delete it by hand.
 
 ## Proven by
 

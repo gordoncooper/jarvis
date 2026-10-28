@@ -7,7 +7,7 @@ spec:
   trigger:
     manual: "test-1"
   restic:
-    repository: volsync-test-restic
+    repository: backups-restic
     destinationPVC: volsync-test-dst
     copyMethod: Direct
     moverResources:
