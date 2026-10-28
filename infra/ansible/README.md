@@ -2,11 +2,19 @@
 
 `site.yml` asserts facts, applies `base-os` on `all`, prepares a declared `data_disk`, installs the k3s server on `control_plane`, joins every other host as an agent, reconciles node labels, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` keeps its data on root; that play matches no hosts. A single-node env has no agent hosts; that play matches none.
 
-Run from this directory after `make deps`. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. An agent fails before it starts if the control-plane name does not resolve on that agent.
+Run from this directory after `make deps`. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
+
+## Prepare a node
+
+`tools/prep-node` takes a freshly installed Ubuntu Server node to that state, then records the host name and `ssh_user` in the env. Run it from a checkout on the machine that drives the build. Omitted flags are prompted.
+
+```bash
+tools/prep-node --env <env> --host <hostname> --login-user <user>
+```
+
+The host name must resolve with `getent hosts` before anything is changed. The script confirms the host key, installs your public key for the login user, sets the hostname, and lets you keep that user or create another one with your key and a locked password. It installs only `openssh-server`, `python3`, and `sudo` if they are missing, and grants the chosen user `NOPASSWD:ALL` from one file in `/etc/sudoers.d/` after `visudo -cf` succeeds. It then checks key-only login, passwordless sudo, and DNS on the node, runs the env-schema check, and shows `git diff`. It does not commit, and it does not run `site.yml`. A later run skips work that is already done.
 
 ## Before the first run
-
-The controller needs `git` and `make`. The node needs OpenSSH. The env's `ssh_user` needs an authorized key and passwordless sudo. The inventory hostname must resolve from the controller, and that host key must already be in the controller's `known_hosts`.
 
 `SOPS_AGE_KEY_FILE` must be set on the controller for the first `site.yml` run. The repo sets no fixed path. The file must be the private half of the recipient in `.sops.yaml` (check with `age-keygen -y` on the file that variable names). When `flux-system/sops-age` already exists and that variable is unset, the run leaves the secret alone.
 

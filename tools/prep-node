@@ -1,0 +1,799 @@
+#!/usr/bin/env python3
+"""Prepare a fresh Ubuntu Server node for site.yml, then record it in the env.
+
+Usage: tools/prep-node --env <env> --host <hostname> --login-user <user>
+
+Omitted flags are prompted. Stops at the first failure. Does not commit,
+does not run site.yml, and does not touch disks, the age key, or secrets.
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+_TOOLS = ("ssh", "ssh-keygen", "git", "make")
+_PUB_NAMES = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
+_SUDOERS = "/etc/sudoers.d/jarvis-ansible"
+_SSH_USER_LINE = re.compile(r"^(\s*ssh_user:\s*)(\S+)(.*)$", re.MULTILINE)
+
+
+class PrepError(Exception):
+    """A prep step failed. Later steps must not run."""
+
+
+def _input(text: str) -> str:
+    try:
+        return input(text)
+    except EOFError as exc:
+        raise PrepError("input closed") from exc
+
+
+def prompt(label: str, default: str | None = None) -> str:
+    if default is None:
+        value = _input(f"{label}: ").strip()
+        if not value:
+            raise PrepError(f"{label} is required")
+        return value
+    value = _input(f"{label} [{default}]: ").strip()
+    return value or default
+
+
+def confirm(question: str, *, default_yes: bool = False) -> bool:
+    suffix = " [Y/n] " if default_yes else " [y/N] "
+    answer = _input(question + suffix).strip().lower()
+    if not answer:
+        return default_yes
+    return answer in {"y", "yes"}
+
+
+def require_token(value: str, label: str) -> None:
+    if (
+        not value
+        or value.startswith("-")
+        or "/" in value
+        or "@" in value
+        or any(char.isspace() for char in value)
+    ):
+        raise PrepError(f"invalid {label}")
+
+
+def _redact(text: str, secret: str | None) -> str:
+    if not secret:
+        return text
+    return text.replace(secret, "***")
+
+
+def assert_host_resolves(host: str, *, unchanged: bool) -> None:
+    """Fail if getent cannot resolve host. Does not write /etc/hosts."""
+    try:
+        result = subprocess.run(
+            ["getent", "hosts", host],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise PrepError("getent is required to check DNS") from exc
+    if result.returncode != 0 or not result.stdout.strip():
+        message = f"{host} does not resolve. Add it on the router."
+        if unchanged:
+            message += " Nothing was changed."
+        raise PrepError(message)
+
+
+def require_tools() -> None:
+    missing = [name for name in _TOOLS if shutil.which(name) is None]
+    if missing:
+        raise PrepError("missing required tools: " + ", ".join(missing))
+
+
+def require_env_dir(repo: Path, env: str) -> None:
+    if not (repo / "envs" / env).is_dir():
+        raise PrepError(f"env directory does not exist: envs/{env}")
+
+
+def ssh_dir() -> Path:
+    return Path.home() / ".ssh"
+
+
+def known_hosts_path() -> Path:
+    return ssh_dir() / "known_hosts"
+
+
+def find_public_key() -> Path | None:
+    directory = ssh_dir()
+    for name in _PUB_NAMES:
+        path = directory / name
+        if path.is_file():
+            return path
+    return None
+
+
+def ensure_public_key() -> Path:
+    found = find_public_key()
+    if found is not None:
+        print(f"Using SSH public key {found}")
+        return found
+    if not confirm("No SSH public key found. Create an ed25519 key?"):
+        raise PrepError("an SSH public key is required")
+    directory = ssh_dir()
+    directory.mkdir(mode=0o700, exist_ok=True)
+    directory.chmod(0o700)
+    private = directory / "id_ed25519"
+    result = subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-f", str(private), "-q"],
+        check=False,
+    )
+    public = private.with_suffix(".pub")
+    if result.returncode != 0 or not public.is_file():
+        raise PrepError("could not create an ed25519 key")
+    print(f"Created SSH public key {public}")
+    return public
+
+
+def public_key_text(path: Path) -> str:
+    line = path.read_text(encoding="utf-8").strip()
+    if not line or "PRIVATE" in line:
+        raise PrepError(f"not a public key: {path.name}")
+    return line
+
+
+def key_material(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    parts = stripped.split()
+    if parts[0].startswith("@"):
+        parts = parts[1:]
+    if len(parts) < 3:
+        return None
+    return parts[1], parts[2]
+
+
+def _materials(lines: list[str]) -> set[tuple[str, str]]:
+    found: set[tuple[str, str]] = set()
+    for line in lines:
+        item = key_material(line)
+        if item is not None:
+            found.add(item)
+    return found
+
+
+def fingerprint(line: str) -> str:
+    result = subprocess.run(
+        ["ssh-keygen", "-lf", "-"],
+        input=line.strip() + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return line.strip()
+
+
+def _print_fingerprints(title: str, lines: list[str]) -> None:
+    print(title)
+    for line in lines:
+        print(f"  {fingerprint(line)}")
+
+
+def scan_host_keys(host: str) -> list[str]:
+    result = subprocess.run(
+        ["ssh-keyscan", "-T", "5", host],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = [line.strip() for line in result.stdout.splitlines() if key_material(line)]
+    if not lines:
+        detail = result.stderr.strip()
+        raise PrepError(detail or f"could not scan a host key for {host}")
+    return lines
+
+
+def recorded_keys(host: str, path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    result = subprocess.run(
+        ["ssh-keygen", "-F", host, "-f", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if key_material(line)]
+
+
+def _append_keys(path: Path, lines: list[str]) -> None:
+    directory = path.parent
+    created_dir = not directory.exists()
+    directory.mkdir(mode=0o700, exist_ok=True)
+    if created_dir:
+        directory.chmod(0o700)
+    creating = not path.exists()
+    with path.open("a", encoding="utf-8") as handle:
+        for line in lines:
+            if key_material(line) is not None:
+                handle.write(line.strip() + "\n")
+    if creating:
+        path.chmod(0o600)
+
+
+def ensure_host_key(host: str) -> None:
+    scanned = scan_host_keys(host)
+    path = known_hosts_path()
+    existing = recorded_keys(host, path)
+    scanned_set = _materials(scanned)
+    existing_set = _materials(existing)
+    if existing_set == scanned_set:
+        print(f"Host key for {host} already recorded.")
+        return
+    if not existing_set:
+        _print_fingerprints(f"Host key for {host}:", scanned)
+        if not confirm("Add this host key to known_hosts?"):
+            raise PrepError("host key was not accepted")
+        _append_keys(path, scanned)
+        print(f"Host key for {host} added.")
+        return
+    _print_fingerprints(f"Recorded host key for {host}:", existing)
+    _print_fingerprints(f"Scanned host key for {host}:", scanned)
+    if not confirm("Replace the recorded host key?"):
+        raise PrepError("host key was not replaced")
+    result = subprocess.run(
+        ["ssh-keygen", "-R", host, "-f", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise PrepError(result.stderr.strip() or "could not remove the recorded host key")
+    _append_keys(path, scanned)
+    print(f"Host key for {host} replaced.")
+
+
+@dataclass
+class Session:
+    host: str
+    login: str
+    control: Path
+    password: str | None = None
+
+    def _base(self) -> list[str]:
+        return [
+            "ssh",
+            "-o",
+            "ControlMaster=auto",
+            "-o",
+            "ControlPersist=300",
+            "-o",
+            f"ControlPath={self.control}",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "PasswordAuthentication=yes",
+            "-o",
+            "KbdInteractiveAuthentication=yes",
+            "-o",
+            "PubkeyAuthentication=yes",
+            "-o",
+            "PreferredAuthentications=publickey,password,keyboard-interactive",
+            f"{self.login}@{self.host}",
+        ]
+
+    def close(self) -> None:
+        self.password = None
+        subprocess.run(
+            [
+                "ssh",
+                "-O",
+                "exit",
+                "-o",
+                f"ControlPath={self.control}",
+                f"{self.login}@{self.host}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        shutil.rmtree(self.control.parent, ignore_errors=True)
+
+    def command(self, remote: str, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [*self._base(), remote],
+            input=stdin,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def check(self, remote: str, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        result = self.command(remote, stdin=stdin)
+        if result.returncode != 0:
+            detail = _redact((result.stderr or result.stdout).strip(), self.password)
+            raise PrepError(detail or f"ssh failed ({result.returncode})")
+        return result
+
+    def bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+        remote = "bash -s -- " + " ".join(shlex.quote(arg) for arg in args)
+        return self.check(remote, stdin=script)
+
+    def sudo_bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+        quoted = " ".join(shlex.quote(arg) for arg in args)
+        if self.password is None:
+            return self.check(f"sudo -n -- bash -s -- {quoted}", stdin=script)
+        result = self.command(
+            f"sudo -S -p '' -- bash -s -- {quoted}",
+            stdin=self.password + "\n" + script,
+        )
+        if result.returncode != 0:
+            detail = _redact((result.stderr or result.stdout).strip(), self.password)
+            raise PrepError(detail or f"sudo failed ({result.returncode})")
+        return result
+
+
+def open_session(login: str, host: str) -> Session:
+    directory = Path(tempfile.mkdtemp(prefix="pn"))
+    session = Session(host=host, login=login, control=directory / "c.sock")
+    try:
+        session.check("true")
+    except Exception:
+        session.close()
+        raise
+    return session
+
+
+def install_login_key(session: Session, pubkey: str) -> None:
+    session.bash(
+        """\
+set -euo pipefail
+key=$1
+umask 077
+mkdir -p "$HOME/.ssh"
+touch "$HOME/.ssh/authorized_keys"
+chmod 700 "$HOME/.ssh"
+chmod 600 "$HOME/.ssh/authorized_keys"
+grep -qxF -- "$key" "$HOME/.ssh/authorized_keys" || printf '%s\\n' "$key" >> "$HOME/.ssh/authorized_keys"
+""",
+        [pubkey],
+    )
+    print(f"Public key is installed for {session.login}.")
+
+
+def ensure_sudo(session: Session) -> None:
+    if session.command("sudo -n true").returncode == 0:
+        print("Passwordless sudo already works.")
+        return
+    try:
+        session.password = getpass.getpass("sudo password: ")
+    except EOFError as exc:
+        raise PrepError("input closed") from exc
+    result = session.command("sudo -S -p '' -- true", stdin=session.password + "\n")
+    if result.returncode != 0:
+        session.password = None
+        raise PrepError("sudo authentication failed")
+
+
+def read_names(session: Session) -> tuple[str, str]:
+    result = session.bash(
+        """\
+set -euo pipefail
+printf '%s\\n' "$(hostnamectl --static)"
+if fqdn=$(hostname --fqdn 2>/dev/null); then
+  printf '%s\\n' "$fqdn"
+else
+  printf '\\n'
+fi
+""",
+        [],
+    )
+    lines = result.stdout.splitlines()
+    hostname = lines[0].strip() if lines else ""
+    fqdn = lines[1].strip() if len(lines) > 1 else ""
+    if not hostname:
+        raise PrepError("the node did not report a hostname")
+    return hostname, fqdn
+
+
+def recorded_host(
+    connected: str,
+    old_hostname: str,
+    new_hostname: str,
+    old_fqdn: str,
+    new_fqdn: str,
+) -> str:
+    """Inventory key follows a new FQDN, else a new short name when that was the DNS name."""
+    if new_fqdn != old_fqdn and new_fqdn:
+        return new_fqdn
+    if new_hostname != old_hostname and (not old_fqdn or connected == old_hostname):
+        return new_hostname
+    return connected
+
+
+def hosts_line(hostname: str, fqdn: str) -> str:
+    if fqdn and fqdn != hostname:
+        return f"127.0.1.1 {fqdn} {hostname}"
+    return f"127.0.1.1 {hostname}"
+
+
+def apply_hostname(session: Session, hostname: str, fqdn: str) -> None:
+    session.sudo_bash(
+        """\
+set -euo pipefail
+short=$1
+line=$2
+current=$(hostnamectl --static)
+if [ "$current" != "$short" ]; then
+  hostnamectl set-hostname --static -- "$short"
+fi
+if grep -qxF -- "$line" /etc/hosts; then
+  exit 0
+fi
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+LINE="$line" awk '
+  BEGIN { line = ENVIRON["LINE"]; done = 0 }
+  /^127\\.0\\.1\\.1[[:space:]]/ {
+    if (done == 0) print line
+    done = 1
+    next
+  }
+  { print }
+  END { if (done == 0) print line }
+' /etc/hosts > "$tmp"
+cat "$tmp" > /etc/hosts
+""",
+        [hostname, hosts_line(hostname, fqdn)],
+    )
+    print(f"Hostname is {hostname}.")
+
+
+def configure_hostname(session: Session, connected: str) -> str:
+    old_hostname, old_fqdn = read_names(session)
+    print(f"Current hostname: {old_hostname}")
+    print(f"Current FQDN: {old_fqdn or '(none)'}")
+    new_hostname = prompt("Hostname", old_hostname)
+    entered = _input(f"FQDN [{old_fqdn or '(none)'}]: ").strip()
+    new_fqdn = old_fqdn if not entered else entered
+    require_token(new_hostname, "hostname")
+    if new_fqdn:
+        require_token(new_fqdn, "FQDN")
+    if new_hostname != old_hostname:
+        assert_host_resolves(new_hostname, unchanged=False)
+    if new_fqdn and new_fqdn != old_fqdn:
+        assert_host_resolves(new_fqdn, unchanged=False)
+    inventory = recorded_host(connected, old_hostname, new_hostname, old_fqdn, new_fqdn)
+    require_token(inventory, "host")
+    if inventory != connected:
+        assert_host_resolves(inventory, unchanged=False)
+        ensure_host_key(inventory)
+    apply_hostname(session, new_hostname, new_fqdn)
+    return inventory
+
+
+def choose_ansible_user(login: str) -> str:
+    if confirm(f"Use login user {login} as the Ansible user?", default_yes=True):
+        return login
+    user = prompt("New user name")
+    require_token(user, "user")
+    return user
+
+
+def ensure_ansible_user(session: Session, user: str, pubkey: str) -> None:
+    session.sudo_bash(
+        """\
+set -euo pipefail
+user=$1
+key=$2
+if ! id -u -- "$user" >/dev/null 2>&1; then
+  useradd --create-home --shell /bin/bash -- "$user"
+  passwd -l -- "$user"
+fi
+home=$(getent passwd -- "$user" | awk -F: '{print $6}')
+if [ -z "$home" ] || [ ! -d "$home" ]; then
+  echo "the chosen user has no home directory" >&2
+  exit 1
+fi
+group=$(id -gn -- "$user")
+install -d -m 700 -o "$user" -g "$group" -- "$home/.ssh"
+auth="$home/.ssh/authorized_keys"
+touch -- "$auth"
+chown -- "$user:$group" "$auth"
+chmod 600 -- "$auth"
+grep -qxF -- "$key" "$auth" || printf '%s\\n' "$key" >> "$auth"
+""",
+        [user, pubkey],
+    )
+    print(f"Ansible user is {user}.")
+
+
+def install_minimum(session: Session, user: str) -> None:
+    session.sudo_bash(
+        """\
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+missing=()
+for pkg in openssh-server python3 sudo; do
+  status=$(dpkg-query -W -f '${Status}' "$pkg" 2>/dev/null || true)
+  if [ "$status" != "install ok installed" ]; then
+    missing+=("$pkg")
+  fi
+done
+if [ "${#missing[@]}" -eq 0 ]; then
+  exit 0
+fi
+apt-get update
+apt-get install -y -- "${missing[@]}"
+""",
+        [],
+    )
+    session.sudo_bash(
+        f"""\
+set -euo pipefail
+user=$1
+file={shlex.quote(_SUDOERS)}
+line="$user ALL=(ALL) NOPASSWD:ALL"
+if [ -f "$file" ] && [ "$(cat "$file")" = "$line" ]; then
+  exit 0
+fi
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+printf '%s\\n' "$line" > "$tmp"
+chmod 0440 "$tmp"
+visudo -cf "$tmp"
+mv "$tmp" "$file"
+trap - EXIT
+chmod 0440 "$file"
+""",
+        [user],
+    )
+    print("Minimum packages and passwordless sudo are in place.")
+
+
+def _identity_args(public: Path) -> list[str]:
+    private = Path(str(public)[: -len(".pub")]) if public.name.endswith(".pub") else public
+    if private.is_file():
+        return ["-o", "IdentitiesOnly=yes", "-i", str(private)]
+    return []
+
+
+def batch_ssh(
+    user: str,
+    host: str,
+    remote: str,
+    public: Path,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "PreferredAuthentications=publickey",
+            "-o",
+            "PasswordAuthentication=no",
+            "-o",
+            "KbdInteractiveAuthentication=no",
+            "-o",
+            "PubkeyAuthentication=yes",
+            *_identity_args(public),
+            f"{user}@{host}",
+            remote,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def proof(user: str, host: str, public: Path) -> None:
+    login = batch_ssh(user, host, "true", public)
+    sudo = batch_ssh(user, host, "sudo -n true", public)
+    dns = batch_ssh(user, host, "getent hosts " + shlex.quote(host), public)
+    checks = (
+        ("key-only login", login.returncode == 0, login),
+        ("passwordless sudo", sudo.returncode == 0, sudo),
+        (
+            "inventory name resolves on the node",
+            dns.returncode == 0 and bool(dns.stdout.strip()),
+            dns,
+        ),
+    )
+    failed = False
+    for label, ok, result in checks:
+        print(f"{'PASS' if ok else 'FAIL'}  {label}")
+        if ok:
+            continue
+        failed = True
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            print(detail, file=sys.stderr)
+    if failed:
+        raise PrepError("proof failed")
+
+
+def _host_key_match(line: str, name: str) -> re.Match[str] | None:
+    return re.match(rf"^(\s*){re.escape(name)}(\s*):(.*)$", line.rstrip("\n"))
+
+
+def _has_host_key(text: str, name: str) -> bool:
+    return any(_host_key_match(line, name) for line in text.splitlines())
+
+
+def rename_inventory_host(text: str, old: str, new: str) -> str:
+    """Rename one host key. Leave comments, roles, and other hosts as they are."""
+    if old == new:
+        if not _has_host_key(text, old):
+            raise PrepError(
+                f"{old} is not a host in the inventory. Add it with node_roles first."
+            )
+        return text
+    old_present = _has_host_key(text, old)
+    new_present = _has_host_key(text, new)
+    if new_present and not old_present:
+        return text
+    if old_present and new_present:
+        raise PrepError(f"inventory already has both {old} and {new}")
+    if not old_present:
+        raise PrepError(
+            f"{old} is not a host in the inventory. Add it with node_roles first."
+        )
+    lines = text.splitlines(keepends=True)
+    replaced = False
+    out: list[str] = []
+    for line in lines:
+        if not replaced:
+            match = _host_key_match(line, old)
+            if match is not None:
+                newline = "\n" if line.endswith("\n") else ""
+                out.append(f"{match.group(1)}{new}{match.group(2)}:{match.group(3)}{newline}")
+                replaced = True
+                continue
+        out.append(line)
+    if not replaced:
+        raise PrepError(
+            f"{old} is not a host in the inventory. Add it with node_roles first."
+        )
+    return "".join(out)
+
+
+def set_ssh_user_line(text: str, user: str) -> str:
+    """Replace the ssh_user value in place, or append one line if it is absent."""
+    require_token(user, "ssh user")
+    match = _SSH_USER_LINE.search(text)
+    if match is None:
+        suffix = "" if text.endswith("\n") or text == "" else "\n"
+        return f"{text}{suffix}ssh_user: {user}\n"
+    if match.group(2) == user:
+        return text
+    return f"{text[: match.start()]}{match.group(1)}{user}{match.group(3)}{text[match.end() :]}"
+
+
+def apply_env_edits(
+    repo: Path,
+    env: str,
+    old_host: str,
+    new_host: str,
+    ssh_user: str,
+) -> None:
+    inventory = repo / "envs" / env / "inventory" / "hosts.yml"
+    cluster = repo / "envs" / env / "values" / "cluster-vars.yaml"
+    for path in (inventory, cluster):
+        if not path.is_file():
+            raise PrepError(f"missing env file: {path.name}")
+    inv_text = inventory.read_text(encoding="utf-8")
+    cv_text = cluster.read_text(encoding="utf-8")
+    new_inv = rename_inventory_host(inv_text, old_host, new_host)
+    new_cv = set_ssh_user_line(cv_text, ssh_user)
+    if new_inv != inv_text:
+        inventory.write_text(new_inv, encoding="utf-8")
+    if new_cv != cv_text:
+        cluster.write_text(new_cv, encoding="utf-8")
+
+
+def run_env_schema(repo: Path) -> None:
+    check = repo / "tools" / "checks" / "env-schema"
+    result = subprocess.run(
+        [str(check)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        raise PrepError("env-schema check failed")
+
+
+def show_git_diff(repo: Path, env: str) -> None:
+    subprocess.run(
+        [
+            "git",
+            "diff",
+            "--",
+            f"envs/{env}/inventory/hosts.yml",
+            f"envs/{env}/values/cluster-vars.yaml",
+        ],
+        cwd=repo,
+        check=False,
+    )
+
+
+def _fill_args(args: argparse.Namespace) -> tuple[str, str, str]:
+    env = args.env or prompt("Env")
+    host = args.host or prompt("Host")
+    login = args.login_user or prompt("Login user")
+    require_token(env, "env")
+    require_token(host, "host")
+    require_token(login, "login user")
+    return env, host, login
+
+
+def run(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Prepare a fresh Ubuntu Server node for site.yml and record it in the env.",
+    )
+    parser.add_argument("--env", help="env directory name under envs/")
+    parser.add_argument("--host", help="inventory hostname; must resolve in DNS")
+    parser.add_argument("--login-user", help="existing user on the node")
+    env, host, login = _fill_args(parser.parse_args(argv))
+
+    require_tools()
+    require_env_dir(REPO_ROOT, env)
+    assert_host_resolves(host, unchanged=True)
+
+    public = ensure_public_key()
+    pubkey = public_key_text(public)
+    ensure_host_key(host)
+
+    session = open_session(login, host)
+    try:
+        install_login_key(session, pubkey)
+        ensure_sudo(session)
+        inventory_host = configure_hostname(session, host)
+        ansible_user = choose_ansible_user(login)
+        ensure_ansible_user(session, ansible_user, pubkey)
+        install_minimum(session, ansible_user)
+    finally:
+        session.close()
+
+    proof(ansible_user, inventory_host, public)
+    apply_env_edits(REPO_ROOT, env, host, inventory_host, ansible_user)
+    schema_error: PrepError | None = None
+    try:
+        run_env_schema(REPO_ROOT)
+    except PrepError as exc:
+        schema_error = exc
+    print("git diff:")
+    show_git_diff(REPO_ROOT, env)
+    if schema_error is not None:
+        raise schema_error
+    print("Recorded the host in the env. Not committed.")
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        run(argv)
+    except PrepError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
