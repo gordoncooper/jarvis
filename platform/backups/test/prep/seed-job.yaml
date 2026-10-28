@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: volsync-test-seed
+  namespace: platform-backups
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: quay.io/backube/volsync@sha256:bbc884d4fa108534260025bf1255a1010ebb6bb8dac9ba4f4a77f437ca7f8fbd
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-c"]
+          args:
+            - |
+              import hashlib
+              import pathlib
+              payload = pathlib.Path("/data/payload")
+              payload.write_bytes(b"volsync-test-v1\n")
+              print(hashlib.sha256(payload.read_bytes()).hexdigest())
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: volsync-test-src

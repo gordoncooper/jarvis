@@ -1,0 +1,23 @@
+apiVersion: volsync.backube/v1alpha1
+kind: ReplicationSource
+metadata:
+  name: volsync-test
+  namespace: platform-backups
+spec:
+  sourcePVC: volsync-test-src
+  trigger:
+    manual: "test-1"
+  restic:
+    repository: volsync-test-restic
+    copyMethod: Direct
+    moverResources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+    moverVolumes:
+      - mountPath: repo
+        volumeSource:
+          persistentVolumeClaim:
+            claimName: volsync-test-repo

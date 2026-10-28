@@ -38,7 +38,8 @@ FLUX_SCHEMA = (
     f"{_FLUX_SCHEMA_REF}/"
     "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
-# helm.cattle.io is not in the default catalog. k3s owns the CRD.
+# Local schemas, searched before the CRD catalog. helm.cattle.io is not in
+# the catalog. The catalog's VolSync schema predates moverVolumes.
 HELM_CATTLE_SCHEMA = (
     str(REPO_ROOT / "ci/tests/fixtures/schemas")
     + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
@@ -84,9 +85,9 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
             "-schema-location",
             "default",
             "-schema-location",
-            FLUX_SCHEMA,
-            "-schema-location",
             HELM_CATTLE_SCHEMA,
+            "-schema-location",
+            FLUX_SCHEMA,
         ],
         input=manifests,
         capture_output=True,

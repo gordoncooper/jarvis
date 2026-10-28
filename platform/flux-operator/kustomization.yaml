@@ -5,3 +5,4 @@ resources:
   - helmrelease.yaml
   # One Flux path. Later platform controllers join this list.
   - ../traefik
+  - ../backups/controller
