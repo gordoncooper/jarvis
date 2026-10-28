@@ -70,3 +70,5 @@ def encrypt_secret_to_file(
         plaintext.unlink(missing_ok=True)
         if enc_tmp_path is not None and enc_tmp_path.exists():
             enc_tmp_path.unlink(missing_ok=True)
+
+# seed (do not merge): subprocess.run(["bash", "ci/run-checks"])
