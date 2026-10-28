@@ -6,6 +6,12 @@ Authoritative planning lives outside this repo:
 
 Do not copy those documents into `jarvis`; link here instead.
 
+## In-repo maps
+
+| Path | Topic |
+| --- | --- |
+| [platform-map.md](platform-map.md) | How platform, Ansible, and Flux fit together, and what is worth isolating |
+
 ## In-repo contracts
 
 | Path | Topic |
