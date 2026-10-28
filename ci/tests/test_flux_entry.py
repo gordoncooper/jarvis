@@ -38,6 +38,11 @@ FLUX_SCHEMA = (
     f"{_FLUX_SCHEMA_REF}/"
     "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
+# helm.cattle.io is not in the default catalog. k3s owns the CRD.
+HELM_CATTLE_SCHEMA = (
+    str(REPO_ROOT / "ci/tests/fixtures/schemas")
+    + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+)
 _KUBECONFORM_SKIPPED = re.compile(r"Skipped:\s*(\d+)")
 
 
@@ -80,6 +85,8 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
             "default",
             "-schema-location",
             FLUX_SCHEMA,
+            "-schema-location",
+            HELM_CATTLE_SCHEMA,
         ],
         input=manifests,
         capture_output=True,

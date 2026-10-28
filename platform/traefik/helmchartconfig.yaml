@@ -1,0 +1,35 @@
+# k3s ships the Traefik HelmChart. This is the only Git object in kube-system.
+# Chart v40 reads the Service type from service.spec.type.
+# Chart v40 does not template providers.kubernetesCRD.defaultTLSResourcesNamespace.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ingressClass:
+      enabled: true
+      isDefaultClass: true
+      name: traefik
+    providers:
+      kubernetesGateway:
+        enabled: false
+    gateway:
+      enabled: false
+    gatewayClass:
+      enabled: false
+    experimental:
+      kubernetesGateway:
+        enabled: false
+    additionalArguments:
+      - "--providers.kubernetesCRD.defaultTLSResourcesNamespace=platform-cert-manager"
+    service:
+      spec:
+        type: LoadBalancer
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
