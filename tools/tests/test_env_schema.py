@@ -13,6 +13,7 @@ import yaml
 
 import schema.env as env_schema
 from schema.env import (
+    DEFAULT_AGE_KEY_FILE,
     DEFAULT_SSH_USER,
     EXAMPLE_ENV,
     ValidationError,
@@ -160,6 +161,14 @@ def test_ssh_user_defaults_to_ubuntu_when_omitted(tmp_path: Path):
     _write_env(tmp_path, omit_ssh_user=True)
     resolved = validate_env_tree(tmp_path)
     assert resolved["env-test"]["ssh_user"] == DEFAULT_SSH_USER
+
+
+def test_age_key_file_defaults_when_omitted(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv.pop("age_key_file", None)
+    _write_env(tmp_path, cluster_vars=cv)
+    resolved = validate_env_tree(tmp_path)
+    assert resolved["env-test"]["age_key_file"] == DEFAULT_AGE_KEY_FILE
 
 
 def test_ssh_user_explicit_value_kept(tmp_path: Path):

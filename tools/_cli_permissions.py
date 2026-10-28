@@ -211,7 +211,7 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
 )
 
 DRY_RUN_MUST_BLOCK_READS: tuple[str, ...] = (
-    ".config/sops/age/alphacut.txt",
+    ".config/sops/age/keys.txt",
 )
 
 DRY_RUN_MUST_ALLOW: tuple[str, ...] = (

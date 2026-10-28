@@ -14,23 +14,34 @@
     flux_sops_age_present: >-
       {{ flux_sops_age_lookup.rc == 0 and (flux_sops_age_lookup.stdout | trim | length) > 0 }}
 
-- name: Record SOPS_AGE_KEY_FILE from the controller
+- name: Record the age private key path
   ansible.builtin.set_fact:
-    sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+    sops_age_key_file: "{{ _sops_age_from_env | default(_sops_age_from_vars, true) | regex_replace('^~/', lookup('env', 'HOME') ~ '/') }}"
+  vars:
+    _sops_age_from_env: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
+    _sops_age_from_vars: "{{ age_key_file | default('~/.config/sops/age/keys.txt', true) }}"
   no_log: true
   changed_when: false
 
-- name: Require SOPS_AGE_KEY_FILE on the controller
-  ansible.builtin.assert:
-    that:
-      - (sops_age_key_file | length > 0) or (flux_sops_age_present | bool)
-    fail_msg: >-
-      Set SOPS_AGE_KEY_FILE to the age private key path on the controller before
-      running flux-operator (bootstrap secret flux-system/sops-age).
+- name: Stat the age private key file
+  ansible.builtin.stat:
+    path: "{{ sops_age_key_file }}"
+  register: sops_age_key_stat
   no_log: true
 
-- name: Use the age private key when SOPS_AGE_KEY_FILE is set
-  when: sops_age_key_file | length > 0
+- name: Require an age private key when the sops-age secret is absent
+  ansible.builtin.assert:
+    that:
+      - sops_age_key_stat.stat.exists | default(false)
+    fail_msg: >-
+      Set SOPS_AGE_KEY_FILE or age_key_file to the age private key on the
+      controller (default ~/.config/sops/age/keys.txt) before running
+      flux-operator (bootstrap secret flux-system/sops-age).
+  when: not (flux_sops_age_present | bool)
+  no_log: true
+
+- name: Use the age private key when the file exists
+  when: sops_age_key_stat.stat.exists | default(false)
   no_log: true
   block:
     - name: Require age private key file on the controller
@@ -38,8 +49,8 @@
         that:
           - lookup('file', sops_age_key_file, errors='ignore') | length > 0
         fail_msg: >-
-          SOPS_AGE_KEY_FILE must point at an existing age private key file on the
-          controller.
+          The age private key file is missing or empty. Set SOPS_AGE_KEY_FILE
+          or age_key_file.
       no_log: true
 
     - name: Load age private key from the controller
@@ -74,8 +85,8 @@
           - (flux_sops_age_existing_json.stdout | from_json).data['age.agekey'] | length > 0
           - (flux_sops_age_existing_key_content | trim) == (flux_sops_age_key_content | trim)
         fail_msg: >-
-          flux-system/sops-age already exists with different content; remove it manually
-          or fix SOPS_AGE_KEY_FILE before re-running site.yml.
+          flux-system/sops-age already exists with different content; remove it
+          manually or point SOPS_AGE_KEY_FILE or age_key_file at the original key.
       when: flux_sops_age_present | bool
       no_log: true
 

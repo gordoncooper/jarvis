@@ -10,8 +10,9 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
   - `inventory/hosts.yml` — one block per host: `node_roles` and an optional `data_disk` (no IPs; R25, D42).
 - Rejection of unknown `code_delivery` and `build_agent` values (only built providers are accepted; §9 alternatives are named as stubs, not valid values).
-- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`.
+- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user` and `age_key_file`.
 - Default `ssh_user: ubuntu` when omitted (D34). The example env still sets `ssh_user`.
+- Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
 - `apps_git_repo_url` required and https, validated like `flux_git_repo_url`. Both URLs use one owner handle, and that handle is the same across every non-example env (D45).
 - `llm_provider_host` required, a bare hostname with no scheme or path (D45).
 
@@ -35,6 +36,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). Never hardcoded in core (R3, R28). |
 | `time_zone` | yes | IANA zone for the node time zone, VolSync schedules, and Hermes cron (e.g. `<time_zone>`; D21). |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`; D34). |
+| `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
 | `code_delivery` | yes | `github` only. `forgejo` is the planned second provider (§9); any other value fails validation. |
 | `build_agent` | yes | `cursor` only. `grok-build` and `opencode-local` are §9 stubs; any other value fails validation. |
 | `backup_path` | yes | Local restic repository directory for VolSync and etcd snapshots (§7; set per `<env>` in `p0a-03`). |
@@ -120,13 +122,13 @@ Product rules in the same check: the word `bastion`, and any hardcoded `/home/` 
 
 ### Reference shape (documentation)
 
-Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `dns_suffix`, `time_zone`, `code_delivery`, `build_agent`, and optional `ssh_user` (default `ubuntu` when omitted).
+Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `dns_suffix`, `time_zone`, `code_delivery`, `build_agent`, optional `ssh_user` (default `ubuntu` when omitted), and optional `age_key_file` (default `~/.config/sops/age/keys.txt` when omitted).
 
 ## Proven by
 
 - `tools/checks/env-schema` in the required `ci` workflow (added in `p0a-05`).
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
-- pytest in `p0a-05`: valid env tree, bad `build_agent`, and `ssh_user` defaulting to `ubuntu`.
+- pytest in `p0a-05`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
 - A drift test fails when the known-key set gains a key the example env does not set.
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
 - A drift test fails when the known role set gains a role the example env does not declare.

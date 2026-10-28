@@ -5,6 +5,7 @@ time_zone: Etc/UTC
 code_delivery: github
 build_agent: cursor
 ssh_user: example
+age_key_file: ~/.config/sops/age/keys.txt
 
 backup_path: /var/lib/jarvis/backup
 backup_retention_daily: 1

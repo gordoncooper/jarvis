@@ -12,11 +12,17 @@ Run from this directory after `make deps`. Before a run, every inventory hostnam
 tools/prep-node --env <env> --host <hostname> --login-user <user>
 ```
 
-The host name must resolve with `getent hosts` before anything is changed. The script confirms the host key, installs your public key for the login user, sets the hostname, and lets you keep that user or create another one with your key and a locked password. It installs only `openssh-server`, `python3`, and `sudo` if they are missing, and grants the chosen user `NOPASSWD:ALL` from one file in `/etc/sudoers.d/` after `visudo -cf` succeeds. It then checks key-only login, passwordless sudo, and DNS on the node, runs the env-schema check, and shows `git diff`. It does not commit, and it does not run `site.yml`. A later run skips work that is already done.
+The host name must already be an inventory key and must resolve with `getent hosts` before the node is changed. The script confirms the host key, installs your public key, and asks before changing the short hostname. A new short hostname is recorded as `<short>.<same domain as --host>` and must resolve first. If the primary address came from DHCP, it can pin that address, gateway, and DNS with one netplan file and `netplan try`. It installs only `openssh-server`, `python3`, and `sudo` if they are missing, and grants the chosen user passwordless sudo. It checks key-only login. If the age key file is missing it can create one and, if you agree, point `.sops.yaml` at the new public key and delete that env's existing `*.sops.yaml` files. It shows `git diff` and does not commit.
+
+Next, create secrets and commit, then run `site.yml`:
+
+```bash
+make bootstrap-secrets ENV=<env>
+```
 
 ## Before the first run
 
-`SOPS_AGE_KEY_FILE` must be set on the controller for the first `site.yml` run. The repo sets no fixed path. The file must be the private half of the recipient in `.sops.yaml` (check with `age-keygen -y` on the file that variable names). When `flux-system/sops-age` already exists and that variable is unset, the run leaves the secret alone.
+The age private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides that path. The file must be the private half of the recipient in `.sops.yaml` (`age-keygen -y` prints the public half). When `flux-system/sops-age` already exists and the key file is absent, the run leaves the secret alone.
 
 Every env run passes the env hosts file, then the constructed role groups. The second file lives in core and is not copied into an env. `node_roles` become groups of the same name. Hosts with `data_disk` set are the `data_disk` group.
 

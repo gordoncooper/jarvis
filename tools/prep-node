@@ -3,14 +3,15 @@
 
 Usage: tools/prep-node --env <env> --host <hostname> --login-user <user>
 
-Omitted flags are prompted. Stops at the first failure. Does not commit,
-does not run site.yml, and does not touch disks, the age key, or secrets.
+Stops at the first failure. Does not commit, does not run site.yml, and does
+not touch disks or print an age private key.
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import re
 import shlex
 import shutil
@@ -21,11 +22,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
+DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 _TOOLS = ("ssh", "ssh-keygen", "git", "make")
 _PUB_NAMES = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
 _SUDOERS = "/etc/sudoers.d/jarvis-ansible"
-_SSH_USER_LINE = re.compile(r"^(\s*ssh_user:\s*)(\S+)(.*)$", re.MULTILINE)
+_NETPLAN = "/etc/netplan/99-jarvis-static.yaml"
+_STRICT = ("-o", "StrictHostKeyChecking=yes")
 
 
 class PrepError(Exception):
@@ -111,23 +113,15 @@ def known_hosts_path() -> Path:
     return ssh_dir() / "known_hosts"
 
 
-def find_public_key() -> Path | None:
+def ensure_public_key() -> Path:
     directory = ssh_dir()
     for name in _PUB_NAMES:
         path = directory / name
         if path.is_file():
+            print(f"Using SSH public key {path}")
             return path
-    return None
-
-
-def ensure_public_key() -> Path:
-    found = find_public_key()
-    if found is not None:
-        print(f"Using SSH public key {found}")
-        return found
     if not confirm("No SSH public key found. Create an ed25519 key?"):
         raise PrepError("an SSH public key is required")
-    directory = ssh_dir()
     directory.mkdir(mode=0o700, exist_ok=True)
     directory.chmod(0o700)
     private = directory / "id_ed25519"
@@ -150,10 +144,9 @@ def public_key_text(path: Path) -> str:
 
 
 def key_material(line: str) -> tuple[str, str] | None:
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
+    parts = line.split()
+    if not parts or parts[0].startswith("#"):
         return None
-    parts = stripped.split()
     if parts[0].startswith("@"):
         parts = parts[1:]
     if len(parts) < 3:
@@ -162,15 +155,10 @@ def key_material(line: str) -> tuple[str, str] | None:
 
 
 def _materials(lines: list[str]) -> set[tuple[str, str]]:
-    found: set[tuple[str, str]] = set()
-    for line in lines:
-        item = key_material(line)
-        if item is not None:
-            found.add(item)
-    return found
+    return {item for line in lines if (item := key_material(line)) is not None}
 
 
-def fingerprint(line: str) -> str:
+def _fingerprint(line: str) -> str:
     result = subprocess.run(
         ["ssh-keygen", "-lf", "-"],
         input=line.strip() + "\n",
@@ -178,15 +166,13 @@ def fingerprint(line: str) -> str:
         capture_output=True,
         check=False,
     )
-    if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
-    return line.strip()
+    return result.stdout.strip() or line.strip()
 
 
-def _print_fingerprints(title: str, lines: list[str]) -> None:
+def _show_keys(title: str, lines: list[str]) -> None:
     print(title)
     for line in lines:
-        print(f"  {fingerprint(line)}")
+        print(f"  {_fingerprint(line)}")
 
 
 def scan_host_keys(host: str) -> list[str]:
@@ -198,12 +184,12 @@ def scan_host_keys(host: str) -> list[str]:
     )
     lines = [line.strip() for line in result.stdout.splitlines() if key_material(line)]
     if not lines:
-        detail = result.stderr.strip()
-        raise PrepError(detail or f"could not scan a host key for {host}")
+        raise PrepError(result.stderr.strip() or f"could not scan a host key for {host}")
     return lines
 
 
-def recorded_keys(host: str, path: Path) -> list[str]:
+def recorded_keys(host: str) -> list[str]:
+    path = known_hosts_path()
     if not path.is_file():
         return []
     result = subprocess.run(
@@ -217,41 +203,40 @@ def recorded_keys(host: str, path: Path) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if key_material(line)]
 
 
-def _append_keys(path: Path, lines: list[str]) -> None:
+def _append_keys(lines: list[str]) -> None:
+    path = known_hosts_path()
     directory = path.parent
-    created_dir = not directory.exists()
+    created = not directory.exists()
     directory.mkdir(mode=0o700, exist_ok=True)
-    if created_dir:
+    if created:
         directory.chmod(0o700)
-    creating = not path.exists()
+    new_file = not path.exists()
     with path.open("a", encoding="utf-8") as handle:
         for line in lines:
             if key_material(line) is not None:
                 handle.write(line.strip() + "\n")
-    if creating:
+    if new_file:
         path.chmod(0o600)
 
 
 def ensure_host_key(host: str) -> None:
     scanned = scan_host_keys(host)
-    path = known_hosts_path()
-    existing = recorded_keys(host, path)
-    scanned_set = _materials(scanned)
-    existing_set = _materials(existing)
-    if existing_set == scanned_set:
+    existing = recorded_keys(host)
+    if _materials(existing) == _materials(scanned):
         print(f"Host key for {host} already recorded.")
         return
-    if not existing_set:
-        _print_fingerprints(f"Host key for {host}:", scanned)
+    if not existing:
+        _show_keys(f"Host key for {host}:", scanned)
         if not confirm("Add this host key to known_hosts?"):
             raise PrepError("host key was not accepted")
-        _append_keys(path, scanned)
+        _append_keys(scanned)
         print(f"Host key for {host} added.")
         return
-    _print_fingerprints(f"Recorded host key for {host}:", existing)
-    _print_fingerprints(f"Scanned host key for {host}:", scanned)
+    _show_keys(f"Recorded host key for {host}:", existing)
+    _show_keys(f"Scanned host key for {host}:", scanned)
     if not confirm("Replace the recorded host key?"):
         raise PrepError("host key was not replaced")
+    path = known_hosts_path()
     result = subprocess.run(
         ["ssh-keygen", "-R", host, "-f", str(path)],
         capture_output=True,
@@ -260,8 +245,54 @@ def ensure_host_key(host: str) -> None:
     )
     if result.returncode != 0:
         raise PrepError(result.stderr.strip() or "could not remove the recorded host key")
-    _append_keys(path, scanned)
+    _append_keys(scanned)
     print(f"Host key for {host} replaced.")
+
+
+def _opt(*items: str) -> list[str]:
+    out: list[str] = []
+    for item in items:
+        out.extend(("-o", item))
+    return out
+
+
+_BATCH = _opt(
+    "BatchMode=yes",
+    "PreferredAuthentications=publickey",
+    "PasswordAuthentication=no",
+    "KbdInteractiveAuthentication=no",
+    "PubkeyAuthentication=yes",
+)
+_PASSWORD = _opt(
+    "PasswordAuthentication=yes",
+    "KbdInteractiveAuthentication=yes",
+    "PubkeyAuthentication=yes",
+    "PreferredAuthentications=publickey,password,keyboard-interactive",
+)
+
+
+def ssh(
+    dest: str,
+    remote: str,
+    *,
+    control: Path | None = None,
+    batch: bool = False,
+    stdin: str | None = None,
+    tty: bool = False,
+    identity: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    cmd = ["ssh", *_STRICT, *(_BATCH if batch else _PASSWORD)]
+    if control is not None:
+        cmd += _opt("ControlMaster=auto", "ControlPersist=300", f"ControlPath={control}")
+    if identity is not None and identity.is_file():
+        cmd += ["-o", "IdentitiesOnly=yes", "-i", str(identity)]
+    if tty:
+        cmd.append("-tt")
+    cmd += [dest, remote]
+    run = subprocess.run(cmd, check=False) if tty else subprocess.run(
+        cmd, input=stdin, text=True, capture_output=True, check=False
+    )
+    return run
 
 
 @dataclass
@@ -271,56 +302,22 @@ class Session:
     control: Path
     password: str | None = None
 
-    def _base(self) -> list[str]:
-        return [
-            "ssh",
-            "-o",
-            "ControlMaster=auto",
-            "-o",
-            "ControlPersist=300",
-            "-o",
-            f"ControlPath={self.control}",
-            "-o",
-            "StrictHostKeyChecking=yes",
-            "-o",
-            "PasswordAuthentication=yes",
-            "-o",
-            "KbdInteractiveAuthentication=yes",
-            "-o",
-            "PubkeyAuthentication=yes",
-            "-o",
-            "PreferredAuthentications=publickey,password,keyboard-interactive",
-            f"{self.login}@{self.host}",
-        ]
+    @property
+    def dest(self) -> str:
+        return f"{self.login}@{self.host}"
 
     def close(self) -> None:
         self.password = None
         subprocess.run(
-            [
-                "ssh",
-                "-O",
-                "exit",
-                "-o",
-                f"ControlPath={self.control}",
-                f"{self.login}@{self.host}",
-            ],
+            ["ssh", *_STRICT, "-o", f"ControlPath={self.control}", "-O", "exit", self.dest],
             capture_output=True,
             text=True,
             check=False,
         )
         shutil.rmtree(self.control.parent, ignore_errors=True)
 
-    def command(self, remote: str, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [*self._base(), remote],
-            input=stdin,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-
-    def check(self, remote: str, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-        result = self.command(remote, stdin=stdin)
+    def run(self, remote: str, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        result = ssh(self.dest, remote, control=self.control, stdin=stdin)
         if result.returncode != 0:
             detail = _redact((result.stderr or result.stdout).strip(), self.password)
             raise PrepError(detail or f"ssh failed ({result.returncode})")
@@ -328,14 +325,16 @@ class Session:
 
     def bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
         remote = "bash -s -- " + " ".join(shlex.quote(arg) for arg in args)
-        return self.check(remote, stdin=script)
+        return self.run(remote, stdin=script)
 
     def sudo_bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
         quoted = " ".join(shlex.quote(arg) for arg in args)
         if self.password is None:
-            return self.check(f"sudo -n -- bash -s -- {quoted}", stdin=script)
-        result = self.command(
+            return self.run(f"sudo -n -- bash -s -- {quoted}", stdin=script)
+        result = ssh(
+            self.dest,
             f"sudo -S -p '' -- bash -s -- {quoted}",
+            control=self.control,
             stdin=self.password + "\n" + script,
         )
         if result.returncode != 0:
@@ -343,12 +342,15 @@ class Session:
             raise PrepError(detail or f"sudo failed ({result.returncode})")
         return result
 
+    def tty(self, remote: str) -> int:
+        return ssh(self.dest, remote, control=self.control, tty=True).returncode
+
 
 def open_session(login: str, host: str) -> Session:
     directory = Path(tempfile.mkdtemp(prefix="pn"))
     session = Session(host=host, login=login, control=directory / "c.sock")
     try:
-        session.check("true")
+        session.run("true")
     except Exception:
         session.close()
         raise
@@ -373,53 +375,29 @@ grep -qxF -- "$key" "$HOME/.ssh/authorized_keys" || printf '%s\\n' "$key" >> "$H
 
 
 def ensure_sudo(session: Session) -> None:
-    if session.command("sudo -n true").returncode == 0:
+    if ssh(session.dest, "sudo -n true", control=session.control).returncode == 0:
         print("Passwordless sudo already works.")
         return
     try:
         session.password = getpass.getpass("sudo password: ")
     except EOFError as exc:
         raise PrepError("input closed") from exc
-    result = session.command("sudo -S -p '' -- true", stdin=session.password + "\n")
+    result = ssh(
+        session.dest,
+        "sudo -S -p '' -- true",
+        control=session.control,
+        stdin=session.password + "\n",
+    )
     if result.returncode != 0:
         session.password = None
         raise PrepError("sudo authentication failed")
 
 
-def read_names(session: Session) -> tuple[str, str]:
-    result = session.bash(
-        """\
-set -euo pipefail
-printf '%s\\n' "$(hostnamectl --static)"
-if fqdn=$(hostname --fqdn 2>/dev/null); then
-  printf '%s\\n' "$fqdn"
-else
-  printf '\\n'
-fi
-""",
-        [],
-    )
-    lines = result.stdout.splitlines()
-    hostname = lines[0].strip() if lines else ""
-    fqdn = lines[1].strip() if len(lines) > 1 else ""
-    if not hostname:
-        raise PrepError("the node did not report a hostname")
-    return hostname, fqdn
-
-
-def recorded_host(
-    connected: str,
-    old_hostname: str,
-    new_hostname: str,
-    old_fqdn: str,
-    new_fqdn: str,
-) -> str:
-    """Inventory key follows a new FQDN, else a new short name when that was the DNS name."""
-    if new_fqdn != old_fqdn and new_fqdn:
-        return new_fqdn
-    if new_hostname != old_hostname and (not old_fqdn or connected == old_hostname):
-        return new_hostname
-    return connected
+def inventory_name(connected: str, new_short: str) -> str:
+    """Inventory key is <short>.<domain of the name we SSH to>."""
+    if "." not in connected:
+        raise PrepError(f"{connected} has no domain, so a new short hostname cannot be recorded")
+    return f"{new_short}.{connected.split('.', 1)[1]}"
 
 
 def hosts_line(hostname: str, fqdn: str) -> str:
@@ -434,8 +412,7 @@ def apply_hostname(session: Session, hostname: str, fqdn: str) -> None:
 set -euo pipefail
 short=$1
 line=$2
-current=$(hostnamectl --static)
-if [ "$current" != "$short" ]; then
+if [ "$(hostnamectl --static)" != "$short" ]; then
   hostnamectl set-hostname --static -- "$short"
 fi
 if grep -qxF -- "$line" /etc/hosts; then
@@ -461,26 +438,23 @@ cat "$tmp" > /etc/hosts
 
 
 def configure_hostname(session: Session, connected: str) -> str:
-    old_hostname, old_fqdn = read_names(session)
-    print(f"Current hostname: {old_hostname}")
-    print(f"Current FQDN: {old_fqdn or '(none)'}")
-    new_hostname = prompt("Hostname", old_hostname)
-    entered = _input(f"FQDN [{old_fqdn or '(none)'}]: ").strip()
-    new_fqdn = old_fqdn if not entered else entered
-    require_token(new_hostname, "hostname")
-    if new_fqdn:
-        require_token(new_fqdn, "FQDN")
-    if new_hostname != old_hostname:
-        assert_host_resolves(new_hostname, unchanged=False)
-    if new_fqdn and new_fqdn != old_fqdn:
-        assert_host_resolves(new_fqdn, unchanged=False)
-    inventory = recorded_host(connected, old_hostname, new_hostname, old_fqdn, new_fqdn)
-    require_token(inventory, "host")
-    if inventory != connected:
-        assert_host_resolves(inventory, unchanged=False)
-        ensure_host_key(inventory)
-    apply_hostname(session, new_hostname, new_fqdn)
-    return inventory
+    current = session.run("hostnamectl --static").stdout.strip()
+    if not current:
+        raise PrepError("the node did not report a hostname")
+    print(f"Current hostname: {current}")
+    print(f"Inventory name: {connected}")
+    new_short = prompt("Short hostname", current)
+    require_token(new_short, "hostname")
+    if new_short == current:
+        print("Hostname unchanged.")
+        return connected
+    new_name = inventory_name(connected, new_short)
+    require_token(new_name, "host")
+    assert_host_resolves(new_name, unchanged=False)
+    if new_name != connected:
+        ensure_host_key(new_name)
+    apply_hostname(session, new_short, new_name)
+    return new_name
 
 
 def choose_ansible_user(login: str) -> str:
@@ -502,10 +476,6 @@ if ! id -u -- "$user" >/dev/null 2>&1; then
   passwd -l -- "$user"
 fi
 home=$(getent passwd -- "$user" | awk -F: '{print $6}')
-if [ -z "$home" ] || [ ! -d "$home" ]; then
-  echo "the chosen user has no home directory" >&2
-  exit 1
-fi
 group=$(id -gn -- "$user")
 install -d -m 700 -o "$user" -g "$group" -- "$home/.ssh"
 auth="$home/.ssh/authorized_keys"
@@ -562,11 +532,102 @@ chmod 0440 "$file"
     print("Minimum packages and passwordless sudo are in place.")
 
 
-def _identity_args(public: Path) -> list[str]:
-    private = Path(str(public)[: -len(".pub")]) if public.name.endswith(".pub") else public
-    if private.is_file():
-        return ["-o", "IdentitiesOnly=yes", "-i", str(private)]
-    return []
+def render_netplan(iface: str, address: str, gateway: str, dns: list[str]) -> str:
+    servers = "\n".join(f"          - {item}" for item in dns)
+    return (
+        "network:\n"
+        "  version: 2\n"
+        "  ethernets:\n"
+        f"    {iface}:\n"
+        "      dhcp4: false\n"
+        "      addresses:\n"
+        f"        - {address}\n"
+        "      routes:\n"
+        "        - to: default\n"
+        f"          via: {gateway}\n"
+        "      nameservers:\n"
+        "        addresses:\n"
+        f"{servers}\n"
+    )
+
+
+def parse_network(text: str) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        found[key] = value.strip()
+    return found
+
+
+_DETECT_NET = """\
+set -euo pipefail
+route=$(ip -4 route show default | awk 'NR==1 {print; exit}')
+iface=$(printf '%s\\n' "$route" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+addr=$(ip -4 -o addr show dev "$iface" | awk '{print $4; exit}')
+gw=$(printf '%s\\n' "$route" | awk '{for (i=1;i<=NF;i++) if ($i=="via") {print $(i+1); exit}}')
+dns=$(resolvectl dns "$iface" 2>/dev/null | awk -F': ' 'NF>1 {print $2; exit}' || true)
+dhcp=no
+case "$route" in
+  *"proto dhcp"*) dhcp=yes ;;
+esac
+printf 'iface=%s\\naddress=%s\\ngateway=%s\\ndns=%s\\ndhcp=%s\\n' "$iface" "$addr" "$gw" "$dns" "$dhcp"
+"""
+
+_WRITE_NETPLAN = f"""\
+set -euo pipefail
+shopt -s nullglob
+file={shlex.quote(_NETPLAN)}
+mkdir -p /etc/netplan
+for other in /etc/netplan/*.yaml; do
+  [ "$other" = "$file" ] && continue
+  mv "$other" "$other.bak"
+done
+printf '%s\\n' "$1" > "$file"
+chmod 600 "$file"
+"""
+
+_RESTORE_NETPLAN = f"""\
+set -euo pipefail
+shopt -s nullglob
+rm -f {shlex.quote(_NETPLAN)}
+for bak in /etc/netplan/*.yaml.bak; do
+  mv "$bak" "${{bak%.bak}}"
+done
+"""
+
+
+def configure_network(session: Session, user: str, host: str, public: Path) -> None:
+    info = parse_network(session.bash(_DETECT_NET, []).stdout)
+    if info.get("dhcp") != "yes":
+        print("Primary interface is not using DHCP.")
+        return
+    iface = info.get("iface", "")
+    address = info.get("address", "")
+    gateway = info.get("gateway", "")
+    dns = info.get("dns", "")
+    print(f"DHCP on {iface}: {address}, gateway {gateway}, DNS {dns}")
+    if not (iface and address and gateway and dns):
+        raise PrepError("DHCP details are incomplete, so static config was not written")
+    if not confirm("Switch this interface to static with those values?"):
+        print("Left the interface on DHCP.")
+        return
+    session.sudo_bash(_WRITE_NETPLAN, [render_netplan(iface, address, gateway, dns.split())])
+    if session.tty("sudo -n netplan try --timeout 120") != 0:
+        session.sudo_bash(_RESTORE_NETPLAN, [])
+        raise PrepError("netplan try did not keep the static config")
+    if batch_ssh(user, host, "true", public).returncode != 0:
+        session.sudo_bash(_RESTORE_NETPLAN, [])
+        raise PrepError("SSH failed after netplan try")
+    print("Static netplan kept; SSH still works.")
+
+
+def _private_key(public: Path) -> Path | None:
+    if not public.name.endswith(".pub"):
+        return None
+    private = Path(str(public)[: -len(".pub")])
+    return private if private.is_file() else None
 
 
 def batch_ssh(
@@ -575,29 +636,7 @@ def batch_ssh(
     remote: str,
     public: Path,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=yes",
-            "-o",
-            "PreferredAuthentications=publickey",
-            "-o",
-            "PasswordAuthentication=no",
-            "-o",
-            "KbdInteractiveAuthentication=no",
-            "-o",
-            "PubkeyAuthentication=yes",
-            *_identity_args(public),
-            f"{user}@{host}",
-            remote,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    return ssh(f"{user}@{host}", remote, batch=True, identity=_private_key(public))
 
 
 def proof(user: str, host: str, public: Path) -> None:
@@ -607,11 +646,7 @@ def proof(user: str, host: str, public: Path) -> None:
     checks = (
         ("key-only login", login.returncode == 0, login),
         ("passwordless sudo", sudo.returncode == 0, sudo),
-        (
-            "inventory name resolves on the node",
-            dns.returncode == 0 and bool(dns.stdout.strip()),
-            dns,
-        ),
+        ("inventory name resolves on the node", dns.returncode == 0 and bool(dns.stdout.strip()), dns),
     )
     failed = False
     for label, ok, result in checks:
@@ -634,81 +669,209 @@ def _has_host_key(text: str, name: str) -> bool:
     return any(_host_key_match(line, name) for line in text.splitlines())
 
 
+def require_inventory_host(repo: Path, env: str, host: str) -> None:
+    path = repo / "envs" / env / "inventory" / "hosts.yml"
+    if not path.is_file() or not _has_host_key(path.read_text(encoding="utf-8"), host):
+        raise PrepError(f"{host} is not a host in the inventory. Add it with node_roles first.")
+
+
 def rename_inventory_host(text: str, old: str, new: str) -> str:
     """Rename one host key. Leave comments, roles, and other hosts as they are."""
     if old == new:
         if not _has_host_key(text, old):
-            raise PrepError(
-                f"{old} is not a host in the inventory. Add it with node_roles first."
-            )
+            raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
         return text
     old_present = _has_host_key(text, old)
     new_present = _has_host_key(text, new)
     if new_present and not old_present:
         return text
-    if old_present and new_present:
-        raise PrepError(f"inventory already has both {old} and {new}")
     if not old_present:
-        raise PrepError(
-            f"{old} is not a host in the inventory. Add it with node_roles first."
-        )
+        raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
     lines = text.splitlines(keepends=True)
     replaced = False
     out: list[str] = []
     for line in lines:
-        if not replaced:
-            match = _host_key_match(line, old)
-            if match is not None:
-                newline = "\n" if line.endswith("\n") else ""
-                out.append(f"{match.group(1)}{new}{match.group(2)}:{match.group(3)}{newline}")
-                replaced = True
-                continue
-        out.append(line)
+        match = None if replaced else _host_key_match(line, old)
+        if match is None:
+            out.append(line)
+            continue
+        newline = "\n" if line.endswith("\n") else ""
+        out.append(f"{match.group(1)}{new}{match.group(2)}:{match.group(3)}{newline}")
+        replaced = True
     if not replaced:
-        raise PrepError(
-            f"{old} is not a host in the inventory. Add it with node_roles first."
-        )
+        raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
     return "".join(out)
 
 
-def set_ssh_user_line(text: str, user: str) -> str:
-    """Replace the ssh_user value in place, or append one line if it is absent."""
-    require_token(user, "ssh user")
-    match = _SSH_USER_LINE.search(text)
+def set_yaml_scalar(text: str, key: str, value: str) -> str:
+    """Replace one scalar in place, or append it. Keeps a trailing comment."""
+    if not value or any(char.isspace() for char in value):
+        raise PrepError(f"invalid {key}")
+    match = re.search(rf"^(\s*{re.escape(key)}:\s*)(\S+)(.*)$", text, re.M)
     if match is None:
         suffix = "" if text.endswith("\n") or text == "" else "\n"
-        return f"{text}{suffix}ssh_user: {user}\n"
-    if match.group(2) == user:
+        return f"{text}{suffix}{key}: {value}\n"
+    if match.group(2) == value:
         return text
-    return f"{text[: match.start()]}{match.group(1)}{user}{match.group(3)}{text[match.end() :]}"
+    return f"{text[: match.start()]}{match.group(1)}{value}{match.group(3)}{text[match.end() :]}"
 
 
-def apply_env_edits(
-    repo: Path,
-    env: str,
-    old_host: str,
-    new_host: str,
-    ssh_user: str,
-) -> None:
+def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user: str) -> None:
     inventory = repo / "envs" / env / "inventory" / "hosts.yml"
     cluster = repo / "envs" / env / "values" / "cluster-vars.yaml"
     for path in (inventory, cluster):
         if not path.is_file():
             raise PrepError(f"missing env file: {path.name}")
-    inv_text = inventory.read_text(encoding="utf-8")
-    cv_text = cluster.read_text(encoding="utf-8")
-    new_inv = rename_inventory_host(inv_text, old_host, new_host)
-    new_cv = set_ssh_user_line(cv_text, ssh_user)
-    if new_inv != inv_text:
+    require_token(ssh_user, "ssh user")
+    new_inv = rename_inventory_host(inventory.read_text(encoding="utf-8"), old_host, new_host)
+    new_cv = set_yaml_scalar(cluster.read_text(encoding="utf-8"), "ssh_user", ssh_user)
+    if new_inv != inventory.read_text(encoding="utf-8"):
         inventory.write_text(new_inv, encoding="utf-8")
-    if new_cv != cv_text:
+    if new_cv != cluster.read_text(encoding="utf-8"):
         cluster.write_text(new_cv, encoding="utf-8")
 
 
-def run_env_schema(repo: Path) -> None:
-    check = repo / "tools" / "checks" / "env-schema"
+def age_key_path(configured: str | None) -> Path:
+    raw = os.environ.get("SOPS_AGE_KEY_FILE") or configured or DEFAULT_AGE_KEY_FILE
+    if raw == "~" or raw.startswith("~/"):
+        return Path.home() / raw.removeprefix("~/")
+    return Path(raw)
+
+
+def age_key_config_value(path: Path) -> str:
+    try:
+        relative = path.relative_to(Path.home())
+    except ValueError:
+        return str(path)
+    return "~/" + relative.as_posix()
+
+
+def age_public_key(path: Path) -> str:
     result = subprocess.run(
-        [str(check)],
+        ["age-keygen", "-y", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    public = result.stdout.strip()
+    if result.returncode != 0 or not public.startswith("age1"):
+        raise PrepError("could not read the age public key")
+    return public
+
+
+def create_age_key(path: Path) -> str:
+    """Create path with age-keygen. Never overwrites. Returns the public key."""
+    if path.exists():
+        raise PrepError("age key already exists; not overwriting")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    result = subprocess.run(
+        ["age-keygen", "-o", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not path.is_file():
+        path.unlink(missing_ok=True)
+        raise PrepError("age-keygen failed")
+    path.chmod(0o600)
+    return age_public_key(path)
+
+
+def _yaml_scalar(text: str, key: str) -> str | None:
+    match = re.search(rf"^{re.escape(key)}:\s*(\S+)", text, re.M)
+    return match.group(1) if match else None
+
+
+def sops_recipient(text: str, env: str) -> str | None:
+    needle = f"envs/{env}/secrets/"
+    arm = False
+    for line in text.splitlines():
+        if "path_regex:" in line:
+            arm = needle in line
+            continue
+        if not arm:
+            continue
+        match = re.match(r"\s*age:\s*(\S+)", line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def set_sops_recipient(text: str, env: str, public: str) -> str:
+    needle = f"envs/{env}/secrets/"
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    arm = False
+    replaced = False
+    for line in lines:
+        body = line[:-1] if line.endswith("\n") else line
+        if "path_regex:" in body:
+            arm = needle in body
+        match = re.match(r"^(\s*age:\s*)(\S+)(.*)$", body) if arm and not replaced else None
+        if match is None:
+            out.append(line)
+            continue
+        newline = "\n" if line.endswith("\n") else ""
+        out.append(f"{match.group(1)}{public}{match.group(3)}{newline}")
+        replaced = True
+        arm = False
+    if not replaced:
+        raise PrepError(f"no age recipient for envs/{env}/secrets/")
+    return "".join(out)
+
+
+def delete_env_secrets(repo: Path, env: str) -> None:
+    secrets = repo / "envs" / env / "secrets"
+    if not secrets.is_dir():
+        return
+    for path in secrets.glob("*.sops.yaml"):
+        path.unlink()
+
+
+def sync_age_key(repo: Path, env: str) -> None:
+    cluster = repo / "envs" / env / "values" / "cluster-vars.yaml"
+    text = cluster.read_text(encoding="utf-8")
+    path = age_key_path(_yaml_scalar(text, "age_key_file"))
+    public: str | None
+    if path.exists():
+        public = age_public_key(path)
+        print(f"Age public key: {public}")
+    elif confirm("Age key file is missing. Create it?"):
+        public = create_age_key(path)
+        print(f"Age public key: {public}")
+        print("Back up the private age key. This script does not print it.")
+    else:
+        public = None
+        print("Age key was not created.")
+    updated = set_yaml_scalar(text, "age_key_file", age_key_config_value(path))
+    if updated != text:
+        cluster.write_text(updated, encoding="utf-8")
+    if public is None:
+        return
+    sops_path = repo / ".sops.yaml"
+    if not sops_path.is_file():
+        print("No .sops.yaml; recipient was not changed.")
+        return
+    sops_text = sops_path.read_text(encoding="utf-8")
+    current = sops_recipient(sops_text, env)
+    if current == public:
+        print("Age recipient already matches.")
+        return
+    if current is None:
+        print(f"No age recipient for envs/{env}/secrets/; .sops.yaml was not changed.")
+        return
+    print(f"Age recipient in .sops.yaml: {current}")
+    if not confirm("Set the recipient to this public key and delete this env's encrypted secrets?"):
+        return
+    sops_path.write_text(set_sops_recipient(sops_text, env, public), encoding="utf-8")
+    delete_env_secrets(repo, env)
+    print("Updated the age recipient and removed that env's encrypted secrets.")
+
+
+def run_env_schema(repo: Path) -> None:
+    result = subprocess.run(
+        [str(repo / "tools" / "checks" / "env-schema")],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -728,6 +891,8 @@ def show_git_diff(repo: Path, env: str) -> None:
             "--",
             f"envs/{env}/inventory/hosts.yml",
             f"envs/{env}/values/cluster-vars.yaml",
+            f"envs/{env}/secrets",
+            ".sops.yaml",
         ],
         cwd=repo,
         check=False,
@@ -756,11 +921,11 @@ def run(argv: list[str] | None = None) -> None:
     require_tools()
     require_env_dir(REPO_ROOT, env)
     assert_host_resolves(host, unchanged=True)
+    require_inventory_host(REPO_ROOT, env, host)
 
     public = ensure_public_key()
     pubkey = public_key_text(public)
     ensure_host_key(host)
-
     session = open_session(login, host)
     try:
         install_login_key(session, pubkey)
@@ -769,11 +934,13 @@ def run(argv: list[str] | None = None) -> None:
         ansible_user = choose_ansible_user(login)
         ensure_ansible_user(session, ansible_user, pubkey)
         install_minimum(session, ansible_user)
+        configure_network(session, ansible_user, inventory_host, public)
     finally:
         session.close()
 
     proof(ansible_user, inventory_host, public)
     apply_env_edits(REPO_ROOT, env, host, inventory_host, ansible_user)
+    sync_age_key(REPO_ROOT, env)
     schema_error: PrepError | None = None
     try:
         run_env_schema(REPO_ROOT)
