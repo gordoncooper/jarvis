@@ -75,6 +75,14 @@ def test_dualboot_keeps_windows_disk_and_deletes_linux_only() -> None:
     assert plan["disk_id"] == "os"
     assert plan["delete"] == [5]
     assert plan["untouched"] == ["data", "loop0"]
+    try:
+        module._refuse_if_linux_remains("dualboot", plan["delete"])
+    except module.SelectionError as exc:
+        assert exc.code == "linux-still-present"
+    else:
+        raise AssertionError("linux-still-present")
+    module._refuse_if_linux_remains("dualboot", [])
+    module._refuse_if_linux_remains("wipe", plan["delete"])
 
 
 def test_kernel_name_swap_does_not_change_the_disk() -> None:
@@ -226,7 +234,7 @@ def test_storage_config_names_only_the_chosen_disk() -> None:
         for action in storage["config"]
         if str(action.get("id", "")).startswith("keep-")
     ]
-    assert kept == [1, 2, 3, 4]
+    assert kept == [1, 2, 3]
     assert all(
         action["match"]["path"] == "/dev/disk/by-path/pci-os"
         for action in storage["config"]
@@ -241,8 +249,11 @@ def test_storage_config_names_only_the_chosen_disk() -> None:
     assert esp["preserve"] is True
     boot = next(action for action in storage["config"] if action.get("id") == "boot-part")
     pv = next(action for action in storage["config"] if action.get("id") == "pv-part")
-    assert boot["preserve"] is True and pv["preserve"] is True
+    assert boot.get("preserve") is not True and pv.get("preserve") is not True
     assert boot["number"] == 5 and pv["number"] == 6
+    assert 4 not in [
+        action["number"] for action in storage["config"] if action["type"] == "partition"
+    ]
     assert pv["flag"] == "lvm"
     data_fs = next(action for action in storage["config"] if action.get("id") == "data-fs")
     assert data_fs["label"] == "jarvis-data"

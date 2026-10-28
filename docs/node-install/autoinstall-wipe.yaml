@@ -35,6 +35,7 @@ autoinstall:
       install -d -m 0755 /target/etc/sudoers.d
       printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-ubuntu-nopasswd
       chmod 0440 /target/etc/sudoers.d/90-ubuntu-nopasswd
+  # storage must stay the last key. The early-command replaces from this key to the end of the file.
   storage:
     swap:
       size: 0

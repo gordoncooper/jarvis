@@ -6,9 +6,11 @@ dualboot keeps the only such disk that has an EFI System partition and NTFS.
 Neither rule looks at kernel disk names. A second disk that also has an EFI
 System partition is not chosen unless it also has NTFS.
 
-dualboot deletes only Linux partitions on the chosen disk. Other disks are
-left out of the storage config the early-command writes. Subiquity re-reads
-that file after early-commands, before it probes disks.
+The early-command only probes and writes storage config. It does not change
+disks. dualboot stops if a Linux partition is still on the chosen disk.
+Other disks are left out of the storage config. Subiquity re-reads that file
+after early-commands, before it probes disks. Curtin applies the config
+only after the confirmation prompt.
 """
 
 from __future__ import annotations
@@ -104,10 +106,10 @@ def _has_windows(disk: dict) -> bool:
 
 
 def select(survey: dict, mode: str) -> dict:
-    """Return the chosen disk id, Linux partition numbers to delete, and the rest.
+    """Return the chosen disk id, Linux partition numbers still present, and the rest.
 
-    delete is empty for wipe: the installer reformats that one disk. Numbers in
-    delete belong to the chosen disk only.
+    delete is empty for wipe. For dualboot it is the Linux partitions the
+    operator has to remove before the install; numbers belong to the chosen disk.
     """
     if mode not in {"wipe", "dualboot"}:
         raise SelectionError("bad-mode")
@@ -153,17 +155,6 @@ def _lvm_sizes(pv_bytes: int) -> tuple[int, int]:
     if data <= 0:
         raise SelectionError("disk-too-small")
     return _ROOT, data
-
-
-def _next_numbers(used: set[int], count: int) -> list[int]:
-    numbers: list[int] = []
-    candidate = 1
-    while len(numbers) < count:
-        if candidate not in used:
-            numbers.append(candidate)
-            used.add(candidate)
-        candidate += 1
-    return numbers
 
 
 def _gap(disk: dict, delete: list[int]) -> tuple[int, int, dict]:
@@ -243,14 +234,19 @@ def _partition_actions(disk: dict, mode: str, delete: list[int]) -> tuple[list[d
         raise SelectionError("esp-not-one")
     before = [part for part in kept if int(part["start"]) + int(part["size"]) <= gap_start]
     before.sort(key=lambda part: int(part["start"]))
-    after = [part for part in kept if part not in before]
-    after.sort(key=lambda part: int(part["start"]))
-    boot_num, pv_num = _next_numbers({int(part["number"]) for part in kept}, 2)
+    if not before:
+        raise SelectionError("gap-order")
+    anchor = max(before, key=lambda part: int(part["start"]) + int(part["size"]))
+    # Subiquity emits partitions in number order. Curtin starts a new partition
+    # at the end of the previous one in that list. Partitions past the gap
+    # (Recovery, when it has a lower number and sits at the end) are left out
+    # of the config so they stay on the preserved table and are not that previous
+    # partition. The anchor has to be the highest number we do include.
+    if max(int(part["number"]) for part in before) != int(anchor["number"]):
+        raise SelectionError("gap-order")
+    high = max(int(part["number"]) for part in kept)
+    boot_num, pv_num = high + 1, high + 2
     actions = [_preserved(part) for part in before]
-    # Subiquity renders partitions in number order. Curtin then starts a new
-    # partition at the end of the previous one in that list, so a Recovery
-    # partition with a lower number would land these after Recovery. Create
-    # them in this command and mark them preserved so curtin only checks them.
     actions.append(
         {
             "type": "partition",
@@ -258,7 +254,6 @@ def _partition_actions(disk: dict, mode: str, delete: list[int]) -> tuple[list[d
             "device": "os-disk",
             "number": boot_num,
             "size": _BOOT,
-            "preserve": True,
             "wipe": "superblock",
         }
     )
@@ -270,11 +265,9 @@ def _partition_actions(disk: dict, mode: str, delete: list[int]) -> tuple[list[d
             "number": pv_num,
             "size": pv,
             "flag": "lvm",
-            "preserve": True,
             "wipe": "superblock",
         }
     )
-    actions.extend(_preserved(part) for part in after)
     return actions, f"keep-{int(esps[0]['number'])}", pv
 
 
@@ -486,52 +479,10 @@ def probe() -> dict:
     return {"disks": disks}
 
 
-def _delete(path: str, numbers: list[int]) -> None:
-    for number in sorted(numbers, reverse=True):
-        subprocess.run(["sgdisk", f"--delete={number}", path], check=True)
-    subprocess.run(["udevadm", "settle"], check=False)
-
-
-def _part_node(disk_path: str, number: int) -> str:
-    name = disk_path.rsplit("/", 1)[-1]
-    if name.startswith(("nvme", "mmcblk", "loop")):
-        return f"{disk_path}p{number}"
-    return f"{disk_path}{number}"
-
-
-def _materialize(disk: dict, storage: dict, delete: list[int]) -> None:
-    """Create /boot and the LVM partition in the gap. Curtin will not move them."""
-    gap_start, _gap_bytes, _anchor = _gap(disk, delete)
-    sector = int(disk.get("sector") or 512)
-    cursor = gap_start
-    created: list[tuple[dict, int]] = []
-    for action in storage["config"]:
-        if action.get("id") not in {"boot-part", "pv-part"}:
-            continue
-        size = int(action["size"])
-        if gap_start % sector or size % sector or cursor % sector:
-            raise SelectionError("bad-alignment")
-        number = int(action["number"])
-        start = cursor // sector
-        end = start + (size // sector) - 1
-        typecode = "8e00" if action.get("flag") == "lvm" else "8300"
-        subprocess.run(
-            [
-                "sgdisk",
-                f"--new={number}:{start}:{end}",
-                f"--typecode={number}:{typecode}",
-                str(disk["path"]),
-            ],
-            check=True,
-        )
-        created.append((action, number))
-        cursor += size
-    subprocess.run(["udevadm", "settle"], check=False)
-    table = _sfdisk(str(disk["path"]))
-    for action, number in created:
-        found = table["sectors"].get(_part_node(str(disk["path"]), number))
-        if not found or int(found["size"]) != int(action["size"]):
-            raise SelectionError("size-mismatch")
+def _refuse_if_linux_remains(mode: str, delete: list[int]) -> None:
+    """Curtin cannot delete partitions. The operator removes Linux ones first."""
+    if mode == "dualboot" and delete:
+        raise SelectionError("linux-still-present")
 
 
 def _yaml_scalar(value: object) -> str:
@@ -577,7 +528,7 @@ def _yaml_block(value: object, indent: int) -> list[str]:
 
 
 def _write(autoinstall: str, storage: dict) -> None:
-    """Replace the storage key. The live image's python has no YAML library."""
+    """Replace the storage key through EOF. The live image's python has no YAML library."""
     path = Path(autoinstall)
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     start = next(
@@ -597,12 +548,9 @@ def _write(autoinstall: str, storage: dict) -> None:
 def apply(mode: str, autoinstall: str) -> None:
     survey = probe()
     result = select(survey, mode)
+    _refuse_if_linux_remains(mode, result["delete"])
     disk = next(item for item in survey["disks"] if item["id"] == result["disk_id"])
     storage = build_storage(disk, mode, result["delete"])
-    if mode == "dualboot":
-        if result["delete"]:
-            _delete(str(disk["path"]), result["delete"])
-        _materialize(disk, storage, result["delete"])
     _write(autoinstall, storage)
 
 
