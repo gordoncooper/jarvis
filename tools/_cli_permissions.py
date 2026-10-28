@@ -172,11 +172,24 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "bash -c 'sops -e envs/<env>/secrets/grafana-admin.sops.yaml'",
     "cat ~/.config/sops/age/keys.txt",
     "cat /tmp/host.agekey",
+    "kubectl apply -f x.yaml",
+    "helm list",
+    "ssh user@host",
     "flux bootstrap github",
+    "flux delete source git demo",
     "flux install",
     "flux suspend kustomization demo",
-    # Case-sensitive globs (* ? ** only). These six casings are what an agent
-    # would type. Other mixed casings (for example SeCrEt) are a known gap.
+    "sops -d file.yaml",
+    "sops decrypt file.yaml",
+    "sops -e file.yaml",
+    # Case-sensitive globs (* ? ** only). secret*, Secret*, and SECRET*
+    # cover those casings and their plurals. Other mixed casings (for
+    # example SeCrEt) are a known gap.
+    "kubectl get secret/sops-age -n flux-system -o yaml",
+    "kubectl -n flux-system get secrets",
+    "kubectl get secret,configmap -A",
+    "kubectl get Secret/sops-age",
+    "kubectl -n flux-system get SECRETS",
     "kubectl get secret",
     "kubectl get secrets",
     "kubectl get Secret",
