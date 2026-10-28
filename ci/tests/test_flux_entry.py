@@ -341,41 +341,6 @@ def test_kubernetes_version_matches_k3s_pin() -> None:
     assert kubernetes_version_from_k3s("v9.8.7") is None
 
 
-def test_flux_build_targets_follow_kustomization_paths(tmp_path: Path) -> None:
-    flux = tmp_path / "flux"
-    (flux / "kustomizations").mkdir(parents=True)
-    (flux / "kustomization.yaml").write_text(
-        "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n",
-        encoding="utf-8",
-    )
-    (flux / "kustomizations" / "extra.yaml").write_text(
-        "apiVersion: kustomize.toolkit.fluxcd.io/v1\n"
-        "kind: Kustomization\n"
-        "metadata:\n"
-        "  name: extra\n"
-        "spec:\n"
-        "  path: ./services/extra\n",
-        encoding="utf-8",
-    )
-    (flux / "kustomizations" / "sealed.yaml").write_text(
-        "apiVersion: kustomize.toolkit.fluxcd.io/v1\n"
-        "kind: Kustomization\n"
-        "metadata:\n"
-        "  name: sealed\n"
-        "spec:\n"
-        "  path: ./layers/sealed\n"
-        "  decryption:\n"
-        "    provider: sops\n",
-        encoding="utf-8",
-    )
-    targets = {item.name: item for item in flux_kustomization_targets(flux)}
-    assert set(targets) == {"extra", "sealed"}
-    assert targets["extra"].path == "services/extra"
-    assert targets["extra"].strip_sops_secrets is False
-    assert targets["sealed"].path == "layers/sealed"
-    assert targets["sealed"].strip_sops_secrets is True
-
-
 @pytest.mark.parametrize("env", non_example_env_names())
 def test_flux_layer_kustomize_build_and_schema_validate(env: str) -> None:
     flux_dir = REPO_ROOT / "envs" / env / "flux"

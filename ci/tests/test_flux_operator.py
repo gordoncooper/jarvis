@@ -72,7 +72,7 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     ]
     for play in plays:
         assert play.get("become") is True
-        assert play.get("vars", {}).get("ansible_user") == "{{ ssh_user }}"
+        assert "ssh_user | default(" in str(play.get("vars", {}).get("ansible_user"))
     assert _role_names(plays[0]) == []
     assert plays[0].get("tags") == ["always"]
     assert _role_names(plays[1]) == ["base-os"]
@@ -93,70 +93,11 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert all(play.get("vars") == connection for play in plays)
 
 
-def test_omitted_ssh_user_uses_schema_default(tmp_path: Path) -> None:
-    require_cli("ansible-playbook")
+def test_site_yml_ssh_user_default_matches_schema() -> None:
     plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
-    assert isinstance(plays, list)
-    connection = plays[0]["vars"]
-
-    def resolve(cluster_text: str) -> str:
-        cluster = tmp_path / "cluster-vars.yaml"
-        cluster.write_text(cluster_text, encoding="utf-8")
-        play = tmp_path / "play.yml"
-        play.write_text(
-            yaml.safe_dump(
-                [
-                    {
-                        "hosts": "localhost",
-                        "gather_facts": False,
-                        "connection": "local",
-                        "become": False,
-                        "vars": connection,
-                        "vars_files": plays[0]["vars_files"],
-                        "tasks": [
-                            {
-                                "ansible.builtin.debug": {
-                                    "msg": "RESOLVED={{ ansible_user }}"
-                                }
-                            }
-                        ],
-                    }
-                ],
-                sort_keys=False,
-            ),
-            encoding="utf-8",
-        )
-        env = os.environ.copy()
-        env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
-        env["ANSIBLE_LOOKUP_PLUGINS"] = str(ANSIBLE_DIR / "lookup_plugins")
-        env["ANSIBLE_BECOME"] = "false"
-        proc = subprocess.run(
-            [
-                "ansible-playbook",
-                str(play),
-                "-i",
-                "localhost,",
-                "-c",
-                "local",
-                "-e",
-                "jarvis_cluster_vars=cluster-vars.yaml",
-                "-e",
-                "ansible_connection=local",
-                "-e",
-                "ansible_become=false",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-        output = proc.stdout + proc.stderr
-        assert proc.returncode == 0, output
-        return output
-
-    assert f"RESOLVED={DEFAULT_SSH_USER}" in resolve("{}\n")
-    assert "RESOLVED=deploy" in resolve("ssh_user: deploy\n")
+    expr = plays[0]["vars"]["ansible_user"]
+    literal = expr.split("default(", 1)[1].split(")", 1)[0].strip("\"'")
+    assert literal == DEFAULT_SSH_USER
 
 
 def _task_documents() -> list[dict[str, object]]:

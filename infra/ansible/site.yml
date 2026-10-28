@@ -1,14 +1,13 @@
 ---
 # Fact asserts run before any change. Tags for k3s, kubeconfig, and flux-operator are on the plays.
-# ssh_user is the env schema value, including its default when cluster-vars omits the key (D34).
+# ansible_user uses ssh_user, or the schema default when cluster-vars omits it (D34).
 - name: Assert facts before any change
   hosts: all
   become: true
   gather_facts: false
   tags: [always]
   vars: &jarvis_play_vars
-    ssh_user: "{{ lookup('schema_cluster_var', 'ssh_user') }}"
-    ansible_user: "{{ ssh_user }}"
+    ansible_user: "{{ ssh_user | default('ubuntu') }}"
   vars_files: &jarvis_vars_files
     - "{{ jarvis_cluster_vars }}"
   tasks:

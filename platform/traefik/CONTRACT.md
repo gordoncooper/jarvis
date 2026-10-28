@@ -1,17 +1,17 @@
 # CONTRACT: Exposure
 
-A component is reachable at `<svc>.<dns_suffix>` by adding one Ingress (D7). cert-manager and lan-dns point at this contract when those components are built.
+A component is reachable at `<svc>.<dns_suffix>` by adding one Ingress (D7). cert-manager and App DNS point at this contract when those components are built.
 
 ## Offers
 
-- JARVIS DNS answers the name.
+- App DNS answers the name.
 - The internal CA wildcard covers it (R28).
 - Ports 80 and 443 land on the edge nodes. Every env gives `edge` to at least one node, with no fallback to `control_plane` (D42).
 
 ## Expects
 
 - The component adds its own Gatus check for each exposed endpoint (R5).
-- Gatus trusts the internal CA's public root (committed in plain text) and resolves the zone through cluster DNS. k3s `coredns-custom` forwards that zone to JARVIS DNS.
+- Gatus trusts the internal CA's public root (committed in plain text) and resolves the zone through cluster DNS. k3s `coredns-custom` forwards that zone to App DNS.
 - `dns_suffix` comes from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode it (R3, R28).
 
 ## Health
