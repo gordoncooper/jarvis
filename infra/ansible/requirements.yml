@@ -1,5 +1,0 @@
-# Pin the collection the plays import. 12.1.0 is the copy in ansible==13.1.0,
-# so a leftover install cannot stay on an older community.general.
-collections:
-  - name: community.general
-    version: "12.1.0"

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import re
 import subprocess
-from pathlib import Path
 
 from conftest import require_cli
 from ansible_role_proof import (
     ANSIBLE_DIR,
-    REPO_ROOT,
     ansible_render_template,
     cluster_vars_playbook_path,
     env_inventory_args,
@@ -66,21 +63,3 @@ def test_site_yml_syntax_check() -> None:
         check=False,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-
-
-def test_community_general_requirements_pin_is_the_only_version() -> None:
-    galaxy = REPO_ROOT / ".venv" / "bin" / "ansible-galaxy"
-    if not galaxy.is_file():
-        galaxy = Path(require_cli("ansible-galaxy"))
-    text = (ANSIBLE_DIR / "requirements.yml").read_text(encoding="utf-8")
-    pinned = re.findall(r"name:\s*community\.general\s+version:\s*[\"']?(\d+\.\d+\.\d+)", text)
-    assert pinned == ["12.1.0"]
-    proc = subprocess.run(
-        [str(galaxy), "collection", "list", "community.general"],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    versions = set(re.findall(r"community\.general\s+(\d+\.\d+\.\d+)", proc.stdout))
-    assert versions == {"12.1.0"}, proc.stdout + proc.stderr
