@@ -1,0 +1,48 @@
+# k3s ships the Traefik HelmChart. This is the only Git object in kube-system.
+# Chart v40 reads the Service type from service.spec.type.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ingressClass:
+      enabled: true
+      isDefaultClass: true
+      name: traefik
+    providers:
+      kubernetesGateway:
+        enabled: false
+    gateway:
+      enabled: false
+    gatewayClass:
+      enabled: false
+    experimental:
+      kubernetesGateway:
+        enabled: false
+    service:
+      spec:
+        type: LoadBalancer
+    readinessProbe:
+      failureThreshold: 1
+      initialDelaySeconds: 2
+      periodSeconds: 10
+      successThreshold: 1
+      timeoutSeconds: 2
+    livenessProbe:
+      failureThreshold: 3
+      initialDelaySeconds: 2
+      periodSeconds: 10
+      successThreshold: 1
+      timeoutSeconds: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+    tlsStore:
+      default:
+        defaultCertificate:
+          secretName: cert-manager-wildcard

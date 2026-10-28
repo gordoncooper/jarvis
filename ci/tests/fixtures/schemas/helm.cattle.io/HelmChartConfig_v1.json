@@ -1,0 +1,33 @@
+{
+  "description": "HelmChartConfig customizes a k3s HelmChart. Schema covers the fields this repo sets.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["helm.cattle.io/v1"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["HelmChartConfig"]
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "namespace"],
+      "properties": {
+        "name": { "type": "string" },
+        "namespace": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": ["valuesContent"],
+      "properties": {
+        "valuesContent": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -18,13 +18,19 @@ A component is reachable at `<svc>.<dns_suffix>` by adding one Ingress (D7). cer
 
 An HTTPS response on `<svc>.<dns_suffix>` whose certificate chains to the internal CA, and the component's Gatus check is up. Manifests that expose the endpoint set probes, log to stdout, set a memory request and limit, and set a CPU request with no CPU limit (R5).
 
+`HelmChartConfig/traefik` in `kube-system` is applied, and the bundled Traefik deployment is Ready. Its container sets liveness and readiness probes, a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit (D30).
+
 ## Config
 
 - Hostname: `<svc>.<dns_suffix>`.
-- One plain Ingress. No Gateway API.
+- One plain Ingress. No Gateway API. The bundled chart's Gateway provider, Gateway, and GatewayClass are off.
+- Ingress class: `traefik`, the class the bundled chart registers. It is a manifest constant, not a cluster-vars key (D32).
 - Wildcard name: `*.<dns_suffix>`.
+- Default TLSStore secret: `cert-manager-wildcard`, in `kube-system`. p0b-04 sets the Certificate `secretName` to that value. Traefik loads the secret from the TLSStore namespace, which is the chart release namespace.
+- Ports 80 and 443 stay the chart's LoadBalancer Service ports. k3s ServiceLB publishes them on nodes labeled for the edge set (D42).
 
 ## Proven by
 
+- `ci/tests/test_traefik.py` (plain Ingress, Gateway provider off, probes, memory limit, CPU request without a CPU limit, one TLS secret name).
 - The R5 manifest lint (`ci/checks/manifest-lint`, p0b-06).
 - The P0b, P2, and P4a reachability checks (`make verify`).
