@@ -1,0 +1,45 @@
+# Chart helper `container-image` uses `.image` as the full reference when set.
+# https://github.com/backube/volsync/blob/v0.17.0/helm/volsync/templates/_helpers.tpl
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: volsync
+  namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  interval: 30m
+  releaseName: volsync
+  targetNamespace: volsync
+  chart:
+    spec:
+      chart: volsync
+      # renovate: datasource=helm depName=volsync registryUrl=https://backube.github.io/helm-charts
+      version: "0.17.0"
+      sourceRef:
+        kind: HelmRepository
+        name: backube
+        namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    image: &volsyncImage
+      # renovate: datasource=docker depName=quay.io/backube/volsync
+      image: quay.io/backube/volsync@sha256:bbc884d4fa108534260025bf1255a1010ebb6bb8dac9ba4f4a77f437ca7f8fbd
+      pullPolicy: IfNotPresent
+    rclone: *volsyncImage
+    restic: *volsyncImage
+    rsync: *volsyncImage
+    rsync-tls: *volsyncImage
+    syncthing: *volsyncImage
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 256Mi

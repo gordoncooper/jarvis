@@ -27,6 +27,12 @@
       "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"]
     },
     {
+      "description": "One PR updates every VolSync image digest pin.",
+      "groupName": "volsync-image",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["quay.io/backube/volsync"]
+    },
+    {
       "description": "Flux distribution version is one pin in the role default and each env FluxInstance. Auto-merge stays off.",
       "groupName": "flux-distribution",
       "matchManagers": ["custom.regex"],
@@ -64,6 +70,26 @@
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*(?:flux_distribution_version|version):\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
       "extractVersionTemplate": "^v?(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "description": "VolSync Helm chart pin.",
+      "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>helm) depName=(?<depName>volsync) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "VolSync container image digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": [
+        "/^platform\\/backups\\/controller\\/helmrelease.yaml$/",
+        "/^platform\\/backups\\/test\\/.+\\.yaml$/"
+      ],
+      "matchStrings": [
+        "image: (?<depName>quay.io/backube/volsync)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ]
     }
   ]
 }

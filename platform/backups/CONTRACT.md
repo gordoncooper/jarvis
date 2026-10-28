@@ -1,6 +1,6 @@
 # CONTRACT: platform-backups
 
-Shared backup contract for every PVC (R31, D7). P0a provides the namespace and the restic secret; VolSync wiring is p0b-09.
+Shared backup contract for every PVC (R31, D7). P0a provides the namespace and the restic secret. p0b-09 installs VolSync and a removable backup-and-restore test. The VolSync-or-CronJob choice, retention, prune, and the R31 check follow the live result.
 
 ## Offers
 
@@ -29,10 +29,22 @@ Namespace exists; Secret `backups-restic` is present (value not logged). A delet
   1. Record the checksum of the source data.
   2. Apply a `ReplicationDestination` that restores the restic snapshot from `backup_path` into the target PVC.
   3. When that destination is complete, compare the checksum to the original.
-- The VolSync-or-restic-CronJob choice is recorded here by the p0b-09 test. Until that test, restore is a `ReplicationDestination`.
+- Until the live result is recorded here, restore is a `ReplicationDestination`.
+- OQ7 test bundle, removed after that result is read: `platform/backups/test/`. Flux applies it as four leaf Kustomizations, `platform-backups-test-prep`, `platform-backups-test-backup`, `platform-backups-test-restore`, and `platform-backups-test-verify`. They depend on `platform-configs` and then on each other, outside the configs-to-services chain. `prep` substitutes `backup_path` from cluster-vars onto a hostPath volume. The controller path installs the VolumeSnapshot CRD so VolSync can start, and does not install a snapshot controller. One shared Secret `backups-restic` holds the restic password and `RESTIC_REPOSITORY=/mnt/repo`. Each PVC's own repo folder is mounted there via `moverVolumes`. Namespace `platform-backups` carries `volsync.backube/privileged-movers: "true"` so the mover can write the root-owned host path. Read the result with read-only kubectl:
+
+  ```
+  kubectl -n flux-system get kustomization platform-backups-test-prep platform-backups-test-backup platform-backups-test-restore platform-backups-test-verify
+  kubectl -n flux-system get helmrelease volsync
+  kubectl -n platform-backups logs job/volsync-test-seed
+  kubectl -n platform-backups logs job/volsync-test-verify
+  kubectl -n platform-backups get replicationsource/volsync-test replicationdestination/volsync-test
+  ```
+
+  The seed log and the verify log each print one sha256. They match when the restored bytes match the source. Delete the test directory and those four Flux Kustomizations to remove the bundle. Removing the bundle leaves `${backup_path}/volsync-test` on the host (Retain + hostPath); delete it by hand.
 
 ## Proven by
 
 - `ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption settings).
+- `ci/tests/test_volsync_backup.py` (the test repo path is `backup_path` from cluster-vars).
 - The R31 CI check (`ci/checks/pvc-backup`, p0b-09).
 - The P0b and P2 restore drills.
