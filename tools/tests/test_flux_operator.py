@@ -117,6 +117,12 @@ def test_sops_age_tasks_use_no_log() -> None:
         if not any(needle.lower() in blob for needle in needles):
             continue
         assert task.get("no_log") is True, task.get("name", task)
+    stat = next(
+        task for task in _task_documents() if task.get("name") == "Stat the age private key file"
+    )
+    assert stat.get("delegate_to") == "localhost"
+    assert stat.get("become") is False
+    assert stat.get("run_once") is True
 
 
 def _ansible_env() -> dict[str, str]:

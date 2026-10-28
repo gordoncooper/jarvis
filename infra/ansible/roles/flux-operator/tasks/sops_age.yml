@@ -27,6 +27,9 @@
   ansible.builtin.stat:
     path: "{{ sops_age_key_file }}"
   register: sops_age_key_stat
+  delegate_to: localhost
+  become: false
+  run_once: true
   no_log: true
 
 - name: Require an age private key when the sops-age secret is absent
