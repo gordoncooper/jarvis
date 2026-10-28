@@ -12,6 +12,7 @@ import yaml
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
+DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 
 
 def is_example_env(name: str) -> bool:
@@ -51,7 +52,7 @@ _CLUSTER_VARS_REQUIRED = frozenset(
     }
 )
 
-_CLUSTER_VARS_OPTIONAL = frozenset({"ssh_user"})
+_CLUSTER_VARS_OPTIONAL = frozenset({"ssh_user", "age_key_file"})
 
 _CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 
@@ -87,6 +88,8 @@ def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
     resolved = dict(data)
     if "ssh_user" not in resolved:
         resolved["ssh_user"] = DEFAULT_SSH_USER
+    if "age_key_file" not in resolved:
+        resolved["age_key_file"] = DEFAULT_AGE_KEY_FILE
     return resolved
 
 
@@ -266,6 +269,11 @@ def _validate_cluster_vars(
         errors.append(f"{rel_path}: ssh_user must be a string")
     elif "ssh_user" in data and not data["ssh_user"]:
         errors.append(f"{rel_path}: ssh_user must not be empty")
+
+    if "age_key_file" in data and not isinstance(data["age_key_file"], str):
+        errors.append(f"{rel_path}: age_key_file must be a string")
+    elif "age_key_file" in data and not data["age_key_file"].strip():
+        errors.append(f"{rel_path}: age_key_file must not be empty")
 
     errors.extend(
         _validate_enum(rel_path, "code_delivery", data.get("code_delivery"), _CODE_DELIVERY_ALLOWED)

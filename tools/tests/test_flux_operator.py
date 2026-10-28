@@ -117,6 +117,12 @@ def test_sops_age_tasks_use_no_log() -> None:
         if not any(needle.lower() in blob for needle in needles):
             continue
         assert task.get("no_log") is True, task.get("name", task)
+    stat = next(
+        task for task in _task_documents() if task.get("name") == "Stat the age private key file"
+    )
+    assert stat.get("delegate_to") == "localhost"
+    assert stat.get("become") is False
+    assert stat.get("run_once") is True
 
 
 def _ansible_env() -> dict[str, str]:
@@ -221,6 +227,8 @@ def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
         """
     )
     extra = _flux_operator_extra(binary)
+    missing_key = tmp_path / "missing-age-key"
+    extra.extend(["-e", f"age_key_file={missing_key}"])
     env = _ansible_env()
     first = _run_localhost_role(play, tmp_path, extra, env=env, check=True)
     second = _run_localhost_role(play, tmp_path, extra, env=env, check=True)
@@ -275,6 +283,8 @@ def test_existing_sops_age_skips_key_when_unset(tmp_path: Path) -> None:
             "ansible_connection=local",
             "-e",
             f"k3s_binary_path={binary}",
+            "-e",
+            f"age_key_file={tmp_path / 'missing-age-key'}",
         ],
         cwd=ANSIBLE_DIR,
         capture_output=True,
