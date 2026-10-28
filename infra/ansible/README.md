@@ -37,7 +37,7 @@ Every env run passes the env hosts file, then the constructed role groups. The s
 
 ## Operator tags
 
-Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and `flux-operator` are play tags, so `--tags kubeconfig` runs only that role. Container proof tests skip `chrony-service`, `k3s`, and `kubeconfig` where noted in pytest.
+Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and `flux-operator` are play tags, so `--tags kubeconfig` runs only that role. Proof runs are localhost plays with fake binaries.
 
 | Tag | Purpose | Example |
 | --- | --- | --- |
@@ -55,3 +55,13 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 `journald` restarts journald through a handler; handlers do not appear in `ansible-playbook --list-tasks`.
 
 Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
+
+## Recovery
+
+The node address changed and k3s fails with an etcd member URL mismatch. Stop k3s (`systemctl stop k3s`), run `/usr/local/bin/k3s server --cluster-reset` once, then start it (`systemctl start k3s`). A later `site.yml` run does not clear this. A DHCP reservation or the prep-node static pin prevents it.
+
+Flux rollback: while the controllers are up, revert the commit. When the FluxInstance or the operator is the broken part, from the controller's reverted checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml` with the fetched kubeconfig. The file is plain YAML with no substitution. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `--tags flux-operator`.
+
+Age key: back up the key file (`age_key_file`, default `~/.config/sops/age/keys.txt`). If the file is lost while `flux-system/sops-age` still exists, copy `age.agekey` from that secret back to the key path at mode `0600` before deleting anything. If both are lost, the old secret values are gone. Accept the prep-node swap prompt (it deletes `envs/<env>/secrets/*.sops.yaml`), run `make bootstrap-secrets`, commit and push, then re-run `site.yml`. If a differing `flux-system/sops-age` still exists, see the case above and don't delete it.
+
+Clock: if Flux is stuck fetching git while the network is fine, check `timedatectl`. chrony uses NTS only, against cluster-vars' `ntp_pools`.

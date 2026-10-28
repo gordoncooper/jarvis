@@ -279,6 +279,32 @@ _PASSWORD = _opt(
 )
 
 
+def _relay_output(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run cmd, show its output, and keep a copy. Used for netplan try."""
+    proc = subprocess.Popen(
+        cmd,
+        stdin=None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    chunks: list[bytes] = []
+    stream = proc.stdout
+    assert stream is not None
+    try:
+        while True:
+            block = stream.read(4096)
+            if not block:
+                break
+            chunks.append(block)
+            sys.stdout.buffer.write(block)
+            sys.stdout.buffer.flush()
+    finally:
+        code = proc.wait()
+    text = b"".join(chunks).decode("utf-8", errors="replace")
+    return subprocess.CompletedProcess(cmd, code, text, "")
+
+
 def ssh(
     dest: str,
     remote: str,
@@ -297,10 +323,9 @@ def ssh(
     if tty:
         cmd.append("-tt")
     cmd += [dest, remote]
-    run = subprocess.run(cmd, check=False) if tty else subprocess.run(
-        cmd, input=stdin, text=True, capture_output=True, check=False
-    )
-    return run
+    if tty:
+        return _relay_output(cmd)
+    return subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=False)
 
 
 @dataclass
@@ -603,6 +628,11 @@ done
 """
 
 
+def netplan_try_accepted(result: subprocess.CompletedProcess[str]) -> bool:
+    output = f"{result.stdout or ''}{result.stderr or ''}"
+    return "Configuration accepted." in output
+
+
 def configure_network(session: Session, user: str, host: str, public: Path) -> None:
     info = parse_network(session.bash(_DETECT_NET, []).stdout)
     if info.get("dhcp") != "yes":
@@ -620,7 +650,7 @@ def configure_network(session: Session, user: str, host: str, public: Path) -> N
         return
     session.sudo_bash(_WRITE_NETPLAN, [render_netplan(iface, address, gateway, dns.split())])
     tried = batch_ssh(user, host, "sudo -n netplan try --timeout 120", public, tty=True)
-    if tried.returncode != 0:
+    if not netplan_try_accepted(tried):
         session.sudo_bash(_RESTORE_NETPLAN, [])
         raise PrepError("netplan try did not keep the static config")
     live = "ip -4 -o addr show | grep -Fq -- " + shlex.quote(address)
@@ -729,7 +759,7 @@ def check_clock(user: str, host: str, public: Path) -> None:
     if clock_synced(result.stdout):
         return
     print("Warning: the clock is not synced. k3s and SOPS need a correct clock.")
-    if not confirm("Continue with the clock unsynced?", default_yes=True):
+    if not confirm("Continue with the clock unsynced?"):
         raise PrepError("stopped because the clock is not synced")
 
 

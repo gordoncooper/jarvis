@@ -12,7 +12,7 @@ make deps
 
 `make deps` installs [getsops/sops](https://github.com/getsops/sops) and [FiloSottile/age](https://github.com/FiloSottile/age) into `~/.local/bin` (pinned in `tools/versions.env`). It also needs **openssl** and **python3** with **PyYAML**; on Debian/Ubuntu it installs missing `openssl` / `python3-yaml` packages when `sudo` and `apt-get` are available, otherwise it prints the exact `apt-get` command and exits.
 
-Ensure `~/.local/bin` is on `PATH` on that machine. The age **public** key must already be in the repo root `.sops.yaml`. Encryption does not need the private key. Keep the private key offline except on the controller during bootstrap (R25). The private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides that path. `tools/prep-node` can create a missing key; then run `make bootstrap-secrets`, commit, and run `site.yml`.
+Ensure `~/.local/bin` is on `PATH` on that machine. The age **public** key must already be in the repo root `.sops.yaml`. Encryption does not need the private key. Keep the private key offline except on the controller during bootstrap (R25). The private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides that path. `tools/prep-node` can create a missing key; then run `make bootstrap-secrets`, commit, and run `site.yml`. If that file is lost, see Recovery in `infra/ansible/README.md` before deleting anything.
 
 ## Usage
 
