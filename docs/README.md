@@ -13,3 +13,7 @@ Do not copy those documents into `jarvis`; link here instead.
 | [CONTRACT.template.md](CONTRACT.template.md) | Shared contract section layout |
 | [code-delivery/CONTRACT.md](code-delivery/CONTRACT.md) | Code delivery provider (`github`) |
 | [../schema/CONTRACT.md](../schema/CONTRACT.md) | Env schema |
+
+## Node install
+
+[node-install/README.md](node-install/README.md) — Ubuntu Server autoinstall profiles used before `tools/prep-node`.

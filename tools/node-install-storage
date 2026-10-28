@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+"""Choose one OS disk for an Ubuntu autoinstall profile.
+
+wipe keeps the only non-removable disk that is not the install medium.
+dualboot keeps the only such disk that has an EFI System partition and NTFS.
+Neither rule looks at kernel disk names. A second disk that also has an EFI
+System partition is not chosen unless it also has NTFS.
+
+dualboot deletes only Linux partitions on the chosen disk. Other disks are
+left out of the storage config the early-command writes. Subiquity re-reads
+that file after early-commands, before it probes disks.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+_MIB = 1 << 20
+_GIB = 1 << 30
+_EFI = _GIB
+_BOOT = 2 * _GIB
+_ROOT = 60 * _GIB
+_LVM_OVERHEAD = _MIB
+_LVM_CHUNK = 4 * _MIB
+_END_MARGIN = 2 * _MIB
+_GAP_SLACK = _MIB
+
+_ESP = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+_MSR = "E3C9E316-0B5C-4DB8-817D-F92DF00215AE"
+_BASIC = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+_RECOVERY = "DE94BBA4-06D1-4D40-A16A-BFD50179D6AC"
+_PROTECTED_TYPES = frozenset({_ESP, _MSR, _BASIC, _RECOVERY})
+_PROTECTED_FS = frozenset({"ntfs", "vfat", "exfat"})
+_LINUX_FS = frozenset({"ext4", "swap", "lvm2_member"})
+# Linux filesystem, swap, LVM, RAID, and the discoverable Linux root/boot types.
+_LINUX_TYPES = frozenset(
+    {
+        "0FC63DAF-8483-4772-8E79-3D69D8477DE4",
+        "0657FD6D-A4AB-43C4-84E5-0933C84B4F4F",
+        "E6D6D379-F507-44C2-A23C-238F2A3DF928",
+        "A19D880F-05FC-4D3B-A006-743F0F84911E",
+        "44479540-F297-41B2-9AF7-D131D5F0458A",
+        "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",
+        "B921B045-1DF0-41C3-AF44-4C6F280D3FAE",
+        "BC13C2FF-59E6-4262-A352-B275FD6F7172",
+        "8484680C-9521-48C6-9C11-B0720656F69E",
+        "933AC7E1-2EB4-4F13-B844-0E14E2AEF915",
+        "3B8F8425-20E0-4F3B-907F-1A25A76F98E8",
+        "4D21B016-B534-45C2-A9FB-5C16E091FD2D",
+    }
+)
+
+
+class SelectionError(Exception):
+    """The disk rule matched no disk or more than one, or the gap is too small."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _guid(part: dict) -> str:
+    return str(part.get("type") or "").upper()
+
+
+def _fs(part: dict) -> str:
+    return str(part.get("fstype") or "").lower()
+
+
+def is_esp(part: dict) -> bool:
+    return _guid(part) == _ESP
+
+
+def is_protected(part: dict) -> bool:
+    if _guid(part) in _PROTECTED_TYPES:
+        return True
+    return _fs(part) in _PROTECTED_FS
+
+
+def is_linux_partition(part: dict) -> bool:
+    """Linux filesystem, swap, or LVM. Never NTFS, vfat, ESP, MSR, or Recovery."""
+    if is_protected(part):
+        return False
+    if _guid(part) in _LINUX_TYPES:
+        return True
+    return _fs(part) in _LINUX_FS
+
+
+def _whole_disks(survey: dict) -> list[dict]:
+    return [disk for disk in survey.get("disks", []) if disk.get("type", "disk") == "disk"]
+
+
+def _eligible(disk: dict) -> bool:
+    return not disk.get("removable") and not disk.get("install_media")
+
+
+def _has_windows(disk: dict) -> bool:
+    parts = disk.get("partitions") or []
+    return any(is_esp(part) for part in parts) and any(_fs(part) == "ntfs" for part in parts)
+
+
+def select(survey: dict, mode: str) -> dict:
+    """Return the chosen disk id, Linux partition numbers to delete, and the rest.
+
+    delete is empty for wipe: the installer reformats that one disk. Numbers in
+    delete belong to the chosen disk only.
+    """
+    if mode not in {"wipe", "dualboot"}:
+        raise SelectionError("bad-mode")
+    disks = _whole_disks(survey)
+    eligible = [disk for disk in disks if _eligible(disk)]
+    if mode == "wipe":
+        chosen = eligible
+        code = "wipe-not-one"
+    else:
+        chosen = [disk for disk in eligible if _has_windows(disk)]
+        code = "dualboot-not-one"
+    if len(chosen) != 1:
+        raise SelectionError(code)
+    disk = chosen[0]
+    delete: list[int] = []
+    if mode == "dualboot":
+        delete = sorted(
+            int(part["number"])
+            for part in disk.get("partitions") or []
+            if is_linux_partition(part)
+        )
+    untouched = sorted(
+        str(item["id"])
+        for item in survey.get("disks", [])
+        if item.get("id") != disk["id"]
+    )
+    return {"disk_id": disk["id"], "delete": delete, "untouched": untouched}
+
+
+def _align_down(size: int, align: int) -> int:
+    return size - (size % align)
+
+
+def _align_up(size: int, align: int) -> int:
+    return _align_down(size + align - 1, align)
+
+
+def _lvm_sizes(pv_bytes: int) -> tuple[int, int]:
+    """Root is 60 GiB. At least 10% of the volume group stays free."""
+    vg = _align_down(pv_bytes - _LVM_OVERHEAD, _LVM_CHUNK)
+    free = _align_up(vg // 10, _LVM_CHUNK)
+    data = vg - _ROOT - free
+    if data <= 0:
+        raise SelectionError("disk-too-small")
+    return _ROOT, data
+
+
+def _next_numbers(used: set[int], count: int) -> list[int]:
+    numbers: list[int] = []
+    candidate = 1
+    while len(numbers) < count:
+        if candidate not in used:
+            numbers.append(candidate)
+            used.add(candidate)
+        candidate += 1
+    return numbers
+
+
+def _gap(disk: dict, delete: list[int]) -> tuple[int, int, dict]:
+    """Largest free run between partitions that are kept, and the one before it."""
+    drop = set(delete)
+    kept = [part for part in disk.get("partitions") or [] if int(part["number"]) not in drop]
+    for part in kept:
+        if part.get("start") is None or part.get("size") is None:
+            raise SelectionError("no-partition-geometry")
+    ordered = sorted(kept, key=lambda part: int(part["start"]))
+    disk_end = int(disk["size"]) - _END_MARGIN
+    cursor = _MIB
+    anchor = None
+    edges: list[tuple[int, int, dict]] = []
+    for part in ordered:
+        start = int(part["start"])
+        end = start + int(part["size"])
+        if start > cursor:
+            edges.append((cursor, start - cursor, anchor))
+        cursor = max(cursor, end)
+        anchor = part
+    if anchor is not None and disk_end > cursor:
+        edges.append((cursor, disk_end - cursor, anchor))
+    if not edges:
+        raise SelectionError("disk-too-small")
+    gap_start, gap_bytes, gap_anchor = max(edges, key=lambda item: item[1])
+    for part in kept:
+        start = int(part["start"])
+        if gap_start < start < gap_start + gap_bytes:
+            raise SelectionError("gap-occupied")
+    return gap_start, gap_bytes, gap_anchor
+
+
+def _partition_actions(disk: dict, mode: str, delete: list[int]) -> tuple[list[dict], str, int]:
+    """Partition actions, the ESP action id, and the LVM partition size."""
+    if mode == "wipe":
+        pv = _align_down(int(disk["size"]) - _MIB - _EFI - _BOOT - _END_MARGIN, _MIB)
+        actions = [
+            {
+                "type": "partition",
+                "id": "esp-part",
+                "device": "os-disk",
+                "number": 1,
+                "size": _EFI,
+                "flag": "boot",
+                "grub_device": True,
+            },
+            {
+                "type": "partition",
+                "id": "boot-part",
+                "device": "os-disk",
+                "number": 2,
+                "size": _BOOT,
+            },
+            {
+                "type": "partition",
+                "id": "pv-part",
+                "device": "os-disk",
+                "number": 3,
+                "size": pv,
+                "flag": "lvm",
+            },
+        ]
+        return actions, "esp-part", pv
+
+    label = disk.get("label")
+    if label and label != "gpt":
+        raise SelectionError("not-gpt")
+    gap_start, gap_bytes, _anchor = _gap(disk, delete)
+    pv = _align_down(gap_bytes - _BOOT - _GAP_SLACK, _MIB)
+    if pv <= 0:
+        raise SelectionError("disk-too-small")
+    drop = set(delete)
+    kept = [part for part in disk.get("partitions") or [] if int(part["number"]) not in drop]
+    esps = [part for part in kept if is_esp(part)]
+    if len(esps) != 1:
+        raise SelectionError("esp-not-one")
+    before = [part for part in kept if int(part["start"]) + int(part["size"]) <= gap_start]
+    before.sort(key=lambda part: int(part["start"]))
+    after = [part for part in kept if part not in before]
+    after.sort(key=lambda part: int(part["start"]))
+    boot_num, pv_num = _next_numbers({int(part["number"]) for part in kept}, 2)
+    actions = [_preserved(part) for part in before]
+    # Subiquity renders partitions in number order. Curtin then starts a new
+    # partition at the end of the previous one in that list, so a Recovery
+    # partition with a lower number would land these after Recovery. Create
+    # them in this command and mark them preserved so curtin only checks them.
+    actions.append(
+        {
+            "type": "partition",
+            "id": "boot-part",
+            "device": "os-disk",
+            "number": boot_num,
+            "size": _BOOT,
+            "preserve": True,
+            "wipe": "superblock",
+        }
+    )
+    actions.append(
+        {
+            "type": "partition",
+            "id": "pv-part",
+            "device": "os-disk",
+            "number": pv_num,
+            "size": pv,
+            "flag": "lvm",
+            "preserve": True,
+            "wipe": "superblock",
+        }
+    )
+    actions.extend(_preserved(part) for part in after)
+    return actions, f"keep-{int(esps[0]['number'])}", pv
+
+
+def _preserved(part: dict) -> dict:
+    action: dict = {
+        "type": "partition",
+        "id": f"keep-{int(part['number'])}",
+        "device": "os-disk",
+        "number": int(part["number"]),
+        "size": int(part["size"]),
+        "preserve": True,
+    }
+    if is_esp(part):
+        action["flag"] = "boot"
+        action["grub_device"] = True
+    return action
+
+
+def build_storage(disk: dict, mode: str, delete: list[int]) -> dict:
+    """Curtin storage config for the chosen disk. Other disks are not listed."""
+    path = disk.get("path")
+    if not path:
+        raise SelectionError("no-path")
+    if not disk.get("size"):
+        raise SelectionError("disk-too-small")
+    partitions, esp_id, pv = _partition_actions(disk, mode, delete)
+    root, data = _lvm_sizes(pv)
+    preserve_esp = mode == "dualboot"
+    config: list[dict] = [
+        {
+            "type": "disk",
+            "id": "os-disk",
+            "match": {"path": path},
+            "ptable": "gpt",
+            "preserve": mode == "dualboot",
+            "grub_device": False,
+        }
+    ]
+    if mode == "wipe":
+        config[0]["wipe"] = "superblock-recursive"
+    config.extend(partitions)
+    config.extend(
+        [
+            {
+                "type": "format",
+                "id": "esp-fs",
+                "volume": esp_id,
+                "fstype": "fat32",
+                "preserve": preserve_esp,
+            },
+            {
+                "type": "mount",
+                "id": "esp-mount",
+                "device": "esp-fs",
+                "path": "/boot/efi",
+            },
+            {
+                "type": "format",
+                "id": "boot-fs",
+                "volume": "boot-part",
+                "fstype": "ext4",
+            },
+            {
+                "type": "mount",
+                "id": "boot-mount",
+                "device": "boot-fs",
+                "path": "/boot",
+            },
+            {
+                "type": "lvm_volgroup",
+                "id": "vg-os",
+                "name": "vg-os",
+                "devices": ["pv-part"],
+            },
+            {
+                "type": "lvm_partition",
+                "id": "lv-root",
+                "name": "lv-root",
+                "volgroup": "vg-os",
+                "size": root,
+            },
+            {
+                "type": "format",
+                "id": "root-fs",
+                "volume": "lv-root",
+                "fstype": "ext4",
+            },
+            {
+                "type": "mount",
+                "id": "root-mount",
+                "device": "root-fs",
+                "path": "/",
+            },
+            {
+                "type": "lvm_partition",
+                "id": "lv-data",
+                "name": "lv-data",
+                "volgroup": "vg-os",
+                "size": data,
+            },
+            {
+                "type": "format",
+                "id": "data-fs",
+                "volume": "lv-data",
+                "fstype": "ext4",
+                "label": "jarvis-data",
+            },
+            {
+                "type": "mount",
+                "id": "data-mount",
+                "device": "data-fs",
+                "path": "/var/lib/jarvis",
+                "options": "defaults,nofail",
+                "spec": "LABEL=jarvis-data",
+            },
+        ]
+    )
+    return {"swap": {"size": 0}, "config": config}
+
+
+def _mounts(node: dict) -> list[str]:
+    found = node.get("mountpoints")
+    if found is None:
+        one = node.get("mountpoint")
+        return [one] if one else []
+    if isinstance(found, str):
+        return [found] if found else []
+    return [item for item in found if item]
+
+
+def _holds_install_media(node: dict) -> bool:
+    if "/cdrom" in _mounts(node):
+        return True
+    return any(_holds_install_media(child) for child in node.get("children") or [])
+
+
+def _part_number(part_name: str, disk_name: str) -> int:
+    suffix = part_name[len(disk_name) :] if part_name.startswith(disk_name) else part_name
+    return int(suffix.lstrip("p"))
+
+
+def _sfdisk(path: str) -> dict:
+    try:
+        raw = subprocess.check_output(
+            ["sfdisk", "--json", path],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {"label": "", "sector": 512, "sectors": {}}
+    table = json.loads(raw).get("partitiontable") or {}
+    sector = int(table.get("sectorsize") or 512)
+    sectors = {}
+    for part in table.get("partitions") or []:
+        sectors[part["node"]] = {
+            "start": int(part["start"]) * sector,
+            "size": int(part["size"]) * sector,
+            "type": str(part.get("type") or "").upper(),
+        }
+    return {"label": str(table.get("label") or ""), "sector": sector, "sectors": sectors}
+
+
+def probe() -> dict:
+    """Read whole disks. Kernel names are recorded only as the path to act on."""
+    raw = subprocess.check_output(
+        [
+            "lsblk",
+            "-J",
+            "-b",
+            "-o",
+            "NAME,PATH,TYPE,SIZE,FSTYPE,PARTTYPE,RM,MOUNTPOINTS",
+        ],
+        text=True,
+    )
+    disks = []
+    for node in json.loads(raw).get("blockdevices") or []:
+        if node.get("type") != "disk":
+            continue
+        path = node.get("path") or f"/dev/{node['name']}"
+        table = _sfdisk(path)
+        parts = []
+        for child in node.get("children") or []:
+            if child.get("type") != "part":
+                continue
+            child_path = child.get("path") or ""
+            extra = table["sectors"].get(child_path, {})
+            parts.append(
+                {
+                    "number": _part_number(str(child.get("name") or ""), str(node.get("name") or "")),
+                    "type": str(child.get("parttype") or extra.get("type") or "").upper(),
+                    "fstype": child.get("fstype") or "",
+                    "start": extra.get("start"),
+                    "size": extra.get("size", int(child.get("size") or 0)),
+                }
+            )
+        removable = node.get("rm") in {1, "1", True}
+        disks.append(
+            {
+                "id": path,
+                "path": path,
+                "size": int(node.get("size") or 0),
+                "removable": removable,
+                "install_media": _holds_install_media(node),
+                "label": table["label"],
+                "sector": table["sector"],
+                "partitions": parts,
+            }
+        )
+    return {"disks": disks}
+
+
+def _delete(path: str, numbers: list[int]) -> None:
+    for number in sorted(numbers, reverse=True):
+        subprocess.run(["sgdisk", f"--delete={number}", path], check=True)
+    subprocess.run(["udevadm", "settle"], check=False)
+
+
+def _part_node(disk_path: str, number: int) -> str:
+    name = disk_path.rsplit("/", 1)[-1]
+    if name.startswith(("nvme", "mmcblk", "loop")):
+        return f"{disk_path}p{number}"
+    return f"{disk_path}{number}"
+
+
+def _materialize(disk: dict, storage: dict, delete: list[int]) -> None:
+    """Create /boot and the LVM partition in the gap. Curtin will not move them."""
+    gap_start, _gap_bytes, _anchor = _gap(disk, delete)
+    sector = int(disk.get("sector") or 512)
+    cursor = gap_start
+    created: list[tuple[dict, int]] = []
+    for action in storage["config"]:
+        if action.get("id") not in {"boot-part", "pv-part"}:
+            continue
+        size = int(action["size"])
+        if gap_start % sector or size % sector or cursor % sector:
+            raise SelectionError("bad-alignment")
+        number = int(action["number"])
+        start = cursor // sector
+        end = start + (size // sector) - 1
+        typecode = "8e00" if action.get("flag") == "lvm" else "8300"
+        subprocess.run(
+            [
+                "sgdisk",
+                f"--new={number}:{start}:{end}",
+                f"--typecode={number}:{typecode}",
+                str(disk["path"]),
+            ],
+            check=True,
+        )
+        created.append((action, number))
+        cursor += size
+    subprocess.run(["udevadm", "settle"], check=False)
+    table = _sfdisk(str(disk["path"]))
+    for action, number in created:
+        found = table["sectors"].get(_part_node(str(disk["path"]), number))
+        if not found or int(found["size"]) != int(action["size"]):
+            raise SelectionError("size-mismatch")
+
+
+def _yaml_scalar(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _yaml_block(value: object, indent: int) -> list[str]:
+    pad = "  " * indent
+    if isinstance(value, dict):
+        lines: list[str] = []
+        for key, item in value.items():
+            if item is None:
+                continue
+            if isinstance(item, (dict, list)):
+                lines.append(f"{pad}{key}:")
+                lines.extend(_yaml_block(item, indent + 1))
+            else:
+                lines.append(f"{pad}{key}: {_yaml_scalar(item)}")
+        return lines
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if not isinstance(item, dict):
+                lines.append(f"{pad}- {_yaml_scalar(item)}")
+                continue
+            first = True
+            for key, child in item.items():
+                if child is None:
+                    continue
+                prefix = "- " if first else "  "
+                first = False
+                if isinstance(child, (dict, list)):
+                    lines.append(f"{pad}{prefix}{key}:")
+                    lines.extend(_yaml_block(child, indent + 2))
+                else:
+                    lines.append(f"{pad}{prefix}{key}: {_yaml_scalar(child)}")
+        return lines
+    return [f"{pad}{_yaml_scalar(value)}"]
+
+
+def _write(autoinstall: str, storage: dict) -> None:
+    """Replace the storage key. The live image's python has no YAML library."""
+    path = Path(autoinstall)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    start = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("  storage:") or line.startswith("storage:")
+        ),
+        None,
+    )
+    if start is None:
+        raise SelectionError("bad-autoinstall")
+    body = "\n".join(_yaml_block({"storage": storage}, 1)) + "\n"
+    path.write_text("".join(lines[:start]) + body, encoding="utf-8")
+
+
+def apply(mode: str, autoinstall: str) -> None:
+    survey = probe()
+    result = select(survey, mode)
+    disk = next(item for item in survey["disks"] if item["id"] == result["disk_id"])
+    storage = build_storage(disk, mode, result["delete"])
+    if mode == "dualboot":
+        if result["delete"]:
+            _delete(str(disk["path"]), result["delete"])
+        _materialize(disk, storage, result["delete"])
+    _write(autoinstall, storage)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Select the OS disk for autoinstall.")
+    parser.add_argument("mode", choices=("wipe", "dualboot"))
+    parser.add_argument("--survey", help="JSON survey to plan against; prints the plan")
+    parser.add_argument("--apply", action="store_true", help="probe this machine and edit the autoinstall file")
+    parser.add_argument("--autoinstall", help="autoinstall file early-commands already copied to /autoinstall.yaml")
+    args = parser.parse_args(argv)
+    if args.apply and not args.autoinstall:
+        parser.error("--apply requires --autoinstall")
+    if not args.apply and not args.survey:
+        parser.error("pass --survey or --apply")
+    try:
+        if args.apply:
+            apply(args.mode, args.autoinstall)
+            return 0
+        survey = json.loads(Path(args.survey).read_text(encoding="utf-8"))
+        result = select(survey, args.mode)
+    except SelectionError as exc:
+        print(exc.code, file=sys.stderr)
+        return 2
+    json.dump(result, sys.stdout)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

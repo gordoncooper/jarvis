@@ -1,0 +1,45 @@
+#cloud-config
+# Ubuntu Server 26.04 autoinstall. Whole OS disk. See docs/node-install/README.md.
+# Do not add the kernel parameter autoinstall. That is what skips the disk confirmation.
+autoinstall:
+  version: 1
+  source:
+    id: ubuntu-server-minimal
+  identity:
+    realname: ubuntu
+    username: ubuntu
+    hostname: ubuntu
+    password: "!"
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - ssh-ed25519 REPLACE_WITH_SSH_PUBLIC_KEY
+  early-commands:
+    - |
+      set -eu
+      script=""
+      for candidate in /cdrom/node-install-storage /cdrom/tools/node-install-storage; do
+        if [ -f "$candidate" ]; then
+          script=$candidate
+          break
+        fi
+      done
+      if [ -z "$script" ]; then
+        echo "node-install-storage is not on the install media" >&2
+        exit 1
+      fi
+      python3 "$script" wipe --apply --autoinstall /autoinstall.yaml
+  late-commands:
+    - |
+      install -d -m 0755 /target/etc/sudoers.d
+      printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-ubuntu-nopasswd
+      chmod 0440 /target/etc/sudoers.d/90-ubuntu-nopasswd
+  storage:
+    swap:
+      size: 0
+    config:
+      - type: disk
+        id: os-disk
+        match:
+          serial: unset-early-command-did-not-run

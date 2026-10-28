@@ -6,7 +6,7 @@ Run from this directory after `make deps`. Before a run, every inventory hostnam
 
 ## Prepare a node
 
-`tools/prep-node` takes a freshly installed Ubuntu Server node to that state, then records the host name and `ssh_user` in the env. Run it from a checkout on the machine that drives the build. Omitted flags are prompted.
+Install Ubuntu Server first with one profile from `docs/node-install/`. `tools/prep-node` then takes that node to the state below and records the host name and `ssh_user` in the env. Run it from a checkout on the machine that drives the build. Omitted flags are prompted.
 
 ```bash
 tools/prep-node --env <env> --host <hostname> --login-user <user>
