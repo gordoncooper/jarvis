@@ -18,4 +18,4 @@ spec:
   healthCheckExprs:
     - apiVersion: volsync.backube/v1alpha1
       kind: ReplicationDestination
-      current: "has(status) && has(status.lastManualSync) && status.lastManualSync == 'test-1'"
+      current: "has(status.lastManualSync) && status.lastManualSync == 'test-1'"
