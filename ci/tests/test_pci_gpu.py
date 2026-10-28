@@ -8,7 +8,7 @@ from pathlib import Path
 from ansible_role_proof import ANSIBLE_DIR, REPO_ROOT
 from conftest import require_cli
 
-FIXTURE_DIR = REPO_ROOT / "tools" / "tests" / "fixtures" / "gpu-assert"
+FIXTURE_DIR = REPO_ROOT / "ci" / "tests" / "fixtures" / "gpu-assert"
 NVIDIA = "0x10de\n"
 OTHER = "0x8086\n"
 

@@ -9,9 +9,9 @@ from pathlib import Path
 
 import yaml
 
-_TOOLS = Path(__file__).resolve().parent
-if str(_TOOLS) not in sys.path:
-    sys.path.insert(0, str(_TOOLS))
+_TOOLS_LIB = Path(__file__).resolve().parent / "lib"
+if str(_TOOLS_LIB) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_LIB))
 
 import _sops  # noqa: E402
 

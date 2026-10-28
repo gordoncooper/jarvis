@@ -19,4 +19,4 @@ Repository path and retention come from `cluster-vars` at reconcile time (p0b).
 
 ## Proven by
 
-`tools/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption settings).
+`ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption settings).

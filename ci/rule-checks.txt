@@ -2,4 +2,5 @@ cli-deny
 contract-md
 core-names
 env-schema
+product-ci
 secret-scan

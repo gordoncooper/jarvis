@@ -24,9 +24,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-_TOOLS_DIR = REPO_ROOT / "tools"
-if str(_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(_TOOLS_DIR))
+_TOOLS_LIB = REPO_ROOT / "tools" / "lib"
+if str(_TOOLS_LIB) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_LIB))
 
 from render_cluster_vars_configmap import render_document  # noqa: E402
 

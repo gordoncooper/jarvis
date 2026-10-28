@@ -14,7 +14,7 @@ Callers may rely on these six capabilities from the active provider:
 | **CI** | Workflow runs on the provider’s hosted runners; default branch requires a green `ci` check (and `admin-gate` after the P2 exit, R36). |
 | **Issue and label queue** | Issues and labels on `jarvis-apps` for the code-factory work protocol (`code-factory:ready`, `code-factory:hard`, `code-factory:failed`; R40). |
 | **PR open and merge** | Pull requests for all changes. Routine jarvis work: coding agents open and merge via a user token when checks pass (until P2 exit; R36). Code-factory: lane job never opens PRs; a publish job opens a **draft** PR with a short-lived App token (R42). Human admin merges code-factory PRs (R40). |
-| **Approval-label check** | `tools/checks/admin-gate` as a required check from the P2 exit (R36). It fails risky PRs unless the `admin-approved` label was added by the human admin’s own account; every push strips that label. Runs on `pull_request_target`, metadata only, never checks out PR code (D35). |
+| **Approval-label check** | `ci/checks/admin-gate` as a required check from the P2 exit (R36). It fails risky PRs unless the `admin-approved` label was added by the human admin’s own account; every push strips that label. Runs on `pull_request_target`, metadata only, never checks out PR code (D35). |
 | **Image registry** | OCI registry for images CI builds. App images are public packages so clusters pull without a registry secret (app hosting, §5). |
 
 ### GitHub mapping (only implementation)
@@ -58,10 +58,10 @@ No core manifest reads `code_delivery` until a second provider is built. Provide
 | Capability | Checkpoint |
 | --- | --- |
 | Repo hosting | P0a exit: every Flux object Ready; rollback drill restores prior state (`p0a-16`). |
-| CI | P0a exit: required `ci` runs every `tools/checks/` rule; seeded bad PRs fail each rule as it lands (`p0a-05`–`p0a-10`). |
+| CI | P0a exit: required `ci` runs every `ci/checks/` rule; seeded bad PRs fail each rule as it lands (`p0a-05`–`p0a-10`). |
 | Issue and label queue | P4b: `code-factory:ready` actor check, ignored App label, `code-factory:failed` on timeout/cap (R40). |
 | PR open and merge | P0a: agents merge own green PRs before P2; P4b: toy `code-factory:ready` issue becomes a draft PR with green `ci` and a `checker` check run. |
 | Approval-label check | P2 exit: seeded protected-path PRs fail without `admin-approved` from the human admin account and pass after it; bot/App fixture actors fail; label from coding-agent account fails (`p2-24`, D38). |
 | Image registry | P4a: `build.yml` publishes the demo app; package public; cluster pulls by digest (`p4a-04`, `p4a-07`). |
 
-Also: `tools/checks/env-schema` rejects unknown `code_delivery` values (P0a seeded PR).
+Also: `ci/checks/env-schema` rejects unknown `code_delivery` values (P0a seeded PR).

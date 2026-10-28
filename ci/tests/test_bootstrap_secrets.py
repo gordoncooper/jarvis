@@ -15,7 +15,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = REPO_ROOT / "tools" / "bootstrap-secrets"
-TOOLS = REPO_ROOT / "tools"
+TOOLS_LIB = REPO_ROOT / "tools" / "lib"
 
 
 def _load_module():
@@ -31,8 +31,8 @@ def _load_module():
 
 
 def _load_sops():
-    if str(TOOLS) not in sys.path:
-        sys.path.insert(0, str(TOOLS))
+    if str(TOOLS_LIB) not in sys.path:
+        sys.path.insert(0, str(TOOLS_LIB))
     import _sops
 
     return _sops

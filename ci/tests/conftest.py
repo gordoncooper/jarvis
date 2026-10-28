@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
-_TOOLS = _ROOT / "tools"
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-if str(_TOOLS) not in sys.path:
-    sys.path.insert(0, str(_TOOLS))
+_TOOLS_LIB = _ROOT / "tools" / "lib"
+_CHECKS_LIB = _ROOT / "ci" / "checks" / "lib"
+for _entry in (_ROOT, _TOOLS_LIB, _CHECKS_LIB):
+    if str(_entry) not in sys.path:
+        sys.path.insert(0, str(_entry))
 
 
 def ci_mode() -> bool:

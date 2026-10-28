@@ -1,15 +1,19 @@
-# Wraps tools/ (render, check, verify, bootstrap-secrets, seal, …).
+# Operator tools live in tools/. Build and test live in ci/.
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help deps ci-verify verify bootstrap-secrets seal
 help:
 	@echo "JARVIS Makefile"
+	@echo
+	@echo "Operator commands"
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
-	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
 	@echo "  make verify             Phase exit check (PHASE=p0a ENV=<env> required)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
+	@echo
+	@echo "Developer commands"
+	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
 
 deps:
 	python3 tools/install-deps
@@ -17,7 +21,7 @@ deps:
 	.venv/bin/pip install -r requirements-dev.txt
 
 ci-verify: deps
-	@bash tools/ci-local-verify
+	@bash ci/ci-local-verify
 
 verify:
 	@test -n "$(PHASE)" || (echo "PHASE is required" >&2; exit 1)

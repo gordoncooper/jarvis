@@ -200,7 +200,7 @@ def _owner_items() -> list[str]:
         " (data_disk and agent plays skip on an env with none):",
         "- second make bootstrap-secrets output (nothing changed):",
     ]
-    checks = (REPO_ROOT / "tools/ci-rule-checks.txt").read_text(encoding="utf-8").split()
+    checks = (REPO_ROOT / "ci/rule-checks.txt").read_text(encoding="utf-8").split()
     items.extend(f"- seeded bad PR for {name}:" for name in checks)
     items.append("- Renovate PR:")
     items.append("- p0a-16 rollback-drill log (infra/ansible/README.md Recovery):")

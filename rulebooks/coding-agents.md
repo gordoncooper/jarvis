@@ -1,20 +1,21 @@
 # Coding agents
 
-Rules here are prose only for what `tools/checks/` and `.cursor/cli.json` cannot enforce (R39). When a check or deny entry already covers a rule, this file names it in one line and does not restate it. A task brief overrides this file on how to open, stack, or stop a PR.
+Rules here are prose only for what `ci/checks/` and `.cursor/cli.json` cannot enforce (R39). When a check or deny entry already covers a rule, this file names it in one line and does not restate it. A task brief overrides this file on how to open, stack, or stop a PR.
 
 ## Automated guards (do not duplicate)
 
-- **R34 — Git is the source of truth; no direct cluster or secret tooling:** `tools/checks/cli-deny` and `.cursor/cli.json`.
-- **R3 / R28 — Core stays env-agnostic and identity-free:** `tools/checks/core-names`. Its spec is the identity section of `schema/CONTRACT.md`; read it there, not here.
-- **Env schema (values under `envs/<env>/`):** `tools/checks/env-schema`.
-- **R2 — Each component folder has `CONTRACT.md`:** `tools/checks/contract-md`.
-- **R25 — No plaintext secrets in Git:** `tools/checks/secret-scan`.
+- **R34 — Git is the source of truth; no direct cluster or secret tooling:** `ci/checks/cli-deny` and `.cursor/cli.json`.
+- **R3 / R28 — Core stays env-agnostic and identity-free:** `ci/checks/core-names`. Its spec is the identity section of `schema/CONTRACT.md`; read it there, not here.
+- **Env schema (values under `envs/<env>/`):** `ci/checks/env-schema`.
+- **R2 — Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
+- **R25 — No plaintext secrets in Git:** `ci/checks/secret-scan`.
+- **Product trees do not use `ci/`:** `ci/checks/product-ci`. `tools/verify` may read `ci/rule-checks.txt`.
 - **Deferred on purpose; don't add early:** model names in core (R28) return to `core-names` in **p2-23**; `pvc-backup` (R31) returns with the first real PVC in **p0b-09**.
 
 ## Stay lean
 
 - Build only what the plan step's done check needs, nothing speculative. This caps scope, not quality: what you do build is clean, consistent with the code around it, and uses the tool's own idioms (an Ansible module over shell where one exists, no dead code, no placeholder scripts, no errors swallowed, one source of truth per value).
-- Tests check behavior or encode a rule. Don't copy templates or hard-code task lists. Don't add a test that only runs a `tools/checks/` entry against the tree CI already scans; behavior tests use fixtures.
+- Tests check behavior or encode a rule. Don't copy templates or hard-code task lists. Don't add a test that only runs a `ci/checks/` entry against the tree CI already scans; behavior tests use fixtures.
 - Add container tests only when no cheaper proof exists. A live run is the proof where there is one.
 - No local tooling that duplicates a hosted service.
 - Prefer deleting code to adding it.

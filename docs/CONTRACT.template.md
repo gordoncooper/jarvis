@@ -18,4 +18,4 @@ Settings, where they live, and allowed values.
 
 ## Proven by
 
-CI rule checks (`tools/checks/`) and/or phase exit checks (`make verify PHASE=…`) that enforce this contract.
+CI rule checks (`ci/checks/`) and/or phase exit checks (`make verify PHASE=…`) that enforce this contract.

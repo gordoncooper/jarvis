@@ -19,4 +19,4 @@ Chart tag in `oci-repository.yaml` (`spec.ref.tag`) is the one pin. The flux-ope
 
 ## Proven by
 
-`tools/tests/test_flux_operator_install.py` (Ansible/Git pin alignment, helm CLI argv), `tools/tests/test_flux_entry.py` (substitute disabled, kustomize render + schema validation).
+`ci/tests/test_flux_operator_install.py` (Ansible/Git pin alignment, helm CLI argv), `ci/tests/test_flux_entry.py` (substitute disabled, kustomize render + schema validation).
