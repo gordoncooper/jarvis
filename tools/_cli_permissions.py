@@ -63,14 +63,7 @@ def _glob_pattern_variants(pattern: str) -> list[str]:
     return variants
 
 
-_SHELL_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
-_AGE_WORD = re.compile(r"(?<![A-Za-z0-9_])age(?![A-Za-z0-9_])")
-
-
-def match_glob(pattern: str, value: str, *, casefold: bool = False) -> bool:
-    if casefold:
-        pattern = pattern.casefold()
-        value = value.casefold()
+def match_glob(pattern: str, value: str) -> bool:
     pattern = pattern.strip()
     if not value and pattern not in ("**", "**/*"):
         return False
@@ -85,65 +78,25 @@ def match_glob(pattern: str, value: str, *, casefold: bool = False) -> bool:
     return fnmatch.fnmatchcase(value, pattern)
 
 
-def _kubectl_or_flux(pattern: str) -> bool:
-    folded = pattern.casefold()
-    if "kubectl" in folded:
-        return True
-    return re.search(r"(?<![a-z0-9_])flux(?![a-z0-9_])", folded) is not None
-
-
-def _age_decrypt_pattern(entry: ShellEntry) -> bool:
-    blob = entry.full_pattern.casefold()
-    if "age" not in blob:
-        return False
-    return "-d" in blob or "decrypt" in blob
-
-
-def _args_tokens_anywhere(args_pattern: str, command_line: str) -> bool:
-    """True when every kubectl/flux args glob hits some word in the command."""
-    words = _SHELL_WORD.findall(command_line)
-    required = [part for part in args_pattern.split() if part.strip("*")]
-    if not required:
-        return False
-    return all(
-        any(fnmatch.fnmatchcase(word.casefold(), part.casefold()) for word in words)
-        for part in required
-    )
-
-
-def _shell_entry_matches(entry: ShellEntry, command_line: str) -> bool:
-    line = command_line.strip()
-    base = extract_base_command(line)
-    fold = _kubectl_or_flux(entry.full_pattern) or _kubectl_or_flux(entry.command_pattern)
-    if entry.args_pattern is not None:
-        args = line[line.index(" ") + 1 :].strip() if " " in line else ""
-        cmd_hit = match_glob(entry.command_pattern, base, casefold=fold) or match_glob(
-            entry.command_pattern, line, casefold=fold
-        )
-        if cmd_hit and match_glob(entry.args_pattern, args, casefold=fold):
-            return True
-        if fold and cmd_hit and _args_tokens_anywhere(entry.args_pattern, line):
-            return True
-    line_cmp = line.casefold() if fold else line
-    full_cmp = entry.full_pattern.casefold() if fold else entry.full_pattern
-    base_cmp = base.casefold() if fold else base
-    return (
-        match_glob(entry.full_pattern, line, casefold=fold)
-        or line_cmp.startswith(f"{full_cmp} ")
-        or match_glob(entry.full_pattern, base, casefold=fold)
-        or base_cmp == full_cmp
-    )
-
-
 def matches_shell(entry_token: str, command_line: str) -> bool:
     entry = parse_shell_entry(entry_token)
     if entry is None:
         return False
-    if not _shell_entry_matches(entry, command_line):
-        return False
-    if _age_decrypt_pattern(entry) and _AGE_WORD.search(command_line) is None:
-        return False
-    return True
+    line = command_line.strip()
+    base = extract_base_command(line)
+    if entry.args_pattern is not None:
+        args = line[line.index(" ") + 1 :].strip() if " " in line else ""
+        cmd_hit = match_glob(entry.command_pattern, base) or match_glob(
+            entry.command_pattern, line
+        )
+        if cmd_hit and match_glob(entry.args_pattern, args):
+            return True
+    return (
+        match_glob(entry.full_pattern, line)
+        or line.startswith(f"{entry.full_pattern} ")
+        or match_glob(entry.full_pattern, base)
+        or base == entry.full_pattern
+    )
 
 
 def matches_read(entry_token: str, file_path: str) -> bool:
@@ -222,8 +175,18 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "flux bootstrap github",
     "flux install",
     "flux suspend kustomization demo",
+    # Case-sensitive globs (* ? ** only). These six casings are what an agent
+    # would type. Other mixed casings (for example SeCrEt) are a known gap.
+    "kubectl get secret",
+    "kubectl get secrets",
+    "kubectl get Secret",
+    "kubectl get Secrets",
+    "kubectl get SECRET",
+    "kubectl get SECRETS",
     "kubectl get Secret -n flux-system sops-age",
+    "kubectl get Secrets -A",
     "kubectl get SECRET -n flux-system sops-age",
+    "kubectl get SECRETS -A",
     "kubectl -n kube-system rollout restart deployment/kustomize-controller",
     "kubectl -n kube-system drain node.example",
     "kubectl -n default label node.example app=demo",
@@ -248,6 +211,13 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "flux tree kustomization demo",
     "flux events --for Kustomization/demo",
     "flux reconcile kustomization demo --with-source",
+    "kubectl get nodes --show-labels",
+    "kubectl get statefulsets -A",
+    "kubectl get replicasets -A",
+    "kubectl get pods --field-selector=status.phase=Running",
+    "kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'",
+    "docker images -d",
+    "python3 manage.py --dry-run",
 )
 
 
