@@ -181,6 +181,20 @@ def test_render_netplan_pins_the_current_address() -> None:
     )
 
 
+def test_sshd_dropin_turns_off_password_login_only() -> None:
+    module = _load()
+    text = module.sshd_password_off()
+    assert text == "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
+    assert "PubkeyAuthentication" not in text
+
+
+def test_clock_synced_is_yes_only() -> None:
+    module = _load()
+    assert module.clock_synced("yes\n")
+    assert not module.clock_synced("no\n")
+    assert not module.clock_synced("")
+
+
 def test_inventory_name_keeps_the_connected_domain() -> None:
     module = _load()
     assert module.inventory_name("node.example", "other") == "other.example"

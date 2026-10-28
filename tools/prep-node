@@ -638,12 +638,14 @@ def batch_ssh(
     public: Path,
     *,
     tty: bool = False,
+    stdin: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return ssh(
         f"{user}@{host}",
         remote,
         batch=True,
         tty=tty,
+        stdin=stdin,
         identity=_private_key(public),
     )
 
@@ -668,6 +670,59 @@ def proof(user: str, host: str, public: Path) -> None:
             print(detail, file=sys.stderr)
     if failed:
         raise PrepError("proof failed")
+
+
+def sshd_password_off() -> str:
+    return "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
+
+
+def _sudo_script(user: str, host: str, public: Path, script: str) -> subprocess.CompletedProcess[str]:
+    return batch_ssh(user, host, "sudo -n bash -s", public, stdin=script)
+
+
+def offer_ssh_passwords_off(user: str, host: str, public: Path) -> None:
+    probe = "sudo -n sshd -T | grep -i '^passwordauthentication no'"
+    if batch_ssh(user, host, probe, public).returncode == 0:
+        print("SSH password login is already off.")
+        return
+    if not confirm("Turn off SSH password login?"):
+        print("Left SSH password login on.")
+        return
+    payload = shlex.quote(sshd_password_off())
+    apply = f"""\
+set -euo pipefail
+file=/etc/ssh/sshd_config.d/00-prep-node.conf
+install -d -m 755 /etc/ssh/sshd_config.d
+printf '%s' {payload} > "$file"
+if ! sshd -t; then rm -f "$file"; systemctl reload ssh || true; exit 1; fi
+if ! systemctl reload ssh; then rm -f "$file"; systemctl reload ssh || true; exit 1; fi
+"""
+    revert = """\
+set -euo pipefail
+rm -f /etc/ssh/sshd_config.d/00-prep-node.conf
+systemctl reload ssh || true
+"""
+    if _sudo_script(user, host, public, apply).returncode != 0:
+        raise PrepError("sshd rejected turning off password login; removed that change")
+    if batch_ssh(user, host, "true", public).returncode != 0:
+        _sudo_script(user, host, public, revert)
+        raise PrepError("key login failed after turning off SSH passwords; removed that change")
+    print("SSH password login is off.")
+
+
+def clock_synced(value: str) -> bool:
+    return value.strip() == "yes"
+
+
+def check_clock(user: str, host: str, public: Path) -> None:
+    result = batch_ssh(user, host, "timedatectl show -p NTPSynchronized --value", public)
+    if result.returncode != 0:
+        raise PrepError(result.stderr.strip() or "could not read whether the clock is synced")
+    if clock_synced(result.stdout):
+        return
+    print("Warning: the clock is not synced. k3s and SOPS need a correct clock.")
+    if not confirm("Continue with the clock unsynced?", default_yes=True):
+        raise PrepError("stopped because the clock is not synced")
 
 
 def _host_key_match(line: str, name: str) -> re.Match[str] | None:
@@ -948,6 +1003,8 @@ def run(argv: list[str] | None = None) -> None:
         session.close()
 
     proof(ansible_user, inventory_host, public)
+    offer_ssh_passwords_off(ansible_user, inventory_host, public)
+    check_clock(ansible_user, inventory_host, public)
     apply_env_edits(REPO_ROOT, env, host, inventory_host, ansible_user)
     sync_age_key(REPO_ROOT, env)
     schema_error: PrepError | None = None
