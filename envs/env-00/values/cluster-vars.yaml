@@ -12,7 +12,7 @@ backup_retention_daily: 1
 backup_retention_weekly: 2
 backup_retention_monthly: 3
 
-k3s_version: v0.0.0-example
+k3s_version: v0.0.0+k3s0
 k3s_sha256: abababababababababababababababababababababababababababababababab
 pod_cidr: 10.80.0.0/16
 service_cidr: 10.81.0.0/16

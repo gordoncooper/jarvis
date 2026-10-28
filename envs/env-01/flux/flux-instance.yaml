@@ -6,6 +6,7 @@ metadata:
   namespace: flux-system
 spec:
   distribution:
+    # renovate: datasource=github-releases depName=fluxcd/flux2 versioning=semver
     version: "2.8.8"
     registry: ghcr.io/fluxcd
   components:

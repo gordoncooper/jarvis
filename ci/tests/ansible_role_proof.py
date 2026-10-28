@@ -57,6 +57,12 @@ def env_inventory_args(repo_root: Path = REPO_ROOT) -> list[str]:
     ]
 
 
+def load_role_defaults(role_dir: Path) -> dict[str, object]:
+    data = yaml.safe_load((role_dir / "defaults" / "main.yml").read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
+
+
 def load_cluster_vars(
     repo_root: Path = REPO_ROOT, *, env: str | None = None
 ) -> dict[str, object]:

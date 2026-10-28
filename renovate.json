@@ -27,6 +27,13 @@
       "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"]
     },
     {
+      "description": "Flux distribution version is one pin in the role default and each env FluxInstance. Auto-merge stays off.",
+      "groupName": "flux-distribution",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["fluxcd/flux2"],
+      "automerge": false
+    },
+    {
       "description": "Helm host CLI version and sha256 are bumped together by PR.",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["helm/helm"],
@@ -45,6 +52,18 @@
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version: (?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Flux distribution version in the Ansible role default and FluxInstance.",
+      "managerFilePatterns": [
+        "/^infra\\/ansible\\/roles\\/flux-operator\\/defaults\\/main\\.yml$/",
+        "/^envs\\/[^/]+\\/flux\\/flux-instance\\.yaml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*(?:flux_distribution_version|version):\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "extractVersionTemplate": "^v?(?<version>.*)$"
     }
   ]
 }

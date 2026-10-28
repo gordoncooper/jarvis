@@ -18,6 +18,7 @@ from ansible_role_proof import (
     playbook_recap_field,
 )
 from conftest import require_cli
+from schema.env import DEFAULT_SSH_USER
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
 
@@ -88,6 +89,74 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert plays[5].get("tags") == ["k3s"]
     assert plays[6].get("tags") == ["kubeconfig"]
     assert plays[7].get("tags") == ["flux-operator"]
+    connection = plays[0].get("vars")
+    assert all(play.get("vars") == connection for play in plays)
+
+
+def test_omitted_ssh_user_uses_schema_default(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
+    assert isinstance(plays, list)
+    connection = plays[0]["vars"]
+
+    def resolve(cluster_text: str) -> str:
+        cluster = tmp_path / "cluster-vars.yaml"
+        cluster.write_text(cluster_text, encoding="utf-8")
+        play = tmp_path / "play.yml"
+        play.write_text(
+            yaml.safe_dump(
+                [
+                    {
+                        "hosts": "localhost",
+                        "gather_facts": False,
+                        "connection": "local",
+                        "become": False,
+                        "vars": connection,
+                        "vars_files": plays[0]["vars_files"],
+                        "tasks": [
+                            {
+                                "ansible.builtin.debug": {
+                                    "msg": "RESOLVED={{ ansible_user }}"
+                                }
+                            }
+                        ],
+                    }
+                ],
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+        env["ANSIBLE_LOOKUP_PLUGINS"] = str(ANSIBLE_DIR / "lookup_plugins")
+        env["ANSIBLE_BECOME"] = "false"
+        proc = subprocess.run(
+            [
+                "ansible-playbook",
+                str(play),
+                "-i",
+                "localhost,",
+                "-c",
+                "local",
+                "-e",
+                "jarvis_cluster_vars=cluster-vars.yaml",
+                "-e",
+                "ansible_connection=local",
+                "-e",
+                "ansible_become=false",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        output = proc.stdout + proc.stderr
+        assert proc.returncode == 0, output
+        return output
+
+    assert f"RESOLVED={DEFAULT_SSH_USER}" in resolve("{}\n")
+    assert "RESOLVED=deploy" in resolve("ssh_user: deploy\n")
 
 
 def _task_documents() -> list[dict[str, object]]:

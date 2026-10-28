@@ -11,6 +11,7 @@ from ansible_role_proof import (
     cluster_vars_playbook_path,
     env_inventory_args,
     load_cluster_vars,
+    load_role_defaults,
 )
 
 ROLE_TEMPLATES = ANSIBLE_DIR / "roles" / "base-os" / "templates"
@@ -27,13 +28,18 @@ def test_base_os_templates_encode_manual_upgrade_policy() -> None:
     for pool in pools:
         assert f"pool {pool}" in chrony
 
+    journald_cap = load_role_defaults(ANSIBLE_DIR / "roles" / "base-os")[
+        "jarvis_journald_system_max_use"
+    ]
     journald = ansible_render_template(
         "journald-jarvis.conf.j2",
-        {"jarvis_journald_system_max_use": cluster.get("jarvis_journald_system_max_use", "2G")},
+        {"jarvis_journald_system_max_use": journald_cap},
         templates_dir=ROLE_TEMPLATES,
     )
-    assert "SystemMaxUse=2G" in journald
+    assert f"SystemMaxUse={journald_cap}" in journald
 
+    auto_upgrades_path = ROLE_TEMPLATES / "20auto-upgrades.j2"
+    assert "departure from framework" not in auto_upgrades_path.read_text(encoding="utf-8")
     auto_upgrades = ansible_render_template(
         "20auto-upgrades.j2", {}, templates_dir=ROLE_TEMPLATES
     )

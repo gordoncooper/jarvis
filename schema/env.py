@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import zoneinfo
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -58,6 +59,7 @@ _CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 
 _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 _ENV_GIT_PATH = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/")
+_K3S_VERSION = re.compile(r"^v(\d+\.\d+\.\d+)\+k3s\d+$")
 
 _HERMES_TOP_LEVEL = frozenset(
     {"bots", "cron", "bot_tier_map", "tier_model_map", "lane_model_map"}
@@ -81,6 +83,14 @@ class ValidationError(Exception):
     def __init__(self, messages: list[str]) -> None:
         self.messages = messages
         super().__init__("\n".join(messages))
+
+
+def kubernetes_version_from_k3s(value: str) -> str | None:
+    """Return the Kubernetes release inside a k3s pin, or None when the pin does not match."""
+    match = _K3S_VERSION.fullmatch(value.strip())
+    if match is None:
+        return None
+    return match.group(1)
 
 
 def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
@@ -334,6 +344,18 @@ def _validate_cluster_vars(
     if isinstance(k3s_sha, str) and k3s_sha and not _SHA256_HEX.match(k3s_sha):
         errors.append(f"{rel_path}: k3s_sha256 must be a 64-character lowercase hex string")
 
+    time_zone = data.get("time_zone")
+    if isinstance(time_zone, str) and time_zone.strip():
+        errors.extend(_validate_time_zone(rel_path, time_zone.strip()))
+
+    k3s_version = data.get("k3s_version")
+    if isinstance(k3s_version, str) and k3s_version.strip():
+        if kubernetes_version_from_k3s(k3s_version) is None:
+            errors.append(
+                f"{rel_path}: k3s_version must be a k3s version string "
+                "(v<major>.<minor>.<patch>+k3s<n>)"
+            )
+
     local_path = data.get("local_path_data")
     if isinstance(local_path, str) and local_path and not local_path.startswith("/"):
         errors.append(f"{rel_path}: local_path_data must be an absolute path")
@@ -365,6 +387,14 @@ def _validate_cluster_vars(
             errors.append(f"{rel_path}: {key} must be a non-empty string")
 
     return errors, owner
+
+
+def _validate_time_zone(rel_path: str, value: str) -> list[str]:
+    try:
+        zoneinfo.ZoneInfo(value)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        return [f"{rel_path}: time_zone must be an IANA time zone"]
+    return []
 
 
 def _validate_cidr(rel_path: str, key: str, value: Any) -> list[str]:
