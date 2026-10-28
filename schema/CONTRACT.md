@@ -23,7 +23,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 
 ## Health
 
-Not a runtime component. Health is “validation passes”: `tools/checks/env-schema` exits 0 for the env tree.
+Not a runtime component. Health is “validation passes”: `ci/checks/env-schema` exits 0 for the env tree.
 
 ## Config
 
@@ -108,15 +108,15 @@ The FluxInstance sets kustomize-controller `StrictPostBuildSubstitutions=true`. 
 
 ### Identity values and product rules
 
-`tools/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user`, `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
+`ci/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user`, `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
 
-Scanned paths are `infra/`, `platform/`, `schema/`, `services/`, `tools/`, `docs/`, `rulebooks/`, `.github/` except `CODEOWNERS`, and every `README` / `README.md`. Env names may appear under `envs/**` and `docs/**`. Hostnames, `dns_suffix`, the owner handle, and `ssh_user` forms may appear only under the `envs/<env>/` they were read from. The personal name may appear nowhere.
+Scanned paths are `infra/`, `platform/`, `schema/`, `services/`, `tools/`, `ci/`, `docs/`, `rulebooks/`, `.github/` except `CODEOWNERS`, and every `README` / `README.md`. Env names may appear under `envs/**` and `docs/**`. Hostnames, `dns_suffix`, the owner handle, and `ssh_user` forms may appear only under the `envs/<env>/` they were read from. The personal name may appear nowhere.
 
 Matching is case-insensitive, on tokens made of letters, digits, underscores, and hyphens. A dot is a boundary, so a DNS suffix inside a longer hostname fails, and a value inside a longer token passes. `ssh_user` matches only as `/home/<user>`, `<user>@<host>`, or `~<user>`.
 
 Repo URLs outside `envs/<env>/` fail because they contain the owner handle. Bare repo names are not identity values.
 
-Product rules in the same check: the word `bastion`, and any hardcoded `/home/` path. This file and `tools/_core_names.py` name those tokens. That pair is the one exemption, and it covers only the product rules.
+Product rules in the same check: the word `bastion`, and any hardcoded `/home/` path. This file and `ci/checks/lib/_core_names.py` name those tokens. That pair is the one exemption, and it covers only the product rules.
 
 `.sops.yaml` has one age creation rule per non-example env, keyed on `envs/<env>/secrets/` (D45). The example env has no root rule.
 
@@ -126,11 +126,11 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 
 ## Proven by
 
-- `tools/checks/env-schema` in the required `ci` workflow (added in `p0a-05`).
+- `ci/checks/env-schema` in the required `ci` workflow (added in `p0a-05`).
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
 - A drift test fails when the known-key set gains a key the example env does not set.
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
 - A drift test fails when the known role set gains a role the example env does not declare.
 - `ansible-inventory --graph` on the example env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles.yml`.
-- `tools/checks/core-names` rejects identity values on the scanned paths and fails when `OWNER_NAME` is unset.
+- `ci/checks/core-names` rejects identity values on the scanned paths and fails when `OWNER_NAME` is unset.

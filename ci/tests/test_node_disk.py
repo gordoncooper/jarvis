@@ -7,7 +7,7 @@ import subprocess
 from ansible_role_proof import ANSIBLE_DIR, REPO_ROOT
 from conftest import require_cli
 
-FIXTURE = REPO_ROOT / "tools" / "tests" / "fixtures" / "node-disk"
+FIXTURE = REPO_ROOT / "ci" / "tests" / "fixtures" / "node-disk"
 
 
 def test_dropin_unit_follows_host_group() -> None:

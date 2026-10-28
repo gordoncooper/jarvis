@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run tools/checks with the expected-list guard (CI and make ci-verify).
+# Run ci/checks with the expected-list guard (CI and make ci-verify).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,15 +14,19 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   line="${line%"${line##*[![:space:]]}"}"
   [[ -n "$line" ]] || continue
   expected_checks+=("$line")
-done <"$repo_root/tools/ci-rule-checks.txt"
+done <"$repo_root/ci/rule-checks.txt"
 if ((${#expected_checks[@]} == 0)); then
-  echo "tools/ci-rule-checks.txt is empty" >&2
+  echo "ci/rule-checks.txt is empty" >&2
   exit 1
 fi
 
 shopt -s nullglob
 found_checks=()
-for check in tools/checks/*; do
+for check in ci/checks/*; do
+  # ci/checks/lib holds helpers, not checks.
+  if [[ -d "$check" ]]; then
+    continue
+  fi
   name="$(basename "$check")"
   if [[ ! -f "$check" ]]; then
     echo "missing check file: $check" >&2
@@ -51,11 +55,11 @@ for name in "${found_checks[@]}"; do
   fi
 done
 if ((${#extra[@]} > 0)); then
-  echo "unexpected checks in tools/checks/: ${extra[*]}" >&2
+  echo "unexpected checks in ci/checks/: ${extra[*]}" >&2
   exit 1
 fi
 for name in "${expected_checks[@]}"; do
-  check="tools/checks/${name}"
+  check="ci/checks/${name}"
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     echo "::group::$name"
   fi

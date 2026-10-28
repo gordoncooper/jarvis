@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# CI rule check: product trees do not import, execute, source, or read ci/.
+# The one exception: tools/verify may read ci/rule-checks.txt.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _product_ci import format_violations, scan_product_ci
+
+violations = scan_product_ci(Path("."))
+if violations:
+    for line in format_violations(violations):
+        print(line, flush=True)
+    raise SystemExit(1)
+PY

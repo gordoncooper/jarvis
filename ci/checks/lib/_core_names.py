@@ -27,7 +27,7 @@ from schema.env import is_example_env, repo_owner_handle, validate_env_tree
 # One exemption, two paths: files that state the product-rule tokens.
 _PRODUCT_RULE_EXEMPT = frozenset(
     {
-        "tools/_core_names.py",
+        "ci/checks/lib/_core_names.py",
         "schema/CONTRACT.md",
     }
 )
@@ -38,6 +38,7 @@ _SCAN_ROOTS = (
     "schema/",
     "services/",
     "tools/",
+    "ci/",
     "docs/",
     "rulebooks/",
     ".github/",

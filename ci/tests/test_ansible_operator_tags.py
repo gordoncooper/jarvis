@@ -6,7 +6,7 @@ import subprocess
 
 from ansible_role_proof import ANSIBLE_DIR, REPO_ROOT, env_name
 
-LIST_TASKS_INVENTORY = REPO_ROOT / "tools/tests/fixtures/ansible-list-tasks/hosts.yml"
+LIST_TASKS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
 CLUSTER_VARS_REL = f"../../envs/{env_name()}/values/cluster-vars.yaml"
 
 

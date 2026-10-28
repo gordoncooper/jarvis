@@ -22,5 +22,5 @@ Create the env empty. Do not copy this folder or its secrets, and do not retarge
 1. Add `envs/<env>/values/` (`cluster-vars.yaml`, `hermes.yaml`, `apps.yaml`) and `envs/<env>/inventory/hosts.yml` with that env's own values and hosts.
 2. Add an age creation rule in the repo root `.sops.yaml` for `envs/<env>/secrets/`.
 3. `make bootstrap-secrets ENV=<env>`
-4. Render the ConfigMap with `python3 tools/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`.
+4. Render the ConfigMap with `python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`.
 5. Add a `flux/` tree whose git paths use `envs/<env>/`.

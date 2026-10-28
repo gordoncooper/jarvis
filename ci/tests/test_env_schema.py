@@ -462,7 +462,7 @@ def test_cli_requires_env() -> None:
     commands = (
         [sys.executable, "tools/bootstrap-secrets"],
         [sys.executable, "tools/seal", "--name", "example"],
-        [sys.executable, "tools/render_cluster_vars_configmap.py"],
+        [sys.executable, "tools/lib/render_cluster_vars_configmap.py"],
     )
     for cmd in commands:
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)

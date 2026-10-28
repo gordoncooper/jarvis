@@ -26,10 +26,10 @@ jobs:
       - name: Install pinned CLIs and Python test deps
         run: make deps
 
-      - name: Run tools/checks
+      - name: Run ci/checks
         env:
           OWNER_NAME: ${{ vars.OWNER_NAME }}
-        run: bash tools/run-checks
+        run: bash ci/run-checks
 
       - name: pytest
         run: |
