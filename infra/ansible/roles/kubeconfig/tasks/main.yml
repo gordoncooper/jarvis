@@ -45,6 +45,7 @@
         src: "{{ k3s_kubeconfig_staging.path }}/k3s.yaml"
         dest: "{{ k3s_kubeconfig_runner_path }}"
         mode: "0600"
+        backup: true
       delegate_to: localhost
       become: false
       no_log: true

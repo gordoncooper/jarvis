@@ -194,17 +194,25 @@ def _check_enablelb(nodes: dict[str, dict[str, str]], roles: dict[str, set[str]]
     return 0
 
 
-def _print_checklist() -> None:
-    _line("Owner checklist:")
-    _line(
+def _owner_items() -> list[str]:
+    items = [
         "- second site.yml PLAY RECAP shows changed=0 and failed=0"
-        " (data_disk and agent plays skip on an env with none):"
-    )
-    _line("- second make bootstrap-secrets output (nothing changed):")
-    for name in (REPO_ROOT / "tools/ci-rule-checks.txt").read_text(encoding="utf-8").split():
-        _line(f"- seeded bad PR for {name}:")
-    _line("- Renovate PR:")
-    _line("- p0a-16 rollback-drill log:")
+        " (data_disk and agent plays skip on an env with none):",
+        "- second make bootstrap-secrets output (nothing changed):",
+    ]
+    checks = (REPO_ROOT / "tools/ci-rule-checks.txt").read_text(encoding="utf-8").split()
+    items.extend(f"- seeded bad PR for {name}:" for name in checks)
+    items.append("- Renovate PR:")
+    items.append("- p0a-16 rollback-drill log:")
+    return items
+
+
+def _print_checklist() -> int:
+    items = _owner_items()
+    _line("Owner checklist:")
+    for item in items:
+        _line(item)
+    return len(items)
 
 
 def run(
@@ -217,8 +225,12 @@ def run(
     failed = _check_flux(kubectl, budget_s=budget_s) + _check_secret(kubectl)
     roles, suffix, nodes = _load(repo_root, env, kubectl)
     failed += _check_node_roles(nodes, roles, suffix) + _check_enablelb(nodes, roles)
-    _print_checklist()
-    return 1 if failed else 0
+    remaining = _print_checklist()
+    if failed:
+        return 1
+    if remaining:
+        _line(f"automatic checks passed; {remaining} owner items remain")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

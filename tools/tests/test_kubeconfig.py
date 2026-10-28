@@ -30,6 +30,8 @@ def test_kubeconfig_role_does_not_override_group_vars_path() -> None:
     doc, tasks = _task_entries()
     fetch = next(task for task in tasks if "ansible.builtin.fetch" in task)
     assert fetch["ansible.builtin.fetch"]["src"] == "{{ k3s_kubeconfig_path }}"
+    copy = next(task for task in tasks if "ansible.builtin.copy" in task)
+    assert copy["ansible.builtin.copy"]["backup"] is True
     var_blocks = [entry.get("vars") or {} for entry in doc]
     var_blocks += [task.get("vars") or {} for task in tasks]
     assert all("k3s_kubeconfig_path" not in block for block in var_blocks)

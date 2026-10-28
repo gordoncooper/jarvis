@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import re
 import subprocess
+from pathlib import Path
 
 import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
     REPO_ROOT,
+    cluster_vars_playbook_path,
     env_inventory_args,
     inventory_path,
     non_example_env_names,
     playbook_recap_field,
+    roles_inventory_path,
 )
 from conftest import require_cli
 
@@ -96,3 +99,43 @@ def test_env_hosts_file_alone_fails_before_any_change() -> None:
     assert "-i ../inventory/roles.yml" in text
     assert "base-os :" not in text
     assert playbook_recap_field(text, "changed") == 0
+
+
+def test_data_disk_group_exists_when_no_host_sets_one(tmp_path: Path) -> None:
+    require_cli("ansible-inventory")
+    hosts = tmp_path / "hosts.yml"
+    hosts.write_text(
+        "all:\n  hosts:\n    n1:\n      node_roles: [control_plane]\n",
+        encoding="utf-8",
+    )
+    graph = subprocess.run(
+        ["ansible-inventory", "--graph", "-i", str(hosts), "-i", str(roles_inventory_path())],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert graph.returncode == 0, graph.stdout + graph.stderr
+    assert _parse_graph(graph.stdout).get("data_disk") == set()
+
+    require_cli("ansible-playbook")
+    play = subprocess.run(
+        [
+            "ansible-playbook",
+            "--syntax-check",
+            "site.yml",
+            "-i",
+            str(hosts),
+            "-i",
+            str(roles_inventory_path()),
+            "-e",
+            f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    text = play.stdout + play.stderr
+    assert play.returncode == 0, text
+    assert "Could not match supplied host pattern, ignoring: data_disk" not in text
