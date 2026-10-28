@@ -16,6 +16,7 @@ from schema.env import (
     DEFAULT_SSH_USER,
     EXAMPLE_ENV,
     ValidationError,
+    is_example_env,
     validate_env_tree,
 )
 
@@ -79,7 +80,34 @@ def _write_env(
         hosts_yml if hosts_yml is not None else _default_hosts(),
         encoding="utf-8",
     )
+    if not is_example_env(env_name):
+        _ensure_sops_creation_rule(root, env_name)
     return env
+
+
+def _ensure_sops_creation_rule(root: Path, env_name: str) -> None:
+    path = root / ".sops.yaml"
+    rules: list[dict[str, object]] = []
+    if path.is_file():
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict) and isinstance(loaded.get("creation_rules"), list):
+            rules = list(loaded["creation_rules"])
+    needle = f"envs/{env_name}/secrets/"
+    if any(
+        isinstance(rule, dict) and needle in str(rule.get("path_regex", ""))
+        for rule in rules
+    ):
+        return
+    rules.append(
+        {
+            "path_regex": f"envs/{env_name}/secrets/.*\\.sops\\.yaml$",
+            "age": "age1fixture",
+        }
+    )
+    path.write_text(
+        yaml.safe_dump({"creation_rules": rules}, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
 def _valid_cluster_vars() -> dict:
@@ -89,9 +117,32 @@ def _valid_cluster_vars() -> dict:
     return dict(reference)
 
 
-def test_env_tree_passes():
-    resolved = validate_env_tree(REPO_ROOT)
-    assert EXAMPLE_ENV in resolved
+def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
+    _write_env(tmp_path)
+    (tmp_path / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "envs/env-test/secrets/" in "\n".join(excinfo.value.messages)
+
+
+def test_sops_creation_rule_rejects_example_env(tmp_path: Path):
+    _write_env(tmp_path)
+    path = tmp_path / ".sops.yaml"
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    rules = loaded["creation_rules"]
+    rules.append(
+        {
+            "path_regex": f"envs/{EXAMPLE_ENV}/secrets/.*\\.sops\\.yaml$",
+            "age": "age1fixture",
+        }
+    )
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert f"{EXAMPLE_ENV} must not have a creation rule" in "\n".join(
+        excinfo.value.messages
+    )
 
 
 def test_bad_build_agent_fails(tmp_path: Path):

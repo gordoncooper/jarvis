@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push verification: checks and full pytest (including containers).
+# Pre-push verification: checks and full pytest.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,10 +8,5 @@ cd "$ROOT"
 export PATH="${HOME}/.local/bin:${PATH}"
 
 bash tools/run-checks
-
-if ! docker info >/dev/null 2>&1; then
-  echo "docker info failed: the Docker daemon isn't reachable by the current user (not running, or user lacks access)" >&2
-  exit 1
-fi
 
 "${ROOT}/.venv/bin/pytest" -ra

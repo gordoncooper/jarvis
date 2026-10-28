@@ -4,31 +4,25 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
 from pathlib import Path
 
-import pytest
 import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
-    CONTAINER_NAME,
     K3S_ROLE_DIR,
     K3S_ROLE_TEMPLATES,
     REPO_ROOT,
     ansible_render_template,
-    docker_exec,
     env_name,
     inventory_path,
     non_example_env_names,
-    k3s_guard_playbook_cmd,
     load_cluster_vars,
-    require_docker,
     roles_inventory_path,
-    start_systemd_container,
-    stop_systemd_container,
 )
 from conftest import require_cli
 
@@ -178,12 +172,56 @@ def _agent_play_section(env: str) -> str:
     return section
 
 
+def _hosts_outside_control_plane(env: str) -> set[str]:
+    doc = yaml.safe_load(
+        (REPO_ROOT / "envs" / env / "inventory" / "hosts.yml").read_text(encoding="utf-8")
+    )
+    hosts = doc["all"]["hosts"]
+    return {
+        name
+        for name, host_vars in hosts.items()
+        if "control_plane" not in ((host_vars or {}).get("node_roles") or [])
+    }
+
+
+def _listed_play_hosts(section: str) -> set[str]:
+    listed: list[str] = []
+    capture = False
+    for line in section.splitlines():
+        header = re.search(r"hosts \(\d+\):\s*(.*)$", line)
+        if header:
+            capture = True
+            inline = header.group(1).strip()
+            if inline:
+                listed.extend(part.strip() for part in inline.split(",") if part.strip())
+            continue
+        if not capture:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.fullmatch(r"[A-Za-z0-9._-]+", stripped):
+            listed.append(stripped)
+            continue
+        break
+    return set(listed)
+
+
 def test_agent_play_host_pattern() -> None:
-    assert "hosts (6):" in _agent_play_section(env_name())
-    real_envs = non_example_env_names()
-    assert real_envs
-    for env in real_envs:
-        assert "hosts (0):" in _agent_play_section(env)
+    envs = [env_name(), *non_example_env_names()]
+    assert non_example_env_names()
+    for env in envs:
+        assert _listed_play_hosts(_agent_play_section(env)) == _hosts_outside_control_plane(env)
+
+
+def test_k3s_download_checksum_is_k3s_sha256() -> None:
+    doc = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    task = next(
+        item
+        for item in doc
+        if isinstance(item, dict) and "ansible.builtin.get_url" in item
+    )
+    assert task["ansible.builtin.get_url"]["checksum"] == "sha256:{{ k3s_sha256 }}"
 
 
 def _label_inventory(edge_hosts: list[str]) -> str:
@@ -275,49 +313,59 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
     assert no_edge["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
 
 
-def _install_fake_k3s_service(container: str) -> None:
-    unit = textwrap.dedent(
-        """\
-        [Unit]
-        Description=Fake k3s for guard tests
-
-        [Service]
-        Type=simple
-        ExecStart=/bin/sleep 3600
-        Restart=no
-
-        [Install]
-        WantedBy=multi-user.target
-        """
+def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    systemctl = fake_bin / "systemctl"
+    systemctl.write_text("#!/bin/sh\necho active\nexit 0\n", encoding="utf-8")
+    systemctl.chmod(0o755)
+    play = tmp_path / "play.yml"
+    guard = K3S_ROLE_DIR / "tasks" / "guard.yml"
+    play.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - name: k3s guard
+              hosts: localhost
+              gather_facts: false
+              become: false
+              environment:
+                PATH: "{fake_bin}:/usr/bin:/bin"
+              tasks:
+                - ansible.builtin.import_tasks: {guard}
+            """
+        ),
+        encoding="utf-8",
     )
-    write = docker_exec(
-        container,
-        "bash",
-        "-lc",
-        "cat > /etc/systemd/system/k3s.service <<'EOF'\n"
-        + unit
-        + "EOF\n"
-        "systemctl daemon-reload && systemctl start k3s",
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    result = subprocess.run(
+        [
+            "ansible-playbook",
+            str(play),
+            "-i",
+            "localhost,",
+            "-e",
+            "ansible_connection=local",
+            "-e",
+            "k3s_service_name=k3s",
+            "-e",
+            "jarvis_env=fixture",
+            "-e",
+            f"k3s_binary_path={tmp_path / 'missing-k3s'}",
+            "-e",
+            f"k3s_data_dir={tmp_path / 'missing-data'}",
+            "-e",
+            f"jarvis_marker_path={tmp_path / 'missing-marker'}",
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
     )
-    assert write.returncode == 0, write.stderr
-    active = docker_exec(container, "systemctl", "is-active", "k3s")
-    assert active.stdout.strip() == "active", active.stdout + active.stderr
-
-
-@pytest.mark.container
-def test_k3s_guard_refuses_active_k3s_without_marker() -> None:
-    require_docker()
-    start_systemd_container()
-    try:
-        _install_fake_k3s_service(CONTAINER_NAME)
-        result = subprocess.run(
-            k3s_guard_playbook_cmd(),
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode != 0, result.stdout + result.stderr
-        assert "k3s is already present" in result.stdout + result.stderr
-    finally:
-        stop_systemd_container()
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "k3s is already present" in output

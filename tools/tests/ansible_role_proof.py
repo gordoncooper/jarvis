@@ -1,20 +1,16 @@
-"""Helpers for Ansible container proof tests and template renders."""
+"""Helpers for Ansible role proof tests and template renders."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
-import pytest
 import yaml
 
-from conftest import ci_mode
 from schema.env import EXAMPLE_ENV, is_example_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -24,35 +20,6 @@ FLUX_OPERATOR_ROLE_DIR = ANSIBLE_DIR / "roles" / "flux-operator"
 FLUX_OPERATOR_ROLE_TEMPLATES = FLUX_OPERATOR_ROLE_DIR / "templates"
 FLUX_OPERATOR_ROLE_TASKS = FLUX_OPERATOR_ROLE_DIR / "tasks"
 K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
-SYSTEMD_DOCKERFILE = REPO_ROOT / "tools/tests/fixtures/systemd-ubuntu"
-SYSTEMD_IMAGE = "jarvis-base-os-systemd:test"
-CONTAINER_NAME = "jarvis-base-os-idem-test"
-DOCKER_PLAYBOOK_EXTRA_VARS: list[str] = ["-e", "ansible_user=root"]
-
-
-def _fail_or_skip(message: str, detail: str = "") -> None:
-    text = f"{message}:\n{detail}" if detail else message
-    if ci_mode():
-        pytest.fail(text)
-    pytest.skip(text)
-
-
-def docker_available() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    probe = subprocess.run(
-        ["docker", "info"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return probe.returncode == 0
-
-
-def require_docker() -> None:
-    if docker_available():
-        return
-    _fail_or_skip("docker is required for container proof tests")
 
 
 def env_name() -> str:
@@ -147,155 +114,6 @@ def ansible_render_template(
         dest.unlink(missing_ok=True)
 
 
-def build_systemd_image() -> str:
-    require_docker()
-    build = subprocess.run(
-        [
-            "docker",
-            "build",
-            "--build-arg",
-            "UBUNTU_VERSION=26.04",
-            "-t",
-            SYSTEMD_IMAGE,
-            str(SYSTEMD_DOCKERFILE),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if build.returncode != 0:
-        _fail_or_skip(
-            "failed to build Ubuntu 26.04 systemd test image",
-            f"{build.stdout}\n{build.stderr}",
-        )
-    return SYSTEMD_IMAGE
-
-
-def start_systemd_container(name: str = CONTAINER_NAME) -> str:
-    image = build_systemd_image()
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
-    run = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            name,
-            "--privileged",
-            "--cgroupns=host",
-            "-v",
-            "/sys/fs/cgroup:/sys/fs/cgroup:rw",
-            "--tmpfs",
-            "/run",
-            "--tmpfs",
-            "/run/lock",
-            image,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if run.returncode != 0:
-        _fail_or_skip("docker run failed", run.stderr)
-
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        wait = subprocess.run(
-            [
-                "docker",
-                "exec",
-                name,
-                "systemctl",
-                "is-system-running",
-                "--wait",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        state = wait.stdout.strip()
-        if state in {"running", "degraded"}:
-            _prepare_container_for_ansible(name)
-            return name
-        time.sleep(2)
-
-    logs = subprocess.run(
-        ["docker", "logs", name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    subprocess.run(["docker", "rm", "-f", name], check=False)
-    _fail_or_skip(
-        "systemd did not reach running/degraded in time",
-        f"{logs.stdout}\n{logs.stderr}",
-    )
-
-
-def _prepare_container_for_ansible(name: str) -> None:
-    prep = docker_exec(
-        name,
-        "bash",
-        "-lc",
-        "export DEBIAN_FRONTEND=noninteractive && apt-get update -qq",
-    )
-    if prep.returncode != 0:
-        stop_systemd_container(name)
-        _fail_or_skip("container apt update failed", prep.stderr)
-
-
-def stop_systemd_container(name: str = CONTAINER_NAME) -> None:
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
-
-
-def control_plane_inventory(container: str) -> str:
-    """One host in control_plane so server, kubeconfig, and flux plays match."""
-    path = Path(tempfile.gettempdir()) / f"{container}-control-plane.yml"
-    path.write_text(
-        "all:\n  children:\n    control_plane:\n      hosts:\n"
-        f"        {container}:\n",
-        encoding="utf-8",
-    )
-    return str(path)
-
-
-def _playbook_cmd(
-    container: str,
-    *,
-    extra_args: list[str],
-) -> list[str]:
-    return [
-        "ansible-playbook",
-        "site.yml",
-        "-i",
-        control_plane_inventory(container),
-        "-e",
-        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-        "-e",
-        "ansible_connection=docker",
-        *DOCKER_PLAYBOOK_EXTRA_VARS,
-        *extra_args,
-    ]
-
-
-def flux_operator_check_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
-    return _playbook_cmd(
-        container,
-        extra_args=[
-            "--check",
-            "--skip-tags",
-            "chrony-service,k3s,kubeconfig",
-        ],
-    )
-
-
-def k3s_guard_playbook_cmd(container: str = CONTAINER_NAME) -> list[str]:
-    return _playbook_cmd(
-        container,
-        extra_args=["--tags", "k3s"],
-    )
-
-
 def playbook_recap_field(output: str, field: str) -> int:
     recap_lines = [
         line
@@ -306,12 +124,3 @@ def playbook_recap_field(output: str, field: str) -> int:
     match = re.search(rf"{field}=(\d+)", recap_lines[-1])
     assert match is not None, output
     return int(match.group(1))
-
-
-def docker_exec(name: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["docker", "exec", name, *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )

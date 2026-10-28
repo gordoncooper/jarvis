@@ -7,55 +7,9 @@ from pathlib import Path
 
 from _cli_permissions import (
     command_allowed,
-    command_blocked_by_deny,
-    load_cli_permissions,
-    matches_read,
     matches_shell,
-    read_blocked_by_deny,
     run_dry_run,
 )
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI_JSON = REPO_ROOT / ".cursor" / "cli.json"
-
-
-def test_kubectl_apply_blocked_kubectl_get_allowed():
-    perms = load_cli_permissions(CLI_JSON)
-    deny = perms["deny"]
-    assert command_blocked_by_deny(deny, "kubectl apply -f x.yaml")
-    assert not command_blocked_by_deny(deny, "kubectl get pods -A")
-
-
-def test_helm_and_ssh_blocked():
-    perms = load_cli_permissions(CLI_JSON)
-    deny = perms["deny"]
-    assert command_blocked_by_deny(deny, "helm list")
-    assert command_blocked_by_deny(deny, "ssh user@host")
-
-
-def test_flux_writes_blocked_reads_allowed():
-    perms = load_cli_permissions(CLI_JSON)
-    deny = perms["deny"]
-    assert command_blocked_by_deny(deny, "flux bootstrap github")
-    assert command_blocked_by_deny(deny, "flux delete source git demo")
-    assert not command_blocked_by_deny(deny, "flux get kustomizations -A")
-    assert not command_blocked_by_deny(deny, "flux reconcile kustomization demo --with-source")
-
-
-def test_age_key_path_read_blocked():
-    perms = load_cli_permissions(CLI_JSON)
-    deny = perms["deny"]
-    assert read_blocked_by_deny(deny, ".config/sops/age/alphacut.txt")
-    assert matches_read("Read(**/.config/sops/age/**)", ".config/sops/age/alphacut.txt")
-
-
-def test_sops_commands_blocked():
-    perms = load_cli_permissions(CLI_JSON)
-    deny = perms["deny"]
-    assert command_blocked_by_deny(deny, "sops -d file.yaml")
-    assert command_blocked_by_deny(deny, "sops decrypt file.yaml")
-    assert command_blocked_by_deny(deny, "sops -e file.yaml")
-
 
 def test_matches_shell_command_args_split():
     assert matches_shell("Shell(kubectl:apply*)", "kubectl apply -f a.yaml")
@@ -80,7 +34,11 @@ def test_minimal_deny_list_in_tmp(tmp_path: Path):
                     "deny": [
                         "Shell(kubectl:apply*)",
                         "Shell(kubectl:get secret*)",
+                        "Shell(kubectl:get Secret*)",
+                        "Shell(kubectl:get SECRET*)",
                         "Shell(*kubectl*get*secret*)",
+                        "Shell(*kubectl*get*Secret*)",
+                        "Shell(*kubectl*get*SECRET*)",
                         "Shell(helm)",
                         "Shell(*helm *)",
                         "Shell(ssh)",
@@ -93,8 +51,18 @@ def test_minimal_deny_list_in_tmp(tmp_path: Path):
                         "Shell(*.config/sops/age*)",
                         "Shell(*.agekey*)",
                         "Shell(flux:bootstrap*)",
+                        "Shell(flux:delete*)",
                         "Shell(flux:install*)",
                         "Shell(flux:suspend*)",
+                        "Shell(*kubectl* drain *)",
+                        "Shell(*kubectl* label *)",
+                        "Shell(*kubectl* rollout restart *)",
+                        "Shell(age:-d*)",
+                        "Shell(age:*-d*)",
+                        "Shell(age:*--decrypt*)",
+                        "Shell(*age -d*)",
+                        "Shell(*age *-d *)",
+                        "Shell(*age *--decrypt*)",
                         "Read(**/.config/sops/age/**)",
                     ]
                 }

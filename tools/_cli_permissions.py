@@ -172,9 +172,42 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "bash -c 'sops -e envs/<env>/secrets/grafana-admin.sops.yaml'",
     "cat ~/.config/sops/age/keys.txt",
     "cat /tmp/host.agekey",
+    "kubectl apply -f x.yaml",
+    "helm list",
+    "ssh user@host",
     "flux bootstrap github",
+    "flux delete source git demo",
     "flux install",
     "flux suspend kustomization demo",
+    "sops -d file.yaml",
+    "sops decrypt file.yaml",
+    "sops -e file.yaml",
+    # Case-sensitive globs (* ? ** only). secret*, Secret*, and SECRET*
+    # cover those casings and their plurals. Other mixed casings (for
+    # example SeCrEt) are a known gap.
+    "kubectl get secret/sops-age -n flux-system -o yaml",
+    "kubectl -n flux-system get secrets",
+    "kubectl get secret,configmap -A",
+    "kubectl get Secret/sops-age",
+    "kubectl -n flux-system get SECRETS",
+    "kubectl get secret",
+    "kubectl get secrets",
+    "kubectl get Secret",
+    "kubectl get Secrets",
+    "kubectl get SECRET",
+    "kubectl get SECRETS",
+    "kubectl get Secret -n flux-system sops-age",
+    "kubectl get Secrets -A",
+    "kubectl get SECRET -n flux-system sops-age",
+    "kubectl get SECRETS -A",
+    "kubectl -n kube-system rollout restart deployment/kustomize-controller",
+    "kubectl -n kube-system drain node.example",
+    "kubectl -n default label node.example app=demo",
+    "age -i /tmp/key.txt -d secret.txt",
+    "bash -c 'age -d secret.txt'",
+    "sh -c 'age --decrypt secret.txt'",
+    "bash -c 'age -i /tmp/key.txt -d secret.txt'",
+    "sh -c 'age -i /tmp/key.txt --decrypt secret.txt'",
 )
 
 DRY_RUN_MUST_BLOCK_READS: tuple[str, ...] = (
@@ -191,6 +224,13 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "flux tree kustomization demo",
     "flux events --for Kustomization/demo",
     "flux reconcile kustomization demo --with-source",
+    "kubectl get nodes --show-labels",
+    "kubectl get statefulsets -A",
+    "kubectl get replicasets -A",
+    "kubectl get pods --field-selector=status.phase=Running",
+    "kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'",
+    "docker images -d",
+    "python3 manage.py --dry-run",
 )
 
 
