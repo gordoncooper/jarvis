@@ -15,6 +15,11 @@ env-01 values live only under `envs/env-01/`; core stays env-agnostic (R3).
 - Routine jarvis changes: agent PRs merge on green `ci` until the P2 exit; then `admin-gate` applies to protected paths (R36).
 - Infra Ansible (`infra/`): the admin re-runs `site.yml` on the controller node after merge (§8).
 - Hermes image bumps: the admin merges; soak between code-factory and ops deploys (R33).
+
+## One-time host cleanup
+
+Delete `${backup_path}/volsync-test` on the node by hand. The VolSync test used a Retain hostPath, and removing that bundle from Git does not remove the directory.
+
 ## New env
 
 Create the env empty. Do not copy this folder or its secrets, and do not retarget env-01.

@@ -3,4 +3,5 @@ contract-md
 core-names
 env-schema
 product-ci
+pvc-backup
 secret-scan

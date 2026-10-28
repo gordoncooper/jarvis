@@ -10,7 +10,8 @@ Rules here are prose only for what `ci/checks/` and `.cursor/cli.json` cannot en
 - **R2 — Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
 - **R25 — No plaintext secrets in Git:** `ci/checks/secret-scan`.
 - **Product trees do not use `ci/`:** `ci/checks/product-ci`. `tools/verify` may read `ci/rule-checks.txt`.
-- **Deferred on purpose; don't add early:** model names in core (R28) return to `core-names` in **p2-23**; `pvc-backup` (R31) returns with the first real PVC in **p0b-09**.
+- **R31 — Every PVC has a VolSync ReplicationSource or `backup: none`:** `ci/checks/pvc-backup`.
+- **Deferred on purpose; don't add early:** model names in core (R28) return to `core-names` in **p2-23**.
 
 ## Stay lean
 
