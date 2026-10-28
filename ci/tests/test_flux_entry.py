@@ -337,7 +337,7 @@ def _record_object_identities(
 
 
 def test_kubernetes_version_matches_k3s_pin() -> None:
-    assert kubernetes_version_from_k3s("v9.8.7+k3s2") == "9.8.7"
+    assert kubernetes_version_from_k3s("v9.8.7+k3s2") == "9.8.0"
     assert kubernetes_version_from_k3s("v9.8.7") is None
 
 

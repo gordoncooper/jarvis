@@ -86,11 +86,12 @@ class ValidationError(Exception):
 
 
 def kubernetes_version_from_k3s(value: str) -> str | None:
-    """Return the Kubernetes release inside a k3s pin, or None when the pin does not match."""
+    """Return major.minor.0 for kubeconform schemas, or None when the pin does not match."""
     match = _K3S_VERSION.fullmatch(value.strip())
     if match is None:
         return None
-    return match.group(1)
+    major, minor, _patch = match.group(1).split(".")
+    return f"{major}.{minor}.0"
 
 
 def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
