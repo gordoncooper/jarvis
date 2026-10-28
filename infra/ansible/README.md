@@ -4,7 +4,11 @@
 
 Run from this directory after `make deps`. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. An agent fails before it starts if the control-plane name does not resolve on that agent.
 
-`SOPS_AGE_KEY_FILE` (the age private key) is needed on the controller for the first `flux-operator` run only. When `flux-system/sops-age` already exists and that variable is unset, the run leaves the secret alone.
+## Before the first run
+
+The controller needs `git` and `make`. The node needs OpenSSH. The env's `ssh_user` needs an authorized key and passwordless sudo. The inventory hostname must resolve from the controller, and that host key must already be in the controller's `known_hosts`.
+
+`SOPS_AGE_KEY_FILE` must be set on the controller for the first `site.yml` run. The repo sets no fixed path. The file must be the private half of the recipient in `.sops.yaml` (check with `age-keygen -y` on the file that variable names). When `flux-system/sops-age` already exists and that variable is unset, the run leaves the secret alone.
 
 Every env run passes the env hosts file, then the constructed role groups. The second file lives in core and is not copied into an env. `node_roles` become groups of the same name. Hosts with `data_disk` set are the `data_disk` group.
 
