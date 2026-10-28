@@ -1,22 +1,38 @@
 # CONTRACT: platform-backups
 
+Shared backup contract for every PVC (R31, D7). P0a provides the namespace and the restic secret; VolSync wiring is p0b-09.
+
 ## Offers
 
-Namespace `platform-backups` and bootstrap restic credentials for VolSync (expanded in p0b per Backups contract).
+- Namespace `platform-backups`.
+- Bootstrap restic credentials for VolSync (Secret `backups-restic`).
+- One `ReplicationSource` per PVC, including an on-demand trigger.
+- A StatefulSet volume gets one `ReplicationSource` per PVC named `<template>-<statefulset>-<ordinal>`.
+- Opt-out for rebuildable observability data: the unprefixed annotation `backup: none` on a PVC, or on a `volumeClaimTemplate`'s `metadata`. Allowed only under `services/observability/victoria-metrics/` and `services/observability/victoria-logs/`.
 
 ## Expects
 
 - Flux SOPS decryption via `flux-system/sops-age` (R25).
 - `envs/<env>/secrets/backups-restic.sops.yaml` (D10 decrypt proof in P0a).
+- Target path, retention, and weekly prune come from `envs/<env>/values/cluster-vars.yaml`.
 
 ## Health
 
-Namespace exists; Secret `backups-restic` is present (value not logged).
+Namespace exists; Secret `backups-restic` is present (value not logged). A deleted volume restores with the same checksum (P0b and P2 drills).
 
 ## Config
 
-Repository path and retention come from `cluster-vars` at reconcile time (p0b).
+- Target path: `backup_path`. Volume data sits under `local_path_data`. etcd snapshots use the same backup path and are for same-node rollback only.
+- Retention: `backup_retention_daily`, `backup_retention_weekly`, `backup_retention_monthly`.
+- Weekly prune uses those retention counts and `time_zone` from cluster-vars. p0b-09 writes the schedule into this section after the backup-and-restore test.
+- Restore is a `ReplicationDestination`:
+  1. Record the checksum of the source data.
+  2. Apply a `ReplicationDestination` that restores the restic snapshot from `backup_path` into the target PVC.
+  3. When that destination is complete, compare the checksum to the original.
+- The VolSync-or-restic-CronJob choice is recorded here by the p0b-09 test. Until that test, restore is a `ReplicationDestination`.
 
 ## Proven by
 
-`ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption settings).
+- `ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption settings).
+- The R31 CI check (`ci/checks/pvc-backup`, p0b-09).
+- The P0b and P2 restore drills.

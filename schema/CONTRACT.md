@@ -13,6 +13,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 - Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user` and `age_key_file`.
 - Default `ssh_user: ubuntu` when omitted (D34). The example env still sets `ssh_user`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
+- Rejection of a `time_zone` that is not an IANA zone, and of a `k3s_version` that is not a k3s version string (`v<major>.<minor>.<patch>+k3s<n>`).
 - `apps_git_repo_url` required and https, validated like `flux_git_repo_url`. Both URLs use one owner handle, and that handle is the same across every non-example env (D45).
 - `llm_provider_host` required, a bare hostname with no scheme or path (D45).
 
@@ -34,7 +35,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | Field | Required | Notes |
 | --- | --- | --- |
 | `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). Never hardcoded in core (R3, R28). |
-| `time_zone` | yes | IANA zone for the node time zone, VolSync schedules, and Hermes cron (e.g. `<time_zone>`; D21). |
+| `time_zone` | yes | IANA time zone name for the node, VolSync schedules, and Hermes cron (e.g. `<time_zone>`; D21). Unknown names fail validation. |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`; D34). |
 | `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
 | `code_delivery` | yes | `github` only. `forgejo` is the planned second provider (§9); any other value fails validation. |
@@ -44,7 +45,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots (§7). |
 | `backup_retention_monthly` | yes | Restic keep count for monthly snapshots (§7). |
 | `jarvis_env` | yes | Env name for `/etc/jarvis/env` marker and guards; must match `envs/<env>/` (p0a-12). |
-| `k3s_version` | yes | Host binary version; changes only by PR (R33, D5). |
+| `k3s_version` | yes | k3s version string `v<major>.<minor>.<patch>+k3s<n>`. Host binary; changes only by PR (R33, D5). |
 | `k3s_sha256` | yes | SHA-256 of the pinned `k3s` amd64 release binary (verified on install). |
 | `pod_cidr` | yes | Pod network CIDR; an IP network, set once per env (D4). |
 | `service_cidr` | yes | Service network CIDR; an IP network, set once per env (D4). |
@@ -129,6 +130,7 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - `ci/checks/env-schema` in the required `ci` workflow (added in `p0a-05`).
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
+- A behavior test rejects an unknown `time_zone` and a `k3s_version` that is not `v<major>.<minor>.<patch>+k3s<n>`.
 - A drift test fails when the known-key set gains a key the example env does not set.
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
 - A drift test fails when the known role set gains a role the example env does not declare.

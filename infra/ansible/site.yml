@@ -1,13 +1,14 @@
 ---
 # Fact asserts run before any change. Tags for k3s, kubeconfig, and flux-operator are on the plays.
+# ansible_user uses ssh_user, or the schema default when cluster-vars omits it (D34).
 - name: Assert facts before any change
   hosts: all
   become: true
   gather_facts: false
   tags: [always]
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
+  vars: &jarvis_play_vars
+    ansible_user: "{{ ssh_user | default('ubuntu') }}"
+  vars_files: &jarvis_vars_files
     - "{{ jarvis_cluster_vars }}"
   tasks:
     - name: Assert exactly one control_plane host
@@ -29,10 +30,8 @@
 - name: Base OS
   hosts: all
   become: true
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
+  vars: *jarvis_play_vars
+  vars_files: *jarvis_vars_files
   roles:
     - base-os
 
@@ -40,10 +39,8 @@
   hosts: data_disk
   become: true
   gather_facts: false
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
+  vars: *jarvis_play_vars
+  vars_files: *jarvis_vars_files
   roles:
     - node-disk
 
@@ -51,10 +48,8 @@
   hosts: control_plane
   become: true
   tags: [k3s]
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
+  vars: *jarvis_play_vars
+  vars_files: *jarvis_vars_files
   roles:
     - role: k3s
       vars:
@@ -64,10 +59,8 @@
   hosts: all:!control_plane
   become: true
   tags: [k3s]
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
+  vars: *jarvis_play_vars
+  vars_files: *jarvis_vars_files
   roles:
     - role: k3s
       vars:
@@ -78,10 +71,8 @@
   become: true
   gather_facts: false
   tags: [k3s]
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
+  vars: *jarvis_play_vars
+  vars_files: *jarvis_vars_files
   tasks:
     - ansible.builtin.import_role:
         name: k3s
@@ -92,10 +83,8 @@
   become: true
   gather_facts: false
   tags: [kubeconfig]
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
+  vars: *jarvis_play_vars
+  vars_files: *jarvis_vars_files
   roles:
     - kubeconfig
 
@@ -103,9 +92,7 @@
   hosts: control_plane
   become: true
   tags: [flux-operator]
-  vars:
-    ansible_user: "{{ ssh_user }}"
-  vars_files:
-    - "{{ jarvis_cluster_vars }}"
+  vars: *jarvis_play_vars
+  vars_files: *jarvis_vars_files
   roles:
     - flux-operator

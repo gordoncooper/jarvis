@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 import yaml
@@ -21,6 +22,7 @@ from ansible_role_proof import (
     non_example_env_names,
 )
 from render_cluster_vars_configmap import cluster_vars_configmap, render_document
+from schema.env import kubernetes_version_from_k3s
 
 FLUX_KUSTOMIZATION_CHAIN: tuple[str, ...] = (
     "platform-controllers",
@@ -65,7 +67,7 @@ def _kustomize_build(rel_path: str) -> str:
     return proc.stdout
 
 
-def _kubeconform_validate(manifests: str) -> None:
+def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
     kubeconform = _require_tool("kubeconform")
     proc = subprocess.run(
         [
@@ -73,7 +75,7 @@ def _kubeconform_validate(manifests: str) -> None:
             "-strict",
             "-summary",
             "-kubernetes-version",
-            "1.31.0",
+            kubernetes_version,
             "-schema-location",
             "default",
             "-schema-location",
@@ -275,14 +277,51 @@ def _object_identity(doc: object) -> tuple[str, str, str] | None:
     return (kind, namespace, name)
 
 
-def _validate_platform_configs_without_sops_secrets(manifests: str) -> None:
+def _validate_platform_configs_without_sops_secrets(
+    manifests: str, kubernetes_version: str
+) -> None:
     docs = [
         doc
         for doc in yaml.safe_load_all(manifests)
         if isinstance(doc, dict) and not (doc.get("kind") == "Secret" and "sops" in doc)
     ]
     rendered = yaml.safe_dump_all(docs, sort_keys=False)
-    _kubeconform_validate(rendered)
+    _kubeconform_validate(rendered, kubernetes_version)
+
+
+class FluxBuildTarget(NamedTuple):
+    name: str
+    path: str
+    strip_sops_secrets: bool
+
+
+def flux_kustomization_targets(flux_dir: Path) -> list[FluxBuildTarget]:
+    """Paths from Flux Kustomization objects under an env's flux directory."""
+    targets: list[FluxBuildTarget] = []
+    if not flux_dir.is_dir():
+        return targets
+    for path in sorted(item for item in flux_dir.rglob("*.yaml") if item.is_file()):
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+            if not isinstance(doc, dict) or doc.get("kind") != "Kustomization":
+                continue
+            api = doc.get("apiVersion")
+            if not isinstance(api, str) or not api.startswith("kustomize.toolkit.fluxcd.io/"):
+                continue
+            metadata = doc.get("metadata")
+            spec = doc.get("spec")
+            assert isinstance(metadata, dict) and isinstance(spec, dict)
+            name = metadata.get("name")
+            rel = spec.get("path")
+            assert isinstance(name, str) and name
+            assert isinstance(rel, str) and rel
+            targets.append(
+                FluxBuildTarget(
+                    name,
+                    rel.removeprefix("./"),
+                    isinstance(spec.get("decryption"), dict),
+                )
+            )
+    return targets
 
 
 def _record_object_identities(
@@ -297,23 +336,27 @@ def _record_object_identities(
         seen[ident] = layer
 
 
+def test_kubernetes_version_matches_k3s_pin() -> None:
+    assert kubernetes_version_from_k3s("v9.8.7+k3s2") == "9.8.0"
+    assert kubernetes_version_from_k3s("v9.8.7") is None
+
+
 @pytest.mark.parametrize("env", non_example_env_names())
 def test_flux_layer_kustomize_build_and_schema_validate(env: str) -> None:
-    # layer, path, strip sops secrets, count toward the cross-layer identity check.
-    # The env flux entry is schema-checked and is not one of those four layers.
-    layers = (
-        ("services", "services", False, True),
-        ("apps", "apps", False, True),
-        ("platform-controllers", "platform/flux-operator", False, True),
-        ("platform-configs", f"envs/{env}/flux/platform-configs", True, True),
-        ("env-flux-entry", f"envs/{env}/flux", False, False),
-    )
+    flux_dir = REPO_ROOT / "envs" / env / "flux"
+    targets = flux_kustomization_targets(flux_dir)
+    assert targets
+    pin = load_cluster_vars(env=env)["k3s_version"]
+    assert isinstance(pin, str)
+    version = kubernetes_version_from_k3s(pin)
+    assert version is not None
     seen: dict[tuple[str, str, str], str] = {}
-    for layer, rel_path, strip_sops_secrets, track_identity in layers:
-        output = _kustomize_build(rel_path)
-        if track_identity:
-            _record_object_identities(output, layer, seen)
-        if strip_sops_secrets:
-            _validate_platform_configs_without_sops_secrets(output)
+    for target in targets:
+        output = _kustomize_build(target.path)
+        _record_object_identities(output, target.name, seen)
+        if target.strip_sops_secrets:
+            _validate_platform_configs_without_sops_secrets(output, version)
         else:
-            _kubeconform_validate(output)
+            _kubeconform_validate(output, version)
+    # The env flux directory holds these Kustomizations. It is not one of their paths.
+    _kubeconform_validate(_kustomize_build(f"envs/{env}/flux"), version)

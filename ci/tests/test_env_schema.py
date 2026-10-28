@@ -224,6 +224,18 @@ def test_flux_paths_must_use_own_env_name(tmp_path: Path):
     assert "env-test" in msg
 
 
+def test_time_zone_and_k3s_version_must_match_their_shapes(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["time_zone"] = "Not/AZone"
+    cv["k3s_version"] = "v1.2.3"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "time_zone must be an IANA time zone" in msg
+    assert "k3s_version must be a k3s version string" in msg
+
+
 def test_bad_k3s_sha256_fails(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["k3s_sha256"] = "not-a-checksum"

@@ -22,6 +22,7 @@ from ansible_role_proof import (
     inventory_path,
     non_example_env_names,
     load_cluster_vars,
+    load_role_defaults,
     roles_inventory_path,
 )
 from conftest import require_cli
@@ -46,14 +47,17 @@ def render_k3s_config(variables: dict[str, object]) -> str:
 
 def test_k3s_config_template_encodes_p0a12_rules() -> None:
     cluster = load_cluster_vars()
+    defaults = load_role_defaults(K3S_ROLE_DIR)
+    cron = defaults["k3s_etcd_snapshot_schedule_cron"]
+    retention = defaults["k3s_etcd_snapshot_retention"]
     variables = {
         "pod_cidr": cluster["pod_cidr"],
         "service_cidr": cluster["service_cidr"],
         "local_path_data": cluster["local_path_data"],
         "backup_path": cluster["backup_path"],
         "inventory_hostname": inventory_hostname(),
-        "k3s_etcd_snapshot_schedule_cron": "0 */12 * * *",
-        "k3s_etcd_snapshot_retention": 5,
+        "k3s_etcd_snapshot_schedule_cron": cron,
+        "k3s_etcd_snapshot_retention": retention,
         "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
         "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
         "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
@@ -63,6 +67,8 @@ def test_k3s_config_template_encodes_p0a12_rules() -> None:
     assert "secrets-encryption: true" in rendered
     assert f"cluster-cidr: {cluster['pod_cidr']}" in rendered
     assert f"service-cidr: {cluster['service_cidr']}" in rendered
+    assert f'etcd-snapshot-schedule-cron: "{cron}"' in rendered
+    assert f"etcd-snapshot-retention: {retention}" in rendered
     assert "etcd-snapshot-dir:" in rendered
     assert "kube-reserved=" in rendered
     assert "system-reserved=" in rendered

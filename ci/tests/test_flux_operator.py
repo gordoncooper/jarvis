@@ -18,6 +18,7 @@ from ansible_role_proof import (
     playbook_recap_field,
 )
 from conftest import require_cli
+from schema.env import DEFAULT_SSH_USER
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
 
@@ -71,7 +72,7 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     ]
     for play in plays:
         assert play.get("become") is True
-        assert play.get("vars", {}).get("ansible_user") == "{{ ssh_user }}"
+        assert "ssh_user | default(" in str(play.get("vars", {}).get("ansible_user"))
     assert _role_names(plays[0]) == []
     assert plays[0].get("tags") == ["always"]
     assert _role_names(plays[1]) == ["base-os"]
@@ -88,6 +89,15 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert plays[5].get("tags") == ["k3s"]
     assert plays[6].get("tags") == ["kubeconfig"]
     assert plays[7].get("tags") == ["flux-operator"]
+    connection = plays[0].get("vars")
+    assert all(play.get("vars") == connection for play in plays)
+
+
+def test_site_yml_ssh_user_default_matches_schema() -> None:
+    plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
+    expr = plays[0]["vars"]["ansible_user"]
+    literal = expr.split("default(", 1)[1].split(")", 1)[0].strip("\"'")
+    assert literal == DEFAULT_SSH_USER
 
 
 def _task_documents() -> list[dict[str, object]]:
