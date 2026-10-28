@@ -113,12 +113,16 @@ def test_volsync_controller_tz_comes_from_time_zone() -> None:
 
 
 def test_env_restic_secret_names_the_rest_server_keys() -> None:
-    path = ROOT / "envs/env-01/secrets/backups-restic.sops.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    data = doc["stringData"]
-    assert set(data) == REST_SERVER_KEYS
-    encrypted = all(isinstance(value, str) and value.startswith("ENC[") for value in data.values())
-    assert encrypted
+    paths = sorted(ROOT.glob("envs/*/secrets/backups-restic.sops.yaml"))
+    assert paths
+    for path in paths:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = doc["stringData"]
+        assert set(data) == REST_SERVER_KEYS
+        encrypted = all(
+            isinstance(value, str) and value.startswith("ENC[") for value in data.values()
+        )
+        assert encrypted
 
 
 def test_renovate_tracks_the_rest_server_digest() -> None:
