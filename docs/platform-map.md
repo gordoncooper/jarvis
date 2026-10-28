@@ -1,11 +1,6 @@
 # Platform map
 
-Point-in-time read of this repo on 2026-10-28 (Pacific). Git only: no SSH, no kubectl, no secret decryption.
-
-Two trees:
-
-- `main` at `46a47e5f`. This note is written to merge there.
-- The checkout the map was taken from, `3972e7b4` on `cursor/restic-rest-server-ecad`, three commits ahead of `main`. Those commits add the restic rest-server and stop privileged VolSync movers. They are not on `main` yet. Sections below say which tree they describe.
+Point-in-time read of `main` at `e98556cf` on 2026-10-28 (Pacific), after PR #83 merged the restic rest-server. Git only: no SSH, no kubectl, no secret decryption. An earlier draft of this note was taken at `46a47e5f`, before that merge, and treated the rest-server as unmerged. This revision describes the merged tree only.
 
 `services/` and `apps/` are placeholders. Most names in the env README (cert-manager, App DNS, Gatus, Grafana, VictoriaMetrics, VictoriaLogs, Hermes, hosted apps) have no manifests.
 
@@ -59,7 +54,7 @@ infra/ansible/site.yml
         │   ├── Traefik HelmChartConfig    the only Git object in kube-system
         │   └── VolSync controller         platform/backups/controller
         ├── platform-configs               dependsOn platform-controllers; SOPS
-        │   ├── platform/backups           namespace, and on main nothing else
+        │   ├── platform/backups           namespace + rest-server Deployment and Service
         │   └── backups-restic secret      envs/<env>/secrets
         ├── services                       dependsOn platform-configs
         │   └── placeholder ConfigMap
@@ -74,7 +69,7 @@ tools/bootstrap-secrets          not in the Flux chain; create-if-missing SOPS f
     hermes-code-factory-*        namespaces hermes-ops, hermes-code-factory (no workload yet)
 ```
 
-On `3972e7b4` the platform-configs half of backups also includes `platform/backups/rest-server.yaml`: one restic rest-server Deployment and ClusterIP Service, pinned to the backup-role node, data on `<backup_path>/restic`. `main` does not have that file. On `main`, `platform/backups` is the namespace plus the secret, and the namespace sets `volsync.backube/privileged-movers` so movers mount the repo hostPath themselves.
+`platform/backups/rest-server.yaml` is one restic rest-server Deployment and ClusterIP Service, pinned to the backup-role node, data on `<backup_path>/restic`. The namespace does not set `volsync.backube/privileged-movers`. Movers talk to the Service. The rest-server process runs as root so it can write that hostPath. PR #83 replaced the earlier model, where every mover in the namespace was privileged and mounted the repo directory itself.
 
 ## What is built
 
@@ -87,7 +82,7 @@ On `3972e7b4` the platform-configs half of backups also includes `platform/backu
 | Flux operator | `platform/flux-operator` and `infra/ansible/roles/flux-operator` | Built. Ansible installs once; Flux reconciles the HelmRelease after that. Distribution `2.8.8` is pinned in the role default and in each env `flux-instance.yaml`. Chart tag `0.60.0` has one pin, the OCIRepository, which Ansible reads. |
 | Traefik | `platform/traefik/helmchartconfig.yaml` | Built as config only. k3s ships the chart. Gateway API is off. Ingress class `traefik` is a manifest constant. |
 | VolSync | `platform/backups/controller` | Built. Chart `0.17.0`, restic mover, `copyMethod: Direct`. Vendored VolumeSnapshot CRD, no snapshot controller. Applied from the flux-operator kustomization, not from `platform/backups/kustomization.yaml`. |
-| restic rest-server | `platform/backups/rest-server.yaml` | On `3972e7b4` only. Not on `main`. |
+| restic rest-server | `platform/backups/rest-server.yaml` | Built. Image digest pin. ClusterIP on port 8000. No Ingress. Applied from platform-configs with the namespace and the secret. |
 | restic credentials | `envs/<env>/secrets/backups-restic.sops.yaml` | Present for env-01. Shape is minted by `tools/bootstrap-secrets`. |
 | services | `services/placeholder.yaml` | Placeholder. |
 | apps | `apps/placeholder.yaml` | Placeholder. `apps_git_repo_url` is validated and unused. |
@@ -120,9 +115,9 @@ These are the only edges that are not parent/child. They are the swap surface.
 | Traefik HelmChartConfig | `platform-cert-manager` | `--providers.kubernetesCRD.defaultTLSResourcesNamespace=platform-cert-manager`. The namespace has a secret and no workload. |
 | k3s labels | Traefik Service | `edge` is the only role that receives the ServiceLB label. |
 | node-disk | k3s unit name | Drop-in is `k3s.service.d` or `k3s-agent.service.d`. |
-| VolSync HelmRelease on `3972e7b4` | base-os zoneinfo | postRenderer sets `TZ` from `time_zone` and mounts `/usr/share/zoneinfo`. Not on `main`. |
-| rest-server on `3972e7b4` | backup role label and `backup_path` | nodeSelector and hostPath use postBuild. The Service DNS name does not. |
-| `tools/bootstrap-secrets` | rest-server URL on `3972e7b4` | The repository prefix is a constant in that script. On `main` the secret still points movers at a hostPath. |
+| VolSync HelmRelease | base-os zoneinfo | postRenderer sets `TZ` from `time_zone` and mounts `/usr/share/zoneinfo`. The backup contract records this. |
+| rest-server | backup role label and `backup_path` | nodeSelector and hostPath use postBuild. The Service DNS name does not. |
+| `tools/bootstrap-secrets` | rest-server URL | The repository prefix is a constant in that script (`rest:http://restic.platform-backups.svc.cluster.local:8000/`). |
 | `ci/checks/lib/_pvc_backup.py` | VolSync | Every PVC must have a `ReplicationSource` or an allowed `backup: none`. The allowlist names Victoria folders that do not exist yet. |
 | FluxInstance git file | Ansible template | Two copies. `ci/tests/test_flux_entry.py` fails if they differ. |
 
@@ -158,17 +153,17 @@ Each one is a change I considered. None of them should land as a cleanup PR.
 
 ### 3. Prefer the rest-server boundary; do not generate ReplicationSources yet
 
-**Recommendation.** Keep the rest-server series (`3972e7b4`) as the backup data plane when it merges. Do not return to privileged hostPath movers. Do not add a generator or a kustomize component for `ReplicationSource` until the same snippet has been copied for real PVCs more than twice.
+**Recommendation.** Keep the rest-server as the backup data plane. Do not put `volsync.backube/privileged-movers` back, and do not send movers at a hostPath. Do not add a generator or a kustomize component for `ReplicationSource` until the same snippet has been copied for real PVCs more than twice.
 
-**Why the rest-server is the better isolation.** On `main`, every mover in `platform-backups` is privileged and mounts the repo hostPath (`RESTIC_REPOSITORY` under `/mnt/repo`). A volume's backup manifest has to know disk layout. On `3972e7b4` the disk stays behind one Deployment. Movers talk to `restic.platform-backups.svc.cluster.local:8000`. The namespace comment says no mover there mounts a hostPath. That is the swap seam: replace rest-server, keep the URL contract, leave VolSync's mover API as the only CRD services see.
+**Why the rest-server is the right isolation.** The disk stays behind one Deployment. Movers talk to `restic.platform-backups.svc.cluster.local:8000`. A volume repository is `ns-<namespace>/pvc-<pvc>` under that prefix. The namespace comment says no mover there mounts a hostPath. That is the swap seam: replace rest-server, keep the URL contract, leave VolSync's mover API as the only CRD services see. The previous shape (privileged movers, `RESTIC_REPOSITORY` under `/mnt/repo`) made every volume manifest know the disk layout. PR #83 removed it.
 
-**Why not wrap it further.** No PVC exists, so a generator has no caller. The CI check is already the policy (`ReplicationSource` or an allowed `backup: none`). Hiding the CRD behind a code generator makes the common case harder to read, and the repository URL still has to vary per PVC (`ns-<namespace>/pvc-<pvc>` on the rest-server tree). A copied example next to the first PVC, with the URL shape written only in `platform/backups/CONTRACT.md`, is the smaller surface.
+**Why not wrap it further.** No PVC exists, so a generator has no caller. The CI check is already the policy (`ReplicationSource` or an allowed `backup: none`). Hiding the CRD behind a code generator makes the common case harder to read, and the repository URL still has to vary per PVC. A copied example next to the first PVC, with the URL shape written only in `platform/backups/CONTRACT.md`, is the smaller surface.
 
 **Pros of a component or generator now.** VolSync field names would stay in `platform/backups`. Swapping VolSync later would be one folder plus the CI check, not a hunt through services.
 
 **Cons.** Machinery with nothing to generate. Per-PVC repository URLs and secrets fit a short manifest better than a framework. The CI check should stay VolSync-specific until a second backend exists; generalizing it early just renames the coupling.
 
-**URL constant.** On the rest-server tree the repository prefix is also a Python constant in `tools/bootstrap-secrets`. When the first real volume secret is built, that prefix should be read from one place (the contract's URL, or a helper next to backups), not retyped. Not before that volume exists.
+**URL constant.** The repository prefix is also a Python constant in `tools/bootstrap-secrets`. When the first real volume secret is built, that prefix should be read from one place (the contract's URL, or a helper next to backups), not retyped. Not before that volume exists.
 
 ### 4. Leave `bootstrap-secrets` as one list
 
@@ -210,7 +205,7 @@ Each one is a change I considered. None of them should land as a cleanup PR.
 
 **Recommendation.** Leave the k3s role, the ServiceLB label, the node-disk unit drop-in, and the etcd snapshot defaults where they are.
 
-**Why it is coupled.** node-disk knows k3s unit names so the data disk is mounted before k3s starts. Labels use a k3s ServiceLB key. etcd snapshots write under `backup_path`, next to where the rest-server will put repositories. The k3s config template does not disable bundled components. Replacing k3s means rewriting those roles. There is no distro interface, and there should not be one.
+**Why it is coupled.** node-disk knows k3s unit names so the data disk is mounted before k3s starts. Labels use a k3s ServiceLB key. etcd snapshots write under `backup_path`, beside `backup_path/restic`. The k3s config template does not disable bundled components. Replacing k3s means rewriting those roles. There is no distro interface, and there should not be one.
 
 **Why this is acceptable.** k3s is the substrate the rest of the repo assumes. A fake interface (`cluster_runtime: k3s`) with one arm is how a spider web starts. etcd snapshot cron `0 */12 * * *` and retention `5` are product constants in the role default, documented as the k3s pin's built-in defaults. They are not per-env, so they do not belong in cluster-vars.
 
@@ -236,11 +231,11 @@ Each one is a change I considered. None of them should land as a cleanup PR.
 
 - **k3s and Traefik move together.** Nothing in Git pins the bundled chart version except the k3s version pin. The HelmChartConfig comments depend on chart v40 (Service type field, missing TLS-namespace value, so `additionalArguments` is used). A k3s bump can break that config without a Traefik file changing. When the k3s pin moves, the Traefik contract's chart assumptions need a look. I would not pin Traefik separately while it remains the bundled chart.
 
-- **Privileged movers are still the `main` backup model.** `platform/backups/namespace.yaml` sets `volsync.backube/privileged-movers: "true"` for every mover in the namespace. The contract says to revisit that at an NFS target. The rest-server commits are that revisit, aimed at a local rest-server instead of NFS. Merging them removes the privilege. Until they merge, any new `ReplicationSource` on `main` inherits root movers and a hostPath.
+- **Do not restore privileged movers.** PR #83 removed `volsync.backube/privileged-movers` and the hostPath repository mount. A new `ReplicationSource` uses the rest-server URL from the backup contract. Putting the annotation back would make every mover root again, for one Deployment that already writes the disk.
 
 - **Namespaces are reserved by secrets before the workloads exist.** Rotating or renaming later means a new secret file, a Traefik arg, and the bootstrap script, while Flux will not delete the old Secret if someone only changes the Git name (the old one was applied). Prefer the names already chosen.
 
-- **Zoneinfo is an implicit package dependency on the rest-server tree.** VolSync's image has no tzdata; the postRenderer mounts the host zone database that base-os installs. If a later base-os slim drops that data, backup crons shift to UTC with the controller still Ready. Worth a sentence in the backup contract when that postRenderer is on `main`. Not worth a probe before any schedule exists.
+- **Zoneinfo is an implicit package dependency.** VolSync's image has no tzdata. The HelmRelease postRenderer mounts `/usr/share/zoneinfo`, which base-os installs, and the backup contract says so. If a later base-os slim drops that data, backup crons shift to UTC with the controller still Ready. Not worth a probe before any schedule exists.
 
 - **The VolumeSnapshot CRD is vendored** under `platform/backups/controller/` because the operator exits if the kind is unmapped, and local-path has no snapshots. `copyMethod: Direct` does not use it. Replacing VolSync means deleting that CRD with the controller. I would not install a snapshot controller to "complete" the CRD.
 
@@ -252,7 +247,7 @@ Each one is a change I considered. None of them should land as a cleanup PR.
 
 1. **cert-manager.** New folder `platform/cert-manager`. One line on the controller list. Same PR may move that list to `platform/kustomization.yaml`. Use namespace `platform-cert-manager` and Secret `cert-manager-ca`. Wildcard certificate and Traefik TLSStore as the exposure contract already describes. No new cluster-vars keys unless a value truly differs per env.
 
-2. **First PVC.** One `ReplicationSource` beside that PVC, copied from the backup contract, aimed at the rest-server URL if that series has merged. Retention keys already come from cluster-vars. No generator.
+2. **First PVC.** One `ReplicationSource` beside that PVC, copied from the backup contract, aimed at the rest-server URL. Retention keys already come from cluster-vars. No generator.
 
 3. **First Ingress.** One Ingress, class `traefik`, host `<svc>.<dns_suffix>`, as the exposure contract says. The class name written in that manifest and in the Traefik contract. No shared library, no cluster-var. Revisit a shared snippet only after a second Ingress copies it wrong.
 
