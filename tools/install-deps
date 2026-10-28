@@ -85,6 +85,8 @@ def _missing_apt_packages() -> list[str]:
             missing.append("python3-yaml")
         if not _python_probe(code="import ensurepip"):
             missing.append("python3-venv")
+        if not _python_probe(code="import bcrypt"):
+            missing.append("python3-bcrypt")
     return missing
 
 

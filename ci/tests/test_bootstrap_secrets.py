@@ -144,7 +144,23 @@ def test_secret_manifest_shape(tmp_path, monkeypatch):
     decrypted = subprocess.check_output([sops_bin, "-d", str(restic_path)], env=env, text=True)
     restic = yaml.safe_load(decrypted)
     assert restic["metadata"]["namespace"] == "platform-backups"
-    assert "RESTIC_PASSWORD" in restic["stringData"]
+    data = restic["stringData"]
+    assert set(data) == {
+        "RESTIC_PASSWORD",
+        "RESTIC_REPOSITORY",
+        "RESTIC_REST_USERNAME",
+        "RESTIC_REST_PASSWORD",
+        "htpasswd",
+    }
+    assert data["RESTIC_REPOSITORY"] == mod.RESTIC_REPOSITORY
+    assert data["RESTIC_REST_USERNAME"] == mod.RESTIC_REST_USERNAME
+    passwords_differ = data["RESTIC_PASSWORD"] != data["RESTIC_REST_PASSWORD"]
+    assert passwords_differ
+    line = data["htpasswd"]
+    one_line = line.endswith("\n") and line.count("\n") == 1
+    assert one_line
+    accepted = mod._htpasswd_accepts(line, data["RESTIC_REST_USERNAME"], data["RESTIC_REST_PASSWORD"])
+    assert accepted
 
 
 def test_sops_failure_leaves_no_target_file(tmp_path):

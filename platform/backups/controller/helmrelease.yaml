@@ -5,8 +5,6 @@ kind: HelmRelease
 metadata:
   name: volsync
   namespace: flux-system
-  annotations:
-    kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
   interval: 30m
   releaseName: volsync
@@ -27,6 +25,37 @@ spec:
   upgrade:
     remediation:
       retries: 3
+  # The chart has no env hook. robfig/cron reads time.Local, and the image
+  # has no tzdata, so mount the node zoneinfo that base-os installs.
+  # platform-controllers postBuild fills ${time_zone}. Double any other
+  # dollar sign so substitution leaves one.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              group: apps
+              version: v1
+              kind: Deployment
+              name: volsync
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: TZ
+                  value: ${time_zone}
+              - op: add
+                path: /spec/template/spec/containers/0/volumeMounts/-
+                value:
+                  name: zoneinfo
+                  mountPath: /usr/share/zoneinfo
+                  readOnly: true
+              - op: add
+                path: /spec/template/spec/volumes/-
+                value:
+                  name: zoneinfo
+                  hostPath:
+                    path: /usr/share/zoneinfo
+                    type: Directory
   values:
     image: &volsyncImage
       # renovate: datasource=docker depName=quay.io/backube/volsync
