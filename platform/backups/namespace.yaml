@@ -1,6 +1,9 @@
+# Prune stays off. Deleting this namespace deletes the restic server with it.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: platform-backups
   # No volsync.backube/privileged-movers. No mover in this namespace mounts
   # a hostPath. rest-server is a Deployment, not a mover.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

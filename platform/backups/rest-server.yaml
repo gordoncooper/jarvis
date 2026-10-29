@@ -8,6 +8,9 @@ metadata:
   namespace: platform-backups
   labels:
     app.kubernetes.io/name: restic
+  # Flux deletes inventory objects one by one, so a kept namespace does not keep this Deployment.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   replicas: 1
   strategy:

@@ -5,6 +5,9 @@ kind: HelmRelease
 metadata:
   name: kyverno
   namespace: flux-system
+  # The crds subchart templates ClusterPolicy. Uninstall deletes that CRD and every ClusterPolicy.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   releaseName: kyverno

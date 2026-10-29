@@ -6,6 +6,9 @@ kind: HelmChartConfig
 metadata:
   name: traefik
   namespace: kube-system
+  # Prune stays off. Deleting this object returns Traefik to the k3s chart defaults.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   valuesContent: |-
     ingressClass:
