@@ -56,6 +56,10 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 
 Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
 
+## Rebuild hold
+
+See `platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before the first FluxInstance.
+
 ## Recovery
 
 The node address changed and k3s fails with an etcd member URL mismatch. Stop k3s (`systemctl stop k3s`), run `/usr/local/bin/k3s server --cluster-reset` once, then start it (`systemctl start k3s`). A later `site.yml` run does not clear this. A DHCP reservation or the prep-node static pin prevents it.

@@ -53,6 +53,19 @@ spec:
       match: *enrolled-match
       exclude: *enrolled-exclude
       preconditions: *enrolled-bound
+      context:
+        # Missing ConfigMap is not paused. Kyverno 1.19 uses this default when the GET errors.
+        # A non-empty string is truthy in JMESPath, so the value is the string true or false.
+        - name: rebuildHold
+          apiCall:
+            urlPath: /api/v1/namespaces/kube-system/configmaps/backup-rebuild-hold
+            jmesPath: "metadata.name && 'true' || 'false'"
+            default: "false"
+        - name: pauseBackup
+          variable:
+            # String "true" / "false". to_boolean keeps spec.paused a bool.
+            jmesPath: "((request.object.metadata.annotations.backup || '') == 'paused' || rebuildHold == 'true') && 'true' || 'false'"
+            default: "false"
       generate:
         generateExisting: true
         synchronize: true
@@ -62,6 +75,8 @@ spec:
         namespace: "{{ request.object.metadata.namespace }}"
         data:
           spec:
+            # Annotation backup: paused. VolSync then sets the mover Job parallelism to 0.
+            paused: "{{ to_boolean(pauseBackup) }}"
             sourcePVC: "{{ request.object.metadata.name }}"
             trigger:
               schedule: "${backup_schedule}"
@@ -74,6 +89,8 @@ spec:
                 daily: ${backup_retention_daily}
                 weekly: ${backup_retention_weekly}
                 monthly: ${backup_retention_monthly}
+                # Keeps every snapshot from the last 7 days, so one empty backup cannot forget that day's good snapshot yet.
+                within: 7d
     - name: privileged-movers
       match: *enrolled-match
       exclude: *enrolled-exclude

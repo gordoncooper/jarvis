@@ -10,6 +10,11 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # pvc-backup reads kube-system/backup-rebuild-hold. A forbidden GET is the same as a missing hold (not paused).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["backup-rebuild-hold"]
+    verbs: ["get"]
   - apiGroups: ["volsync.backube"]
     resources: ["replicationsources"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

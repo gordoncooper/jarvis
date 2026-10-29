@@ -6,13 +6,21 @@
       get fluxinstance {{ flux_instance_name }} -o name
   register: flux_instance_lookup
   changed_when: false
-  failed_when: false
+  failed_when: >-
+    flux_instance_lookup.rc != 0
+    and 'NotFound' not in (
+      (flux_instance_lookup.stderr | default(''))
+      ~ (flux_instance_lookup.stdout | default(''))
+    )
   check_mode: false
 
 - name: Record FluxInstance presence
   ansible.builtin.set_fact:
-    flux_instance_present: >-
-      {{ flux_instance_lookup.rc == 0 and (flux_instance_lookup.stdout | trim | length) > 0 }}
+    flux_instance_present: "{{ flux_instance_lookup.rc == 0 }}"
+
+- name: Hold PVC backups when this cluster is new and restic data is already on disk
+  when: not (flux_instance_present | bool)
+  ansible.builtin.import_tasks: rebuild_hold.yml
 
 - name: Bootstrap FluxInstance when absent
   when: not (flux_instance_present | bool)

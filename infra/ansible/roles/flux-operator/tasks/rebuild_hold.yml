@@ -1,0 +1,60 @@
+---
+# Imported only when FluxInstance is absent (instance.yml). A later site.yml run
+# must not create this. The ConfigMap is cluster state, not Git.
+- name: Require the backup host
+  ansible.builtin.assert:
+    that:
+      - groups['backup'] | length == 1
+    fail_msg: inventory group backup must be exactly one host.
+
+- name: Stat restic data on the backup host
+  ansible.builtin.stat:
+    path: "{{ backup_path }}/restic"
+  delegate_to: "{{ groups['backup'][0] }}"
+  become: true
+  register: restic_data
+  changed_when: false
+
+- name: List restic PVC repositories
+  when: restic_data.stat.isdir | default(false)
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ backup_path }}/restic"
+      - -mindepth
+      - "3"
+      - -maxdepth
+      - "3"
+      - -type
+      - f
+      - -path
+      - "*/ns-*/pvc-*/config"
+  delegate_to: "{{ groups['backup'][0] }}"
+  become: true
+  register: restic_repo_find
+  changed_when: false
+
+- name: Record repository ids
+  ansible.builtin.set_fact:
+    backup_hold_repos: >-
+      {{
+        [] if (restic_repo_find is skipped)
+        else (
+          (restic_repo_find.stdout_lines | default([]))
+          | map('dirname')
+          | map('regex_replace', '^.*/restic/', '')
+          | select('match', '^ns-.*/pvc-.*$')
+          | sort
+          | list
+        )
+      }}
+
+- name: Apply the rebuild hold
+  when: backup_hold_repos | length > 0
+  ansible.builtin.command:
+    cmd: "{{ k3s_binary_path }} kubectl apply -f -"
+    stdin: "{{ lookup('template', 'backup-rebuild-hold.yaml.j2') }}"
+  register: backup_hold_apply
+  changed_when: >-
+    'created' in backup_hold_apply.stdout
+    or 'configured' in backup_hold_apply.stdout

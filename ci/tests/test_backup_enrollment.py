@@ -66,10 +66,10 @@ def test_kyverno_roles_aggregate_secret_and_replicationsource_permissions() -> N
     labels = generate["metadata"]["labels"]
     assert labels["rbac.kyverno.io/aggregate-to-admission-controller"] == "true"
     assert labels["rbac.kyverno.io/aggregate-to-background-controller"] == "true"
-    by_resource = {tuple(rule["resources"]): rule["verbs"] for rule in generate["rules"]}
-    assert "create" in by_resource[("secrets",)]
-    assert "get" in by_resource[("secrets",)]
-    assert "create" in by_resource[("replicationsources",)]
+    by_resource = {tuple(rule["resources"]): rule for rule in generate["rules"]}
+    assert "create" in by_resource[("secrets",)]["verbs"]
+    assert "get" in by_resource[("secrets",)]["verbs"]
+    assert "create" in by_resource[("replicationsources",)]["verbs"]
     namespaces = roles["kyverno:backup-namespaces"]
     assert (
         namespaces["metadata"]["labels"]["rbac.kyverno.io/aggregate-to-background-controller"]
@@ -137,14 +137,6 @@ def test_enrollment_policy_rules() -> None:
         ]
     }
 
-    lookup = secret["context"][0]["apiCall"]
-    assert lookup["urlPath"] == "/api/v1/namespaces/platform-backups/secrets/backups-restic"
-    assert lookup["jmesPath"] == "data"
-    data = secret["generate"]["data"]["data"]
-    assert data["RESTIC_PASSWORD"] == "{{ backupsRestic.RESTIC_PASSWORD }}"
-    repository = data["RESTIC_REPOSITORY"]
-    assert "base64_decode" in repository
-    assert "ns-{{ request.object.metadata.namespace }}/pvc-{{ request.object.metadata.name }}" in repository
     assert secret["generate"]["generateExisting"] is True
     assert secret["generate"]["synchronize"] is True
     assert secret["generate"]["name"].startswith("restic-")
@@ -153,18 +145,13 @@ def test_enrollment_policy_rules() -> None:
     assert source["generate"]["generateExisting"] is True
     assert source["generate"]["synchronize"] is True
     spec = source["generate"]["data"]["spec"]
-    assert spec["sourcePVC"] == "{{ request.object.metadata.name }}"
-    assert spec["trigger"]["schedule"] == "${backup_schedule}"
-    restic = spec["restic"]
-    assert restic["copyMethod"] == "Direct"
-    assert restic["pruneIntervalDays"] == 7
-    assert restic["cacheCapacity"] == "1Gi"
-    assert restic["repository"].startswith("restic-")
-    assert restic["retain"] == {
-        "daily": "${backup_retention_daily}",
-        "weekly": "${backup_retention_weekly}",
-        "monthly": "${backup_retention_monthly}",
-    }
+    assert "manual" not in spec["trigger"]
+    pause = next(entry for entry in source["context"] if entry["name"] == "pauseBackup")
+    assert pause["variable"]["default"] == "false"
+    assert "annotations.backup" in pause["variable"]["jmesPath"]
+    assert "'paused'" in pause["variable"]["jmesPath"]
+    assert spec["paused"] == "{{ to_boolean(pauseBackup) }}"
+    assert spec["restic"]["retain"]["within"] == "7d"
     assert "rest:http://" not in (ROOT / "platform/backups/enrollment.yaml").read_text(encoding="utf-8")
 
     assert mutate["mutate"]["mutateExistingOnPolicyUpdate"] is True

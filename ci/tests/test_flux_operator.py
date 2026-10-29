@@ -162,6 +162,20 @@ def _flux_operator_extra(binary: Path) -> list[str]:
     ]
 
 
+def _backup_inventory(tmp_path: Path) -> Path:
+    path = tmp_path / "backup-hosts.yml"
+    path.write_text(
+        "all:\n"
+        "  children:\n"
+        "    backup:\n"
+        "      hosts:\n"
+        "        backup-host:\n"
+        "          ansible_connection: local\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _run_localhost_role(
     play_text: str,
     tmp_path: Path,
@@ -169,18 +183,20 @@ def _run_localhost_role(
     *,
     env: dict[str, str],
     check: bool = False,
+    inventory: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     play = tmp_path / "play.yml"
     play.write_text(play_text, encoding="utf-8")
-    cmd = [
-        "ansible-playbook",
-        str(play),
-        "-i",
-        "localhost,",
-        "-e",
-        "ansible_connection=local",
-        *extra,
-    ]
+    cmd = ["ansible-playbook", str(play)]
+    for source in inventory or ["localhost,"]:
+        cmd.extend(["-i", source])
+    cmd.extend(
+        [
+            "-e",
+            "ansible_connection=local",
+            *extra,
+        ]
+    )
     if check:
         cmd.append("--check")
     return subprocess.run(
@@ -240,8 +256,9 @@ def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
     missing_key = tmp_path / "missing-age-key"
     extra.extend(["-e", f"age_key_file={missing_key}"])
     env = _ansible_env()
-    first = _run_localhost_role(play, tmp_path, extra, env=env, check=True)
-    second = _run_localhost_role(play, tmp_path, extra, env=env, check=True)
+    inventory = ["localhost,", str(_backup_inventory(tmp_path))]
+    first = _run_localhost_role(play, tmp_path, extra, env=env, check=True, inventory=inventory)
+    second = _run_localhost_role(play, tmp_path, extra, env=env, check=True, inventory=inventory)
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
     assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
@@ -353,3 +370,204 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply(tmp_path: Path) -> N
     invocations = log.read_text(encoding="utf-8")
     assert "kubectl create" in invocations
     assert "kubectl apply" not in invocations
+
+
+def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    _write_executable(
+        binary,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            set -euo pipefail
+            printf '%s\\n' "$*" >> {log}
+            joined="$*"
+            if [[ "$joined" == *"get fluxinstance"* ]]; then
+              echo "fluxinstance.fluxcd.controlplane.io/flux"
+              exit 0
+            fi
+            echo "unexpected k3s invocation: $*" >&2
+            exit 1
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: FluxInstance already present
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: instance.yml
+        """
+    )
+    env = _ansible_env()
+    extra = ["-e", f"k3s_binary_path={binary}"]
+    inventory = ["localhost,", str(_backup_inventory(tmp_path))]
+    first = _run_localhost_role(play, tmp_path, extra, env=env, inventory=inventory)
+    second = _run_localhost_role(play, tmp_path, extra, env=env, inventory=inventory)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    invocations = log.read_text(encoding="utf-8")
+    assert invocations.count("get fluxinstance") == 2
+    assert "backup-rebuild-hold" not in invocations
+    assert "configmap" not in invocations.lower()
+
+
+def _become_exe(tmp_path: Path) -> Path:
+    path = tmp_path / "sudo"
+    _write_executable(
+        path,
+        textwrap.dedent(
+            """\
+            #!/bin/bash
+            # Ansible become: sudo -H -S -n -u root <command>
+            skip=0
+            args=()
+            for arg in "$@"; do
+              if [[ "$skip" -eq 1 ]]; then
+                skip=0
+                continue
+              fi
+              case "$arg" in
+                -u) skip=1 ;;
+                -H|-S|-n) ;;
+                *) args+=("$arg") ;;
+              esac
+            done
+            exec "${args[@]}"
+            """
+        ),
+    )
+    return path
+
+
+def test_fresh_cluster_with_restic_repos_sets_the_hold(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    stdin_path = tmp_path / "apply.stdin"
+    binary = tmp_path / "k3s"
+    restic = tmp_path / "backup" / "restic"
+    (restic / "ns-demo" / "pvc-drill").mkdir(parents=True)
+    (restic / "ns-demo" / "pvc-drill" / "config").write_text("repo\n", encoding="utf-8")
+    (restic / "ns-decoy" / "notpvc").mkdir(parents=True)
+    (restic / "ns-decoy" / "notpvc" / "config").write_text("nope\n", encoding="utf-8")
+    _write_executable(
+        binary,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            set -euo pipefail
+            printf '%s\\n' "$*" >> {log}
+            joined="$*"
+            if [[ "$joined" == *"get fluxinstance"* ]]; then
+              echo 'Error from server (NotFound): fluxinstances.fluxcd.controlplane.io "flux" not found' >&2
+              exit 1
+            fi
+            if [[ "$joined" == *"kubectl apply -f -"* ]]; then
+              cat > {stdin_path}
+              echo "configmap/backup-rebuild-hold created"
+              exit 0
+            fi
+            if [[ "$joined" == *"kubectl apply -f "* ]]; then
+              echo "fluxinstance.fluxcd.controlplane.io/flux"
+              exit 0
+            fi
+            echo "unexpected k3s invocation: $*" >&2
+            exit 1
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: Fresh cluster
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: instance.yml
+        """
+    )
+    env = _ansible_env()
+    extra = [
+        *_flux_operator_extra(binary),
+        "-e",
+        f"backup_path={tmp_path / 'backup'}",
+        "-e",
+        f"ansible_become_exe={_become_exe(tmp_path)}",
+    ]
+    proc = _run_localhost_role(
+        play,
+        tmp_path,
+        extra,
+        env=env,
+        inventory=["localhost,", str(_backup_inventory(tmp_path))],
+    )
+    output = proc.stdout + proc.stderr
+    # changed_when used to fail the play here, before the FluxInstance render.
+    assert "'stdout' is undefined" not in output
+    assert "Apply the rebuild hold" in output
+    rendered = stdin_path.read_text(encoding="utf-8")
+    assert "ns-demo/pvc-drill" in rendered
+    assert "ns-decoy" not in rendered
+    if proc.returncode != 0:
+        assert "chown failed" in output
+    else:
+        invocations = log.read_text(encoding="utf-8").splitlines()
+        hold_apply = next(i for i, line in enumerate(invocations) if "apply -f -" in line)
+        flux_apply = next(
+            i for i, line in enumerate(invocations) if "apply -f " in line and "apply -f -" not in line
+        )
+        assert hold_apply < flux_apply
+
+
+def test_fluxinstance_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    _write_executable(
+        binary,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            set -euo pipefail
+            printf '%s\\n' "$*" >> {log}
+            echo "The connection to the server 127.0.0.1:6443 was refused" >&2
+            exit 1
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: API error
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: instance.yml
+        """
+    )
+    env = _ansible_env()
+    proc = _run_localhost_role(
+        play,
+        tmp_path,
+        ["-e", f"k3s_binary_path={binary}"],
+        env=env,
+        inventory=["localhost,", str(_backup_inventory(tmp_path))],
+    )
+    assert proc.returncode != 0
+    output = proc.stdout + proc.stderr
+    assert "Check whether FluxInstance exists" in output
+    assert "Stat restic data on the backup host" not in output
+    assert "backup-rebuild-hold" not in log.read_text(encoding="utf-8")
