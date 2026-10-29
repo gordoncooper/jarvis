@@ -387,6 +387,16 @@ def _run(cluster: _Cluster, **kwargs: object) -> int:
     return restore_tool.run(cluster.kubectl, **args)  # type: ignore[arg-type]
 
 
+def test_pass_line_names_the_snapshot(capsys) -> None:
+    logs = (
+        "restoring snapshot 3727b648 of [/data] at "
+        "2026-10-29 00:00:00.000000000 +0000 UTC by root@volsync to .\n"
+    )
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=logs)
+    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    assert "PASS restore demo/drill snapshot 3727b648" in capsys.readouterr().out
+
+
 def test_empty_mover_logs_fail(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs="")
     assert _run(cluster, app="demo", all_pvcs=False) != 0

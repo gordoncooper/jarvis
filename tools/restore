@@ -33,6 +33,8 @@ _BIND_PREFIX = "restore-bind-"
 _NO_SNAPSHOT = "No eligible snapshots found"
 # VolSync's restic log filter keeps a line that starts with "restoring" after a real restore.
 _RESTORING = re.compile(r"(?im)^\s*restoring\b")
+# restic 0.19.1 (VolSync 0.17 mover) prints the short id on that line.
+_SNAPSHOT_ID = re.compile(r"(?im)^\s*restoring\s+snapshot\s+([0-9a-f]{8})\b")
 _FLUX_NAME = "kustomize.toolkit.fluxcd.io/name"
 _FLUX_NS = "kustomize.toolkit.fluxcd.io/namespace"
 HOLD_NAMESPACE = "kube-system"
@@ -593,6 +595,13 @@ def _delete_destination(kubectl: Kubectl, namespace: str, pvc: str) -> None:
     )
 
 
+def _snapshot_id(logs: str) -> str:
+    found = _SNAPSHOT_ID.search(logs)
+    if found is None:
+        return "unknown"
+    return found.group(1)
+
+
 def _mover_logs(kubectl: Kubectl, namespace: str, pvc: str) -> str:
     # VolSync 0.17 writes the filtered mover log here, then deletes the Job.
     name = f"restore-{pvc}"
@@ -694,7 +703,7 @@ def _restore_one(
             _resume(kubectl, namespace, pvc)
             state.paused = False
         _unquiesce(kubectl, namespace, state)
-        _line(f"PASS restore {namespace}/{pvc}")
+        _line(f"PASS restore {namespace}/{pvc} snapshot {_snapshot_id(logs)}")
     except NoSnapshot:
         raise
     except Fail:
