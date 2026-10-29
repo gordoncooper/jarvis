@@ -1,4 +1,8 @@
+# Prune stays off. Deleting this namespace tears down the controller, and a
+# Terminating namespace blocks the chart from creating it again.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: volsync
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
