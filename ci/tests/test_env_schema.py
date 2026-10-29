@@ -224,6 +224,15 @@ def test_flux_paths_must_use_own_env_name(tmp_path: Path):
     assert "env-test" in msg
 
 
+def test_backup_schedule_must_be_five_fields(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["backup_schedule"] = "nightly"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "backup_schedule must be a five-field cron" in "\n".join(excinfo.value.messages)
+
+
 def test_time_zone_and_k3s_version_must_match_their_shapes(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["time_zone"] = "Not/AZone"

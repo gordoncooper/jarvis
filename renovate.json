@@ -33,6 +33,16 @@
       "matchDepNames": ["quay.io/backube/volsync"]
     },
     {
+      "description": "One PR updates every Kyverno image digest pin.",
+      "groupName": "kyverno-image",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": [
+        "ghcr.io/kyverno/kyverno",
+        "ghcr.io/kyverno/kyvernopre",
+        "ghcr.io/kyverno/background-controller"
+      ]
+    },
+    {
       "description": "Flux distribution version is one pin in the role default and each env FluxInstance. Auto-merge stays off.",
       "groupName": "flux-distribution",
       "matchManagers": ["custom.regex"],
@@ -77,6 +87,23 @@
       "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>helm) depName=(?<depName>volsync) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Kyverno Helm chart pin.",
+      "managerFilePatterns": ["/^platform\\/kyverno\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>helm) depName=(?<depName>kyverno) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Kyverno controller image digest and version.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/kyverno\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=docker depName=(?<depName>ghcr.io/kyverno/\\S+)\\n\\s*tag: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ]
     },
     {

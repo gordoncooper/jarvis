@@ -1,0 +1,80 @@
+# Generates one restic Secret and ReplicationSource per PVC. Not a ReplicationSource object.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: pvc-backup
+spec:
+  webhookConfiguration:
+    failurePolicy: Ignore
+  rules:
+    - name: restic-secret
+      match: &enrolled-match
+        any:
+          - resources:
+              kinds:
+                - PersistentVolumeClaim
+      exclude: &enrolled-exclude
+        any:
+          - resources:
+              annotations:
+                backup: none
+          - resources:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: volsync
+      context:
+        - name: backupsRestic
+          apiCall:
+            urlPath: /api/v1/namespaces/platform-backups/secrets/backups-restic
+            jmesPath: data
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: v1
+        kind: Secret
+        name: "restic-{{ request.object.metadata.name }}"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          type: Opaque
+          data:
+            RESTIC_PASSWORD: "{{ backupsRestic.RESTIC_PASSWORD }}"
+            RESTIC_REST_USERNAME: "{{ backupsRestic.RESTIC_REST_USERNAME }}"
+            RESTIC_REST_PASSWORD: "{{ backupsRestic.RESTIC_REST_PASSWORD }}"
+            RESTIC_REPOSITORY: "{{ base64_encode('{{ base64_decode(backupsRestic.RESTIC_REPOSITORY) }}ns-{{ request.object.metadata.namespace }}/pvc-{{ request.object.metadata.name }}') }}"
+    - name: replication-source
+      match: *enrolled-match
+      exclude: *enrolled-exclude
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: volsync.backube/v1alpha1
+        kind: ReplicationSource
+        name: "{{ request.object.metadata.name }}"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            sourcePVC: "{{ request.object.metadata.name }}"
+            trigger:
+              schedule: "${backup_schedule}"
+            restic:
+              repository: "restic-{{ request.object.metadata.name }}"
+              copyMethod: Direct
+              cacheCapacity: 1Gi
+              pruneIntervalDays: 7
+              retain:
+                daily: ${backup_retention_daily}
+                weekly: ${backup_retention_weekly}
+                monthly: ${backup_retention_monthly}
+    - name: privileged-movers
+      match: *enrolled-match
+      exclude: *enrolled-exclude
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: v1
+            kind: Namespace
+            name: "{{ request.object.metadata.namespace }}"
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              volsync.backube/privileged-movers: "true"

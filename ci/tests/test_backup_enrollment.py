@@ -1,0 +1,186 @@
+"""Backup enrollment rules: Kyverno install and the PVC ClusterPolicy."""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+
+from ansible_role_proof import non_example_env_names
+from test_flux_entry import _kustomize_build
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _docs(path: Path) -> list[dict]:
+    return [
+        doc
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if isinstance(doc, dict)
+    ]
+
+
+def _rule(policy: dict, name: str) -> dict:
+    return next(rule for rule in policy["spec"]["rules"] if rule["name"] == name)
+
+
+def test_kyverno_chart_pins_and_controllers() -> None:
+    release = _docs(ROOT / "platform/kyverno/helmrelease.yaml")[0]
+    chart = release["spec"]["chart"]["spec"]
+    assert chart["version"] == "3.9.2"
+    assert chart["sourceRef"]["name"] == "kyverno"
+    values = release["spec"]["values"]
+    assert values["cleanupController"]["enabled"] is False
+    assert values["reportsController"]["enabled"] is False
+    reporting = values["features"]["reporting"]
+    assert reporting == {
+        "validate": False,
+        "mutate": False,
+        "mutateExisting": False,
+        "imageVerify": False,
+        "generate": False,
+    }
+    images = [
+        values["admissionController"]["container"]["image"],
+        values["admissionController"]["initContainer"]["image"],
+        values["backgroundController"]["image"],
+    ]
+    for image in images:
+        assert image["registry"] == "ghcr.io"
+        assert re.fullmatch(r"v1\.19\.2@sha256:[a-f0-9]{64}", image["tag"])
+    controllers = yaml.safe_load(
+        (ROOT / "platform/flux-operator/kustomization.yaml").read_text(encoding="utf-8")
+    )
+    assert "../kyverno" in controllers["resources"]
+
+
+def test_kyverno_roles_aggregate_secret_and_replicationsource_permissions() -> None:
+    roles = {
+        doc["metadata"]["name"]: doc
+        for doc in _docs(ROOT / "platform/kyverno/rbac.yaml")
+    }
+    generate = roles["kyverno:backup-generate"]
+    labels = generate["metadata"]["labels"]
+    assert labels["rbac.kyverno.io/aggregate-to-admission-controller"] == "true"
+    assert labels["rbac.kyverno.io/aggregate-to-background-controller"] == "true"
+    by_resource = {tuple(rule["resources"]): rule["verbs"] for rule in generate["rules"]}
+    assert "create" in by_resource[("secrets",)]
+    assert "get" in by_resource[("secrets",)]
+    assert "create" in by_resource[("replicationsources",)]
+    namespaces = roles["kyverno:backup-namespaces"]
+    assert (
+        namespaces["metadata"]["labels"]["rbac.kyverno.io/aggregate-to-background-controller"]
+        == "true"
+    )
+    assert "rbac.kyverno.io/aggregate-to-admission-controller" not in namespaces["metadata"]["labels"]
+    assert "update" in namespaces["rules"][0]["verbs"]
+    assert namespaces["rules"][0]["resources"] == ["namespaces"]
+
+
+def test_renovate_tracks_the_kyverno_chart_and_images() -> None:
+    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    managers = [
+        manager
+        for manager in renovate["customManagers"]
+        if any(
+            "kyverno" in pattern and "helmrelease" in pattern
+            for pattern in manager["managerFilePatterns"]
+        )
+    ]
+    assert len(managers) == 2
+    assert any(manager.get("datasourceTemplate") == "docker" for manager in managers)
+    assert any(
+        "currentDigest" in pattern and "currentValue" in pattern
+        for manager in managers
+        for pattern in manager["matchStrings"]
+    )
+    groups = [rule for rule in renovate["packageRules"] if rule.get("groupName") == "kyverno-image"]
+    assert len(groups) == 1
+    assert "ghcr.io/kyverno/background-controller" in groups[0]["matchDepNames"]
+
+
+def test_enrollment_policy_rules() -> None:
+    policy = next(
+        doc
+        for doc in _docs(ROOT / "platform/backups/enrollment.yaml")
+        if doc.get("kind") == "ClusterPolicy"
+    )
+    assert policy["metadata"]["name"] == "pvc-backup"
+    assert "failurePolicy" not in policy["spec"]
+    assert policy["spec"]["webhookConfiguration"]["failurePolicy"] == "Ignore"
+    assert policy["spec"].get("background", True) is True
+    secret, source, mutate = (
+        _rule(policy, "restic-secret"),
+        _rule(policy, "replication-source"),
+        _rule(policy, "privileged-movers"),
+    )
+    assert secret["match"] == source["match"] == mutate["match"]
+    assert secret["exclude"] == source["exclude"] == mutate["exclude"]
+    excluded = secret["exclude"]["any"]
+    assert {"annotations": {"backup": "none"}} in [
+        item["resources"] for item in excluded
+    ]
+    assert {"selector": {"matchLabels": {"app.kubernetes.io/created-by": "volsync"}}} in [
+        item["resources"] for item in excluded
+    ]
+
+    lookup = secret["context"][0]["apiCall"]
+    assert lookup["urlPath"] == "/api/v1/namespaces/platform-backups/secrets/backups-restic"
+    assert lookup["jmesPath"] == "data"
+    data = secret["generate"]["data"]["data"]
+    assert data["RESTIC_PASSWORD"] == "{{ backupsRestic.RESTIC_PASSWORD }}"
+    repository = data["RESTIC_REPOSITORY"]
+    assert "base64_decode" in repository
+    assert "ns-{{ request.object.metadata.namespace }}/pvc-{{ request.object.metadata.name }}" in repository
+    assert secret["generate"]["generateExisting"] is True
+    assert secret["generate"]["synchronize"] is True
+    assert secret["generate"]["name"].startswith("restic-")
+
+    assert source["generate"]["kind"] == "ReplicationSource"
+    assert source["generate"]["generateExisting"] is True
+    assert source["generate"]["synchronize"] is True
+    spec = source["generate"]["data"]["spec"]
+    assert spec["sourcePVC"] == "{{ request.object.metadata.name }}"
+    assert spec["trigger"]["schedule"] == "${backup_schedule}"
+    restic = spec["restic"]
+    assert restic["copyMethod"] == "Direct"
+    assert restic["pruneIntervalDays"] == 7
+    assert restic["cacheCapacity"] == "1Gi"
+    assert restic["repository"].startswith("restic-")
+    assert restic["retain"] == {
+        "daily": "${backup_retention_daily}",
+        "weekly": "${backup_retention_weekly}",
+        "monthly": "${backup_retention_monthly}",
+    }
+    assert "rest:http://" not in (ROOT / "platform/backups/enrollment.yaml").read_text(encoding="utf-8")
+
+    assert mutate["mutate"]["mutateExistingOnPolicyUpdate"] is True
+    target = mutate["mutate"]["targets"][0]
+    assert target["kind"] == "Namespace"
+    assert target["name"] == "{{ request.object.metadata.namespace }}"
+    annotation = mutate["mutate"]["patchStrategicMerge"]["metadata"]["annotations"]
+    assert annotation["volsync.backube/privileged-movers"] == "true"
+
+
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_enrollment_policy_is_on_the_platform_configs_build(env: str) -> None:
+    docs = [
+        doc
+        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux/platform-configs"))
+        if isinstance(doc, dict)
+    ]
+    policies = [doc for doc in docs if doc.get("kind") == "ClusterPolicy"]
+    assert [doc["metadata"]["name"] for doc in policies] == ["pvc-backup"]
+    assert not any(doc.get("kind") == "ReplicationSource" for doc in docs)
+    controllers = [
+        doc
+        for doc in yaml.safe_load_all(_kustomize_build("platform/flux-operator"))
+        if isinstance(doc, dict)
+    ]
+    assert any(
+        doc.get("kind") == "HelmRelease" and doc["metadata"]["name"] == "kyverno"
+        for doc in controllers
+    )

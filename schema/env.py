@@ -37,6 +37,7 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "backup_retention_daily",
         "backup_retention_weekly",
         "backup_retention_monthly",
+        "backup_schedule",
         "k3s_version",
         "k3s_sha256",
         "pod_cidr",
@@ -373,6 +374,11 @@ def _validate_cluster_vars(
             errors.append(f"{rel_path}: {key} must be an integer")
         elif val <= 0:
             errors.append(f"{rel_path}: {key} must be > 0")
+
+    if "backup_schedule" in data:
+        schedule = data["backup_schedule"]
+        if not isinstance(schedule, str) or len(schedule.split()) != 5:
+            errors.append(f"{rel_path}: backup_schedule must be a five-field cron")
 
     errors.extend(_validate_ntp_pools(rel_path, data.get("ntp_pools")))
 

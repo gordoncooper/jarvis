@@ -6,3 +6,4 @@ resources:
   # One Flux path. Later platform controllers join this list.
   - ../traefik
   - ../backups/controller
+  - ../kyverno
