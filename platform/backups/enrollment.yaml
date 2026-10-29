@@ -42,7 +42,7 @@ spec:
             RESTIC_PASSWORD: "{{ backupsRestic.RESTIC_PASSWORD }}"
             RESTIC_REST_USERNAME: "{{ backupsRestic.RESTIC_REST_USERNAME }}"
             RESTIC_REST_PASSWORD: "{{ backupsRestic.RESTIC_REST_PASSWORD }}"
-            RESTIC_REPOSITORY: "{{ base64_encode('{{ backupsRestic.RESTIC_REPOSITORY | base64_decode }}ns-{{ request.object.metadata.namespace }}/pvc-{{ request.object.metadata.name }}') }}"
+            RESTIC_REPOSITORY: "{{ base64_encode('{{ base64_decode(backupsRestic.RESTIC_REPOSITORY) }}ns-{{ request.object.metadata.namespace }}/pvc-{{ request.object.metadata.name }}') }}"
     - name: replication-source
       match: *enrolled-match
       exclude: *enrolled-exclude
@@ -58,7 +58,6 @@ spec:
             sourcePVC: "{{ request.object.metadata.name }}"
             trigger:
               schedule: "${backup_schedule}"
-              manual: "{{ (request.object.metadata.annotations || `{}`).\"backup.manual\" || '0' }}"
             restic:
               repository: "restic-{{ request.object.metadata.name }}"
               copyMethod: Direct

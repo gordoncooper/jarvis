@@ -145,7 +145,6 @@ def test_enrollment_policy_rules() -> None:
     spec = source["generate"]["data"]["spec"]
     assert spec["sourcePVC"] == "{{ request.object.metadata.name }}"
     assert spec["trigger"]["schedule"] == "${backup_schedule}"
-    assert "backup.manual" in spec["trigger"]["manual"]
     restic = spec["restic"]
     assert restic["copyMethod"] == "Direct"
     assert restic["pruneIntervalDays"] == 7
