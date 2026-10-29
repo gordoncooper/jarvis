@@ -353,3 +353,64 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply(tmp_path: Path) -> N
     invocations = log.read_text(encoding="utf-8")
     assert "kubectl create" in invocations
     assert "kubectl apply" not in invocations
+
+
+def test_rebuild_hold_is_between_the_lookup_and_the_fluxinstance_apply() -> None:
+    tasks = yaml.safe_load((FLUX_OPERATOR_ROLE_TASKS / "instance.yml").read_text(encoding="utf-8"))
+    assert isinstance(tasks, list)
+    names = [task.get("name") for task in tasks if isinstance(task, dict)]
+    record = names.index("Record FluxInstance presence")
+    hold = names.index(
+        "Hold PVC backups when this cluster is new and restic data is already on disk"
+    )
+    bootstrap = names.index("Bootstrap FluxInstance when absent")
+    assert record < hold < bootstrap
+    task = next(item for item in tasks if isinstance(item, dict) and item.get("name") == names[hold])
+    assert task["when"] == "not (flux_instance_present | bool)"
+    assert task["ansible.builtin.import_tasks"] == "rebuild_hold.yml"
+
+
+def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    _write_executable(
+        binary,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            set -euo pipefail
+            printf '%s\\n' "$*" >> {log}
+            joined="$*"
+            if [[ "$joined" == *"get fluxinstance"* ]]; then
+              echo "fluxinstance.fluxcd.controlplane.io/flux"
+              exit 0
+            fi
+            echo "unexpected k3s invocation: $*" >&2
+            exit 1
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: FluxInstance already present
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: instance.yml
+        """
+    )
+    env = _ansible_env()
+    extra = ["-e", f"k3s_binary_path={binary}"]
+    first = _run_localhost_role(play, tmp_path, extra, env=env)
+    second = _run_localhost_role(play, tmp_path, extra, env=env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    invocations = log.read_text(encoding="utf-8")
+    assert invocations.count("get fluxinstance") == 2
+    assert "backup-rebuild-hold" not in invocations
+    assert "configmap" not in invocations.lower()

@@ -9,7 +9,7 @@ help:
 	@echo "Operator commands"
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
 	@echo "  make verify             Phase exit check (PHASE=p0a|p0b ENV=<env>; p0b needs DRILL_LOG)"
-	@echo "  make restore            Restore PVCs in namespace APP"
+	@echo "  make restore            Restore PVCs in namespace APP (optional AS_OF=RFC3339)"
 	@echo "  make restore-all        Restore every enrolled PVC"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"

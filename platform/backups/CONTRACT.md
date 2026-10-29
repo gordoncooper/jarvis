@@ -32,105 +32,31 @@ Namespace exists; Secret `backups-restic` is present (value not logged); Service
 - A volume's repository URL is `rest:http://restic.platform-backups.svc.cluster.local:8000/ns-<namespace>/pvc-<pvc>`. The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names (`data`, `index`, `keys`, `locks`, `snapshots`, `config`). The password stays out of the URL.
 - Secret `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the server prefix `rest:http://restic.platform-backups.svc.cluster.local:8000/`), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`. A volume secret sets `RESTIC_REPOSITORY` to that volume's URL and copies the password and `RESTIC_REST_*` keys. VolSync 0.17 passes those two keys into the mover.
 - The process runs with htpasswd auth and without `--append-only` or `--private-repos`. The mover forgets on every backup and prunes with the same credentials. Repository paths are `ns-<namespace>/pvc-<pvc>`.
-- Retention is 7 daily, 4 weekly, and 3 monthly (`backup_retention_daily`, `backup_retention_weekly`, `backup_retention_monthly`). A ReplicationSource copies those into `restic.retain` and sets `pruneIntervalDays: 7`.
+- Retention is 7 daily, 4 weekly, and 3 monthly (`backup_retention_daily`, `backup_retention_weekly`, `backup_retention_monthly`). A ReplicationSource copies those into `restic.retain`, sets `retain.within: 7d`, and sets `pruneIntervalDays: 7`. `within` keeps every snapshot from the last 7 days (VolSync passes `--keep-within`), so one backup of an empty recreated claim cannot forget that day's good snapshot yet. It does not replace the rebuild hold: after 7 days, keep-daily still keeps only the newest snapshot of the loss day.
 - Enrollment is ClusterPolicy `pvc-backup` in this directory (platform-configs, after the VolSync CRDs). `failurePolicy` is Ignore on `spec.webhookConfiguration.failurePolicy` only. `spec.failurePolicy` is unset. Each generate rule sets `generateExisting` and `synchronize`. It skips a PVC annotated `backup: none` and a PVC labeled `app.kubernetes.io/created-by: volsync`.
 - A PVC is enrolled once it is bound (`spec.volumeName` is set): VolSync 0.17 starts the mover Job immediately, and generating it before local-path binds the claim races two `restic init`s on the new repository.
 - ClusterPolicy `pvc-backup` is annotated `kustomize.toolkit.fluxcd.io/force: Enabled`: generate rules can't be edited in place, so Flux recreates the policy; recreating it deletes and regenerates the generated Secrets and ReplicationSources, while restic data on disk stays.
 - For every other PVC it generates Secret `restic-<pvc>` and ReplicationSource `<pvc>` in that namespace. `RESTIC_REPOSITORY` is Secret `backups-restic` key `RESTIC_REPOSITORY` plus `ns-<namespace>/pvc-<pvc>`. `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` are copied from that Secret with a data generate and an apiCall lookup. The ReplicationSource uses the restic mover, `copyMethod: Direct`, `cacheCapacity: 1Gi`, and `trigger.schedule` from `backup_schedule`. On-demand backup is p2-20; VolSync ignores the schedule while trigger.manual is set, so the policy does not set it.
+- Do not merge a `pvc-backup` policy change during a restore. The policy is annotated `kustomize.toolkit.fluxcd.io/force: Enabled`, so Flux recreates it and Kyverno regenerates every Secret and ReplicationSource.
 - A mutate-existing rule sets annotation `volsync.backube/privileged-movers: "true"` on the PVC's namespace. It lands asynchronously, so the first sync may fail once and pass on retry.
 - The VolSync controller pod's `TZ` is `time_zone`. The 0.17 cron parser uses the process local zone and has no timezone field. The chart has no env hook, so a HelmRelease postRenderer sets `TZ` and mounts the node zoneinfo directory.
 - `platform-backups` does not set `volsync.backube/privileged-movers`. No mover in this namespace mounts a hostPath. The rest-server runs as root so it can write its hostPath. The etcd CronJob runs as root so it can read the snapshot files (mode 0600). It is not a mover.
 - CronJob `etcd-snapshots` is pinned to `role.<dns_suffix>/control_plane=true`. It mounts `backup_path/etcd-snapshots` read-only (`hostPath` type `Directory`) and runs `restic backup` of that mount into `host-etcd-snapshots`: the `RESTIC_REPOSITORY` prefix from Secret `backups-restic` plus that one path segment. `restic init` runs only when `restic cat config` exits 10 (repository missing). Any other error stops the run. `spec.timeZone` is `time_zone`. The schedule is five minutes after the k3s snapshot cron (role default `0 */12 * * *`, so `5 */12 * * *`). `concurrencyPolicy` is `Forbid`. Each run forgets with `backup_retention_daily`, `backup_retention_weekly`, and `backup_retention_monthly`, then prunes. The snapshot host is the fixed name `etcd-snapshots`, so retention is one group across runs. The image is official `restic/restic`, digest-pinned; Renovate updates the digest.
 - While the rest-server's data sits on the same disk, this copy adds retention and dedup, not disk-failure protection.
-- Volume restore is `make restore APP=<namespace>` or `make restore-all`. `APP` is the namespace. `restore-all` selects every bound PVC that is not `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`. The command is not in Git. It annotates the PVC `backup: paused`, waits until ReplicationSource `spec.paused` is true, the VolSync source Job has parallelism 0 and no active pod, and Secret `restic-<pvc>` exists, then applies a ReplicationDestination and waits for `status.lastManualSync`. On success it deletes the destination and removes the annotation. On failure it leaves `backup: paused` so the next sync cannot run.
-- `backup: paused` is how a restore holds the schedule. The policy sets ReplicationSource `spec.paused` from that annotation (`to_boolean`). VolSync 0.17 still creates the mover Job and sets its parallelism to 0, so no mover pod runs and restic does not backup or forget. That pause is required: forget's keep-daily keeps the newest snapshot that day, so a backup of a recreated empty PVC would replace the good snapshot and the next prune would drop it. `trigger.manual` is not the pause. Setting it starts a sync, and the policy still does not set it (on-demand backup is p2-20). `backup: none` is not the pause. That annotation means the volume is never enrolled.
-- The destination uses the restic mover, `copyMethod: Direct`, `enableFileDeletion: true`, and `restoreAsOf` one second before the PVC `creationTimestamp`. That timestamp is the rebuild time when the claim was deleted and recreated, so the newest snapshot at or before it is the pre-delete snapshot. There is no VolumeSnapshot, volume populator, or snapshot class. The recreated PVC must already carry `backup: paused` before it binds, because a new ReplicationSource starts its mover immediately and an unpaused source would snapshot the empty claim. Direct copy needs the PVC free of other mounts.
-- P0b drill, run by hand on the controller and removed afterward. No drill helper. etcd is not restored. Save the session transcript in order and pass it as `DRILL_LOG` to `make verify PHASE=p0b`. The image is the one already pinned on CronJob `etcd-snapshots`. The source syncs when it is created, which can be before the file exists, so after the first checksum delete the ReplicationSource and wait for Kyverno to recreate it and finish a sync. Then pause, delete the claim, and recreate it already paused. After `make restore` resumes the source, wait for its Job to complete before reading the checksum back. The Job name is `volsync-src-<pvc>` (VolSync 0.17; a name longer than 63 characters is `volsync-src-` plus the crc32 of the PVC name).
+- Volume restore is `make restore APP=<namespace>` or `make restore-all`. `APP` is the namespace. `AS_OF=<RFC3339>` overrides `restoreAsOf` for every selected PVC. The default is one second before the PVC `creationTimestamp`, which is the right point for a claim that was deleted and recreated. A volume that was not recreated needs `AS_OF`, because that default is before its first snapshot. `restore-all` selects every PVC that is not `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`, including one that is not bound yet. The command is not in Git.
+- Before the copy, restore suspends the Flux Kustomization labeled on the PVC or its Deployment or StatefulSet, and scales those workloads to 0. It records the previous replica counts in annotation `restore-quiesce` so a second run still knows them. It then annotates `backup: paused` and waits until ReplicationSource `spec.paused` is true, the source Job's parallelism is 0, and no pod that mounts the PVC is running, pending, or terminating. `status.active` does not count a terminating pod, and that pod can still hold the volume. An unbound PVC is annotated `backup: paused` first, then bound by a short-lived pod using the `etcd-snapshots` image. That pod is deleted and must be gone before the copy. Restore waits for Secret `restic-<pvc>`, applies a ReplicationDestination, and waits for `status.lastManualSync`. The mover's own log is the result: `No eligible snapshots found` means it restored nothing and exited 0. `make restore` fails on that line. `restore-all` reports it and skips that PVC. On success it deletes the destination, puts the workloads back, and resumes the Flux Kustomization. On failure it leaves the pause, the scaled workloads, the suspended Kustomization, and the destination, and prints the commands that put them back. A second run starts from that state.
+- `backup: paused` is how a restore holds one PVC. The policy sets ReplicationSource `spec.paused` from that annotation or from ConfigMap `kube-system/backup-rebuild-hold` (`to_boolean`). The hold's apiCall `default` is the string `false`, so a missing ConfigMap is not paused. A forbidden read is the same as a missing ConfigMap, which is why `kyverno:backup-generate` must be allowed to get that ConfigMap. VolSync 0.17 still creates the mover Job and sets its parallelism to 0, so no mover pod runs and restic does not backup or forget. `trigger.manual` is not the pause. Setting it starts a sync, and the policy still does not set it (on-demand backup is p2-20). `backup: none` is not the pause. That annotation means the volume is never enrolled.
+- The rebuild hold is cluster state, not Git. `site.yml` creates it only when FluxInstance `flux` is absent and the backup-role node already has restic repositories under `backup_path/restic/ns-*/pvc-*`. The backup-role node is the rest-server node selector, which is not always the control plane. The ConfigMap's `data.repos` is that list. While it exists, new ReplicationSources are generated paused, so a cluster rebuilt on a disk that still has restic data cannot snapshot empty volumes over the last good backup. A later `site.yml`, once the FluxInstance exists, does not create or change it. Deleting the ConfigMap does not re-run generate on sources that already exist. `make restore-all` deletes it only after every restore has succeeded and every listed repository has a PVC, and only then removes `backup: paused`. If a listed repository has no PVC, it reports that and leaves the hold, and the restored PVCs stay `backup: paused`. One `make restore` does not lift the hold, and it leaves `backup: paused` in place while the hold exists.
+- The destination uses the restic mover, `copyMethod: Direct`, `enableFileDeletion: true`, and `restoreAsOf` as above. There is no VolumeSnapshot, volume populator, or snapshot class. The recreated PVC must already carry `backup: paused` before it binds, because a new ReplicationSource starts its mover immediately and an unpaused source would snapshot the empty claim. Direct copy needs the PVC free of other mounts.
+- P0b drill, run by hand on the controller and removed afterward. No drill helper. Save the session transcript in order and pass it as `DRILL_LOG` to `make verify PHASE=p0b`. The image is the one already pinned on CronJob `etcd-snapshots`. The Job name is `volsync-src-<pvc>` (VolSync 0.17; a name longer than 63 characters is `volsync-src-` plus the crc32 of the PVC name). Steps:
+  1. Create namespace `platform-drill`, PVC `drill`, and a pod that writes a file. Read its sha256.
+  2. Delete the ReplicationSource and wait until Kyverno's replacement finishes a sync. The first sync can run before the file exists.
+  3. Annotate the PVC `backup: paused`, delete the pod and the PVC, and recreate the PVC already annotated `backup: paused`. Do not wait for Bound. local-path binds on first use.
+  4. `make restore APP=platform-drill`. It binds the claim. Wait for Job `volsync-src-drill` to complete, then read the sha256 back.
+  5. Run a pod with CronJob `etcd-snapshots`' image, node selector, and snapshot hostPath, as root. It restores the newest snapshot from `host-etcd-snapshots` into an emptyDir on that node and prints the sha256 of the k3s file and of the restored file. Do not print Secret values. Do not reset the cluster. The emptyDir is removed with the pod.
+  6. Delete the namespace and that pod.
 
-```bash
-NS=platform-drill
-PVC=drill
-IMAGE=$(kubectl get cronjob -n platform-backups etcd-snapshots -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}')
-kubectl create namespace "$NS"
-kubectl apply -n "$NS" -f - <<EOF
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: ${PVC}
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 64Mi
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${PVC}
-spec:
-  restartPolicy: Never
-  containers:
-    - name: drill
-      image: ${IMAGE}
-      command: ["sh", "-c", "echo drill-ok > /data/payload && sleep 3600"]
-      volumeMounts:
-        - name: data
-          mountPath: /data
-  volumes:
-    - name: data
-      persistentVolumeClaim:
-        claimName: ${PVC}
-EOF
-kubectl wait -n "$NS" --for=condition=Ready "pod/$PVC"
-kubectl exec -n "$NS" "$PVC" -- sha256sum /data/payload
-kubectl delete replicationsource "$PVC" -n "$NS" --wait=true
-until kubectl get replicationsource "$PVC" -n "$NS" -o jsonpath='{.status.lastSyncTime}' | grep -q .; do sleep 5; done
-kubectl annotate pvc "$PVC" -n "$NS" backup=paused --overwrite
-until kubectl get replicationsource "$PVC" -n "$NS" -o jsonpath='{.spec.paused}' | grep -qx true; do sleep 5; done
-kubectl delete pod "$PVC" -n "$NS" --wait=true
-kubectl delete pvc "$PVC" -n "$NS" --wait=true
-kubectl apply -n "$NS" -f - <<EOF
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: ${PVC}
-  annotations:
-    backup: paused
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 64Mi
-EOF
-kubectl wait -n "$NS" --for=jsonpath='{.status.phase}'=Bound "pvc/$PVC"
-make restore APP="$NS"
-until kubectl get job "volsync-src-$PVC" -n "$NS" -o name | grep -q .; do sleep 5; done
-kubectl wait -n "$NS" --for=condition=complete "job/volsync-src-$PVC" --timeout=600s
-kubectl apply -n "$NS" -f - <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${PVC}
-spec:
-  restartPolicy: Never
-  containers:
-    - name: drill
-      image: ${IMAGE}
-      command: ["sh", "-c", "sha256sum /data/payload && sleep 3600"]
-      volumeMounts:
-        - name: data
-          mountPath: /data
-  volumes:
-    - name: data
-      persistentVolumeClaim:
-        claimName: ${PVC}
-EOF
-kubectl wait -n "$NS" --for=condition=Ready "pod/$PVC"
-kubectl exec -n "$NS" "$PVC" -- sha256sum /data/payload
-kubectl get etcdsnapshotfiles.k3s.cattle.io -o jsonpath='{range .items[*]}{.spec.location}{"\n"}{end}'
-kubectl delete namespace "$NS" --wait=true
-```
-- etcd restore is owner-run. It is not a make target. Do not print Secret values. Set `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` from Secret `backups-restic`, and set `RESTIC_REPOSITORY` to that Secret's prefix plus `host-etcd-snapshots`. On the server node, `restic snapshots`, then `restic restore <id> --target <dir> --include /snapshots/<file>`. The k3s file lands at `<dir>/snapshots/<file>`. Stop k3s, run `/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path=<dir>/snapshots/<file>` once, then start k3s. A pod pinned to the control-plane role can reach the Service and write the file through a hostPath; the reset itself runs on the node. Do not run that reset as a drill on the live env. k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the original k3s server token; same-node restore is the stated scope.
+- etcd cluster-reset is owner-run. It is not a make target and it is not part of the drill. Do not print Secret values. Set `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` from Secret `backups-restic`, and set `RESTIC_REPOSITORY` to that Secret's prefix plus `host-etcd-snapshots`. On the server node, `restic snapshots`, then `restic restore <id> --target <dir> --include /snapshots/<file>`. The k3s file lands at `<dir>/snapshots/<file>`. Stop k3s, run `/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path=<dir>/snapshots/<file>` once, then start k3s. The reset itself runs on the node. Do not run that reset as a drill on the live env. k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the original k3s server token; same-node restore is the stated scope. The drill only checks that the newest restic copy matches the k3s file's sha256.
 - The OQ7 test bundle is removed. `${backup_path}/volsync-test` is still on the node (Retain + hostPath). Delete that directory by hand once.
 
 ## Proven by
@@ -138,7 +64,7 @@ kubectl delete namespace "$NS" --wait=true
 - `ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption).
 - `ci/tests/test_restic_rest_server.py` (rest-server rules and the etcd CronJob rules) and `ci/tests/test_bootstrap_secrets.py`.
 - `ci/checks/pvc-backup` (R31) and `ci/tests/test_pvc_backup.py` (policy present, `backup: none` allow-list, no ReplicationSource in Git, no hand-written VolSync object or restic repository URL under `services/` or `apps/`).
-- `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles, policy rules, `backup: paused` sets `spec.paused`).
-- `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`).
-- `make verify PHASE=p0b` reads the drill transcript for the checksum and the etcd snapshot filename. It does not re-run the drill.
+- `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles, policy rules, `backup: paused` or the rebuild hold sets `spec.paused`).
+- `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails; `AS_OF` restores a live volume; `restore-all` keeps or lifts the hold).
+- `make verify PHASE=p0b` reads the drill transcript for the checksum, the PVC deletion, and the matching etcd snapshot checksum. It does not re-run the drill.
 - The P0b scratch drill (Direct source and destination against this rest-server, checksum match).

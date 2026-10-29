@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-rebuild-hold
+  namespace: kube-system
+data:
+  repos: |
+{% for repo in backup_hold_repos | default([]) %}
+    {{ repo }}
+{% endfor %}

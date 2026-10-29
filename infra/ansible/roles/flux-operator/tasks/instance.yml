@@ -14,6 +14,10 @@
     flux_instance_present: >-
       {{ flux_instance_lookup.rc == 0 and (flux_instance_lookup.stdout | trim | length) > 0 }}
 
+- name: Hold PVC backups when this cluster is new and restic data is already on disk
+  when: not (flux_instance_present | bool)
+  ansible.builtin.import_tasks: rebuild_hold.yml
+
 - name: Bootstrap FluxInstance when absent
   when: not (flux_instance_present | bool)
   block:
