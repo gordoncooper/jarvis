@@ -15,7 +15,7 @@
       "automerge": false
     },
     {
-      "description": "D5: k3s host binary is pinned in cluster-vars.yaml; changes only by PR.",
+      "description": "D5: k3s host binary is pinned in cluster-vars.yaml and changes only by PR. A bump has to re-check platform/traefik and update the bundled chart and k3s versions in platform/traefik/CONTRACT.md.",
       "matchDatasources": ["github-releases"],
       "matchPackageNames": ["k3s-io/k3s"],
       "enabled": false
@@ -87,6 +87,14 @@
       "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>helm) depName=(?<depName>volsync) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "cert-manager Helm chart pin.",
+      "managerFilePatterns": ["/^platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>helm) depName=(?<depName>cert-manager) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\""
       ]
     },
     {

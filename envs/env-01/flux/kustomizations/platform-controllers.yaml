@@ -7,7 +7,7 @@ spec:
   interval: 10m
   retryInterval: 1m
   timeout: 15m
-  path: ./platform/flux-operator
+  path: ./platform
   prune: true
   # A HelmRelease healthCheck would stall platform-configs on a public chart pull.
   sourceRef:

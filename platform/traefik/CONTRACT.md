@@ -29,6 +29,7 @@ An HTTPS response on `<svc>.<dns_suffix>` whose certificate chains to the intern
 - `kube-system` keeps only this HelmChartConfig. p0b-04 puts TLSStore `default` next to the wildcard Certificate in `platform-cert-manager` (the namespace of the internal CA secret). Traefik reads the certificate secret from the TLSStore's namespace.
 - Chart v40 does not template `providers.kubernetesCRD.defaultTLSResourcesNamespace`. `additionalArguments` passes `--providers.kubernetesCRD.defaultTLSResourcesNamespace=platform-cert-manager`, so only that namespace's default store counts.
 - Ports 80 and 443 stay the chart's LoadBalancer Service ports. k3s ServiceLB publishes them on nodes labeled for the edge set (D42).
+- Checked: bundled Traefik chart v40 on k3s v1.36.5+k3s1.
 
 ## Proven by
 

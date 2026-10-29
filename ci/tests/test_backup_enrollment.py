@@ -52,9 +52,9 @@ def test_kyverno_chart_pins_and_controllers() -> None:
         assert image["registry"] == "ghcr.io"
         assert re.fullmatch(r"v1\.19\.2@sha256:[a-f0-9]{64}", image["tag"])
     controllers = yaml.safe_load(
-        (ROOT / "platform/flux-operator/kustomization.yaml").read_text(encoding="utf-8")
+        (ROOT / "platform/kustomization.yaml").read_text(encoding="utf-8")
     )
-    assert "../kyverno" in controllers["resources"]
+    assert "kyverno" in controllers["resources"]
 
 
 def test_kyverno_roles_aggregate_secret_and_replicationsource_permissions() -> None:
@@ -174,7 +174,7 @@ def test_enrollment_policy_is_on_the_platform_configs_build(env: str) -> None:
     assert not any(doc.get("kind") == "ReplicationSource" for doc in docs)
     controllers = [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build("platform/flux-operator"))
+        for doc in yaml.safe_load_all(_kustomize_build("platform"))
         if isinstance(doc, dict)
     ]
     assert any(

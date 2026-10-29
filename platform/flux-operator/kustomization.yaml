@@ -3,7 +3,3 @@ kind: Kustomization
 resources:
   - oci-repository.yaml
   - helmrelease.yaml
-  # One Flux path. Later platform controllers join this list.
-  - ../traefik
-  - ../backups/controller
-  - ../kyverno
