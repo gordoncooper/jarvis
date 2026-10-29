@@ -1,6 +1,6 @@
 # rest-server 0.14. Digest pin; Renovate updates it (renovate.json).
 # No --append-only: the mover forgets and prunes with these credentials.
-# No --private-repos: one user, and repos are <namespace>/<pvc>.
+# No --private-repos: one user, and repos are ns-<namespace>/pvc-<pvc>.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

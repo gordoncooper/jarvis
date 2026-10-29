@@ -99,6 +99,15 @@
       "matchStrings": [
         "image: (?<depName>restic/rest-server)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "restic image digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/backups\\/etcd-snapshots\\.yaml$/"],
+      "matchStrings": [
+        "image: (?<depName>restic/restic)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ]
     }
   ]
 }

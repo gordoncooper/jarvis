@@ -1,0 +1,88 @@
+# restic 0.19.1. Digest pin; Renovate updates it (renovate.json).
+# Reads the k3s snapshot directory. The k3s config is unchanged.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-snapshots
+  namespace: platform-backups
+  labels:
+    app.kubernetes.io/name: etcd-snapshots
+spec:
+  # Five minutes after k3s_etcd_snapshot_schedule_cron (role default "0 */12 * * *").
+  schedule: "5 */12 * * *"
+  timeZone: ${time_zone}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: etcd-snapshots
+        spec:
+          # Flux postBuild on platform-configs fills these from cluster-vars.
+          nodeSelector:
+            "role.${dns_suffix}/control_plane": "true"
+          restartPolicy: OnFailure
+          containers:
+            - name: restic
+              # renovate: datasource=docker depName=restic/restic
+              image: restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+              imagePullPolicy: IfNotPresent
+              # Snapshot files are mode 0600, owned by root.
+              securityContext:
+                runAsUser: 0
+              env:
+                - name: RESTIC_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: backups-restic
+                      key: RESTIC_PASSWORD
+                - name: RESTIC_REST_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: backups-restic
+                      key: RESTIC_REST_USERNAME
+                - name: RESTIC_REST_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: backups-restic
+                      key: RESTIC_REST_PASSWORD
+                - name: RESTIC_REPOSITORY_PREFIX
+                  valueFrom:
+                    secretKeyRef:
+                      name: backups-restic
+                      key: RESTIC_REPOSITORY
+                - name: RESTIC_REPOSITORY
+                  value: "$(RESTIC_REPOSITORY_PREFIX)host-etcd-snapshots"
+                # forget groups by host. The pod name changes every run.
+                - name: RESTIC_HOST
+                  value: etcd-snapshots
+              # cat config exit 10 means the repository is missing.
+              # Separate restic prune every run, because forget --prune skips prune when nothing was removed.
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  status=0
+                  restic cat config >/dev/null || status=$?
+                  if [ "$status" -eq 10 ]; then
+                    restic init
+                  elif [ "$status" -ne 0 ]; then
+                    exit "$status"
+                  fi
+                  restic backup /snapshots
+                  restic forget \
+                    --keep-daily=${backup_retention_daily} \
+                    --keep-weekly=${backup_retention_weekly} \
+                    --keep-monthly=${backup_retention_monthly}
+                  restic prune
+              volumeMounts:
+                - name: snapshots
+                  mountPath: /snapshots
+                  readOnly: true
+          volumes:
+            - name: snapshots
+              hostPath:
+                path: ${backup_path}/etcd-snapshots
+                type: Directory
