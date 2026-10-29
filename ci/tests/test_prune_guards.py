@@ -28,6 +28,7 @@ _PROTECTED = {
     ("HelmRepository", "flux-system", "jetstack"),
     ("HelmRepository", "flux-system", "kyverno"),
     ("Namespace", "", "kyverno"),
+    ("Namespace", "", "platform-cert-manager"),
     ("Namespace", "", "platform-backups"),
     ("Namespace", "", "volsync"),
 }
