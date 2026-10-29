@@ -71,12 +71,14 @@ class _Cluster:
         logs: str = _SNAPSHOT_LOG,
         hold: list[str] | None = None,
         pods: list[dict] | None = None,
+        drop_source_after_hold: bool = False,
     ) -> None:
         self.items = items
         self.will_pause = will_pause
         self.logs = logs
         self.hold = hold
         self.pods = pods or []
+        self.drop_source_after_hold = drop_source_after_hold
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
         self.paused: set[str] = set()
@@ -135,34 +137,23 @@ class _Cluster:
                 argv,
                 json.dumps({"data": {"repos": "\n".join(self.hold) + "\n"}}),
             )
-        if argv[:3] == ["get", "cronjob", "etcd-snapshots"]:
-            return _completed(
-                argv,
-                json.dumps(
-                    {
-                        "spec": {
-                            "jobTemplate": {
-                                "spec": {
-                                    "template": {
-                                        "spec": {
-                                            "containers": [{"image": "restic/restic@sha256:abc"}]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                ),
-            )
         if argv[:2] == ["annotate", "pvc"] and "backup=paused" in argv:
             self.paused.add(argv[2])
             return _completed(argv, "annotated\n")
         if argv[:2] == ["annotate", "pvc"] and "backup-" in argv:
             self.resumed.add(argv[2])
             return _completed(argv, "annotated\n")
-        if argv[:2] == ["annotate", "pvc"] and "restore-quiesce-" in argv:
-            return _completed(argv, "annotated\n")
         if argv[:2] == ["get", "replicationsource"]:
+            if self.drop_source_after_hold and self.hold_deleted:
+                return _completed(
+                    argv,
+                    "",
+                    returncode=1,
+                    stderr=(
+                        "Error from server (NotFound): "
+                        f'replicationsources.volsync.backube "{argv[2]}" not found'
+                    ),
+                )
             return _completed(
                 argv, json.dumps({"spec": {"paused": self._source_paused(argv[2])}})
             )
@@ -171,7 +162,12 @@ class _Cluster:
         if argv[:2] == ["get", "secret"]:
             return _completed(argv, f"secret/{argv[2]}\n")
         if argv[0] == "logs":
-            return _completed(argv, self.logs)
+            return _completed(
+                argv,
+                "",
+                returncode=1,
+                stderr="Error from server (NotFound): jobs.batch not found",
+            )
         if argv[:2] == ["apply", "-f"]:
             assert input is not None
             doc = yaml.safe_load(input)
@@ -183,7 +179,17 @@ class _Cluster:
             return _completed(argv, "applied\n")
         if argv[:2] == ["get", "replicationdestination"]:
             manual = self.applied[-1]["spec"]["trigger"]["manual"]
-            return _completed(argv, json.dumps({"status": {"lastManualSync": manual}}))
+            return _completed(
+                argv,
+                json.dumps(
+                    {
+                        "status": {
+                            "lastManualSync": manual,
+                            "latestMoverStatus": {"result": "Successful", "logs": self.logs},
+                        }
+                    }
+                ),
+            )
         if argv[:2] == ["delete", "replicationdestination"]:
             return _completed(argv, "deleted\n")
         if argv[:2] == ["delete", "pod"]:
@@ -379,8 +385,15 @@ def test_no_snapshot_fails_and_rerun_can_resume(capsys) -> None:
     failed = capsys.readouterr().out
     assert "PASS restore" not in failed
     assert "no eligible snapshots" in failed
-    assert "LEFT replicationdestination demo/restore-drill" in failed
-    assert "kubectl delete replicationdestination restore-drill -n demo" in failed
+    assert "mover logs unavailable" not in failed
+    assert failed.count("kubectl annotate pvc drill -n demo backup-") == 1
+    assert (
+        failed.count(
+            "kubectl delete replicationdestination restore-drill -n demo --wait=true"
+        )
+        == 1
+    )
+    assert not any(call[0] == "logs" for call in cluster.calls)
     assert "backup-" not in [arg for call in cluster.calls for arg in call]
 
     cluster.logs = _SNAPSHOT_LOG
@@ -492,6 +505,39 @@ def test_restore_all_keeps_hold_until_every_repo_has_a_pvc(capsys) -> None:
     resume_at = at(lifted.calls, lambda call: "backup-" in call)
     assert delete_at < resume_at
     assert "HOLD lifted" in capsys.readouterr().out
+
+
+def test_restore_all_retires_a_named_repo_with_no_pvc(capsys) -> None:
+    cluster = _Cluster(
+        [_pvc("demo", "drill")],
+        will_pause=True,
+        hold=["ns-demo/pvc-drill", "ns-ghost/pvc-gone"],
+    )
+    assert _run(cluster, app=None, all_pvcs=True, retire=["ns-ghost/pvc-gone"]) == 0
+    assert cluster.hold_deleted is True
+    assert "HOLD retired ns-ghost/pvc-gone" in capsys.readouterr().out
+    assert "HOLD kept" not in capsys.readouterr().out
+
+
+def test_mover_job_already_gone_uses_destination_status(capsys) -> None:
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=_NO_SNAPSHOT_LOG)
+    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    out = capsys.readouterr().out
+    assert "no eligible snapshots" in out
+    assert "mover logs unavailable" not in out
+    assert not any(call[0] == "logs" for call in cluster.calls)
+
+
+def test_lift_does_not_treat_a_missing_source_as_unpaused(capsys) -> None:
+    cluster = _Cluster(
+        [_pvc("demo", "drill")],
+        will_pause=True,
+        hold=["ns-demo/pvc-drill"],
+        drop_source_after_hold=True,
+    )
+    assert _run(cluster, app=None, all_pvcs=True, pause_budget_s=0) != 0
+    assert cluster.hold_deleted is True
+    assert "source stayed paused" in capsys.readouterr().out
 
 
 def test_restore_all_skips_a_volume_with_no_snapshot(capsys) -> None:

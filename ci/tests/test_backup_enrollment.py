@@ -70,9 +70,6 @@ def test_kyverno_roles_aggregate_secret_and_replicationsource_permissions() -> N
     assert "create" in by_resource[("secrets",)]["verbs"]
     assert "get" in by_resource[("secrets",)]["verbs"]
     assert "create" in by_resource[("replicationsources",)]["verbs"]
-    hold_read = by_resource[("configmaps",)]
-    assert hold_read["verbs"] == ["get"]
-    assert hold_read["resourceNames"] == ["backup-rebuild-hold"]
     namespaces = roles["kyverno:backup-namespaces"]
     assert (
         namespaces["metadata"]["labels"]["rbac.kyverno.io/aggregate-to-background-controller"]
@@ -149,16 +146,10 @@ def test_enrollment_policy_rules() -> None:
     assert source["generate"]["synchronize"] is True
     spec = source["generate"]["data"]["spec"]
     assert "manual" not in spec["trigger"]
-    hold = next(entry for entry in source["context"] if entry["name"] == "rebuildHold")
-    assert hold["apiCall"]["urlPath"] == (
-        "/api/v1/namespaces/kube-system/configmaps/backup-rebuild-hold"
-    )
-    assert hold["apiCall"]["default"] == "false"
     pause = next(entry for entry in source["context"] if entry["name"] == "pauseBackup")
     assert pause["variable"]["default"] == "false"
     assert "annotations.backup" in pause["variable"]["jmesPath"]
     assert "'paused'" in pause["variable"]["jmesPath"]
-    assert "rebuildHold" in pause["variable"]["jmesPath"]
     assert spec["paused"] == "{{ to_boolean(pauseBackup) }}"
     assert spec["restic"]["retain"]["within"] == "7d"
     assert "rest:http://" not in (ROOT / "platform/backups/enrollment.yaml").read_text(encoding="utf-8")

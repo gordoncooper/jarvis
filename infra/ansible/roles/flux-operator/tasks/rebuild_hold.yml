@@ -1,41 +1,16 @@
 ---
 # Imported only when FluxInstance is absent (instance.yml). A later site.yml run
 # must not create this. The ConfigMap is cluster state, not Git.
-- name: Read the rest-server backup role
-  ansible.builtin.set_fact:
-    backup_hold_role: >-
-      {{
-        (
-          (
-            lookup('file', role_path + '/../../../../platform/backups/rest-server.yaml')
-            | from_yaml_all
-            | list
-            | selectattr('kind', 'equalto', 'Deployment')
-            | first
-          ).spec.template.spec.nodeSelector
-          | dict2items
-          | first
-        ).key.split('/')[-1]
-      }}
-
-- name: Require the backup-role host
+- name: Require the backup host
   ansible.builtin.assert:
     that:
-      - backup_hold_role | length > 0
-      - groups[backup_hold_role] | default([]) | length == 1
-    fail_msg: >-
-      rest-server node selector role {{ backup_hold_role | default('') }}
-      must be exactly one inventory host.
+      - groups['backup'] | length == 1
+    fail_msg: inventory group backup must be exactly one host.
 
-- name: Stat restic data on the backup-role node
+- name: Stat restic data on the backup host
   ansible.builtin.stat:
     path: "{{ backup_path }}/restic"
-  delegate_to: >-
-    {{
-      groups[backup_hold_role][0]
-      if backup_hold_role is defined and (groups[backup_hold_role] | default([]) | length) > 0
-      else inventory_hostname
-    }}
+  delegate_to: "{{ groups['backup'][0] }}"
   become: true
   register: restic_data
   changed_when: false
@@ -54,37 +29,32 @@
       - f
       - -path
       - "*/ns-*/pvc-*/config"
-  delegate_to: >-
-    {{
-      groups[backup_hold_role][0]
-      if backup_hold_role is defined and (groups[backup_hold_role] | default([]) | length) > 0
-      else inventory_hostname
-    }}
+  delegate_to: "{{ groups['backup'][0] }}"
   become: true
   register: restic_repo_find
   changed_when: false
 
-- name: Start with no repositories
-  ansible.builtin.set_fact:
-    backup_hold_repos: []
-
 - name: Record repository ids
-  when: restic_repo_find is defined and restic_repo_find is not skipped
   ansible.builtin.set_fact:
     backup_hold_repos: >-
       {{
-        (restic_repo_find.stdout_lines | default([]))
-        | map('dirname')
-        | map('regex_replace', '^.*/restic/', '')
-        | select('match', '^ns-.*/pvc-.*$')
-        | sort
-        | list
+        [] if (restic_repo_find is skipped)
+        else (
+          (restic_repo_find.stdout_lines | default([]))
+          | map('dirname')
+          | map('regex_replace', '^.*/restic/', '')
+          | select('match', '^ns-.*/pvc-.*$')
+          | sort
+          | list
+        )
       }}
 
 - name: Apply the rebuild hold
-  when: (backup_hold_repos | default([])) | length > 0
+  when: backup_hold_repos | length > 0
   ansible.builtin.command:
     cmd: "{{ k3s_binary_path }} kubectl apply -f -"
     stdin: "{{ lookup('template', 'backup-rebuild-hold.yaml.j2') }}"
   register: backup_hold_apply
-  changed_when: "'created' in stdout or 'configured' in stdout"
+  changed_when: >-
+    'created' in backup_hold_apply.stdout
+    or 'configured' in backup_hold_apply.stdout

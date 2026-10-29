@@ -58,7 +58,7 @@ Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
 
 ## Rebuild hold
 
-A fresh `site.yml` reaches the FluxInstance apply only when that object is absent. Before the apply, if the backup-role node already has restic repositories at `${backup_path}/restic/ns-*/pvc-*`, the run creates ConfigMap `kube-system/backup-rebuild-hold` with that list. The backup-role node is the host selected by `platform/backups/rest-server.yaml`, which is not always the control plane. The ConfigMap is not in Git. While it exists, ClusterPolicy `pvc-backup` generates ReplicationSources paused, so a rebuilt cluster cannot snapshot empty volumes over the last good backup. A later `site.yml`, once the FluxInstance exists, does not create or change the ConfigMap. `make restore-all` deletes it only after every restore succeeds and every listed repository has a PVC.
+See `platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before the first FluxInstance.
 
 ## Recovery
 

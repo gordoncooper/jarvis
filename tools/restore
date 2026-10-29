@@ -28,16 +28,14 @@ _POLL_SECONDS = 5.0
 # VolSync 0.17 job prefix. Longer than 63 characters, the rest is crc32 of the owner name.
 _JOB_NAME_MAX = 63
 _SRC_JOB_PREFIX = "volsync-src-"
-_DST_JOB_PREFIX = "volsync-dst-"
 _BIND_PREFIX = "restore-bind-"
 _NO_SNAPSHOT = "No eligible snapshots found"
-_QUIESCE = "restore-quiesce"
 _FLUX_NAME = "kustomize.toolkit.fluxcd.io/name"
 _FLUX_NS = "kustomize.toolkit.fluxcd.io/namespace"
 HOLD_NAMESPACE = "kube-system"
 HOLD_NAME = "backup-rebuild-hold"
-_ETCD_CRONJOB_NS = "platform-backups"
-_ETCD_CRONJOB = "etcd-snapshots"
+# Same digest as CronJob etcd-snapshots. The binder only runs exit 0.
+_BIND_IMAGE = "restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510"
 _DONE_PHASES = {"Succeeded", "Failed"}
 
 Kubectl = Callable[..., CompletedProcess[str]]
@@ -67,41 +65,6 @@ class _Quiesce:
         self.kustomizations: list[tuple[str, str]] = []
         self.paused = False
         self.destination = False
-        self.saved = False
-
-    def to_json(self) -> str:
-        return json.dumps(
-            {
-                "deployments": self.deployments,
-                "statefulsets": self.statefulsets,
-                "kustomizations": [f"{ns}/{name}" for ns, name in self.kustomizations],
-            },
-            separators=(",", ":"),
-        )
-
-    @classmethod
-    def from_annotation(cls, raw: str | None) -> _Quiesce:
-        state = cls()
-        if not raw:
-            return state
-        try:
-            body = json.loads(raw)
-        except json.JSONDecodeError:
-            return state
-        if not isinstance(body, dict):
-            return state
-        deployments = body.get("deployments") or {}
-        statefulsets = body.get("statefulsets") or {}
-        if isinstance(deployments, dict):
-            state.deployments = {str(key): int(value) for key, value in deployments.items()}
-        if isinstance(statefulsets, dict):
-            state.statefulsets = {str(key): int(value) for key, value in statefulsets.items()}
-        for item in body.get("kustomizations") or []:
-            if isinstance(item, str) and "/" in item:
-                ns, name = item.split("/", 1)
-                state.kustomizations.append((ns, name))
-        state.saved = True
-        return state
 
 
 def _line(text: str) -> None:
@@ -156,14 +119,17 @@ def _load(proc: CompletedProcess[str], what: str) -> dict:
     return body
 
 
-def _maybe_load(proc: CompletedProcess[str]) -> dict | None:
-    if proc.returncode != 0:
+def _not_found(proc: CompletedProcess[str]) -> bool:
+    if proc.returncode == 0:
+        return False
+    text = f"{proc.stderr}\n{proc.stdout}"
+    return "NotFound" in text or "not found" in text.lower()
+
+
+def _load_if_present(proc: CompletedProcess[str], what: str) -> dict | None:
+    if _not_found(proc):
         return None
-    try:
-        body = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return None
-    return body if isinstance(body, dict) else None
+    return _load(proc, what)
 
 
 def job_name(owner: str, *, prefix: str = _SRC_JOB_PREFIX) -> str:
@@ -249,15 +215,33 @@ def _pvc_body(kubectl: Kubectl, namespace: str, pvc: str) -> dict:
     )
 
 
+def _replication_source(kubectl: Kubectl, namespace: str, pvc: str) -> dict | None:
+    return _load_if_present(
+        kubectl(["get", "replicationsource", pvc, "-n", namespace, "-o", "json"]),
+        f"get replicationsource {namespace}/{pvc}",
+    )
+
+
 def _source_paused(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
-    body = _maybe_load(kubectl(["get", "replicationsource", pvc, "-n", namespace, "-o", "json"]))
+    body = _replication_source(kubectl, namespace, pvc)
     if body is None:
         return False
     return (body.get("spec") or {}).get("paused") is True
 
 
+def _source_unpaused(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
+    """Missing is not ready. A missing source is not an unpaused source."""
+    body = _replication_source(kubectl, namespace, pvc)
+    if body is None:
+        return False
+    return (body.get("spec") or {}).get("paused") is not True
+
+
 def _job_parallelism_zero(kubectl: Kubectl, namespace: str, name: str) -> bool:
-    body = _maybe_load(kubectl(["get", "job", name, "-n", namespace, "-o", "json"]))
+    body = _load_if_present(
+        kubectl(["get", "job", name, "-n", namespace, "-o", "json"]),
+        f"get job {namespace}/{name}",
+    )
     if body is None:
         return True
     parallelism = (body.get("spec") or {}).get("parallelism", 1)
@@ -282,13 +266,12 @@ def _pod_blocks_volume(pod: dict) -> bool:
 
 
 def volume_holders(kubectl: Kubectl, namespace: str, pvc: str) -> list[str]:
-    body = _maybe_load(kubectl(["get", "pods", "-n", namespace, "-o", "json"]))
-    if body is None:
-        return ["<pod list failed>"]
+    body = _load(
+        kubectl(["get", "pods", "-n", namespace, "-o", "json"]),
+        f"list pods {namespace}",
+    )
     names: list[str] = []
     for pod in body.get("items") or []:
-        if not isinstance(pod, dict):
-            continue
         meta = pod.get("metadata") or {}
         name = str(meta.get("name") or "")
         if name.startswith(_BIND_PREFIX):
@@ -313,8 +296,9 @@ def _paused(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
 
 
 def _restored(kubectl: Kubectl, namespace: str, name: str, manual: str) -> bool:
-    body = _maybe_load(
-        kubectl(["get", "replicationdestination", name, "-n", namespace, "-o", "json"])
+    body = _load_if_present(
+        kubectl(["get", "replicationdestination", name, "-n", namespace, "-o", "json"]),
+        f"get replicationdestination {namespace}/{name}",
     )
     if body is None:
         return False
@@ -325,7 +309,7 @@ def _flux_ref(obj: dict) -> tuple[str, str] | None:
     labels = (obj.get("metadata") or {}).get("labels") or {}
     name = labels.get(_FLUX_NAME)
     namespace = labels.get(_FLUX_NS)
-    if isinstance(name, str) and name and isinstance(namespace, str) and namespace:
+    if name and namespace:
         return namespace, name
     return None
 
@@ -350,29 +334,17 @@ def _sts_owns(sts: dict, pvc: str) -> bool:
 
 def _replicas(spec: dict) -> int:
     replicas = spec.get("replicas")
-    if isinstance(replicas, int):
-        return replicas
-    return 1
+    if replicas is None:
+        return 1
+    return replicas
 
 
 def _items(kubectl: Kubectl, kind: str, namespace: str) -> list[dict]:
     body = _load(kubectl(["get", kind, "-n", namespace, "-o", "json"]), f"list {kind}")
-    items = body.get("items") or []
-    return [item for item in items if isinstance(item, dict)]
+    return list(body.get("items") or [])
 
 
-def _save_quiesce(kubectl: Kubectl, namespace: str, pvc: str, state: _Quiesce) -> None:
-    patch = {"metadata": {"annotations": {_QUIESCE: state.to_json()}}}
-    _ok(
-        kubectl(
-            ["patch", "pvc", pvc, "-n", namespace, "--type", "merge", "-p", json.dumps(patch)]
-        ),
-        f"record quiesce {namespace}/{pvc}",
-    )
-    state.saved = True
-
-
-def _suspend(kubectl: Kubectl, namespace: str, pvc: str, owners: list[dict], state: _Quiesce) -> None:
+def _suspend(kubectl: Kubectl, owners: list[dict], state: _Quiesce) -> None:
     refs: list[tuple[str, str]] = []
     for obj in owners:
         ref = _flux_ref(obj)
@@ -382,12 +354,11 @@ def _suspend(kubectl: Kubectl, namespace: str, pvc: str, owners: list[dict], sta
     for ref_ns, ref_name in refs:
         if (ref_ns, ref_name) in known:
             continue
-        body = _maybe_load(
-            kubectl(["get", "kustomization", ref_name, "-n", ref_ns, "-o", "json"])
+        body = _load_if_present(
+            kubectl(["get", "kustomization", ref_name, "-n", ref_ns, "-o", "json"]),
+            f"get kustomization {ref_ns}/{ref_name}",
         )
-        if body is None:
-            continue
-        if (body.get("spec") or {}).get("suspend") is True:
+        if body is None or (body.get("spec") or {}).get("suspend") is True:
             continue
         _ok(
             kubectl(
@@ -406,28 +377,24 @@ def _suspend(kubectl: Kubectl, namespace: str, pvc: str, owners: list[dict], sta
             f"suspend kustomization {ref_ns}/{ref_name}",
         )
         state.kustomizations.append((ref_ns, ref_name))
-        _save_quiesce(kubectl, namespace, pvc, state)
 
 
 def _scale_kind(
     kubectl: Kubectl,
     namespace: str,
-    pvc: str,
     kind: str,
     stored: dict[str, int],
     owns: Callable[[dict], bool],
-    state: _Quiesce,
 ) -> None:
     for obj in _items(kubectl, kind, namespace):
         name = (obj.get("metadata") or {}).get("name")
-        if not isinstance(name, str) or not owns(obj):
+        if not name or not owns(obj):
             continue
         if name not in stored:
             current = _replicas(obj.get("spec") or {})
             if current == 0:
                 continue
             stored[name] = current
-            _save_quiesce(kubectl, namespace, pvc, state)
         _ok(
             kubectl(["scale", kind, name, "-n", namespace, "--replicas=0"]),
             f"scale {kind} {namespace}/{name}",
@@ -438,30 +405,26 @@ def _quiesce(kubectl: Kubectl, namespace: str, pvc: str, pvc_body: dict, state: 
     deployments = _items(kubectl, "deployment", namespace)
     statefulsets = _items(kubectl, "statefulset", namespace)
     owners = [pvc_body, *deployments, *statefulsets]
-    _suspend(kubectl, namespace, pvc, owners, state)
+    _suspend(kubectl, owners, state)
     _scale_kind(
         kubectl,
         namespace,
-        pvc,
         "deployment",
         state.deployments,
         lambda obj: _claim_in_pod_spec(
             ((obj.get("spec") or {}).get("template") or {}).get("spec") or {}, pvc
         ),
-        state,
     )
     _scale_kind(
         kubectl,
         namespace,
-        pvc,
         "statefulset",
         state.statefulsets,
         lambda obj: _sts_owns(obj, pvc),
-        state,
     )
 
 
-def _unquiesce(kubectl: Kubectl, namespace: str, pvc: str, state: _Quiesce) -> None:
+def _unquiesce(kubectl: Kubectl, namespace: str, state: _Quiesce) -> None:
     for name, replicas in state.deployments.items():
         _ok(
             kubectl(["scale", "deployment", name, "-n", namespace, f"--replicas={replicas}"]),
@@ -489,77 +452,34 @@ def _unquiesce(kubectl: Kubectl, namespace: str, pvc: str, state: _Quiesce) -> N
             ),
             f"resume kustomization {ref_ns}/{ref_name}",
         )
-    if state.saved:
-        _ok(
-            kubectl(["annotate", "pvc", pvc, "-n", namespace, f"{_QUIESCE}-"]),
-            f"clear quiesce {namespace}/{pvc}",
-        )
-        state.saved = False
     state.deployments.clear()
     state.statefulsets.clear()
     state.kustomizations.clear()
 
 
 def _print_left(namespace: str, pvc: str, state: _Quiesce) -> None:
-    _line(f"LEFT {namespace}/{pvc}")
     if state.paused:
-        _line(f"LEFT paused pvc {namespace}/{pvc} annotation backup=paused")
-        _line(f"  kubectl annotate pvc {pvc} -n {namespace} backup-")
+        _line(f"kubectl annotate pvc {pvc} -n {namespace} backup-")
     for name, replicas in state.deployments.items():
-        _line(f"LEFT scaled deployment {namespace}/{name} to 0 (was {replicas})")
-        _line(f"  kubectl scale deployment {name} -n {namespace} --replicas={replicas}")
+        _line(f"kubectl scale deployment {name} -n {namespace} --replicas={replicas}")
     for name, replicas in state.statefulsets.items():
-        _line(f"LEFT scaled statefulset {namespace}/{name} to 0 (was {replicas})")
-        _line(f"  kubectl scale statefulset {name} -n {namespace} --replicas={replicas}")
+        _line(f"kubectl scale statefulset {name} -n {namespace} --replicas={replicas}")
     for ref_ns, ref_name in state.kustomizations:
-        _line(f"LEFT suspended kustomization {ref_ns}/{ref_name}")
         _line(
-            f"  kubectl patch kustomization {ref_name} -n {ref_ns}"
+            f"kubectl patch kustomization {ref_name} -n {ref_ns}"
             " --type merge -p '{\"spec\":{\"suspend\":false}}'"
         )
     if state.destination:
-        _line(f"LEFT replicationdestination {namespace}/restore-{pvc}")
         _line(
-            f"  kubectl delete replicationdestination restore-{pvc} -n {namespace} --wait=true"
+            f"kubectl delete replicationdestination restore-{pvc} -n {namespace} --wait=true"
         )
-    if state.saved:
-        _line(f"  kubectl annotate pvc {pvc} -n {namespace} {_QUIESCE}-")
 
 
 def _binder_name(pvc: str) -> str:
     return job_name(pvc, prefix=_BIND_PREFIX)
 
 
-def _etcd_image(kubectl: Kubectl) -> str:
-    body = _load(
-        kubectl(
-            [
-                "get",
-                "cronjob",
-                _ETCD_CRONJOB,
-                "-n",
-                _ETCD_CRONJOB_NS,
-                "-o",
-                "json",
-            ]
-        ),
-        "get cronjob etcd-snapshots",
-    )
-    containers = (
-        body.get("spec", {})
-        .get("jobTemplate", {})
-        .get("spec", {})
-        .get("template", {})
-        .get("spec", {})
-        .get("containers")
-        or []
-    )
-    if not containers or not isinstance(containers[0].get("image"), str):
-        raise Fail("cronjob etcd-snapshots has no image")
-    return containers[0]["image"]
-
-
-def _binder_body(namespace: str, pvc: str, image: str) -> dict:
+def _binder_body(namespace: str, pvc: str) -> dict:
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -569,7 +489,7 @@ def _binder_body(namespace: str, pvc: str, image: str) -> dict:
             "containers": [
                 {
                     "name": "bind",
-                    "image": image,
+                    "image": _BIND_IMAGE,
                     "command": ["sh", "-c", "exit 0"],
                     "volumeMounts": [{"name": "data", "mountPath": "/data"}],
                 }
@@ -582,12 +502,13 @@ def _binder_body(namespace: str, pvc: str, image: str) -> dict:
 
 
 def _binder_gone(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
-    body = _maybe_load(kubectl(["get", "pods", "-n", namespace, "-o", "json"]))
-    if body is None:
-        return False
+    body = _load(
+        kubectl(["get", "pods", "-n", namespace, "-o", "json"]),
+        f"list pods {namespace}",
+    )
     name = _binder_name(pvc)
     for pod in body.get("items") or []:
-        if isinstance(pod, dict) and (pod.get("metadata") or {}).get("name") == name:
+        if (pod.get("metadata") or {}).get("name") == name:
             return False
     return True
 
@@ -601,14 +522,14 @@ def _bind(
     sleep: Sleeper,
     pause_budget_s: float,
 ) -> None:
-    image = _etcd_image(kubectl)
-    body = yaml.safe_dump(_binder_body(namespace, pvc, image), sort_keys=False)
+    body = yaml.safe_dump(_binder_body(namespace, pvc), sort_keys=False)
     _ok(kubectl(["apply", "-f", "-"], input=body), f"bind {namespace}/{pvc}")
 
     def bound() -> bool:
-        current = _maybe_load(kubectl(["get", "pvc", pvc, "-n", namespace, "-o", "json"]))
-        if current is None:
-            return False
+        current = _load(
+            kubectl(["get", "pvc", pvc, "-n", namespace, "-o", "json"]),
+            f"get pvc {namespace}/{pvc}",
+        )
         return bool((current.get("spec") or {}).get("volumeName"))
 
     if not _wait(bound, budget_s=pause_budget_s, monotonic=monotonic, sleep=sleep):
@@ -638,17 +559,10 @@ def _bind(
 
 def _hold_repos(kubectl: Kubectl) -> list[str] | None:
     proc = kubectl(["get", "configmap", HOLD_NAME, "-n", HOLD_NAMESPACE, "-o", "json"])
-    if proc.returncode != 0:
-        text = f"{proc.stderr}\n{proc.stdout}"
-        if "NotFound" in text or "not found" in text.lower():
-            return None
-        raise Fail(f"read rebuild hold: {_reason(proc)}")
-    body = _maybe_load(proc)
+    body = _load_if_present(proc, "read rebuild hold")
     if body is None:
-        raise Fail("read rebuild hold: invalid kubectl JSON")
+        return None
     text = ((body.get("data") or {}).get("repos")) or ""
-    if not isinstance(text, str):
-        return []
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
@@ -677,11 +591,14 @@ def _delete_destination(kubectl: Kubectl, namespace: str, pvc: str) -> None:
 
 
 def _mover_logs(kubectl: Kubectl, namespace: str, pvc: str) -> str:
-    name = job_name(f"restore-{pvc}", prefix=_DST_JOB_PREFIX)
-    proc = kubectl(["logs", f"job/{name}", "-n", namespace])
-    if proc.returncode != 0:
-        raise Fail(f"{namespace}/{pvc}: mover logs unavailable")
-    return proc.stdout or ""
+    # VolSync 0.17 writes the filtered mover log here, then deletes the Job.
+    name = f"restore-{pvc}"
+    body = _load(
+        kubectl(["get", "replicationdestination", name, "-n", namespace, "-o", "json"]),
+        f"get {namespace}/{name}",
+    )
+    latest = (body.get("status") or {}).get("latestMoverStatus") or {}
+    return latest.get("logs") or ""
 
 
 def _restore_one(
@@ -702,9 +619,6 @@ def _restore_one(
     state = _Quiesce()
     try:
         current = _pvc_body(kubectl, namespace, pvc)
-        annotations = (current.get("metadata") or {}).get("annotations") or {}
-        raw = annotations.get(_QUIESCE)
-        state = _Quiesce.from_annotation(raw if isinstance(raw, str) else None)
         _quiesce(kubectl, namespace, pvc, current, state)
         _line(f"pause {namespace}/{pvc}")
         _ok(
@@ -759,7 +673,7 @@ def _restore_one(
             if resume:
                 _resume(kubectl, namespace, pvc)
                 state.paused = False
-            _unquiesce(kubectl, namespace, pvc, state)
+            _unquiesce(kubectl, namespace, state)
             raise NoSnapshot(namespace, pvc)
         _delete_destination(kubectl, namespace, pvc)
         state.destination = False
@@ -773,7 +687,7 @@ def _restore_one(
         if resume:
             _resume(kubectl, namespace, pvc)
             state.paused = False
-        _unquiesce(kubectl, namespace, pvc, state)
+        _unquiesce(kubectl, namespace, state)
         _line(f"PASS restore {namespace}/{pvc}")
     except NoSnapshot:
         raise
@@ -803,22 +717,28 @@ def _select(kubectl: Kubectl, app: str | None) -> tuple[list[tuple[str, str, str
     chosen: list[tuple[str, str, str]] = []
     present: set[tuple[str, str]] = set()
     for item in body.get("items") or []:
-        if not isinstance(item, dict):
-            continue
         meta = item.get("metadata") or {}
         namespace = meta.get("namespace")
         name = meta.get("name")
-        if not isinstance(namespace, str) or not isinstance(name, str):
+        if not namespace or not name:
             continue
         present.add((namespace, name))
         if not eligible(item):
             continue
         created = meta.get("creationTimestamp")
-        if not isinstance(created, str) or not created:
+        if not created:
             raise Fail(f"{namespace}/{name}: no creationTimestamp")
         chosen.append((namespace, name, created))
     chosen.sort()
     return chosen, present
+
+
+def _retired(values: Sequence[str] | None) -> set[str]:
+    found: set[str] = set()
+    for value in values or []:
+        for part in value.replace(",", " ").split():
+            found.add(part)
+    return found
 
 
 def _lift_hold(
@@ -826,17 +746,23 @@ def _lift_hold(
     hold: list[str],
     present: set[tuple[str, str]],
     done: list[tuple[str, str]],
+    retired: set[str],
     *,
     monotonic: Mono,
     sleep: Sleeper,
     pause_budget_s: float,
 ) -> None:
-    missing = [repo for repo in hold if parse_repo(repo) not in present]
+    missing = [
+        repo for repo in hold if parse_repo(repo) not in present and repo not in retired
+    ]
     if missing:
         for repo in missing:
             _line(f"HOLD kept: no PVC for {repo}")
         _line("HOLD kept: backup=paused remains")
         raise Fail("rebuild hold kept")
+    for repo in hold:
+        if repo in retired and parse_repo(repo) not in present:
+            _line(f"HOLD retired {repo}")
     # Deleting the hold does not re-run generate. Remove backup: paused after it is gone.
     _ok(
         kubectl(
@@ -856,7 +782,7 @@ def _lift_hold(
     for namespace, pvc in done:
         _resume(kubectl, namespace, pvc)
         if not _wait(
-            lambda namespace=namespace, pvc=pvc: not _source_paused(kubectl, namespace, pvc),
+            lambda namespace=namespace, pvc=pvc: _source_unpaused(kubectl, namespace, pvc),
             budget_s=pause_budget_s,
             monotonic=monotonic,
             sleep=sleep,
@@ -870,6 +796,7 @@ def run(
     app: str | None,
     all_pvcs: bool,
     as_of: str | None = None,
+    retire: Sequence[str] | None = None,
     monotonic: Mono | None = None,
     sleep: Sleeper | None = None,
     now: Callable[[], float] | None = None,
@@ -890,19 +817,9 @@ def run(
             override = normalize_as_of(override)
         chosen, present = _select(kubectl, None if all_pvcs else app)
         hold = _hold_repos(kubectl)
-        if not chosen and not (all_pvcs and hold is not None):
+        retired = _retired(retire)
+        if not chosen and hold is None:
             raise Fail("no PVC to restore")
-        if not chosen and hold is not None:
-            _lift_hold(
-                kubectl,
-                hold,
-                present,
-                [],
-                monotonic=clock,
-                sleep=pause,
-                pause_budget_s=pause_budget_s,
-            )
-            return 0
         done: list[tuple[str, str]] = []
         for namespace, pvc, created in chosen:
             try:
@@ -931,6 +848,7 @@ def run(
                 hold,
                 present,
                 done,
+                retired,
                 monotonic=clock,
                 sleep=pause,
                 pause_budget_s=pause_budget_s,
@@ -949,9 +867,15 @@ def main(argv: list[str] | None = None) -> int:
         "--as-of",
         help="RFC3339 restoreAsOf for every selected PVC (default: creation time minus 1s)",
     )
+    parser.add_argument(
+        "--retire",
+        action="append",
+        default=[],
+        help="Hold repo id with no PVC that the owner retired (repeat, or comma-separate)",
+    )
     args = parser.parse_args(argv)
     app = args.app or None
-    return run(_kubectl, app=app, all_pvcs=args.all, as_of=args.as_of)
+    return run(_kubectl, app=app, all_pvcs=args.all, as_of=args.as_of, retire=args.retire)
 
 
 if __name__ == "__main__":
