@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tempfile
@@ -28,33 +27,34 @@ def encrypt_secret_to_file(
     document: dict,
     sops_bin: str,
 ) -> None:
-    """Write an encrypted Secret manifest to destination; plaintext never touches that path."""
+    """Write an encrypted Secret manifest to destination.
+
+    Plaintext is piped to sops on stdin and is not written to disk. The
+    ciphertext is renamed into place so a failed encrypt leaves no target file.
+    """
     destination = destination.resolve()
     repo_root = repo_root.resolve()
     override = destination.relative_to(repo_root).as_posix()
+    payload = yaml.safe_dump(document, sort_keys=False)
 
-    fd, plaintext_path = tempfile.mkstemp(prefix="jarvis-secret-", suffix=".yaml")
-    os.close(fd)
-    plaintext = Path(plaintext_path)
+    result = subprocess.run(
+        [sops_bin, "encrypt", f"--filename-override={override}", "/dev/stdin"],
+        cwd=repo_root,
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            result.args,
+            result.stdout,
+            result.stderr,
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
     enc_tmp_path: Path | None = None
     try:
-        os.chmod(plaintext, 0o600)
-        plaintext.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-        result = subprocess.run(
-            [sops_bin, "encrypt", f"--filename-override={override}", str(plaintext)],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(
-                result.returncode,
-                result.args,
-                result.stdout,
-                result.stderr,
-            )
-        destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -67,6 +67,5 @@ def encrypt_secret_to_file(
             enc_tmp_path = Path(enc_tmp.name)
         enc_tmp_path.replace(destination)
     finally:
-        plaintext.unlink(missing_ok=True)
         if enc_tmp_path is not None and enc_tmp_path.exists():
             enc_tmp_path.unlink(missing_ok=True)

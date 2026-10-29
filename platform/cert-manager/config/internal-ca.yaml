@@ -1,0 +1,31 @@
+# ClusterIssuer reads Secret cert-manager-ca in the controller namespace.
+# platform-configs postBuild fills ${dns_suffix}.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca
+spec:
+  ca:
+    secretName: cert-manager-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard
+  namespace: platform-cert-manager
+spec:
+  secretName: wildcard-tls
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.${dns_suffix}"
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: platform-cert-manager
+spec:
+  defaultCertificate:
+    secretName: wildcard-tls

@@ -20,6 +20,8 @@ Ensure `~/.local/bin` is on `PATH` on that machine. The age **public** key must 
 make deps && make bootstrap-secrets ENV=env-01
 ```
 
-Creates missing files only; a second run changes nothing. Commit the generated `*.sops.yaml` files; do not commit the age private key.
+Creates missing files only; a second run changes nothing. Commit the generated `*.sops.yaml` files and `ca.crt`; do not commit the age private key.
 
 Bootstrap files (p0a-04): internal CA (`cert-manager-ca`), VolSync restic credentials (`backups-restic`: `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` as the `rest:` server prefix, `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`; a volume's repository URL appends `ns-<namespace>/pvc-<pvc>`), Grafana admin password (`grafana-admin`), and per-deploy Hermes API keys and dashboard credentials (`hermes-ops-*`, `hermes-code-factory-*`). Later secrets (Telegram, Google OAuth, and so on) are added with `make seal` or other make targets. `bootstrap-secrets` does not rewrite an existing file. To rotate `backups-restic`, delete that file and run the command again. Encryption uses the public key in `.sops.yaml`.
+
+The public CA certificate is `envs/env-01/ca.crt`. The private key is never written there. A new CA writes `ca.crt` in the same run, which needs only the public recipient. env-01 already has `cert-manager-ca`, so the run that creates the missing `ca.crt` decrypts only `tls.crt` and needs the age key (an owner run). An existing `ca.crt` is left as-is.

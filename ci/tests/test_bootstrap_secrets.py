@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -86,17 +87,112 @@ def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
     mod.bootstrap(env_name, sops_bin=sops_bin)
     secrets_dir = tmp_path / "envs" / env_name / "secrets"
     files = sorted(secrets_dir.glob("*.sops.yaml"))
+    root = tmp_path / "envs" / env_name / "ca.crt"
     assert len(files) == 7
-    first_bytes = {path: path.read_bytes() for path in files}
+    cert = root.read_text(encoding="utf-8")
+    assert "BEGIN CERTIFICATE" in cert
+    assert "PRIVATE KEY" not in cert
+    first_bytes = {path: path.read_bytes() for path in [*files, root]}
 
     mod.bootstrap(env_name, sops_bin=sops_bin)
-    for path in files:
-        assert path.read_bytes() == first_bytes[path], path.name
+    for path, blob in first_bytes.items():
+        assert path.read_bytes() == blob, path.name
 
     victim = files[0]
     victim.write_bytes(b"stale-content\n")
+    root.write_bytes(b"stale-root\n")
     mod.bootstrap(env_name, sops_bin=sops_bin)
     assert victim.read_bytes() == b"stale-content\n"
+    assert root.read_bytes() == b"stale-root\n"
+
+
+def _wrap_sops(tmp_path: Path, sops_bin: str, *, reject_decrypt: bool) -> tuple[Path, Path]:
+    log = tmp_path / "sops-args"
+    wrapper = tmp_path / "sops-wrap"
+    reject = ""
+    if reject_decrypt:
+        reject = 'if [ "$1" = decrypt ]; then echo "decrypt not allowed" >&2; exit 1; fi\n'
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(log))}\n"
+        f"{reject}"
+        f"exec {shlex.quote(sops_bin)} \"$@\"\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    return wrapper, log
+
+
+def test_new_ca_writes_the_root_without_decrypting(tmp_path, monkeypatch):
+    mod = _load_module()
+    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
+    _write_test_sops_yaml(tmp_path, public)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    sops_bin = _require_tool("sops")
+    wrapper, log = _wrap_sops(tmp_path, sops_bin, reject_decrypt=True)
+    env_name = "env-test"
+    (tmp_path / "envs" / env_name / "secrets").mkdir(parents=True)
+
+    mod.bootstrap(env_name, sops_bin=str(wrapper))
+    root = tmp_path / "envs" / env_name / "ca.crt"
+    cert = root.read_text(encoding="utf-8")
+    assert "BEGIN CERTIFICATE" in cert
+    assert "PRIVATE KEY" not in cert
+    recorded = log.read_text(encoding="utf-8")
+    assert "encrypt" in recorded
+    assert "decrypt" not in recorded
+
+
+def test_missing_root_is_recovered_from_tls_crt_only(tmp_path, monkeypatch):
+    mod = _load_module()
+    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
+    _write_test_sops_yaml(tmp_path, public)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    sops_bin = _require_tool("sops")
+    env_name = "env-test"
+    (tmp_path / "envs" / env_name / "secrets").mkdir(parents=True)
+    mod.bootstrap(env_name, sops_bin=sops_bin)
+
+    secret = tmp_path / "envs" / env_name / "secrets" / "cert-manager-ca.sops.yaml"
+    root = tmp_path / "envs" / env_name / "ca.crt"
+    secret_bytes = secret.read_bytes()
+    root.unlink()
+    wrapper, log = _wrap_sops(tmp_path, sops_bin, reject_decrypt=False)
+    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(keyfile))
+    mod.bootstrap(env_name, sops_bin=str(wrapper))
+
+    assert secret.read_bytes() == secret_bytes
+    recorded = log.read_text(encoding="utf-8")
+    assert "decrypt" in recorded
+    assert "--extract" in recorded
+    assert "tls.crt" in recorded
+    assert "tls.key" not in recorded
+    env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
+    extracted = subprocess.check_output(
+        [sops_bin, "decrypt", "--extract", '["stringData"]["tls.crt"]', str(secret)],
+        env=env,
+        text=True,
+    )
+    assert root.read_text(encoding="utf-8") == extracted
+    assert "BEGIN CERTIFICATE" in extracted
+    assert "PRIVATE KEY" not in extracted
+
+
+def test_public_root_refuses_a_private_key(tmp_path, monkeypatch):
+    mod = _load_module()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    dest = tmp_path / "envs" / "env-test" / "ca.crt"
+    with pytest.raises(SystemExit, match="not a certificate"):
+        mod._write_public_root(
+            dest,
+            "-----BEGIN PRIVATE KEY-----\nYQ==\n-----END PRIVATE KEY-----\n",
+        )
+    assert not dest.exists()
 
 
 def test_openssl_stderr_is_shown_only_on_failure(
