@@ -5,6 +5,9 @@ kind: HelmRelease
 metadata:
   name: kyverno
   namespace: flux-system
+  # The crds subchart templates ClusterPolicy. Uninstall deletes that CRD and every ClusterPolicy.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   releaseName: kyverno
@@ -25,11 +28,6 @@ spec:
   upgrade:
     remediation:
       retries: 3
-  # kyverno-scale-to-zero is a pre-delete hook. It runs with a ServiceAccount
-  # in the kyverno namespace. If that namespace is already gone, the hook never
-  # finishes and the release stays uninstalling.
-  uninstall:
-    disableHooks: true
   values:
     cleanupController:
       enabled: false

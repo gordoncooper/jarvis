@@ -15,10 +15,18 @@ from test_flux_entry import _kustomize_build
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 
 # (kind, namespace, name). Namespace is empty for cluster-scoped objects.
-# These are the objects whose deletion costs data or wedges recovery.
+# A guarded Namespace does not cover the HelmRelease. Uninstall of kyverno
+# or volsync deletes chart-templated CRDs and every object of those kinds.
 _PROTECTED = {
     ("CustomResourceDefinition", "", "volumesnapshots.snapshot.storage.k8s.io"),
     ("Deployment", "platform-backups", "restic"),
+    ("HelmChartConfig", "kube-system", "traefik"),
+    ("HelmRelease", "flux-system", "cert-manager"),
+    ("HelmRelease", "flux-system", "kyverno"),
+    ("HelmRelease", "flux-system", "volsync"),
+    ("HelmRepository", "flux-system", "backube"),
+    ("HelmRepository", "flux-system", "jetstack"),
+    ("HelmRepository", "flux-system", "kyverno"),
     ("Namespace", "", "kyverno"),
     ("Namespace", "", "platform-backups"),
     ("Namespace", "", "volsync"),
@@ -50,7 +58,7 @@ def _index(manifests: str) -> dict[tuple[str, str, str], dict]:
     return found
 
 
-def test_costly_objects_keep_prune_disabled() -> None:
+def test_kustomize_build_keeps_prune_disabled_on_guarded_objects() -> None:
     envs = non_example_env_names()
     assert envs
     for env in envs:
