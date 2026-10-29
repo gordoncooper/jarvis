@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -30,6 +31,8 @@ _JOB_NAME_MAX = 63
 _SRC_JOB_PREFIX = "volsync-src-"
 _BIND_PREFIX = "restore-bind-"
 _NO_SNAPSHOT = "No eligible snapshots found"
+# VolSync's restic log filter keeps a line that starts with "restoring" after a real restore.
+_RESTORING = re.compile(r"(?im)^\s*restoring\b")
 _FLUX_NAME = "kustomize.toolkit.fluxcd.io/name"
 _FLUX_NS = "kustomize.toolkit.fluxcd.io/namespace"
 HOLD_NAMESPACE = "kube-system"
@@ -664,6 +667,9 @@ def _restore_one(
         ):
             raise Fail(f"{namespace}/{pvc}: ReplicationDestination did not finish")
         logs = _mover_logs(kubectl, namespace, pvc)
+        if _NO_SNAPSHOT not in logs and _RESTORING.search(logs) is None:
+            # An empty log is what VolSync stores when it cannot read the mover pod.
+            raise Fail(f"{namespace}/{pvc}: mover log has no restore result")
         if _NO_SNAPSHOT in logs:
             # The mover exits 0 and still sets lastManualSync. That is not a restore.
             if not skip_missing:
@@ -818,7 +824,7 @@ def run(
         chosen, present = _select(kubectl, None if all_pvcs else app)
         hold = _hold_repos(kubectl)
         retired = _retired(retire)
-        if not chosen and hold is None:
+        if not chosen and (hold is None or not all_pvcs):
             raise Fail("no PVC to restore")
         done: list[tuple[str, str]] = []
         for namespace, pvc, created in chosen:

@@ -16,6 +16,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _HASH = re.compile(r"\b[0-9a-f]{64}\b")
+# sha256sum labels the volume checksum with the drill file. An image digest is not that line.
+_VOLUME_SUM = re.compile(r"^([0-9a-f]{64})  /data/payload$")
 _PVC_DELETED = re.compile(r'persistentvolumeclaim "[^"]+" deleted')
 _RESTORE = re.compile(r"\brestore\b")
 _SNAPSHOT = re.compile(r"etcd-snapshot-\S+")
@@ -109,15 +111,16 @@ def recorded_checksum(text: str) -> str | None:
     for line in text.splitlines():
         if _SNAPSHOT.search(line):
             continue
-        hashes = _HASH.findall(line)
-        if first is None and hashes:
-            first = hashes[0]
+        match = _VOLUME_SUM.match(line.strip())
+        if first is None:
+            if match:
+                first = match.group(1)
             continue
-        if first is not None and _PVC_DELETED.search(line):
+        if _PVC_DELETED.search(line):
             deleted = True
         if deleted and _RESTORE.search(line):
             restored = True
-        if restored and first is not None and first in hashes and etcd_checksum_matches(text):
+        if restored and match is not None and match.group(1) == first and etcd_checksum_matches(text):
             return first
     return None
 

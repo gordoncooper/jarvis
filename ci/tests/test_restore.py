@@ -58,7 +58,7 @@ def _pvc(
     return {"metadata": meta, "spec": {"volumeName": volume}}
 
 
-_SNAPSHOT_LOG = "Selected restic snapshot with id: abc\n"
+_SNAPSHOT_LOG = "restoring abc to /data\n"
 _NO_SNAPSHOT_LOG = "No eligible snapshots found\n=== No data will be restored ===\n"
 
 
@@ -367,6 +367,15 @@ def test_verify_p0b_reads_drill_log(tmp_path: Path, capsys) -> None:
     assert verify_p0b.run(tmp_path, env, log, fetch, issuer) != 0
     assert "PVC deletion" in capsys.readouterr().out
 
+    digest = "d" * 64
+    log.write_text(
+        f"IMAGE=restic/restic@sha256:{digest}\n" + _log(CHECKSUM, snapshot=True),
+        encoding="utf-8",
+    )
+    assert verify_p0b.run(tmp_path, env, log, fetch, issuer) == 0
+    assert f"PASS restore checksum {CHECKSUM}" in capsys.readouterr().out
+    assert digest not in capsys.readouterr().out
+
 
 def _run(cluster: _Cluster, **kwargs: object) -> int:
     args = {
@@ -376,6 +385,22 @@ def _run(cluster: _Cluster, **kwargs: object) -> int:
     }
     args.update(kwargs)
     return restore_tool.run(cluster.kubectl, **args)  # type: ignore[arg-type]
+
+
+def test_empty_mover_logs_fail(capsys) -> None:
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs="")
+    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    out = capsys.readouterr().out
+    assert "mover log has no restore result" in out
+    assert "PASS restore" not in out
+    assert "backup-" not in [arg for call in cluster.calls for arg in call]
+
+
+def test_named_restore_fails_when_nothing_matches(capsys) -> None:
+    cluster = _Cluster([], will_pause=True, hold=["ns-demo/pvc-drill"])
+    assert _run(cluster, app="typo", all_pvcs=False) != 0
+    assert "no PVC to restore" in capsys.readouterr().out
+    assert cluster.hold_deleted is False
 
 
 def test_no_snapshot_fails_and_rerun_can_resume(capsys) -> None:
