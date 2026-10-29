@@ -3,6 +3,8 @@ apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: pvc-backup
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: Enabled
 spec:
   webhookConfiguration:
     failurePolicy: Ignore
