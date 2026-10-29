@@ -44,6 +44,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `backup_retention_daily` | yes | Restic keep count for daily snapshots (§7). |
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots (§7). |
 | `backup_retention_monthly` | yes | Restic keep count for monthly snapshots (§7). |
+| `backup_schedule` | yes | Five-field cron for each PVC's VolSync ReplicationSource (`trigger.schedule`). The controller evaluates it in `time_zone`. |
 | `jarvis_env` | yes | Env name for `/etc/jarvis/env` marker and guards; must match `envs/<env>/` (p0a-12). |
 | `k3s_version` | yes | k3s version string `v<major>.<minor>.<patch>+k3s<n>`. Host binary; changes only by PR (R33, D5). |
 | `k3s_sha256` | yes | SHA-256 of the pinned `k3s` amd64 release binary (verified on install). |
@@ -131,6 +132,7 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
 - A behavior test rejects an unknown `time_zone` and a `k3s_version` that is not `v<major>.<minor>.<patch>+k3s<n>`.
+- A behavior test rejects a `backup_schedule` that is not a five-field cron.
 - A drift test fails when the known-key set gains a key the example env does not set.
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
 - A drift test fails when the known role set gains a role the example env does not declare.

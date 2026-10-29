@@ -1,0 +1,66 @@
+# Kyverno 1.19.2, chart 3.9.2. Classic ClusterPolicy only.
+# Reports and cleanup controllers are off. Admission and background stay on.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kyverno
+  namespace: flux-system
+spec:
+  interval: 30m
+  releaseName: kyverno
+  targetNamespace: kyverno
+  chart:
+    spec:
+      chart: kyverno
+      # renovate: datasource=helm depName=kyverno registryUrl=https://kyverno.github.io/kyverno
+      version: "3.9.2"
+      sourceRef:
+        kind: HelmRepository
+        name: kyverno
+        namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    cleanupController:
+      enabled: false
+    reportsController:
+      enabled: false
+    features:
+      admissionReports:
+        enabled: false
+      aggregateReports:
+        enabled: false
+      policyReports:
+        enabled: false
+      validatingAdmissionPolicyReports:
+        enabled: false
+      reporting:
+        validate: false
+        mutate: false
+        mutateExisting: false
+        imageVerify: false
+        generate: false
+    admissionController:
+      container:
+        image:
+          registry: ghcr.io
+          repository: kyverno/kyverno
+          # renovate: datasource=docker depName=ghcr.io/kyverno/kyverno
+          tag: "v1.19.2@sha256:c8c4dd09e720d2cd7fd24ca73ac28e46651001372f988e0cba3f2f612f04b955"
+      initContainer:
+        image:
+          registry: ghcr.io
+          repository: kyverno/kyvernopre
+          # renovate: datasource=docker depName=ghcr.io/kyverno/kyvernopre
+          tag: "v1.19.2@sha256:27f3cc52e628559b56d08363b85316819802086c9808606914f7805a244148f4"
+    backgroundController:
+      image:
+        registry: ghcr.io
+        repository: kyverno/background-controller
+        # renovate: datasource=docker depName=ghcr.io/kyverno/background-controller
+        tag: "v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2"

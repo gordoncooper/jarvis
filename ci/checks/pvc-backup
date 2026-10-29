@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: every PVC has a VolSync ReplicationSource or backup: none (R31).
+# CI rule check: the backup ClusterPolicy enrolls PVCs (R31).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
