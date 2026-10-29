@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Read-only P0b exit check (make verify PHASE=p0b ENV=<env> DRILL_LOG=<file>)."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from subprocess import CompletedProcess
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_HASH = re.compile(r"\b[0-9a-f]{64}\b")
+_DELETE = re.compile(r"\bdelete")
+_RESTORE = re.compile(r"\brestore\b")
+_SNAPSHOT = re.compile(r"etcd-snapshot-\S+")
+_TIMEOUT_SECONDS = 30
+
+Fetch = Callable[[str], tuple[int, str]]
+Issuer = Callable[[str], tuple[int, str]]
+
+
+def _line(text: str) -> None:
+    print(text, flush=True)
+
+
+def _tool_env() -> dict[str, str]:
+    env = os.environ.copy()
+    prefix = os.pathsep.join(
+        (
+            str(REPO_ROOT / ".venv" / "bin"),
+            str(Path.home() / ".local" / "bin"),
+        )
+    )
+    env["PATH"] = prefix + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def _run(argv: list[str], *, input: str | None = None) -> CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            argv,
+            input=input,
+            env=_tool_env(),
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError:
+        _line(f"{argv[0]} not found")
+        raise SystemExit(1) from None
+    except subprocess.TimeoutExpired:
+        _line(f"{argv[0]} timed out")
+        raise SystemExit(1) from None
+
+
+def _fetch(host: str) -> tuple[int, str]:
+    proc = _run(["curl", "-fsS", "--max-time", str(_TIMEOUT_SECONDS), f"https://{host}/"])
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "curl failed").strip()
+        return 1, err.splitlines()[0] if err else "curl failed"
+    return 0, proc.stdout
+
+
+def _issuer(host: str) -> tuple[int, str]:
+    client = _run(
+        [
+            "openssl",
+            "s_client",
+            "-connect",
+            f"{host}:443",
+            "-servername",
+            host,
+            "-verify_return_error",
+        ],
+        input="",
+    )
+    if client.returncode != 0:
+        err = (client.stderr or "certificate verify failed").strip()
+        return 1, err.splitlines()[0] if err else "certificate verify failed"
+    cert = _run(["openssl", "x509", "-noout", "-issuer"], input=client.stdout)
+    if cert.returncode != 0 or not cert.stdout.strip():
+        return 1, "no certificate issuer"
+    return 0, cert.stdout.strip()
+
+
+def recorded_checksum(text: str) -> str | None:
+    """Original checksum, then a delete, then a restore, then the same checksum."""
+    first: str | None = None
+    deleted = False
+    restored = False
+    for line in text.splitlines():
+        hashes = _HASH.findall(line)
+        if first is None and hashes:
+            first = hashes[0]
+            continue
+        if first is not None and _DELETE.search(line):
+            deleted = True
+        if deleted and _RESTORE.search(line):
+            restored = True
+        if restored and first is not None and first in hashes and _SNAPSHOT.search(text):
+            return first
+    return None
+
+
+def _print_checklist(host: str) -> int:
+    _line("Owner checklist:")
+    _line(f"- tailnet curl of https://{host}/ [G]:")
+    return 1
+
+
+def run(
+    repo_root: Path,
+    env: str,
+    drill_log: Path,
+    fetch: Fetch,
+    issuer: Issuer,
+) -> int:
+    values = repo_root / "envs" / env / "values" / "cluster-vars.yaml"
+    suffix = yaml.safe_load(values.read_text(encoding="utf-8"))["dns_suffix"]
+    host = f"testapp.{suffix}"
+    failed = 0
+    code, body = fetch(host)
+    if code != 0 or not body:
+        _line(f"FAIL lan curl https://{host}/: {body or 'empty body'}")
+        failed += 1
+    else:
+        _line(f"PASS lan curl https://{host}/")
+        _line(body.rstrip("\n"))
+    code, who = issuer(host)
+    if code != 0 or not who:
+        _line(f"FAIL cert issuer: {who or 'empty'}")
+        failed += 1
+    else:
+        _line(f"PASS cert issuer {who}")
+    try:
+        text = drill_log.read_text(encoding="utf-8")
+    except OSError as exc:
+        _line(f"FAIL drill log: {exc.strerror or exc}")
+        failed += 1
+        text = ""
+    else:
+        checksum = recorded_checksum(text)
+        if checksum is None:
+            _line(
+                "FAIL drill log: need the checksum, the delete, the restore,"
+                " and an etcd snapshot filename"
+            )
+            failed += 1
+        else:
+            _line(f"PASS restore checksum {checksum}")
+    remaining = _print_checklist(host)
+    if failed:
+        return 1
+    if remaining:
+        _line(f"automatic checks passed; {remaining} owner items remain")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env", required=True, help="Env under envs/")
+    parser.add_argument("--drill-log", required=True, help="p0b-10 drill transcript")
+    args = parser.parse_args(argv)
+    return run(REPO_ROOT, args.env, Path(args.drill_log), _fetch, _issuer)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

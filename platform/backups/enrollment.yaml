@@ -53,6 +53,12 @@ spec:
       match: *enrolled-match
       exclude: *enrolled-exclude
       preconditions: *enrolled-bound
+      context:
+        - name: pauseBackup
+          variable:
+            # String "true" / "false". to_boolean keeps spec.paused a bool.
+            jmesPath: "(request.object.metadata.annotations.backup || '') == 'paused' && 'true' || 'false'"
+            default: "false"
       generate:
         generateExisting: true
         synchronize: true
@@ -62,6 +68,8 @@ spec:
         namespace: "{{ request.object.metadata.namespace }}"
         data:
           spec:
+            # Annotation backup: paused. VolSync then sets the mover Job parallelism to 0.
+            paused: "{{ to_boolean(pauseBackup) }}"
             sourcePVC: "{{ request.object.metadata.name }}"
             trigger:
               schedule: "${backup_schedule}"

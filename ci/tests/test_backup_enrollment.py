@@ -155,6 +155,13 @@ def test_enrollment_policy_rules() -> None:
     spec = source["generate"]["data"]["spec"]
     assert spec["sourcePVC"] == "{{ request.object.metadata.name }}"
     assert spec["trigger"]["schedule"] == "${backup_schedule}"
+    assert "manual" not in spec["trigger"]
+    pause = source["context"][0]
+    assert pause["name"] == "pauseBackup"
+    assert pause["variable"]["default"] == "false"
+    assert "annotations.backup" in pause["variable"]["jmesPath"]
+    assert "'paused'" in pause["variable"]["jmesPath"]
+    assert spec["paused"] == "{{ to_boolean(pauseBackup) }}"
     restic = spec["restic"]
     assert restic["copyMethod"] == "Direct"
     assert restic["pruneIntervalDays"] == 7

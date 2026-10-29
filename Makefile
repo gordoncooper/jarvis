@@ -2,13 +2,15 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help deps ci-verify verify bootstrap-secrets seal
+.PHONY: help deps ci-verify verify bootstrap-secrets seal restore restore-all
 help:
 	@echo "JARVIS Makefile"
 	@echo
 	@echo "Operator commands"
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
-	@echo "  make verify             Phase exit check (PHASE=p0a ENV=<env> required)"
+	@echo "  make verify             Phase exit check (PHASE=p0a|p0b ENV=<env>; p0b needs DRILL_LOG)"
+	@echo "  make restore            Restore PVCs in namespace APP"
+	@echo "  make restore-all        Restore every enrolled PVC"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
 	@echo
@@ -28,8 +30,17 @@ verify:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@case "$(PHASE)" in \
 	  p0a) python3 tools/verify/p0a --env "$(ENV)" ;; \
+	  p0b) test -n "$(DRILL_LOG)" || { echo "DRILL_LOG is required" >&2; exit 1; }; \
+	       python3 tools/verify/p0b --env "$(ENV)" --drill-log "$(DRILL_LOG)" ;; \
 	  *) echo "unknown PHASE=$(PHASE)" >&2; exit 1 ;; \
 	esac
+
+restore:
+	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
+	@python3 tools/restore --app "$(APP)"
+
+restore-all:
+	@python3 tools/restore --all
 
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)

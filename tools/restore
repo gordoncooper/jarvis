@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Restore PVC data with a one-shot VolSync ReplicationDestination.
+
+Pauses that PVC's ReplicationSource first (annotation backup: paused).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import zlib
+from collections.abc import Callable, Sequence
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from subprocess import CompletedProcess
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PAUSE_BUDGET_SECONDS = 120
+RESTORE_BUDGET_SECONDS = 30 * 60
+_POLL_SECONDS = 5.0
+# VolSync 0.17 job prefix. Longer than 63 characters, the rest is crc32 of the source name.
+_JOB_PREFIX = "volsync-src-"
+_JOB_NAME_MAX = 63
+
+Kubectl = Callable[..., CompletedProcess[str]]
+Mono = Callable[[], float]
+Sleeper = Callable[[float], None]
+
+
+class Fail(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def _line(text: str) -> None:
+    print(text, flush=True)
+
+
+def _tool_env() -> dict[str, str]:
+    env = os.environ.copy()
+    prefix = os.pathsep.join(
+        (
+            str(REPO_ROOT / ".venv" / "bin"),
+            str(Path.home() / ".local" / "bin"),
+        )
+    )
+    env["PATH"] = prefix + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def _kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["kubectl", *args],
+            input=input,
+            env=_tool_env(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        _line("run make deps")
+        raise SystemExit(1) from None
+
+
+def _reason(proc: CompletedProcess[str]) -> str:
+    text = (proc.stderr or proc.stdout or "kubectl failed").strip()
+    return text.splitlines()[0] if text else "kubectl failed"
+
+
+def _ok(proc: CompletedProcess[str], what: str) -> None:
+    if proc.returncode != 0:
+        raise Fail(f"{what}: {_reason(proc)}")
+
+
+def _load(proc: CompletedProcess[str], what: str) -> dict:
+    _ok(proc, what)
+    try:
+        body = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Fail(f"{what}: invalid kubectl JSON") from exc
+    if not isinstance(body, dict):
+        raise Fail(f"{what}: invalid kubectl JSON")
+    return body
+
+
+def job_name(pvc: str) -> str:
+    plain = _JOB_PREFIX + pvc
+    if len(plain) <= _JOB_NAME_MAX:
+        return plain
+    digest = zlib.crc32(pvc.encode()) & 0xFFFFFFFF
+    return f"{_JOB_PREFIX}{digest:08x}"
+
+
+def restore_as_of(created: str) -> str:
+    stamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
+    earlier = stamp - timedelta(seconds=1)
+    return earlier.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def eligible(item: dict) -> bool:
+    meta = item.get("metadata") or {}
+    annotations = meta.get("annotations") or {}
+    labels = meta.get("labels") or {}
+    if annotations.get("backup") == "none":
+        return False
+    if labels.get("app.kubernetes.io/created-by") == "volsync":
+        return False
+    spec = item.get("spec") or {}
+    return bool(spec.get("volumeName"))
+
+
+def destination_body(namespace: str, pvc: str, as_of: str, manual: str) -> dict:
+    return {
+        "apiVersion": "volsync.backube/v1alpha1",
+        "kind": "ReplicationDestination",
+        "metadata": {"name": f"restore-{pvc}", "namespace": namespace},
+        "spec": {
+            "trigger": {"manual": manual},
+            "restic": {
+                "destinationPVC": pvc,
+                "repository": f"restic-{pvc}",
+                "copyMethod": "Direct",
+                "enableFileDeletion": True,
+                "restoreAsOf": as_of,
+            },
+        },
+    }
+
+
+def _wait(pred: Callable[[], bool], *, budget_s: float, monotonic: Mono, sleep: Sleeper) -> bool:
+    deadline = monotonic() + budget_s
+    while True:
+        if pred():
+            return True
+        if monotonic() >= deadline:
+            return False
+        sleep(min(_POLL_SECONDS, max(0.0, deadline - monotonic())))
+
+
+def _source_paused(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
+    proc = kubectl(["get", "replicationsource", pvc, "-n", namespace, "-o", "json"])
+    if proc.returncode != 0:
+        return False
+    try:
+        body = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False
+    return (body.get("spec") or {}).get("paused") is True
+
+
+def _job_idle(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
+    proc = kubectl(["get", "job", job_name(pvc), "-n", namespace, "-o", "json"])
+    if proc.returncode != 0:
+        return True
+    try:
+        body = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False
+    parallelism = (body.get("spec") or {}).get("parallelism", 1)
+    active = (body.get("status") or {}).get("active") or 0
+    return parallelism == 0 and active == 0
+
+
+def _secret_ready(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
+    proc = kubectl(["get", "secret", f"restic-{pvc}", "-n", namespace, "-o", "name"])
+    return proc.returncode == 0
+
+
+def _paused(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
+    return (
+        _source_paused(kubectl, namespace, pvc)
+        and _job_idle(kubectl, namespace, pvc)
+        and _secret_ready(kubectl, namespace, pvc)
+    )
+
+
+def _restored(kubectl: Kubectl, namespace: str, name: str, manual: str) -> bool:
+    proc = kubectl(["get", "replicationdestination", name, "-n", namespace, "-o", "json"])
+    if proc.returncode != 0:
+        return False
+    try:
+        body = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False
+    return (body.get("status") or {}).get("lastManualSync") == manual
+
+
+def _select(kubectl: Kubectl, app: str | None) -> list[tuple[str, str, str]]:
+    args = ["get", "pvc", "-o", "json"]
+    if app is None:
+        args[2:2] = ["-A"]
+    else:
+        args[2:2] = ["-n", app]
+    body = _load(kubectl(args), "list pvc")
+    chosen: list[tuple[str, str, str]] = []
+    for item in body.get("items") or []:
+        if not isinstance(item, dict) or not eligible(item):
+            continue
+        meta = item["metadata"]
+        created = meta.get("creationTimestamp")
+        if not isinstance(created, str) or not created:
+            raise Fail(f"{meta.get('namespace')}/{meta.get('name')}: no creationTimestamp")
+        chosen.append((meta["namespace"], meta["name"], created))
+    chosen.sort()
+    return chosen
+
+
+def _restore_one(
+    kubectl: Kubectl,
+    namespace: str,
+    pvc: str,
+    created: str,
+    *,
+    monotonic: Mono,
+    sleep: Sleeper,
+    now: Callable[[], float],
+    pause_budget_s: float,
+    restore_budget_s: float,
+) -> None:
+    _line(f"pause {namespace}/{pvc}")
+    _ok(
+        kubectl(["annotate", "pvc", pvc, "-n", namespace, "backup=paused", "--overwrite"]),
+        f"annotate {namespace}/{pvc}",
+    )
+    if not _wait(
+        lambda: _paused(kubectl, namespace, pvc),
+        budget_s=pause_budget_s,
+        monotonic=monotonic,
+        sleep=sleep,
+    ):
+        raise Fail(f"{namespace}/{pvc}: ReplicationSource did not pause")
+    as_of = restore_as_of(created)
+    manual = f"restore-{int(now())}"
+    name = f"restore-{pvc}"
+    _line(f"restore {namespace}/{pvc} as-of {as_of}")
+    body = yaml.safe_dump(
+        destination_body(namespace, pvc, as_of, manual),
+        sort_keys=False,
+    )
+    _ok(kubectl(["apply", "-f", "-"], input=body), f"apply {namespace}/{name}")
+    if not _wait(
+        lambda: _restored(kubectl, namespace, name, manual),
+        budget_s=restore_budget_s,
+        monotonic=monotonic,
+        sleep=sleep,
+    ):
+        raise Fail(f"{namespace}/{pvc}: ReplicationDestination did not finish")
+    _ok(
+        kubectl(
+            [
+                "delete",
+                "replicationdestination",
+                name,
+                "-n",
+                namespace,
+                "--wait=true",
+                "--ignore-not-found=true",
+            ]
+        ),
+        f"delete {namespace}/{name}",
+    )
+    _ok(
+        kubectl(["annotate", "pvc", pvc, "-n", namespace, "backup-"]),
+        f"resume {namespace}/{pvc}",
+    )
+    _line(f"PASS restore {namespace}/{pvc}")
+
+
+def run(
+    kubectl: Kubectl,
+    *,
+    app: str | None,
+    all_pvcs: bool,
+    monotonic: Mono | None = None,
+    sleep: Sleeper | None = None,
+    now: Callable[[], float] | None = None,
+    pause_budget_s: float = PAUSE_BUDGET_SECONDS,
+    restore_budget_s: float = RESTORE_BUDGET_SECONDS,
+) -> int:
+    if all_pvcs == (app is not None):
+        _line("pass APP=<namespace> or --all")
+        return 1
+    clock = monotonic or time.monotonic
+    pause = sleep or time.sleep
+    stamp = now or time.time
+    try:
+        chosen = _select(kubectl, None if all_pvcs else app)
+        if not chosen:
+            raise Fail("no PVC to restore")
+        for namespace, pvc, created in chosen:
+            _restore_one(
+                kubectl,
+                namespace,
+                pvc,
+                created,
+                monotonic=clock,
+                sleep=pause,
+                now=stamp,
+                pause_budget_s=pause_budget_s,
+                restore_budget_s=restore_budget_s,
+            )
+    except Fail as exc:
+        _line(f"FAIL {exc.message}")
+        return 1
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--app", help="Namespace whose PVCs to restore")
+    parser.add_argument("--all", action="store_true", help="Restore every enrolled PVC")
+    args = parser.parse_args(argv)
+    app = args.app or None
+    return run(_kubectl, app=app, all_pvcs=args.all)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
