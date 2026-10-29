@@ -126,6 +126,15 @@ def test_enrollment_policy_rules() -> None:
     assert {"selector": {"matchLabels": {"app.kubernetes.io/created-by": "volsync"}}} in [
         item["resources"] for item in excluded
     ]
+    assert secret["preconditions"] == source["preconditions"] == {
+        "all": [
+            {
+                "key": "{{ request.object.spec.volumeName || '' }}",
+                "operator": "NotEquals",
+                "value": "",
+            }
+        ]
+    }
 
     lookup = secret["context"][0]["apiCall"]
     assert lookup["urlPath"] == "/api/v1/namespaces/platform-backups/secrets/backups-restic"

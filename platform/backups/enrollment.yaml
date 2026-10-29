@@ -22,6 +22,12 @@ spec:
               selector:
                 matchLabels:
                   app.kubernetes.io/created-by: volsync
+      # volumeName is empty until the claim binds; that UPDATE re-triggers generate.
+      preconditions: &enrolled-bound
+        all:
+          - key: "{{ request.object.spec.volumeName || '' }}"
+            operator: NotEquals
+            value: ""
       context:
         - name: backupsRestic
           apiCall:
@@ -44,6 +50,7 @@ spec:
     - name: replication-source
       match: *enrolled-match
       exclude: *enrolled-exclude
+      preconditions: *enrolled-bound
       generate:
         generateExisting: true
         synchronize: true
