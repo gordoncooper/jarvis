@@ -109,7 +109,7 @@ def test_enrollment_policy_rules() -> None:
         if doc.get("kind") == "ClusterPolicy"
     )
     assert policy["metadata"]["name"] == "pvc-backup"
-    assert policy["spec"]["failurePolicy"] == "Ignore"
+    assert "failurePolicy" not in policy["spec"]
     assert policy["spec"]["webhookConfiguration"]["failurePolicy"] == "Ignore"
     assert policy["spec"].get("background", True) is True
     secret, source, mutate = (

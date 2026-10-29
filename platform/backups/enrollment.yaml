@@ -4,8 +4,6 @@ kind: ClusterPolicy
 metadata:
   name: pvc-backup
 spec:
-  # Deprecated spelling. GetFailurePolicy still reads it when the webhook field is unset.
-  failurePolicy: Ignore
   webhookConfiguration:
     failurePolicy: Ignore
   rules:
