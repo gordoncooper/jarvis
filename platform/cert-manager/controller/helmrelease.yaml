@@ -7,6 +7,10 @@ kind: HelmRelease
 metadata:
   name: cert-manager
   namespace: flux-system
+  # Prune stays off so a path move cannot uninstall the controller.
+  # crds.keep defaults to true, so the CRDs and Certificates stay either way.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   releaseName: cert-manager

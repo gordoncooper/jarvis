@@ -3,6 +3,9 @@ kind: HelmRepository
 metadata:
   name: backube
   namespace: flux-system
+  # The HelmRelease stays. This is the chart source it reconciles.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   url: https://backube.github.io/helm-charts

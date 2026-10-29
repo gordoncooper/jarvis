@@ -1,4 +1,8 @@
+# Prune stays off. Deleting this namespace removes the ServiceAccount the
+# kyverno-scale-to-zero uninstall hook needs, and the HelmRelease stays stuck.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: kyverno
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

@@ -5,6 +5,10 @@ kind: HelmRelease
 metadata:
   name: volsync
   namespace: flux-system
+  # ReplicationSource and ReplicationDestination are chart templates.
+  # Uninstall deletes those CRDs and every object of those kinds.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   releaseName: volsync

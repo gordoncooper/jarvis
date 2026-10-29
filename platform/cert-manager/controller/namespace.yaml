@@ -1,4 +1,9 @@
+# Prune stays off. Deleting this namespace removes the cert-manager pods while
+# the HelmRelease reports InSync, and the cluster-wide webhook then blocks
+# platform-configs until someone forces a reconcile.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: platform-cert-manager
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
