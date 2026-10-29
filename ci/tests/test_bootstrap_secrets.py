@@ -195,6 +195,66 @@ def test_public_root_refuses_a_private_key(tmp_path, monkeypatch):
     assert not dest.exists()
 
 
+def test_ca_leaf_passes_x509_strict_verify(tmp_path: Path) -> None:
+    mod = _load_module()
+    cert_pem, key_pem = mod._generate_ca_material()
+    assert "PRIVATE KEY" not in cert_pem
+    ca_cert = tmp_path / "ca.crt"
+    ca_key = tmp_path / "ca.key"
+    ca_cert.write_text(cert_pem, encoding="utf-8")
+    ca_key.write_text(key_pem, encoding="utf-8")
+    ca_key.chmod(0o600)
+
+    leaf_csr = tmp_path / "leaf.csr"
+    leaf_crt = tmp_path / "leaf.crt"
+    subprocess.check_call(
+        [
+            "openssl",
+            "req",
+            "-new",
+            "-nodes",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(tmp_path / "leaf.key"),
+            "-out",
+            str(leaf_csr),
+            "-subj",
+            "/CN=leaf.example",
+            "-batch",
+        ],
+        stdout=subprocess.DEVNULL,
+    )
+    subprocess.check_call(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(leaf_csr),
+            "-CA",
+            str(ca_cert),
+            "-CAkey",
+            str(ca_key),
+            "-CAcreateserial",
+            "-out",
+            str(leaf_crt),
+            "-days",
+            "1",
+            "-sha256",
+        ],
+        stdout=subprocess.DEVNULL,
+    )
+    verified = subprocess.run(
+        ["openssl", "verify", "-x509_strict", "-CAfile", str(ca_cert), str(leaf_crt)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert verified.returncode == 0, verified.stderr
+    assert verified.stdout.strip().endswith(": OK")
+
+
 def test_openssl_stderr_is_shown_only_on_failure(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
