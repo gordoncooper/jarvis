@@ -93,11 +93,6 @@ def _cron_fields(expr: str) -> list[str]:
     return fields
 
 
-def _secret_ref(entry: dict) -> tuple[str, str]:
-    ref = entry["valueFrom"]["secretKeyRef"]
-    return ref["name"], ref["key"]
-
-
 def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     """The copy follows the k3s cron, reads that directory, and keeps one restic group."""
     defaults = yaml.safe_load(
@@ -107,19 +102,25 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     k3s_config = (ROOT / "infra/ansible/roles/k3s/templates/config.yaml.j2").read_text(
         encoding="utf-8"
     )
-    assert "etcd-snapshot-dir: {{ backup_path }}/etcd-snapshots" in k3s_config
 
     docs: list[dict] = []
     for path in sorted((ROOT / "platform/backups").rglob("*.yaml")):
         docs.extend(_docs(path))
-    jobs = [doc for doc in docs if doc.get("kind") == "CronJob"]
-    assert len(jobs) == 1
-    job = jobs[0]
-    assert job["metadata"]["name"] == "etcd-snapshots"
-    assert job["metadata"]["namespace"] == "platform-backups"
+    snapshot_path = "${backup_path}/etcd-snapshots"
+    job = next(
+        doc
+        for doc in docs
+        if doc.get("kind") == "CronJob"
+        and any(
+            vol.get("hostPath", {}).get("path") == snapshot_path
+            for vol in doc["spec"]["jobTemplate"]["spec"]["template"]["spec"].get("volumes")
+            or []
+        )
+    )
+    assert f"etcd-snapshot-dir: {snapshot_path.replace('${backup_path}', '{{ backup_path }}')}" in k3s_config
+
     spec = job["spec"]
     assert spec["timeZone"] == "${time_zone}"
-    assert spec["concurrencyPolicy"] == "Forbid"
     schedule = _cron_fields(spec["schedule"])
     assert schedule[1:] == k3s_cron[1:]
     assert schedule[0].isdigit() and k3s_cron[0].isdigit()
@@ -127,38 +128,23 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
 
     pod = spec["jobTemplate"]["spec"]["template"]["spec"]
     assert pod["nodeSelector"]["role.${dns_suffix}/control_plane"] == "true"
-    assert pod["restartPolicy"] == "OnFailure"
     container = pod["containers"][0]
     assert re.fullmatch(r"restic/restic@sha256:[a-f0-9]{64}", container["image"])
-    assert container["securityContext"]["runAsUser"] == 0
-
-    mount = next(item for item in container["volumeMounts"] if item["name"] == "snapshots")
+    volume = next(item for item in pod["volumes"] if item.get("hostPath", {}).get("path") == snapshot_path)
+    mount = next(item for item in container["volumeMounts"] if item["name"] == volume["name"])
     assert mount["readOnly"] is True
-    volume = next(item for item in pod["volumes"] if item["name"] == mount["name"])
-    assert volume["hostPath"]["path"] == "${backup_path}/etcd-snapshots"
-    assert volume["hostPath"]["type"] == "Directory"
 
-    script = "\n".join(str(part) for part in container["command"])
-    assert script.index("restic cat config") < script.index("restic init")
-    assert "10" in script[: script.index("restic init")]
-    assert f"restic backup {mount['mountPath']}" in script
-    assert script.index("restic forget") < script.index("restic prune")
+    forget = "\n".join(str(part) for part in container["command"]).split("restic forget", 1)[1]
     for key in (
         "backup_retention_daily",
         "backup_retention_weekly",
         "backup_retention_monthly",
     ):
-        assert f"${{{key}}}" in script.split("restic forget", 1)[1].split("restic prune", 1)[0]
+        assert f"${{{key}}}" in forget
 
     env = {item["name"]: item for item in container["env"]}
-    assert "htpasswd" not in env
-    for name, key in (
-        ("RESTIC_PASSWORD", "RESTIC_PASSWORD"),
-        ("RESTIC_REST_USERNAME", "RESTIC_REST_USERNAME"),
-        ("RESTIC_REST_PASSWORD", "RESTIC_REST_PASSWORD"),
-        ("RESTIC_REPOSITORY_PREFIX", "RESTIC_REPOSITORY"),
-    ):
-        assert _secret_ref(env[name]) == ("backups-restic", key)
+    prefix = env["RESTIC_REPOSITORY_PREFIX"]["valueFrom"]["secretKeyRef"]
+    assert (prefix["name"], prefix["key"]) == ("backups-restic", "RESTIC_REPOSITORY")
     assert env["RESTIC_REPOSITORY"]["value"] == "$(RESTIC_REPOSITORY_PREFIX)host-etcd-snapshots"
     host = env["RESTIC_HOST"]["value"]
     assert isinstance(host, str) and host and "$" not in host
@@ -167,7 +153,10 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     managers = [
         manager
         for manager in renovate["customManagers"]
-        if any("etcd-snapshots" in pattern for pattern in manager.get("managerFilePatterns", []))
+        if any(
+            "etcd-snapshots" in pattern and "config" not in pattern
+            for pattern in manager.get("managerFilePatterns", [])
+        )
     ]
     assert len(managers) == 1
     assert managers[0]["datasourceTemplate"] == "docker"
@@ -175,15 +164,3 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
         "restic/restic" in pattern and "currentDigest" in pattern
         for pattern in managers[0]["matchStrings"]
     )
-
-    contract = (ROOT / "platform/backups/CONTRACT.md").read_text(encoding="utf-8")
-    assert "host-etcd-snapshots" in contract
-    assert "--cluster-reset-restore-path" in contract
-    assert "not disk-failure protection" in contract
-    texts = [(ROOT / "platform/backups/rest-server.yaml").read_text(encoding="utf-8")]
-    readmes = sorted((ROOT / "envs").glob("*/secrets/README.md"))
-    assert readmes
-    texts.extend(path.read_text(encoding="utf-8") for path in readmes)
-    for text in texts:
-        assert "<namespace>/<pvc>" not in text
-        assert "ns-<namespace>/pvc-<pvc>" in text

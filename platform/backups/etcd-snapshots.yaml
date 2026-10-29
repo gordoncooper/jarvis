@@ -58,14 +58,14 @@ spec:
                 - name: RESTIC_HOST
                   value: etcd-snapshots
               # cat config exit 10 means the repository is missing.
-              # forget --prune skips prune when nothing was removed.
+              # Separate restic prune every run, because forget --prune skips prune when nothing was removed.
               command:
                 - /bin/sh
                 - -c
                 - |
                   set -eu
                   status=0
-                  restic cat config >/dev/null 2>&1 || status=$?
+                  restic cat config >/dev/null || status=$?
                   if [ "$status" -eq 10 ]; then
                     restic init
                   elif [ "$status" -ne 0 ]; then
