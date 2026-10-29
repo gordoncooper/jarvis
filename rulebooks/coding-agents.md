@@ -16,15 +16,16 @@ Rules here are prose only for what `ci/checks/` and `.cursor/cli.json` cannot en
 ## Stay lean
 
 - Build only what the plan step's done check needs, nothing speculative. This caps scope, not quality: what you do build is clean, consistent with the code around it, and uses the tool's own idioms (an Ansible module over shell where one exists, no dead code, no placeholder scripts, no errors swallowed, one source of truth per value).
-- Tests check behavior or encode a rule. Don't copy templates or hard-code task lists. Don't add a test that only runs a `ci/checks/` entry against the tree CI already scans; behavior tests use fixtures.
-- Add container tests only when no cheaper proof exists. A live run is the proof where there is one.
+- Tests check behavior or encode a rule. Each test names the rule it checks. No tests on names, ordering or file shape. Don't copy templates or hard-code task lists. Don't add a test that only runs a `ci/checks/` entry against the tree CI already scans; behavior tests use fixtures.
+- Add container tests only when no cheaper proof exists. A live run is the proof where there is one. If the done check is a live run, attach that run and a server-side dry-run from the head SHA before asking for review. If you can't run them, say so.
 - No local tooling that duplicates a hosted service.
-- Prefer deleting code to adding it.
+- Prefer deleting code to adding it. Before calling a PR ready, list what you'd delete: tests over ~30 lines, and custom scripts where native Ansible, k3s or Flux would do.
 - Hardening ideas and edge cases go in the report as notes, not code.
 
 ## Workflow
 
 - Start from a fresh checkout of current `main`; never build on another agent's branch. Use the branch prefix the task or forge requires, otherwise `agent/<topic>`. One PR per task, or per batch of related plan steps that touch the same area; keep unrelated or risky changes in separate PRs. No stacked PRs, except throwaway PRs a brief asks for. Open the PR ready for review unless the brief says draft.
+- Once review is requested, scope is frozen. New ideas go to a follow-up PR.
 - Merging follows R36. In addition, merge only after the Ready to merge boxes are ticked, and if a task brief says to leave the PR unmerged, do that.
 - Never touch real hosts: no SSH, no secret decryption, no reading the age private key (deny list blocks many of these; still treat this as a hard stop).
 - A value that differs per deployment, including disks, sizes and node roles, is an env setting under `envs/<env>/`, not an Ansible role default and not a literal in core. A schema default the contract documents (D34's `ssh_user`) stays in the schema. The repo must run from any controller node under any user.
