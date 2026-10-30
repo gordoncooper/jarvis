@@ -242,6 +242,15 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "nohup kubectl port-forward svc/demo 8080:80",
     "nohup ssh user@host",
     "nohup sops -d file.yaml",
+    # Runner after a chain (ssh, scp, sops, age).
+    "cd x && timeout 5 ssh user@host",
+    "true; env A=1 sops -d file.yaml",
+    "cat f | nohup ssh user@host",
+    "cd x && nohup scp file.yaml user@host:",
+    "cd x && env A=1 ssh",
+    "cd x && xargs -a hosts ssh",
+    "true; timeout 5 age -d secret.txt",
+    "ls | xargs -n1 age -d",
 )
 
 DRY_RUN_MUST_BLOCK_READS: tuple[str, ...] = (
@@ -273,7 +282,12 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "kubectl get clustersecretstores",
     "git commit -m 'tighten sops rule'",
     "git commit -m 'sync sops rule'",
-    "ls | xargs docker image rm",
+    "ls | xargs docker image ls",
+    "rg -n timeout docs",
+    "rg -n nohup docs",
+    "git commit -m 'add env check'",
+    "cd x && env A=1 docker image ls",
+    "cd x && timeout 5 du -sh storage",
 )
 
 
