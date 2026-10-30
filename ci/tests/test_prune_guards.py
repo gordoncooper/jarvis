@@ -18,16 +18,20 @@ _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 # A guarded Namespace does not cover the HelmRelease. Uninstall of kyverno
 # or volsync deletes chart-templated CRDs and every object of those kinds.
 _PROTECTED = {
+    ("ConfigMap", "kube-system", "coredns-custom"),
     ("CustomResourceDefinition", "", "volumesnapshots.snapshot.storage.k8s.io"),
     ("Deployment", "platform-backups", "restic"),
     ("HelmChartConfig", "kube-system", "traefik"),
     ("HelmRelease", "flux-system", "cert-manager"),
+    ("HelmRelease", "flux-system", "k8s-gateway"),
     ("HelmRelease", "flux-system", "kyverno"),
     ("HelmRelease", "flux-system", "volsync"),
     ("HelmRepository", "flux-system", "backube"),
     ("HelmRepository", "flux-system", "jetstack"),
+    ("HelmRepository", "flux-system", "k8s-gateway"),
     ("HelmRepository", "flux-system", "kyverno"),
     ("Namespace", "", "kyverno"),
+    ("Namespace", "", "platform-app-dns"),
     ("Namespace", "", "platform-cert-manager"),
     ("Namespace", "", "platform-backups"),
     ("Namespace", "", "volsync"),

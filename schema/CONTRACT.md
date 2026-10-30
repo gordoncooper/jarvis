@@ -50,6 +50,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `k3s_sha256` | yes | SHA-256 of the pinned `k3s` amd64 release binary (verified on install). |
 | `pod_cidr` | yes | Pod network CIDR; an IP network, set once per env (D4). |
 | `service_cidr` | yes | Service network CIDR; an IP network, set once per env (D4). |
+| `app_dns_cluster_ip` | yes | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API). k3s uses the tenth address for cluster DNS. |
 | `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
 | `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; R25). |
 | `apps_git_repo_url` | yes | https Git remote for the apps repo. Same owner handle as `flux_git_repo_url`. That handle is the same across every non-example env (D45). |
@@ -133,6 +134,7 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
 - A behavior test rejects an unknown `time_zone` and a `k3s_version` that is not `v<major>.<minor>.<patch>+k3s<n>`.
 - A behavior test rejects a `backup_schedule` that is not a five-field cron.
+- A behavior test rejects an `app_dns_cluster_ip` that is not an IP address, is outside `service_cidr`, is not a host address, or is the first address of `service_cidr`.
 - A drift test fails when the known-key set gains a key the example env does not set.
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
 - A drift test fails when the known role set gains a role the example env does not declare.

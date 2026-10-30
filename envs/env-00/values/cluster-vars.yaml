@@ -17,6 +17,7 @@ k3s_version: v0.0.0+k3s0
 k3s_sha256: abababababababababababababababababababababababababababababababab
 pod_cidr: 10.80.0.0/16
 service_cidr: 10.81.0.0/16
+app_dns_cluster_ip: 10.81.0.53
 local_path_data: /var/lib/jarvis/local-path
 
 k3s_kubelet_kube_reserved: cpu=100m,memory=128Mi

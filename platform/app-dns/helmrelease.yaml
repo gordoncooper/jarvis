@@ -1,0 +1,69 @@
+# Chart 4.0.1 (app 1.9.2). The image tag is the chart appVersion.
+# k8s_gateway reads Ingress status.loadBalancer.ingress. k3s ServiceLB
+# writes the edge node addresses there. Preference ip selects that address.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: k8s-gateway
+  namespace: flux-system
+  # Prune stays off so a path move cannot uninstall the resolver.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  interval: 30m
+  releaseName: k8s-gateway
+  targetNamespace: platform-app-dns
+  chart:
+    spec:
+      chart: k8s-gateway
+      # renovate: datasource=helm depName=k8s-gateway registryUrl=oci://codeberg.org/k8s-gateway/charts
+      version: "4.0.1"
+      sourceRef:
+        kind: HelmRepository
+        name: k8s-gateway
+        namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    serviceType: LoadBalancer
+    service:
+      clusterIP: ${app_dns_cluster_ip}
+    # Chart default. A hostname in a load balancer status is resolved from
+    # this pod, and cluster DNS forwards the zone here.
+    deployment:
+      dnsPolicy: Default
+    # D30. The chart default sets a CPU limit. null drops that key.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: null
+        memory: 256Mi
+    livenessProbe:
+      enabled: true
+    readinessProbe:
+      enabled: true
+    servers:
+      - port: 53
+        zones:
+          - zone: ${dns_suffix}
+            use_tcp: true
+        plugins:
+          - name: errors
+          - name: health
+          - name: ready
+          - name: k8s_gateway
+            parameters: ${dns_suffix}
+            configBlock: |-
+              resources Ingress
+              loadBalancerAddressPreference ip
+              ttl 30
+          - name: cache
+            parameters: "30"
+          - name: loadbalance

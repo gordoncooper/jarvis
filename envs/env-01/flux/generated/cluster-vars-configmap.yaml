@@ -21,6 +21,7 @@ data:
   k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
   pod_cidr: 10.42.0.0/16
   service_cidr: 10.43.0.0/16
+  app_dns_cluster_ip: 10.43.0.53
   local_path_data: /var/lib/jarvis/local-path
   k3s_kubelet_kube_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi
   k3s_kubelet_system_reserved: cpu=500m,memory=1Gi,ephemeral-storage=1Gi

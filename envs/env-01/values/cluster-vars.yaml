@@ -17,6 +17,8 @@ k3s_version: v1.36.5+k3s1
 k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
 pod_cidr: 10.42.0.0/16
 service_cidr: 10.43.0.0/16
+# App DNS ClusterIP. Inside service_cidr, not the Kubernetes API address.
+app_dns_cluster_ip: 10.43.0.53
 local_path_data: /var/lib/jarvis/local-path
 
 # Node-sized kubelet reservations and eviction (Ansible k3s role).

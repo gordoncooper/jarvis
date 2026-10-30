@@ -34,8 +34,12 @@ def test_traefik_helmchartconfig_rules() -> None:
         if isinstance(doc.get("metadata"), dict)
         and doc["metadata"].get("namespace") == "kube-system"
     ]
-    assert [doc["kind"] for doc in kube_system] == ["HelmChartConfig"]
-    values = yaml.safe_load(kube_system[0]["spec"]["valuesContent"])
+    assert {(doc["kind"], doc["metadata"]["name"]) for doc in kube_system} == {
+        ("HelmChartConfig", "traefik"),
+        ("ConfigMap", "coredns-custom"),
+    }
+    chart = next(doc for doc in kube_system if doc["kind"] == "HelmChartConfig")
+    values = yaml.safe_load(chart["spec"]["valuesContent"])
     assert values["providers"]["kubernetesGateway"]["enabled"] is False
     assert (
         "--providers.kubernetesCRD.defaultTLSResourcesNamespace=platform-cert-manager"

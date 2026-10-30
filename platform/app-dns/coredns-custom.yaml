@@ -1,0 +1,17 @@
+# k3s imports keys named *.server as extra CoreDNS server blocks.
+# forward takes an address. ${app_dns_cluster_ip} is the App DNS Service clusterIP.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+  # Prune stays off. Deleting this drops the zone forward, and k3s does not recreate it.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+data:
+  app-dns.server: |
+    ${dns_suffix}:53 {
+        errors
+        cache 30
+        forward . ${app_dns_cluster_ip}
+    }

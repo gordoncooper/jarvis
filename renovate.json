@@ -99,6 +99,14 @@
     },
     {
       "customType": "regex",
+      "description": "k8s-gateway Helm chart pin.",
+      "managerFilePatterns": ["/^platform\\/app-dns\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>helm) depName=(?<depName>k8s-gateway) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Kyverno Helm chart pin.",
       "managerFilePatterns": ["/^platform\\/kyverno\\/helmrelease.yaml$/"],
       "matchStrings": [

@@ -1,0 +1,8 @@
+# Prune stays off. Deleting this namespace removes the App DNS pods while
+# cluster DNS still forwards the zone at the fixed ClusterIP.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-app-dns
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

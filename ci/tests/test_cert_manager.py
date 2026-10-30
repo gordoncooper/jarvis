@@ -12,16 +12,20 @@ from test_flux_entry import _kustomize_build
 _CONTROLLERS = {
     ("ClusterRole", "", "kyverno:backup-generate"),
     ("ClusterRole", "", "kyverno:backup-namespaces"),
+    ("ConfigMap", "kube-system", "coredns-custom"),
     ("CustomResourceDefinition", "", "volumesnapshots.snapshot.storage.k8s.io"),
     ("HelmChartConfig", "kube-system", "traefik"),
     ("HelmRelease", "flux-system", "cert-manager"),
     ("HelmRelease", "flux-system", "flux-operator"),
+    ("HelmRelease", "flux-system", "k8s-gateway"),
     ("HelmRelease", "flux-system", "kyverno"),
     ("HelmRelease", "flux-system", "volsync"),
     ("HelmRepository", "flux-system", "backube"),
     ("HelmRepository", "flux-system", "jetstack"),
+    ("HelmRepository", "flux-system", "k8s-gateway"),
     ("HelmRepository", "flux-system", "kyverno"),
     ("Namespace", "", "kyverno"),
+    ("Namespace", "", "platform-app-dns"),
     ("Namespace", "", "platform-cert-manager"),
     ("Namespace", "", "volsync"),
     ("OCIRepository", "flux-system", "flux-operator"),
@@ -66,6 +70,7 @@ def test_controller_list_lives_on_platform() -> None:
         "backups/controller",
         "kyverno",
         "cert-manager/controller",
+        "app-dns",
     ]
     operator = yaml.safe_load(
         (REPO_ROOT / "platform/flux-operator/kustomization.yaml").read_text(encoding="utf-8")

@@ -7,3 +7,4 @@ resources:
   - backups/controller
   - kyverno
   - cert-manager/controller
+  - app-dns
