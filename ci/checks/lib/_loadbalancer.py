@@ -1,0 +1,67 @@
+"""R28: the only LoadBalancer Services are Traefik and App DNS.
+
+Traefik is the HelmChartConfig under platform/traefik/. App DNS is the
+HelmRelease under platform/app-dns/. Those two directory prefixes are the
+allow-list. The check does not match a DNS name or an address.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+from _manifests import helm_values, load_documents, ref_of
+
+# Component directories, not hostnames.
+ALLOW_PREFIXES = ("platform/traefik/", "platform/app-dns/")
+
+
+@dataclass(frozen=True)
+class LoadBalancerViolation:
+    path: str
+    message: str
+
+
+def scan_loadbalancer(repo_root: Path | str) -> list[LoadBalancerViolation]:
+    violations: list[LoadBalancerViolation] = []
+    for rel, doc, error in load_documents(repo_root):
+        if error or doc is None:
+            violations.append(LoadBalancerViolation(rel, error or "unreadable YAML"))
+            continue
+        if not _is_loadbalancer(doc):
+            continue
+        if rel.startswith(ALLOW_PREFIXES):
+            continue
+        violations.append(
+            LoadBalancerViolation(
+                rel,
+                f"{ref_of(doc)}: LoadBalancer is only allowed for Traefik and App DNS",
+            )
+        )
+    return sorted(violations, key=lambda item: (item.path, item.message))
+
+
+def format_violations(violations: Iterable[LoadBalancerViolation]) -> list[str]:
+    return [f"{item.path}: {item.message}" for item in violations]
+
+
+def _is_loadbalancer(doc: dict) -> bool:
+    kind = doc.get("kind")
+    if kind == "Service":
+        spec = doc.get("spec")
+        return isinstance(spec, dict) and spec.get("type") == "LoadBalancer"
+    if kind not in {"HelmRelease", "HelmChartConfig"}:
+        return False
+    values, error = helm_values(doc)
+    if error or not isinstance(values, dict):
+        return False
+    if values.get("serviceType") == "LoadBalancer":
+        return True
+    service = values.get("service")
+    if not isinstance(service, dict):
+        return False
+    if service.get("type") == "LoadBalancer":
+        return True
+    nested = service.get("spec")
+    return isinstance(nested, dict) and nested.get("type") == "LoadBalancer"

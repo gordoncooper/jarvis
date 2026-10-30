@@ -5,7 +5,9 @@ Rules here are prose only for what `ci/checks/` and `.cursor/cli.json` cannot en
 ## Automated guards (do not duplicate)
 
 - **R34 — Git is the source of truth; no direct cluster or secret tooling:** `ci/checks/cli-deny` and `.cursor/cli.json`.
-- **R3 / R28 — Core stays env-agnostic and identity-free:** `ci/checks/core-names`. Its spec is the identity section of `schema/CONTRACT.md`; read it there, not here.
+- **R5 — Probes, memory and CPU, stdout:** `ci/checks/manifest-lint`. Gatus stays a later check.
+- **R3 / R28 — Core stays env-agnostic and identity-free:** `ci/checks/core-names`. Its spec is the identity section of `schema/CONTRACT.md`; read it there, not here. LoadBalancer Services are `ci/checks/loadbalancer`.
+- **R33 — Images the repo adds are digest-pinned:** `ci/checks/digest-pin`.
 - **Env schema (values under `envs/<env>/`):** `ci/checks/env-schema`.
 - **R2 — Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
 - **R25 — No plaintext secrets in Git:** `ci/checks/secret-scan`.

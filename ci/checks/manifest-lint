@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# CI rule check: workloads set probes, resources, and stdout logs (R5, D30).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _manifest_lint import format_violations, scan_manifest_lint
+
+violations = scan_manifest_lint(Path("."))
+if violations:
+    for line in format_violations(violations):
+        print(line, flush=True)
+    raise SystemExit(1)
+PY

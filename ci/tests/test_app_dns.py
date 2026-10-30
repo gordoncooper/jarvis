@@ -38,6 +38,10 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
     assert resources["limits"].get("cpu") is None
     assert values["livenessProbe"]["enabled"] is True
     assert values["readinessProbe"]["enabled"] is True
+    assert re.fullmatch(
+        r"1\.9\.2@sha256:[a-f0-9]{64}",
+        values["image"]["tag"],
+    )
 
     custom = next(
         doc
@@ -55,14 +59,35 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
         for manager in renovate["customManagers"]
         if any("app-dns" in pattern for pattern in manager["managerFilePatterns"])
     ]
-    assert len(managers) == 1
-    found = []
-    for pattern in managers[0]["matchStrings"]:
-        # Renovate uses RE2 named groups; Python's re uses ?P<name>.
-        python_pattern = re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", pattern)
-        match = re.search(python_pattern, source)
-        if match is not None:
-            found.append(match)
-    assert len(found) == 1
-    assert found[0].group("datasource") == "docker"
-    assert found[0].group("currentValue") == "4.0.1"
+    chart_managers = [
+        manager
+        for manager in managers
+        if any("version:" in pattern for pattern in manager["matchStrings"])
+    ]
+    image_managers = [
+        manager
+        for manager in managers
+        if any("currentDigest" in pattern for pattern in manager["matchStrings"])
+    ]
+    assert len(chart_managers) == 1
+    assert len(image_managers) == 1
+
+    def _matches(manager: dict) -> list[re.Match[str]]:
+        found = []
+        for pattern in manager["matchStrings"]:
+            # Renovate uses RE2 named groups; Python's re uses ?P<name>.
+            python_pattern = re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", pattern)
+            match = re.search(python_pattern, source)
+            if match is not None:
+                found.append(match)
+        return found
+
+    chart = _matches(chart_managers[0])
+    assert len(chart) == 1
+    assert chart[0].group("datasource") == "docker"
+    assert chart[0].group("currentValue") == "4.0.1"
+    image = _matches(image_managers[0])
+    assert len(image) == 1
+    assert image[0].group("depName") == "codeberg.org/k8s-gateway/k8s_gateway"
+    assert image[0].group("currentValue") == "1.9.2"
+    assert image[0].group("currentDigest") == values["image"]["tag"].split("@", 1)[1]
