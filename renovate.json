@@ -181,6 +181,15 @@
       "matchStrings": [
         "image: (?<depName>restic/restic)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "testapp image tag and digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/testapp\\/.+\\.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=docker depName=(?<depName>nginxinc/nginx-unprivileged)\\n\\s*image: nginxinc/nginx-unprivileged:(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.]+)*)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ]
     }
   ]
 }
