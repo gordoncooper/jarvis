@@ -16,7 +16,7 @@ spec:
   chart:
     spec:
       chart: k8s-gateway
-      # renovate: datasource=helm depName=k8s-gateway registryUrl=oci://codeberg.org/k8s-gateway/charts
+      # renovate: datasource=docker depName=codeberg.org/k8s-gateway/charts/k8s-gateway versioning=semver
       version: "4.0.1"
       sourceRef:
         kind: HelmRepository

@@ -14,6 +14,7 @@ A second CoreDNS, with the k8s_gateway plugin, answers `${dns_suffix}` from Ingr
 - `dns_suffix` and `app_dns_cluster_ip` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode them (R3, R28).
 - Traefik's LoadBalancer Service and Ingress class `traefik` (the exposure contract).
 - The `edge` role. The k3s role sets `svccontroller.k3s.cattle.io/enablelb=true` on those nodes only.
+- Edge hosts do not use the systemd-resolved stub (`127.0.0.53`). base-os sets `DNSStubListener=no` and links `/etc/resolv.conf` to `/run/systemd/resolve/resolv.conf`.
 - Chart `k8s-gateway` `4.0.1` from `oci://codeberg.org/k8s-gateway/charts`. The image tag is the chart appVersion.
 
 ## Health
@@ -35,5 +36,6 @@ From a pod, an Ingress host in the zone resolves through this Service and throug
 ## Proven by
 
 - `ci/tests/test_app_dns.py` (LoadBalancer port 53, zone `${dns_suffix}`, forward target, D30 resources, probes).
+- `ci/tests/test_base_os.py` (edge hosts: `DNSStubListener=no`, resolv.conf is resolved's upstream list).
 - `ci/tests/test_prune_guards.py` (namespace, chart source, HelmRelease, and `coredns-custom`).
 - The post-merge drill: a throwaway Ingress resolves from a pod through App DNS and through cluster DNS.

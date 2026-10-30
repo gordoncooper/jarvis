@@ -99,10 +99,10 @@
     },
     {
       "customType": "regex",
-      "description": "k8s-gateway Helm chart pin.",
+      "description": "k8s-gateway OCI chart pin.",
       "managerFilePatterns": ["/^platform\\/app-dns\\/helmrelease.yaml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>helm) depName=(?<depName>k8s-gateway) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
     },
     {

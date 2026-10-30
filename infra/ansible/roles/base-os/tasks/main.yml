@@ -112,3 +112,49 @@
   tags:
     - base-os
     - time
+
+# Edge only. ServiceLB requests hostPort 53 with no hostIP, and the portmap
+# DNAT sends locally generated traffic for the stub at 127.0.0.53 to App DNS.
+# systemd-resolved.service(8): with the stub off, resolv.conf points at the
+# upstream list resolved already uses. A later site.yml applies this when a
+# host joins edge. Leaving edge does not turn the stub back on.
+- name: Keep edge host DNS off the resolved stub
+  when: "'edge' in group_names"
+  tags:
+    - base-os
+    - resolved
+  block:
+    - name: Ensure resolved drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags:
+        - base-os
+        - resolved
+
+    - name: Install resolved stub listener drop-in
+      ansible.builtin.template:
+        src: resolved-stub.conf.j2
+        dest: /etc/systemd/resolved.conf.d/jarvis.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart systemd-resolved
+      tags:
+        - base-os
+        - resolved
+
+    - name: Point resolv.conf at resolved's upstream list
+      ansible.builtin.file:
+        src: /run/systemd/resolve/resolv.conf
+        dest: /etc/resolv.conf
+        state: link
+        force: true
+        owner: root
+        group: root
+      tags:
+        - base-os
+        - resolved

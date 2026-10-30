@@ -435,6 +435,11 @@ def _validate_app_dns_cluster_ip(rel_path: str, data: dict[str, Any]) -> list[st
     first = next(network.hosts(), None)
     if first is not None and addr == first:
         return [f"{rel_path}: {key} must not be the first address of service_cidr"]
+    # k3s cluster DNS is the tenth address of the service CIDR (10.43.0.10
+    # when the CIDR is 10.43.0.0/16). network_address + 10 is that address.
+    tenth = network.network_address + 10
+    if tenth in network and addr == tenth:
+        return [f"{rel_path}: {key} must not be the tenth address of service_cidr"]
     return []
 
 

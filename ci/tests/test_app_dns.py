@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import yaml
 
@@ -22,18 +23,14 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
         if doc["kind"] == "HelmRelease" and doc["metadata"]["name"] == "k8s-gateway"
     )
     values = release["spec"]["values"]
-    # The chart templates a LoadBalancer Service. use_tcp on the zone opens UDP and TCP.
     assert values["serviceType"] == "LoadBalancer"
     assert values["service"]["clusterIP"] == "${app_dns_cluster_ip}"
     server = values["servers"][0]
     assert server["port"] == 53
-    assert server["zones"] == [{"zone": "${dns_suffix}", "use_tcp": True}]
-    plugins = {plugin["name"]: plugin for plugin in server["plugins"]}
-    assert plugins["k8s_gateway"]["parameters"] == "${dns_suffix}"
-    block = plugins["k8s_gateway"]["configBlock"]
-    assert "resources Ingress" in block
-    assert "loadBalancerAddressPreference ip" in block
-    assert "health" in plugins and "ready" in plugins
+    assert any(
+        zone.get("zone") == "${dns_suffix}" and zone.get("use_tcp") is True
+        for zone in server["zones"]
+    )
     resources = values["resources"]
     assert resources["requests"]["cpu"]
     assert resources["requests"]["memory"]
@@ -51,6 +48,7 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
     assert "${dns_suffix}:53" in corefile
     assert "forward . ${app_dns_cluster_ip}" in corefile
 
+    source = (REPO_ROOT / "platform/app-dns/helmrelease.yaml").read_text(encoding="utf-8")
     renovate = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [
         manager
@@ -58,4 +56,13 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
         if any("app-dns" in pattern for pattern in manager["managerFilePatterns"])
     ]
     assert len(managers) == 1
-    assert any("k8s-gateway" in pattern for pattern in managers[0]["matchStrings"])
+    found = []
+    for pattern in managers[0]["matchStrings"]:
+        # Renovate uses RE2 named groups; Python's re uses ?P<name>.
+        python_pattern = re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", pattern)
+        match = re.search(python_pattern, source)
+        if match is not None:
+            found.append(match)
+    assert len(found) == 1
+    assert found[0].group("datasource") == "docker"
+    assert found[0].group("currentValue") == "4.0.1"

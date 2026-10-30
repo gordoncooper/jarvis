@@ -41,7 +41,7 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 
 | Tag | Purpose | Example |
 | --- | --- | --- |
-| `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone) | `../../.venv/bin/ansible-playbook site.yml --tags base-os` |
+| `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone; edge hosts also turn off the resolved stub) | `../../.venv/bin/ansible-playbook site.yml --tags base-os` |
 | `node-disk` | Partition, label, and mount a declared data disk. A wipe also needs `-e jarvis_wipe_confirm` set to comma-separated `<node>:<disk id>` pairs | `../../.venv/bin/ansible-playbook site.yml --tags node-disk -e "jarvis_wipe_confirm=<node>:<disk id>,<node>:<disk id>"` |
 | `k3s` | k3s server, agents, and node labels | `../../.venv/bin/ansible-playbook site.yml --tags k3s` |
 | `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `../../.venv/bin/ansible-playbook site.yml --tags flux-operator` |
@@ -49,10 +49,13 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 | `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `../../.venv/bin/ansible-playbook site.yml --tags time` |
 | `apt-policy` | Apt list refresh timers and inert unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml --tags apt-policy` |
 | `journald` | journald drop-in and restart | `../../.venv/bin/ansible-playbook site.yml --tags journald` |
+| `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `../../.venv/bin/ansible-playbook site.yml --tags resolved` |
 
 `node-disk` refuses to format the disk that holds `/`, and it refuses to format unless `wipe_confirmed` is boolean true and `jarvis_wipe_confirm` includes that host's `<inventory_hostname>:<data_disk.id>`. The value is a comma-separated list of those pairs. A `jarvis-data` filesystem on that disk is mounted and not formatted. The root check resolves `findmnt` of `/` through a btrfs `[subvol]` suffix, `readlink` of `/dev/root`, and `lsblk -nso NAME,TYPE` parents, including device-mapper and LVM. It refuses when the data disk is one of those disks, before either confirmation. A `jarvis-data` label on a device other than that disk or its partition is refused, including when both confirmations are set. A second label is refused. Not checked: mounted elsewhere, a foreign or non-empty mountpoint, partition contents, data paths outside the mount, and other disks in a multi-device btrfs filesystem. The boot drop-in is `k3s.service.d` on `control_plane` and `k3s-agent.service.d` on every other host.
 
-`journald` restarts journald through a handler; handlers do not appear in `ansible-playbook --list-tasks`.
+`journald` and `resolved` restart through handlers; handlers do not appear in `ansible-playbook --list-tasks`.
+
+On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `site.yml`. Leaving `edge` does not turn the stub back on.
 
 Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
 
