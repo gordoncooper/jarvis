@@ -98,7 +98,7 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
         )
     )
     chart = release["spec"]["chart"]["spec"]
-    assert chart["version"] == "v1.21.3"
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", chart["version"])
     assert chart["sourceRef"] == {
         "kind": "HelmRepository",
         "name": "jetstack",
@@ -142,15 +142,23 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
     ]
     assert len(chart_managers) == 1
     assert any("currentValue" in pattern for pattern in chart_managers[0]["matchStrings"])
+    source = (REPO_ROOT / "platform/cert-manager/controller/helmrelease.yaml").read_text(
+        encoding="utf-8"
+    )
+    chart_pattern = re.sub(
+        r"\(\?<([A-Za-z_]\w*)>",
+        r"(?P<\1>",
+        chart_managers[0]["matchStrings"][0],
+    )
+    chart_found = list(re.finditer(chart_pattern, source))
+    assert len(chart_found) == 1
+    assert chart_found[0].group("currentValue") == chart["version"]
     image_managers = [
         manager
         for manager in managers
         if any("currentDigest" in pattern for pattern in manager["matchStrings"])
     ]
     assert len(image_managers) == 1
-    source = (REPO_ROOT / "platform/cert-manager/controller/helmrelease.yaml").read_text(
-        encoding="utf-8"
-    )
     python_pattern = re.sub(
         r"\(\?<([A-Za-z_]\w*)>",
         r"(?P<\1>",

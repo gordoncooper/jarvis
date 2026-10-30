@@ -1,4 +1,4 @@
-"""R5: memory and CPU requests, a memory limit, no CPU limit, probes, stdout.
+"""R5: memory and CPU requests, a memory limit, no CPU limit on long-running containers, probes, stdout.
 
 Plain pod specs are checked as written. HelmRelease values and HelmChartConfig
 valuesContent are checked where they set resources, probes, or args. Charts

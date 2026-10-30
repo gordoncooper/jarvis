@@ -4,6 +4,9 @@ kind: OCIRepository
 metadata:
   name: flux-operator
   namespace: flux-system
+  # The HelmRelease stays. This is the chart source it reconciles.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
   url: oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator
