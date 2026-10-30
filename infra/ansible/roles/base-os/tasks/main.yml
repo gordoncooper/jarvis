@@ -153,8 +153,9 @@
         dest: /etc/resolv.conf
         state: link
         force: true
-        owner: root
-        group: root
+        # Link only. follow true with owner or group chowns the target, and
+        # resolved replaces that file, so the next run stays changed.
+        follow: false
       tags:
         - base-os
         - resolved

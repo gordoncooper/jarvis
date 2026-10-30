@@ -55,7 +55,7 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 
 `journald` and `resolved` restart through handlers; handlers do not appear in `ansible-playbook --list-tasks`.
 
-On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `site.yml`. Leaving `edge` does not turn the stub back on.
+On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `site.yml`. Leaving `edge` does not turn the stub back on. On an existing cluster, run `site.yml --tags resolved` on the edge hosts before App DNS is applied, and again after a `--tags k3s` run that adds a host to edge.
 
 Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
 
