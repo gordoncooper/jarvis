@@ -28,6 +28,12 @@ spec:
               # renovate: datasource=docker depName=restic/restic
               image: restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
               imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
               # Snapshot files are mode 0600, owned by root.
               securityContext:
                 runAsUser: 0

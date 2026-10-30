@@ -43,6 +43,18 @@
       ]
     },
     {
+      "description": "One PR updates every cert-manager image digest pin.",
+      "groupName": "cert-manager-image",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": [
+        "quay.io/jetstack/cert-manager-controller",
+        "quay.io/jetstack/cert-manager-webhook",
+        "quay.io/jetstack/cert-manager-cainjector",
+        "quay.io/jetstack/cert-manager-startupapicheck",
+        "quay.io/jetstack/cert-manager-acmesolver"
+      ]
+    },
+    {
       "description": "Flux distribution version is one pin in the role default and each env FluxInstance. Auto-merge stays off.",
       "groupName": "flux-distribution",
       "matchManagers": ["custom.regex"],
@@ -99,10 +111,28 @@
     },
     {
       "customType": "regex",
+      "description": "cert-manager component image tag and digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=docker depName=(?<depName>quay\\.io/jetstack/cert-manager-\\S+)\\n\\s*tag: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"\\n\\s*digest: \"(?<currentDigest>sha256:[a-f0-9]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "k8s-gateway OCI chart pin.",
       "managerFilePatterns": ["/^platform\\/app-dns\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "k8s_gateway image tag and digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/app-dns\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=docker depName=(?<depName>codeberg\\.org/k8s-gateway/k8s_gateway)\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ]
     },
     {

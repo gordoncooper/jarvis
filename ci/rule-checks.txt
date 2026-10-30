@@ -1,7 +1,10 @@
 cli-deny
 contract-md
 core-names
+digest-pin
 env-schema
+loadbalancer
+manifest-lint
 product-ci
 pvc-backup
 secret-scan

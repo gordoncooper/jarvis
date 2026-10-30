@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# CI rule check: images the repo adds are pinned by digest (R33).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _digest_pin import format_violations, scan_digest_pin
+
+violations = scan_digest_pin(Path("."))
+if violations:
+    for line in format_violations(violations):
+        print(line, flush=True)
+    raise SystemExit(1)
+PY

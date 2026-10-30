@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import yaml
 
@@ -109,14 +110,53 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
         assert block["requests"]["memory"]
         assert block["limits"]["memory"]
         assert "cpu" not in block["limits"]
+    images = [
+        values["image"],
+        values["webhook"]["image"],
+        values["cainjector"]["image"],
+        values["startupapicheck"]["image"],
+        values["acmesolver"]["image"],
+    ]
+    for image in images:
+        assert image["tag"] == "v1.21.3"
+        assert re.fullmatch(r"sha256:[a-f0-9]{64}", image["digest"])
     renovate = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [
         manager
         for manager in renovate["customManagers"]
         if any("cert-manager" in pattern for pattern in manager["managerFilePatterns"])
     ]
-    assert len(managers) == 1
-    assert any("currentValue" in pattern for pattern in managers[0]["matchStrings"])
+    chart_managers = [
+        manager
+        for manager in managers
+        if any("registryUrl" in pattern for pattern in manager["matchStrings"])
+    ]
+    assert len(chart_managers) == 1
+    assert any("currentValue" in pattern for pattern in chart_managers[0]["matchStrings"])
+    image_managers = [
+        manager
+        for manager in managers
+        if any("currentDigest" in pattern for pattern in manager["matchStrings"])
+    ]
+    assert len(image_managers) == 1
+    source = (REPO_ROOT / "platform/cert-manager/controller/helmrelease.yaml").read_text(
+        encoding="utf-8"
+    )
+    python_pattern = re.sub(
+        r"\(\?<([A-Za-z_]\w*)>",
+        r"(?P<\1>",
+        image_managers[0]["matchStrings"][0],
+    )
+    found = list(re.finditer(python_pattern, source))
+    assert len(found) == 5
+    assert {match.group("currentValue") for match in found} == {"v1.21.3"}
+    assert {match.group("depName") for match in found} == {
+        "quay.io/jetstack/cert-manager-controller",
+        "quay.io/jetstack/cert-manager-webhook",
+        "quay.io/jetstack/cert-manager-cainjector",
+        "quay.io/jetstack/cert-manager-startupapicheck",
+        "quay.io/jetstack/cert-manager-acmesolver",
+    }
 
 
 def test_platform_configs_hold_the_issuer_wildcard_and_store() -> None:

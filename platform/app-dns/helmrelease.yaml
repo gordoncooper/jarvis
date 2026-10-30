@@ -1,4 +1,4 @@
-# Chart 4.0.1 (app 1.9.2). The image tag is the chart appVersion.
+# Chart 4.0.1 (app 1.9.2). image.tag is that appVersion pinned by digest.
 # k8s_gateway reads Ingress status.loadBalancer.ingress. k3s ServiceLB
 # writes the edge node addresses there. Preference ip selects that address.
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -30,6 +30,9 @@ spec:
     remediation:
       retries: 3
   values:
+    image:
+      # renovate: datasource=docker depName=codeberg.org/k8s-gateway/k8s_gateway
+      tag: "1.9.2@sha256:80930fdbf98f28d4d5009cc4da8ddedbaa8afc9a6b753419e54d4cd30cea7308"
     serviceType: LoadBalancer
     service:
       clusterIP: ${app_dns_cluster_ip}

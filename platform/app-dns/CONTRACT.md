@@ -15,7 +15,7 @@ A second CoreDNS, with the k8s_gateway plugin, answers `${dns_suffix}` from Ingr
 - Traefik's LoadBalancer Service and Ingress class `traefik` (the exposure contract).
 - The `edge` role. The k3s role sets `svccontroller.k3s.cattle.io/enablelb=true` on those nodes only.
 - Edge hosts do not use the systemd-resolved stub (`127.0.0.53`). base-os sets `DNSStubListener=no` and links `/etc/resolv.conf` to `/run/systemd/resolve/resolv.conf`.
-- Chart `k8s-gateway` `4.0.1` from `oci://codeberg.org/k8s-gateway/charts`. The image tag is the chart appVersion.
+- Chart `k8s-gateway` `4.0.1` from `oci://codeberg.org/k8s-gateway/charts`. The image is chart appVersion `1.9.2` (`codeberg.org/k8s-gateway/k8s_gateway`), digest-pinned in `image.tag`. Renovate updates the digest.
 
 ## Health
 

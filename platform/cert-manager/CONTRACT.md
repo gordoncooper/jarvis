@@ -21,6 +21,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA (R28). 
 ## Config
 
 - Helm chart `cert-manager` `v1.21.3` from `https://charts.jetstack.io`, installed into `platform-cert-manager`. `crds.enabled` is true. The chart's empty `clusterResourceNamespace` selects the release namespace.
+- Controller, webhook, cainjector, startupapicheck, and acmesolver images are `quay.io/jetstack/cert-manager-*` at chart appVersion `v1.21.3`, digest-pinned. Renovate updates the tag and the digest together.
 - CA lifetime is 10 years, set when `bootstrap-secrets` generates the key. The leaf lifetime is cert-manager's default.
 - TLSStore name `default` is the one Traefik uses. The HelmChartConfig limits the default store to this namespace.
 
