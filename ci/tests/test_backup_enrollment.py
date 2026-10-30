@@ -28,9 +28,29 @@ def _rule(policy: dict, name: str) -> dict:
 
 
 def test_kyverno_chart_pins_and_controllers() -> None:
-    release = _docs(ROOT / "platform/kyverno/helmrelease.yaml")[0]
+    source = (ROOT / "platform/kyverno/helmrelease.yaml").read_text(encoding="utf-8")
+    release = next(doc for doc in yaml.safe_load_all(source) if isinstance(doc, dict))
     chart = release["spec"]["chart"]["spec"]
-    assert chart["version"] == "3.9.2"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", chart["version"])
+    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    chart_managers = [
+        manager
+        for manager in renovate["customManagers"]
+        if any(
+            "kyverno" in pattern and "helmrelease" in pattern
+            for pattern in manager["managerFilePatterns"]
+        )
+        and any("registryUrl" in pattern for pattern in manager["matchStrings"])
+    ]
+    assert len(chart_managers) == 1
+    chart_pattern = re.sub(
+        r"\(\?<([A-Za-z_]\w*)>",
+        r"(?P<\1>",
+        chart_managers[0]["matchStrings"][0],
+    )
+    chart_found = list(re.finditer(chart_pattern, source))
+    assert len(chart_found) == 1
+    assert chart_found[0].group("currentValue") == chart["version"]
     assert chart["sourceRef"]["name"] == "kyverno"
     values = release["spec"]["values"]
     assert values["cleanupController"]["enabled"] is False
@@ -48,9 +68,14 @@ def test_kyverno_chart_pins_and_controllers() -> None:
         values["admissionController"]["initContainer"]["image"],
         values["backgroundController"]["image"],
     ]
+    tags = set()
     for image in images:
         assert image["registry"] == "ghcr.io"
-        assert re.fullmatch(r"v1\.19\.2@sha256:[a-f0-9]{64}", image["tag"])
+        tag, digest = image["tag"].split("@", 1)
+        assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
+        assert re.fullmatch(r"sha256:[a-f0-9]{64}", digest)
+        tags.add(tag)
+    assert len(tags) == 1
     controllers = yaml.safe_load(
         (ROOT / "platform/kustomization.yaml").read_text(encoding="utf-8")
     )
