@@ -1,0 +1,5 @@
+# Prune stays on. The fixture stores nothing on disk, so removing this path deletes it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-testapp

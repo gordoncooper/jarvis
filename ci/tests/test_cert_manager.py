@@ -46,6 +46,14 @@ _CONFIGS_ADDED = {
     ("Secret", "platform-cert-manager", "cert-manager-ca"),
     ("TLSStore", "platform-cert-manager", "default"),
 }
+# platform/testapp is rendered on the platform-configs path.
+_TESTAPP = {
+    ("ConfigMap", "platform-testapp", "testapp"),
+    ("Deployment", "platform-testapp", "testapp"),
+    ("Ingress", "platform-testapp", "testapp"),
+    ("Namespace", "", "platform-testapp"),
+    ("Service", "platform-testapp", "testapp"),
+}
 
 
 def _idents(path: str) -> set[tuple[str, str, str]]:
@@ -163,7 +171,7 @@ def test_platform_configs_hold_the_issuer_wildcard_and_store() -> None:
     envs = non_example_env_names()
     assert len(envs) == 1
     env = envs[0]
-    assert _idents(f"envs/{env}/flux/platform-configs") == _CONFIGS_BEFORE | _CONFIGS_ADDED
+    assert _idents(f"envs/{env}/flux/platform-configs") == _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP
     text = (REPO_ROOT / "platform/cert-manager/config/internal-ca.yaml").read_text(
         encoding="utf-8"
     )
