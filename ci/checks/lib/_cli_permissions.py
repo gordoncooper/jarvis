@@ -386,9 +386,8 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "sops decrypt file.yaml",
     "sops -e file.yaml",
     # Only * is a wildcard and matching is case-sensitive, so cli.json lists
-    # *ecret / *ecrets (secret, Secret) and *ECRET / *ECRETS, each bare or
-    # followed by space, "/" or ",". secretstores stays allowed. Other mixed
-    # casings (for example SeCrEt) are a known gap.
+    # *kubectl*get*ecret* (secret, Secret) and *kubectl*get*ECRET*. Other
+    # mixed casings (for example SeCrEt) are a known gap.
     "kubectl get secret/sops-age -n flux-system -o yaml",
     "kubectl -n flux-system get secrets",
     "kubectl get secret,configmap -A",
@@ -486,6 +485,40 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "git push --force-with-lease",
     "git -C repo push -f origin main",
     "git push origin +main",
+    # Wrappers and quoting the CLI does not unwrap (caught by broad patterns).
+    "watch kubectl get secret -A",
+    "kubectl get 'secret' -n flux-system sops-age",
+    "kubectl get secret.v1 -n flux-system sops-age -o yaml",
+    "kubectl get --raw '/api/v1/secrets?limit=500'",
+    "kubectl proxy --port 8001",
+    "time ssh user@host",
+    "strace -f ssh user@host",
+    "setsid ssh user@host",
+    "doas sops -d file.yaml",
+    "flock /tmp/lock ssh user@host",
+    "taskset -c 0 sops -d file.yaml",
+    "ionice -c3 ssh user@host",
+    "/usr/bin/env sops -d file.yaml",
+    "script -qc 'ssh user@host'",
+    "busybox sh -c 'ssh user@host'",
+    "perl -e 'system(\"ssh user@host\")'",
+    "python3 -c 'import os; os.system(\"ssh user@host\")'",
+    "find . -name '*.sops.yaml' -exec sops -d {} \\;",
+    "parallel ssh ::: h1 h2",
+    "bash -c 'ssh'",
+    "'ssh' user@host",
+    "strace age --decrypt secret.txt",
+    "age -i key.txt -d",
+    "gh api -X PUT repos/owner/repo/pulls/98/merge",
+    "time kubectl delete ns foo",
+    "/usr/bin/env kubectl delete ns foo",
+    # Blocked by design: the broad patterns also catch harmless text.
+    "rg ssh .",
+    "git commit -m 'tighten sops rule'",
+    "echo 'a | ssh b'",
+    "kubectl get secretstores -A",
+    "kubectl get clustersecretstores",
+    "command -v sops",
 )
 
 DRY_RUN_MUST_BLOCK_READS: tuple[str, ...] = (
@@ -509,14 +542,9 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'",
     "docker images -d",
     "python3 manage.py --dry-run",
-    # Tool names as arguments or text, not as the command.
-    "rg ssh .",
+    # Normal work, including tool names that are not ssh/scp/sops/age.
     "rg -n 'kubectl apply' docs",
     "helm template demo ./chart",
-    "kubectl get secretstores -A",
-    "kubectl get clustersecretstores",
-    "git commit -m 'tighten sops rule'",
-    "git commit -m 'sync sops rule'",
     "ls | xargs docker image ls",
     "rg -n timeout docs",
     "rg -n nohup docs",
@@ -530,9 +558,12 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "gh pr view 98",
     "rsync -av ./a/ ./b/",
     "kubectl get pods | grep secret",
+    "pytest -q",
+    "make ci-verify",
+    "command -v kubectl",
+    "helm template cm jetstack/cert-manager --set installCRDs=true",
     "timeout 60 docker image ls",
     "nohup python3 -m http.server --directory coverage 8000",
-    "echo 'a | ssh b'",
 )
 
 
