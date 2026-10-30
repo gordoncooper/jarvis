@@ -1,7 +1,14 @@
 """Cursor CLI shell permission matching for .cursor/cli.json (R34).
 
-Semantics mirror cursor-agent's matchesShell / Read(pathOrGlob) (Cursor docs:
-commandBase + optional command:args, glob wildcards, deny beats allow).
+Mirrors the matcher in cursor-agent 2026.10.22-27dcf5f:
+- the line is split into commands at && || ; | & newlines, $( ), backticks
+  and subshells, and leading FOO=1 assignments are dropped;
+- each command is matched as "name args" (raw word text, quotes kept);
+- only * is a wildcard (? is literal), matching is case-sensitive and
+  anchored;
+- bash -c, eval, sudo, absolute paths and the like are NOT unwrapped, so
+  cli.json lists them itself.
+Read(pathOrGlob) keeps glob semantics. Deny beats allow.
 """
 
 from __future__ import annotations
@@ -14,6 +21,9 @@ from pathlib import Path
 
 SHELL_ENTRY_RE = re.compile(r"^\s*(Shell|Bash)\s*\((.*)\)\s*$")
 READ_ENTRY_RE = re.compile(r"^\s*Read\s*\((.*)\)\s*$")
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+_LEADING_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{"}
+_HEAD_ONLY_KEYWORDS = {"for", "select", "case", "fi", "done", "esac", "}"}
 
 
 @dataclass(frozen=True)
@@ -49,10 +59,218 @@ def parse_read_entry(token: str) -> str | None:
     return (match.group(1) or "").strip()
 
 
-def extract_base_command(command_line: str) -> str:
-    text = command_line.strip()
+def _close_paren(text: str, i: int) -> int:
+    """Index just past the ) matching the ( before position i."""
+    depth = 1
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in "'\"`":
+            i = _skip_quoted(text, i)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return len(text)
+
+
+def _skip_quoted(text: str, i: int) -> int:
+    quote = text[i]
+    i += 1
+    while i < len(text) and text[i] != quote:
+        i += 2 if text[i] == "\\" and quote != "'" else 1
+    return min(i + 1, len(text))
+
+
+def _nested_commands(text: str, out: list[str]) -> None:
+    """Collect commands inside $( ) and backticks within a double-quoted word."""
+    i = 0
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+        elif text.startswith("$((", i):
+            i = _close_paren(text, i + 3)
+        elif text.startswith("$(", i):
+            j = _close_paren(text, i + 2)
+            out.extend(split_commands(text[i + 2 : j - 1]))
+            i = j
+        elif text[i] == "`":
+            j = _skip_quoted(text, i)
+            out.extend(split_commands(text[i + 1 : j - 1]))
+            i = j
+        else:
+            i += 1
+
+
+def split_commands(line: str) -> list[str]:
+    """Split a shell line into "name args" strings, like the CLI's parser."""
+    out: list[str] = []
+    words: list[str] = []
+    word = ""
+    heredocs: list[str] = []
+    skip_next_word = False
+    i, n = 0, len(line)
+
+    def end_word() -> None:
+        nonlocal word, skip_next_word
+        if word:
+            if skip_next_word:
+                skip_next_word = False
+            else:
+                words.append(word)
+            word = ""
+
+    def end_command() -> None:
+        end_word()
+        cmd = list(words)
+        words.clear()
+        while cmd and cmd[0] in _LEADING_KEYWORDS:
+            cmd.pop(0)
+        while cmd and _ASSIGNMENT_RE.match(cmd[0]):
+            cmd.pop(0)
+        if cmd and cmd[0] not in _HEAD_ONLY_KEYWORDS:
+            out.append(" ".join(cmd))
+
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and i + 1 < n:
+            if line[i + 1] == "\n":
+                i += 2
+                continue
+            word += line[i : i + 2]
+            i += 2
+        elif ch in " \t":
+            end_word()
+            i += 1
+        elif ch == "\n":
+            end_command()
+            i += 1
+            for delim in heredocs:
+                while i < n:
+                    eol = line.find("\n", i)
+                    eol = n if eol == -1 else eol
+                    body_line = line[i:eol]
+                    i = eol + 1
+                    if body_line.strip("\t") == delim:
+                        break
+            heredocs.clear()
+        elif ch == "'":
+            j = _skip_quoted(line, i)
+            word += line[i:j]
+            i = j
+        elif ch == '"':
+            j = _skip_quoted(line, i)
+            _nested_commands(line[i + 1 : j - 1], out)
+            word += line[i:j]
+            i = j
+        elif ch == "`":
+            j = _skip_quoted(line, i)
+            out.extend(split_commands(line[i + 1 : j - 1]))
+            word += line[i:j]
+            i = j
+        elif line.startswith("$((", i):
+            j = _close_paren(line, i + 3)
+            word += line[i:j]
+            i = j
+        elif line.startswith("$(", i) or (
+            ch in "<>" and line.startswith("(", i + 1) and not word
+        ):
+            start = i + 2
+            j = _close_paren(line, start)
+            out.extend(split_commands(line[start : j - 1]))
+            word += line[i:j]
+            i = j
+        elif line.startswith("${", i):
+            j = line.find("}", i)
+            j = n if j == -1 else j + 1
+            word += line[i:j]
+            i = j
+        elif ch == "(" and not word:
+            j = _close_paren(line, i + 1)
+            end_command()
+            out.extend(split_commands(line[i + 1 : j - 1]))
+            i = j
+        elif ch in ";|&()":
+            if ch == "&" and line.startswith("&>", i):
+                end_word()
+                i += 3 if line.startswith("&>>", i) else 2
+                skip_next_word = True
+                continue
+            end_command()
+            i += 1
+        elif ch in "<>":
+            if word.isdigit():
+                word = ""
+            end_word()
+            op_end = i
+            while op_end < n and line[op_end] in "<>&|-":
+                op_end += 1
+            op = line[i:op_end]
+            i = op_end
+            if op.startswith("<<") and not op.startswith("<<<"):
+                while i < n and line[i] in " \t":
+                    i += 1
+                k = i
+                while k < n and line[k] not in " \t\n;|&<>":
+                    k += 1
+                heredocs.append(line[i:k].strip("'\""))
+                i = k
+            elif op.endswith("&"):
+                k = i
+                while k < n and (line[k].isdigit() or line[k] == "-"):
+                    k += 1
+                i = k
+            else:
+                skip_next_word = True
+        else:
+            word += ch
+            i += 1
+    end_command()
+    return out
+
+
+def _pattern_regex(pattern: str) -> re.Pattern[str]:
+    parts = (re.escape(p) for p in pattern.strip().split("*"))
+    return re.compile("^" + "[^\n\r\u2028\u2029]*".join(parts) + "$")
+
+
+def match_pattern(pattern: str, value: str) -> bool:
+    """CLI shell pattern match: only * is a wildcard, anchored, case-sensitive."""
+    return bool(_pattern_regex(pattern).match(value))
+
+
+def extract_base_command(command: str) -> str:
+    text = command.strip()
     space = text.find(" ")
     return text if space == -1 else text[:space]
+
+
+def matches_shell(entry_token: str, command: str) -> bool:
+    """Match one deny/allow entry against ONE command (already split)."""
+    entry = parse_shell_entry(entry_token)
+    if entry is None:
+        return False
+    line = command.strip()
+    base = extract_base_command(line)
+    if entry.args_pattern is not None:
+        args = line[line.index(" ") + 1 :].strip() if " " in line else ""
+        cmd_hit = match_pattern(entry.command_pattern, base) or match_pattern(
+            entry.command_pattern, line
+        )
+        if cmd_hit and match_pattern(entry.args_pattern, args):
+            return True
+    return (
+        match_pattern(entry.full_pattern, line)
+        or line.startswith(f"{entry.full_pattern} ")
+        or match_pattern(entry.full_pattern, base)
+        or base == entry.full_pattern
+    )
 
 
 def _glob_pattern_variants(pattern: str) -> list[str]:
@@ -78,27 +296,6 @@ def match_glob(pattern: str, value: str) -> bool:
     return fnmatch.fnmatchcase(value, pattern)
 
 
-def matches_shell(entry_token: str, command_line: str) -> bool:
-    entry = parse_shell_entry(entry_token)
-    if entry is None:
-        return False
-    line = command_line.strip()
-    base = extract_base_command(line)
-    if entry.args_pattern is not None:
-        args = line[line.index(" ") + 1 :].strip() if " " in line else ""
-        cmd_hit = match_glob(entry.command_pattern, base) or match_glob(
-            entry.command_pattern, line
-        )
-        if cmd_hit and match_glob(entry.args_pattern, args):
-            return True
-    return (
-        match_glob(entry.full_pattern, line)
-        or line.startswith(f"{entry.full_pattern} ")
-        or match_glob(entry.full_pattern, base)
-        or base == entry.full_pattern
-    )
-
-
 def matches_read(entry_token: str, file_path: str) -> bool:
     pattern = parse_read_entry(entry_token)
     if pattern is None:
@@ -122,8 +319,11 @@ def load_cli_permissions(path: Path) -> dict[str, list[str]]:
 
 
 def command_blocked_by_deny(deny: list[str], command_line: str) -> bool:
+    shell_deny = [t for t in deny if parse_shell_entry(t)]
     return any(
-        matches_shell(token, command_line) for token in deny if parse_shell_entry(token)
+        matches_shell(token, cmd)
+        for cmd in split_commands(command_line)
+        for token in shell_deny
     )
 
 
@@ -141,7 +341,10 @@ def command_allowed(
     shell_allow = [t for t in allow if parse_shell_entry(t)]
     if not shell_allow:
         return True
-    return any(matches_shell(token, command_line) for token in shell_allow)
+    return all(
+        any(matches_shell(token, cmd) for token in shell_allow)
+        for cmd in split_commands(command_line)
+    )
 
 
 def read_allowed(allow: list[str], deny: list[str], file_path: str) -> bool:
@@ -182,9 +385,9 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "sops -d file.yaml",
     "sops decrypt file.yaml",
     "sops -e file.yaml",
-    # Case-sensitive globs (* ? ** only). secret*, Secret*, and SECRET*
-    # cover those casings and their plurals. Other mixed casings (for
-    # example SeCrEt) are a known gap.
+    # Only * is a wildcard and matching is case-sensitive, so cli.json lists
+    # *kubectl*get*ecret* (secret, Secret) and *kubectl*get*ECRET*. Other
+    # mixed casings (for example SeCrEt) are a known gap.
     "kubectl get secret/sops-age -n flux-system -o yaml",
     "kubectl -n flux-system get secrets",
     "kubectl get secret,configmap -A",
@@ -208,6 +411,114 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "sh -c 'age --decrypt secret.txt'",
     "bash -c 'age -i /tmp/key.txt -d secret.txt'",
     "sh -c 'age -i /tmp/key.txt --decrypt secret.txt'",
+    # Leading global flag before the verb.
+    "kubectl --context x delete ns foo",
+    "helm --kube-context x upgrade demo ./chart",
+    # Chained: && | ; $( ).
+    "cd x && kubectl delete ns foo",
+    "cd x && ssh user@host",
+    "cd x && ssh",
+    "cat f | kubectl apply -f -",
+    "cat f | ssh user@host",
+    "true; sops -d file.yaml",
+    "true; ssh",
+    "echo $(kubectl get secret x -o yaml)",
+    "echo $(ssh user@host uptime)",
+    "kubectl get pods -o name | xargs kubectl delete",
+    "cat hosts | xargs -n1 ssh",
+    # bash -c / sh -c wrapped.
+    "bash -c 'kubectl delete ns foo'",
+    "sh -c \"kubectl apply -f x.yaml\"",
+    "bash -lc 'ssh user@host'",
+    "bash -c 'sops -d file.yaml'",
+    # Runner prefixes: env, timeout, xargs, nohup.
+    "env KUBECONFIG=x kubectl delete ns foo",
+    "env SOPS_AGE_KEY_FILE=k sops -d file.yaml",
+    "env FOO=1 ssh user@host",
+    "timeout 60 kubectl apply -f x.yaml",
+    "timeout 60 ssh user@host",
+    "timeout 5 sops -d file.yaml",
+    "xargs kubectl delete pod",
+    "xargs ssh user@host",
+    "xargs sops -d",
+    "nohup kubectl port-forward svc/demo 8080:80",
+    "nohup ssh user@host",
+    "nohup sops -d file.yaml",
+    # Runner after a chain (ssh, scp, sops, age).
+    "cd x && timeout 5 ssh user@host",
+    "true; env A=1 sops -d file.yaml",
+    "cat f | nohup ssh user@host",
+    "cd x && nohup scp file.yaml user@host:",
+    "cd x && env A=1 ssh",
+    "cd x && xargs -a hosts ssh",
+    "true; timeout 5 age -d secret.txt",
+    "ls | xargs -n1 age -d",
+    # Secret reads.
+    "kubectl get secret -n flux-system sops-age -o yaml",
+    "kubectl -n flux-system get secret sops-age -o jsonpath={.data}",
+    "kubectl describe secret -n flux-system sops-age",
+    "x=$(kubectl get secret -o yaml)",
+    # Wrappers the CLI does not unwrap, and path forms.
+    "zsh -c 'flux suspend kustomization demo'",
+    "eval 'ssh user@host'",
+    "command ssh user@host",
+    "exec ssh user@host",
+    "sudo kubectl apply -f x.yaml",
+    "nice sops -d file.yaml",
+    "stdbuf -o0 ssh user@host",
+    "env -i helm upgrade demo ./chart",
+    "/usr/bin/ssh user@host",
+    "~/.local/bin/sops -d file.yaml",
+    "./bin/kubectl delete ns foo",
+    "/usr/bin/age -d secret.txt",
+    "FOO=1 ssh user@host",
+    "for h in a b; do ssh $h; done",
+    "diff <(sops -d a.yaml) b.yaml",
+    # Other remote or irreversible calls.
+    "rsync -e ssh a user@host:/x",
+    "rsync a user@host:/x",
+    "sftp user@host",
+    "ssh-copy-id user@host",
+    "gh pr merge 98",
+    "gh -R owner/repo pr merge 98 --squash",
+    "git push --force origin main",
+    "git push --force-with-lease",
+    "git -C repo push -f origin main",
+    "git push origin +main",
+    # Wrappers and quoting the CLI does not unwrap (caught by broad patterns).
+    "watch kubectl get secret -A",
+    "kubectl get 'secret' -n flux-system sops-age",
+    "kubectl get secret.v1 -n flux-system sops-age -o yaml",
+    "kubectl get --raw '/api/v1/secrets?limit=500'",
+    "kubectl proxy --port 8001",
+    "time ssh user@host",
+    "strace -f ssh user@host",
+    "setsid ssh user@host",
+    "doas sops -d file.yaml",
+    "flock /tmp/lock ssh user@host",
+    "taskset -c 0 sops -d file.yaml",
+    "ionice -c3 ssh user@host",
+    "/usr/bin/env sops -d file.yaml",
+    "script -qc 'ssh user@host'",
+    "busybox sh -c 'ssh user@host'",
+    "perl -e 'system(\"ssh user@host\")'",
+    "python3 -c 'import os; os.system(\"ssh user@host\")'",
+    "find . -name '*.sops.yaml' -exec sops -d {} \\;",
+    "parallel ssh ::: h1 h2",
+    "bash -c 'ssh'",
+    "'ssh' user@host",
+    "strace age --decrypt secret.txt",
+    "age -i key.txt -d",
+    "gh api -X PUT repos/owner/repo/pulls/98/merge",
+    "time kubectl delete ns foo",
+    "/usr/bin/env kubectl delete ns foo",
+    # Blocked by design: the broad patterns also catch harmless text.
+    "rg ssh .",
+    "git commit -m 'tighten sops rule'",
+    "echo 'a | ssh b'",
+    "kubectl get secretstores -A",
+    "kubectl get clustersecretstores",
+    "command -v sops",
 )
 
 DRY_RUN_MUST_BLOCK_READS: tuple[str, ...] = (
@@ -231,6 +542,28 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'",
     "docker images -d",
     "python3 manage.py --dry-run",
+    # Normal work, including tool names that are not ssh/scp/sops/age.
+    "rg -n 'kubectl apply' docs",
+    "helm template demo ./chart",
+    "ls | xargs docker image ls",
+    "rg -n timeout docs",
+    "rg -n nohup docs",
+    "git commit -m 'add env check'",
+    "cd x && env A=1 docker image ls",
+    "cd x && timeout 5 du -sh storage",
+    "helm --debug template demo ./chart",
+    "helm lint ./chart",
+    "git push origin my-branch",
+    "git push -u origin my-feature",
+    "gh pr view 98",
+    "rsync -av ./a/ ./b/",
+    "kubectl get pods | grep secret",
+    "pytest -q",
+    "make ci-verify",
+    "command -v kubectl",
+    "helm template cm jetstack/cert-manager --set installCRDs=true",
+    "timeout 60 docker image ls",
+    "nohup python3 -m http.server --directory coverage 8000",
 )
 
 
