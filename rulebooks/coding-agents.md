@@ -28,7 +28,7 @@ Rules here are prose only for what `ci/checks/` and `.cursor/cli.json` cannot en
 
 - Start from a fresh checkout of current `main`; never build on another agent's branch. Use the branch prefix the task or forge requires, otherwise `agent/<topic>`. One PR per task, or per batch of related plan steps that touch the same area; keep unrelated or risky changes in separate PRs. No stacked PRs, except throwaway PRs a brief asks for. Open the PR ready for review unless the brief says draft.
 - Once review is requested, scope is frozen. New ideas go to a follow-up PR.
-- Merging follows R36. In addition, merge only after the Ready to merge boxes are ticked, and if a task brief says to leave the PR unmerged, do that.
+- Merging follows R36. In addition, merge only after the reviewer has ticked the Ready to merge boxes, and if a task brief says to leave the PR unmerged, do that.
 - Never touch real hosts: no SSH, no secret decryption, no reading the age private key (deny list blocks many of these; still treat this as a hard stop).
 - A value that differs per deployment, including disks, sizes and node roles, is an env setting under `envs/<env>/`, not an Ansible role default and not a literal in core. A schema default the contract documents (D34's `ssh_user`) stays in the schema. The repo must run from any controller node under any user.
 - LAN IPs and numeric user IDs never appear in plaintext, envs/ included. Keep them out, or encrypt them under `envs/<env>/secrets/` (R25).
@@ -47,4 +47,4 @@ When handing off or finishing a task, include:
 - If the PR is over about 300 changed lines (excluding deletions), say why
 - Open questions (surface them; do not decide silently)
 
-Before merge, complete the **Ready to merge** checkboxes in `.github/pull_request_template.md`.
+Leave the **Ready to merge** checkboxes from `.github/pull_request_template.md` unticked. The reviewer ticks them on approval.
