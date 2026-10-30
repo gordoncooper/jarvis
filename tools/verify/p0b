@@ -87,6 +87,18 @@ def _fetch(host: str, ca_file: Path) -> tuple[int, str]:
     return 0, proc.stdout
 
 
+def _s_client_error(stderr: str) -> str:
+    text = stderr.strip()
+    if not text:
+        return "certificate verify failed"
+    lines = text.splitlines()
+    for line in lines:
+        folded = line.lower()
+        if "verify error:" in folded or "verify return code" in folded:
+            return line.strip()
+    return lines[0].strip()
+
+
 def _issuer(host: str, ca_file: Path) -> tuple[int, str]:
     client = _run(
         [
@@ -103,8 +115,7 @@ def _issuer(host: str, ca_file: Path) -> tuple[int, str]:
         input="",
     )
     if client.returncode != 0:
-        err = (client.stderr or "certificate verify failed").strip()
-        return 1, err.splitlines()[0] if err else "certificate verify failed"
+        return 1, _s_client_error(client.stderr or "")
     cert = _run(["openssl", "x509", "-noout", "-issuer"], input=client.stdout)
     if cert.returncode != 0 or not cert.stdout.strip():
         return 1, "no certificate issuer"

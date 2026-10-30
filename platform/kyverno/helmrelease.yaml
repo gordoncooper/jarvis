@@ -48,6 +48,8 @@ spec:
         mutateExisting: false
         imageVerify: false
         generate: false
+    # D30. The chart sets a CPU limit on the init container and the hook
+    # Jobs. null drops that key. Requests and the memory limit are the chart's.
     admissionController:
       container:
         image:
@@ -61,9 +63,21 @@ spec:
           repository: kyverno/kyvernopre
           # renovate: datasource=docker depName=ghcr.io/kyverno/kyvernopre
           tag: "v1.19.2@sha256:27f3cc52e628559b56d08363b85316819802086c9808606914f7805a244148f4"
+        resources: &kyvernoBatchResources
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            cpu: null
+            memory: 256Mi
     backgroundController:
       image:
         registry: ghcr.io
         repository: kyverno/background-controller
         # renovate: datasource=docker depName=ghcr.io/kyverno/background-controller
         tag: "v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2"
+    crds:
+      migration:
+        podResources: *kyvernoBatchResources
+    webhooksCleanup:
+      resources: *kyvernoBatchResources

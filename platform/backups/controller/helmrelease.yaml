@@ -70,9 +70,11 @@ spec:
     rsync: *volsyncImage
     rsync-tls: *volsyncImage
     syncthing: *volsyncImage
+    # D30. The chart default sets a CPU limit. null drops that key.
     resources:
       requests:
         cpu: 100m
         memory: 128Mi
       limits:
+        cpu: null
         memory: 256Mi

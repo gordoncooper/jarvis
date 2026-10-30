@@ -51,6 +51,16 @@ def test_kyverno_chart_pins_and_controllers() -> None:
     for image in images:
         assert image["registry"] == "ghcr.io"
         assert re.fullmatch(r"v1\.19\.2@sha256:[a-f0-9]{64}", image["tag"])
+    # D30. The init container and the hook Jobs. Chart memory limits stay.
+    blocks = (
+        values["admissionController"]["initContainer"]["resources"],
+        values["crds"]["migration"]["podResources"],
+        values["webhooksCleanup"]["resources"],
+    )
+    for block in blocks:
+        assert block["limits"]["cpu"] is None
+        assert block["limits"]["memory"]
+        assert block["requests"]["memory"]
     controllers = yaml.safe_load(
         (ROOT / "platform/kustomization.yaml").read_text(encoding="utf-8")
     )

@@ -17,3 +17,13 @@ spec:
   upgrade:
     remediation:
       retries: 3
+  # D30. The chart default sets a CPU limit. null drops that key.
+  # Requests and the memory limit are the chart's.
+  values:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 64Mi
+      limits:
+        cpu: null
+        memory: 1Gi

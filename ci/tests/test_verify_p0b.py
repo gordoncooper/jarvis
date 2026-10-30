@@ -106,6 +106,24 @@ def test_verify_p0b_ca_body_and_drill_log(tmp_path: Path, monkeypatch, capsys) -
     assert "automatic checks passed" not in out
 
     calls.clear()
+    state["err"] = (
+        "Connecting to testapp.test.example:443\n"
+        "depth=0 CN = testapp.test.example\n"
+        "verify error:num=20:unable to get local issuer certificate\n"
+        "Verify return code: 20 (unable to get local issuer certificate)\n"
+    )
+    code, out = go()
+    assert code != 0
+    assert "FAIL cert issuer: verify error:num=20:unable to get local issuer certificate" in out
+    assert "Connecting to" not in out
+
+    calls.clear()
+    state["err"] = "Connecting to testapp.test.example:443\n"
+    code, out = go()
+    assert code != 0
+    assert "FAIL cert issuer: Connecting to testapp.test.example:443" in out
+
+    calls.clear()
     state["rc"] = 0
     state["err"] = ""
     ca.unlink()

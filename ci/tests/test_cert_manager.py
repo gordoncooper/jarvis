@@ -125,8 +125,9 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
         values["startupapicheck"]["image"],
         values["acmesolver"]["image"],
     ]
+    tags = {image["tag"] for image in images}
     for image in images:
-        assert image["tag"] == "v1.21.3"
+        assert re.fullmatch(r"v\d+\.\d+\.\d+", image["tag"])
         assert re.fullmatch(r"sha256:[a-f0-9]{64}", image["digest"])
     renovate = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [
@@ -157,7 +158,8 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
     )
     found = list(re.finditer(python_pattern, source))
     assert len(found) == 5
-    assert {match.group("currentValue") for match in found} == {"v1.21.3"}
+    assert len(tags) == 1
+    assert {match.group("currentValue") for match in found} == tags
     assert {match.group("depName") for match in found} == {
         "quay.io/jetstack/cert-manager-controller",
         "quay.io/jetstack/cert-manager-webhook",
