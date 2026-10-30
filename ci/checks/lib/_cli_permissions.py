@@ -182,8 +182,9 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "sops -d file.yaml",
     "sops decrypt file.yaml",
     "sops -e file.yaml",
-    # Case-sensitive globs (* ? ** only). secret*, Secret*, and SECRET*
-    # cover those casings and their plurals. Other mixed casings (for
+    # Case-sensitive globs (* ? ** only). ?ecret(s) covers secret and
+    # Secret, ?ECRET(S) covers SECRET; each is anchored to end, space,
+    # "/" or "," so secretstores stays allowed. Other mixed casings (for
     # example SeCrEt) are a known gap.
     "kubectl get secret/sops-age -n flux-system -o yaml",
     "kubectl -n flux-system get secrets",
@@ -208,6 +209,39 @@ DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
     "sh -c 'age --decrypt secret.txt'",
     "bash -c 'age -i /tmp/key.txt -d secret.txt'",
     "sh -c 'age -i /tmp/key.txt --decrypt secret.txt'",
+    # Leading global flag before the verb.
+    "kubectl --context x delete ns foo",
+    "helm --kube-context x upgrade demo ./chart",
+    # Chained: && | ; $( ).
+    "cd x && kubectl delete ns foo",
+    "cd x && ssh user@host",
+    "cd x && ssh",
+    "cat f | kubectl apply -f -",
+    "cat f | ssh user@host",
+    "true; sops -d file.yaml",
+    "true; ssh",
+    "echo $(kubectl get secret x -o yaml)",
+    "echo $(ssh user@host uptime)",
+    "kubectl get pods -o name | xargs kubectl delete",
+    "cat hosts | xargs -n1 ssh",
+    # bash -c / sh -c wrapped.
+    "bash -c 'kubectl delete ns foo'",
+    "sh -c \"kubectl apply -f x.yaml\"",
+    "bash -lc 'ssh user@host'",
+    "bash -c 'sops -d file.yaml'",
+    # Runner prefixes: env, timeout, xargs, nohup.
+    "env KUBECONFIG=x kubectl delete ns foo",
+    "env SOPS_AGE_KEY_FILE=k sops -d file.yaml",
+    "env FOO=1 ssh user@host",
+    "timeout 60 kubectl apply -f x.yaml",
+    "timeout 60 ssh user@host",
+    "timeout 5 sops -d file.yaml",
+    "xargs kubectl delete pod",
+    "xargs ssh user@host",
+    "xargs sops -d",
+    "nohup kubectl port-forward svc/demo 8080:80",
+    "nohup ssh user@host",
+    "nohup sops -d file.yaml",
 )
 
 DRY_RUN_MUST_BLOCK_READS: tuple[str, ...] = (
@@ -231,6 +265,15 @@ DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
     "kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'",
     "docker images -d",
     "python3 manage.py --dry-run",
+    # Tool names as arguments or text, not as the command.
+    "rg ssh .",
+    "rg -n 'kubectl apply' docs",
+    "helm template demo ./chart",
+    "kubectl get secretstores -A",
+    "kubectl get clustersecretstores",
+    "git commit -m 'tighten sops rule'",
+    "git commit -m 'sync sops rule'",
+    "ls | xargs docker image rm",
 )
 
 
