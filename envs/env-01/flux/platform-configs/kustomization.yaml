@@ -3,5 +3,6 @@ kind: Kustomization
 resources:
   - ../../../../platform/backups
   - ../../../../platform/cert-manager/config
+  - ../../../../platform/testapp
   - ../../secrets/backups-restic.sops.yaml
   - ../../secrets/cert-manager-ca.sops.yaml

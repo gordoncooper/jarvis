@@ -1,0 +1,120 @@
+# Fixed body for GET /. platform-configs postBuild fills ${dns_suffix} on the Ingress host.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testapp
+  namespace: platform-testapp
+data:
+  index.html: |
+    testapp
+---
+# nginxinc/nginx-unprivileged 1.30.6 alpine-slim. uid 101, listen 8080.
+# Official library/nginx runs as root; this image is the non-root build.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testapp
+  namespace: platform-testapp
+  labels:
+    app.kubernetes.io/name: testapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: testapp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: testapp
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: testapp
+          # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
+          image: nginxinc/nginx-unprivileged:1.30.6-alpine-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+            # nginx.conf puts the pid and the *_temp dirs under /tmp.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: html
+          configMap:
+            name: testapp
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testapp
+  namespace: platform-testapp
+  labels:
+    app.kubernetes.io/name: testapp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: testapp
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Traefik 3.7 skips a tls section with no secretName. The websecure entrypoint
+# already terminates TLS, and TLSStore default in platform-cert-manager is the
+# wildcard. A secret in this namespace would be a second certificate.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testapp
+  namespace: platform-testapp
+  labels:
+    app.kubernetes.io/name: testapp
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: testapp.${dns_suffix}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testapp
+                port:
+                  name: http
