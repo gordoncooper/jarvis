@@ -32,6 +32,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 101
         runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: testapp
           # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
@@ -56,6 +58,7 @@ spec:
               memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -63,10 +66,15 @@ spec:
             - name: html
               mountPath: /usr/share/nginx/html
               readOnly: true
+            # nginx.conf puts the pid and the *_temp dirs under /tmp.
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: html
           configMap:
             name: testapp
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

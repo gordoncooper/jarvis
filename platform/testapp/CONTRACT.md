@@ -1,6 +1,8 @@
 # CONTRACT: test app
 
-A platform fixture answers `https://testapp.<dns_suffix>/` through one Traefik Ingress. The certificate is the internal CA wildcard on TLSStore `default`, not a secret in this namespace (R28).
+The platform canary. The P0b exit check, Gatus, the P1 log proof, and the P1 alert drill use it. It never depends on services or apps, and nothing depends on it.
+
+It answers `https://testapp.<dns_suffix>/` through one Traefik Ingress. The certificate is the internal CA wildcard on TLSStore `default`, not a secret in this namespace (R28).
 
 ## Offers
 
@@ -23,7 +25,7 @@ An HTTPS response on `testapp.<dns_suffix>` whose body is the file above and who
 
 ## Config
 
-- Image `nginxinc/nginx-unprivileged:1.30.6-alpine-slim`, digest-pinned. The process is uid 101 and listens on 8080. `docker.io/library/nginx` is not used: its master process runs as root. A custom regex manager in `renovate.json`, scoped to `platform/testapp/`, updates the tag and the digest.
+- Image `nginxinc/nginx-unprivileged:1.30.6-alpine-slim`, digest-pinned. The process is uid 101 and listens on 8080. `docker.io/library/nginx` is not used: its master process runs as root. The pod seccomp profile is `RuntimeDefault`. The root filesystem is read-only; the only emptyDir is `/tmp`, where this image writes its pid and temp dirs. A custom regex manager in `renovate.json`, scoped to `platform/testapp/`, updates the tag and the digest.
 - The page is ConfigMap `testapp` key `index.html`, mounted at `/usr/share/nginx/html`. No PVC, so the backup policy has nothing to enroll.
 - Ingress host `testapp.${dns_suffix}`. Annotations `traefik.ingress.kubernetes.io/router.entrypoints: websecure` and `traefik.ingress.kubernetes.io/router.tls: "true"`. No `spec.tls` secret. Traefik 3.7 ignores a TLS section that has no secret name, and the default store's certificate is the wildcard.
 - Prune stays enabled on the namespace.
