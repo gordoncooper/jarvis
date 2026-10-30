@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import subprocess
@@ -22,9 +23,11 @@ _PVC_DELETED = re.compile(r'persistentvolumeclaim "[^"]+" deleted')
 _RESTORE = re.compile(r"\brestore\b")
 _SNAPSHOT = re.compile(r"etcd-snapshot-\S+")
 _TIMEOUT_SECONDS = 30
+# platform/testapp ConfigMap index.html (`testapp` plus a newline). sha256 is in that CONTRACT.md.
+_CANARY_SHA256 = "60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7"
 
-Fetch = Callable[[str], tuple[int, str]]
-Issuer = Callable[[str], tuple[int, str]]
+Fetch = Callable[[str, Path], tuple[int, str]]
+Issuer = Callable[[str, Path], tuple[int, str]]
 
 
 def _line(text: str) -> None:
@@ -62,15 +65,29 @@ def _run(argv: list[str], *, input: str | None = None) -> CompletedProcess[str]:
         raise SystemExit(1) from None
 
 
-def _fetch(host: str) -> tuple[int, str]:
-    proc = _run(["curl", "-fsS", "--max-time", str(_TIMEOUT_SECONDS), f"https://{host}/"])
+def _ca_file(repo_root: Path, env: str) -> Path:
+    return repo_root / "envs" / env / "ca.crt"
+
+
+def _fetch(host: str, ca_file: Path) -> tuple[int, str]:
+    proc = _run(
+        [
+            "curl",
+            "-fsS",
+            "--max-time",
+            str(_TIMEOUT_SECONDS),
+            "--cacert",
+            str(ca_file),
+            f"https://{host}/",
+        ]
+    )
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "curl failed").strip()
         return 1, err.splitlines()[0] if err else "curl failed"
     return 0, proc.stdout
 
 
-def _issuer(host: str) -> tuple[int, str]:
+def _issuer(host: str, ca_file: Path) -> tuple[int, str]:
     client = _run(
         [
             "openssl",
@@ -79,6 +96,8 @@ def _issuer(host: str) -> tuple[int, str]:
             f"{host}:443",
             "-servername",
             host,
+            "-CAfile",
+            str(ca_file),
             "-verify_return_error",
         ],
         input="",
@@ -142,19 +161,28 @@ def run(
     suffix = yaml.safe_load(values.read_text(encoding="utf-8"))["dns_suffix"]
     host = f"testapp.{suffix}"
     failed = 0
-    code, body = fetch(host)
-    if code != 0 or not body:
-        _line(f"FAIL lan curl https://{host}/: {body or 'empty body'}")
+    ca_file = _ca_file(repo_root, env)
+    if not ca_file.is_file():
+        _line(f"FAIL missing envs/{env}/ca.crt")
         failed += 1
     else:
-        _line(f"PASS lan curl https://{host}/")
-        _line(body.rstrip("\n"))
-    code, who = issuer(host)
-    if code != 0 or not who:
-        _line(f"FAIL cert issuer: {who or 'empty'}")
-        failed += 1
-    else:
-        _line(f"PASS cert issuer {who}")
+        code, body = fetch(host, ca_file)
+        digest = hashlib.sha256(body.encode()).hexdigest() if code == 0 and body else ""
+        if code != 0 or not body:
+            _line(f"FAIL lan curl https://{host}/: {body or 'empty body'}")
+            failed += 1
+        elif digest != _CANARY_SHA256:
+            _line(f"FAIL lan curl https://{host}/: body sha256 {digest} != {_CANARY_SHA256}")
+            failed += 1
+        else:
+            _line(f"PASS lan curl https://{host}/")
+            _line(body.rstrip("\n"))
+        code, who = issuer(host, ca_file)
+        if code != 0 or not who:
+            _line(f"FAIL cert issuer: {who or 'empty'}")
+            failed += 1
+        else:
+            _line(f"PASS cert issuer {who}")
     try:
         text = drill_log.read_text(encoding="utf-8")
     except OSError as exc:

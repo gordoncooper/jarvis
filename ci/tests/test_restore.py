@@ -336,18 +336,23 @@ def test_verify_p0b_reads_drill_log(tmp_path: Path, capsys) -> None:
     log = tmp_path / "drill.log"
     log.write_text(_log(CHECKSUM, snapshot=True), encoding="utf-8")
 
-    def fetch(host: str) -> tuple[int, str]:
-        assert host == "testapp.test.example"
-        return 0, "drill-ok\n"
+    ca = tmp_path / "envs" / env / "ca.crt"
+    ca.write_text("dummy\n", encoding="utf-8")
 
-    def issuer(host: str) -> tuple[int, str]:
+    def fetch(host: str, ca_file: Path) -> tuple[int, str]:
         assert host == "testapp.test.example"
+        assert ca_file == ca
+        return 0, "testapp\n"
+
+    def issuer(host: str, ca_file: Path) -> tuple[int, str]:
+        assert host == "testapp.test.example"
+        assert ca_file == ca
         return 0, "issuer=CN = test-ca"
 
     assert verify_p0b.run(tmp_path, env, log, fetch, issuer) == 0
     out = capsys.readouterr().out
     assert "PASS lan curl https://testapp.test.example/" in out
-    assert "drill-ok" in out
+    assert "testapp" in out.splitlines()
     assert "PASS cert issuer issuer=CN = test-ca" in out
     assert f"PASS restore checksum {CHECKSUM}" in out
     assert "tailnet curl of https://testapp.test.example/ [G]:" in out
