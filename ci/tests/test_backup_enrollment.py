@@ -51,16 +51,17 @@ def test_kyverno_chart_pins_and_controllers() -> None:
     for image in images:
         assert image["registry"] == "ghcr.io"
         assert re.fullmatch(r"v1\.19\.2@sha256:[a-f0-9]{64}", image["tag"])
-    # D30. The init container and the hook Jobs. Chart memory limits stay.
-    blocks = (
+    # D30. Init container and webhooksCleanup. The migration hook is excluded:
+    # crds is a subchart, and Helm keeps null under that key, so cpu: null
+    # would render as a limit of 0 and the post-upgrade Job would be rejected.
+    for block in (
         values["admissionController"]["initContainer"]["resources"],
-        values["crds"]["migration"]["podResources"],
         values["webhooksCleanup"]["resources"],
-    )
-    for block in blocks:
+    ):
         assert block["limits"]["cpu"] is None
         assert block["limits"]["memory"]
         assert block["requests"]["memory"]
+    assert "crds" not in values
     controllers = yaml.safe_load(
         (ROOT / "platform/kustomization.yaml").read_text(encoding="utf-8")
     )

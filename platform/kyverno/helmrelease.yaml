@@ -48,8 +48,10 @@ spec:
         mutateExisting: false
         imageVerify: false
         generate: false
-    # D30. The chart sets a CPU limit on the init container and the hook
-    # Jobs. null drops that key. Requests and the memory limit are the chart's.
+    # D30. null drops the chart CPU limit on the init container and the
+    # webhooksCleanup hooks. Requests and the memory limit are the chart's.
+    # crds.migration is not set: crds is a subchart, and Helm keeps null
+    # under that key, so the migration hook stays on the chart default.
     admissionController:
       container:
         image:
@@ -76,8 +78,5 @@ spec:
         repository: kyverno/background-controller
         # renovate: datasource=docker depName=ghcr.io/kyverno/background-controller
         tag: "v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2"
-    crds:
-      migration:
-        podResources: *kyvernoBatchResources
     webhooksCleanup:
       resources: *kyvernoBatchResources
