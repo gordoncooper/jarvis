@@ -6,3 +6,11 @@
   tags:
     - base-os
     - journald
+
+- name: Restart systemd-resolved
+  ansible.builtin.service:
+    name: systemd-resolved
+    state: restarted
+  tags:
+    - base-os
+    - resolved

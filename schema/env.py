@@ -42,6 +42,7 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "k3s_sha256",
         "pod_cidr",
         "service_cidr",
+        "app_dns_cluster_ip",
         "local_path_data",
         "flux_git_repo_url",
         "apps_git_repo_url",
@@ -314,6 +315,7 @@ def _validate_cluster_vars(
 
     for key in ("pod_cidr", "service_cidr"):
         errors.extend(_validate_cidr(rel_path, key, data.get(key)))
+    errors.extend(_validate_app_dns_cluster_ip(rel_path, data))
 
     flux_errors, flux_owner = _validate_repo_url(
         rel_path, "flux_git_repo_url", data.get("flux_git_repo_url")
@@ -401,6 +403,43 @@ def _validate_time_zone(rel_path: str, value: str) -> list[str]:
         zoneinfo.ZoneInfo(value)
     except (zoneinfo.ZoneInfoNotFoundError, ValueError):
         return [f"{rel_path}: time_zone must be an IANA time zone"]
+    return []
+
+
+def _validate_app_dns_cluster_ip(rel_path: str, data: dict[str, Any]) -> list[str]:
+    """ClusterIP for App DNS. CoreDNS forward takes an address."""
+    key = "app_dns_cluster_ip"
+    value = data.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, str):
+        return [f"{rel_path}: {key} must be a string"]
+    if not value.strip():
+        return [f"{rel_path}: {key} must not be empty"]
+    try:
+        addr = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return [f"{rel_path}: {key} must be an IP address"]
+
+    cidr = data.get("service_cidr")
+    if not isinstance(cidr, str) or not cidr.strip():
+        return []
+    try:
+        network = ipaddress.ip_network(cidr.strip(), strict=True)
+    except ValueError:
+        return []
+    if addr not in network:
+        return [f"{rel_path}: {key} must be inside service_cidr"]
+    if addr == network.network_address or addr == network.broadcast_address:
+        return [f"{rel_path}: {key} must be a host address inside service_cidr"]
+    first = next(network.hosts(), None)
+    if first is not None and addr == first:
+        return [f"{rel_path}: {key} must not be the first address of service_cidr"]
+    # k3s cluster DNS is the tenth address of the service CIDR (10.43.0.10
+    # when the CIDR is 10.43.0.0/16). network_address + 10 is that address.
+    tenth = network.network_address + 10
+    if tenth in network and addr == tenth:
+        return [f"{rel_path}: {key} must not be the tenth address of service_cidr"]
     return []
 
 

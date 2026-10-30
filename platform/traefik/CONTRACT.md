@@ -26,13 +26,13 @@ An HTTPS response on `<svc>.<dns_suffix>` whose certificate chains to the intern
 - One plain Ingress. No Gateway API. The bundled chart's Gateway provider, Gateway, and GatewayClass are off.
 - Ingress class: `traefik`, the class the bundled chart registers. It is a manifest constant, not a cluster-vars key (D32).
 - Wildcard name: `*.<dns_suffix>`.
-- `kube-system` keeps only this HelmChartConfig. p0b-04 puts TLSStore `default` next to the wildcard Certificate in `platform-cert-manager` (the namespace of the internal CA secret). Traefik reads the certificate secret from the TLSStore's namespace.
+- `kube-system` holds this HelmChartConfig and ConfigMap `coredns-custom` (the App DNS forward). p0b-04 puts TLSStore `default` next to the wildcard Certificate in `platform-cert-manager` (the namespace of the internal CA secret). Traefik reads the certificate secret from the TLSStore's namespace.
 - Chart v40 does not template `providers.kubernetesCRD.defaultTLSResourcesNamespace`. `additionalArguments` passes `--providers.kubernetesCRD.defaultTLSResourcesNamespace=platform-cert-manager`, so only that namespace's default store counts.
 - Ports 80 and 443 stay the chart's LoadBalancer Service ports. k3s ServiceLB publishes them on nodes labeled for the edge set (D42).
 - Checked: bundled Traefik chart v40 on k3s v1.36.5+k3s1.
 
 ## Proven by
 
-- `ci/tests/test_traefik.py` (only the HelmChartConfig in `kube-system`, Gateway provider off, memory limit, CPU request without a CPU limit, LoadBalancer Service).
+- `ci/tests/test_traefik.py` (HelmChartConfig and `coredns-custom` in `kube-system`, Gateway provider off, memory limit, CPU request without a CPU limit, LoadBalancer Service).
 - The R5 manifest lint (`ci/checks/manifest-lint`, p0b-06).
 - The P0b, P2, and P4a reachability checks (`make verify`).

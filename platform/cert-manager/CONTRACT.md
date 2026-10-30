@@ -6,7 +6,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA (R28). 
 
 - ClusterIssuer `internal-ca` signs from Secret `cert-manager-ca` in `platform-cert-manager`.
 - Certificate `wildcard` in that namespace, name `*.<dns_suffix>`, stored as Secret `wildcard-tls`.
-- TLSStore `default` in that namespace, so `kube-system` keeps only the Traefik HelmChartConfig.
+- TLSStore `default` in that namespace. `kube-system` holds the Traefik HelmChartConfig and ConfigMap `coredns-custom`.
 
 ## Expects
 

@@ -197,6 +197,25 @@ def test_bad_flux_git_repo_url_fails(tmp_path: Path):
     assert "flux_git_repo_url" in "\n".join(excinfo.value.messages)
 
 
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("not-an-ip", "must be an IP address"),
+        ("10.80.0.53", "must be inside service_cidr"),
+        ("10.81.0.0", "must be a host address inside service_cidr"),
+        ("10.81.0.1", "must not be the first address of service_cidr"),
+        ("10.81.0.10", "must not be the tenth address of service_cidr"),
+    ],
+)
+def test_app_dns_cluster_ip_must_be_a_service_host_address(tmp_path: Path, value: str, message: str):
+    cv = _valid_cluster_vars()
+    cv["app_dns_cluster_ip"] = value
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert message in "\n".join(excinfo.value.messages)
+
+
 def test_cluster_cidrs_must_be_cidrs(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["pod_cidr"] = "not-a-pod-cidr"

@@ -1,0 +1,12 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: k8s-gateway
+  namespace: flux-system
+  # The HelmRelease stays. This is the chart source it reconciles.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  type: oci
+  interval: 30m
+  url: oci://codeberg.org/k8s-gateway/charts

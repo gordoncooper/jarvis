@@ -99,6 +99,14 @@
     },
     {
       "customType": "regex",
+      "description": "k8s-gateway OCI chart pin.",
+      "managerFilePatterns": ["/^platform\\/app-dns\\/helmrelease.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Kyverno Helm chart pin.",
       "managerFilePatterns": ["/^platform\\/kyverno\\/helmrelease.yaml$/"],
       "matchStrings": [
