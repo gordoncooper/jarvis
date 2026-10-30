@@ -58,6 +58,10 @@ def test_ansible_chart_pin_matches_git_helmrelease() -> None:
     assert release["metadata"]["namespace"] == defaults["flux_system_namespace"]
     assert release["spec"]["releaseName"] == defaults["flux_operator_deployment_name"]
     assert release["spec"]["chartRef"]["name"] == defaults["flux_operator_deployment_name"]
+    resources = release["spec"]["values"]["resources"]
+    assert resources["limits"]["cpu"] is None
+    assert resources["limits"]["memory"]
+    assert resources["requests"]["memory"]
 
 
 def test_helm_upgrade_command_renders_expected_argv() -> None:

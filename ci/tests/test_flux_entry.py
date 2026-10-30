@@ -55,6 +55,7 @@ def _require_tool(name: str) -> str:
 
 
 def _kustomize_build(rel_path: str) -> str:
+    """Chart defaults the values don't set pass unchecked."""
     kustomize = _require_tool("kustomize")
     proc = subprocess.run(
         [

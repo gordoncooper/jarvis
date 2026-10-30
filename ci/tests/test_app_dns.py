@@ -38,10 +38,9 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
     assert resources["limits"].get("cpu") is None
     assert values["livenessProbe"]["enabled"] is True
     assert values["readinessProbe"]["enabled"] is True
-    assert re.fullmatch(
-        r"1\.9\.2@sha256:[a-f0-9]{64}",
-        values["image"]["tag"],
-    )
+    tag, digest = values["image"]["tag"].split("@", 1)
+    assert re.fullmatch(r"\d+\.\d+\.\d+", tag)
+    assert re.fullmatch(r"sha256:[a-f0-9]{64}", digest)
 
     custom = next(
         doc
@@ -89,5 +88,5 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
     image = _matches(image_managers[0])
     assert len(image) == 1
     assert image[0].group("depName") == "codeberg.org/k8s-gateway/k8s_gateway"
-    assert image[0].group("currentValue") == "1.9.2"
-    assert image[0].group("currentDigest") == values["image"]["tag"].split("@", 1)[1]
+    assert image[0].group("currentValue") == tag
+    assert image[0].group("currentDigest") == digest

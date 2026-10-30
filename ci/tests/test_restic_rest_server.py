@@ -63,6 +63,12 @@ def test_volsync_controller_tz_comes_from_time_zone() -> None:
     assert "value: ${time_zone}" in text
     assert "mountPath: /usr/share/zoneinfo" in text
     assert "path: /usr/share/zoneinfo" in text
+    resources = _docs(ROOT / "platform/backups/controller/helmrelease.yaml")[0]["spec"]["values"][
+        "resources"
+    ]
+    assert resources["limits"]["cpu"] is None
+    assert resources["limits"]["memory"]
+    assert resources["requests"]["memory"]
 
 
 def test_renovate_tracks_the_rest_server_digest() -> None:
