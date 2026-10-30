@@ -3,7 +3,9 @@ kind: HelmRelease
 metadata:
   name: flux-operator
   namespace: flux-system
+  # Prune stays off so a path move cannot uninstall the operator.
   annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
     kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
   interval: 30m

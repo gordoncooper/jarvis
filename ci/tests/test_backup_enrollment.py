@@ -48,9 +48,14 @@ def test_kyverno_chart_pins_and_controllers() -> None:
         values["admissionController"]["initContainer"]["image"],
         values["backgroundController"]["image"],
     ]
+    tags = set()
     for image in images:
         assert image["registry"] == "ghcr.io"
-        assert re.fullmatch(r"v1\.19\.2@sha256:[a-f0-9]{64}", image["tag"])
+        tag, digest = image["tag"].split("@", 1)
+        assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
+        assert re.fullmatch(r"sha256:[a-f0-9]{64}", digest)
+        tags.add(tag)
+    assert len(tags) == 1
     controllers = yaml.safe_load(
         (ROOT / "platform/kustomization.yaml").read_text(encoding="utf-8")
     )

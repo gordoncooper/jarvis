@@ -1,8 +1,11 @@
 # Chart roles aggregate these. The background core role can get a Namespace, not update one.
+# Prune stays off so a path move cannot drop the backup permissions.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kyverno:backup-generate
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
   labels:
     rbac.kyverno.io/aggregate-to-admission-controller: "true"
     rbac.kyverno.io/aggregate-to-background-controller: "true"
@@ -23,6 +26,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kyverno:backup-namespaces
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
   labels:
     rbac.kyverno.io/aggregate-to-background-controller: "true"
 rules:

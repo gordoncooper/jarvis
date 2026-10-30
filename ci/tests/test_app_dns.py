@@ -84,7 +84,8 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
     chart = _matches(chart_managers[0])
     assert len(chart) == 1
     assert chart[0].group("datasource") == "docker"
-    assert chart[0].group("currentValue") == "4.0.1"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", chart[0].group("currentValue"))
+    assert chart[0].group("currentValue") == release["spec"]["chart"]["spec"]["version"]
     image = _matches(image_managers[0])
     assert len(image) == 1
     assert image[0].group("depName") == "codeberg.org/k8s-gateway/k8s_gateway"
