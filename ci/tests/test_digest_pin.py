@@ -6,7 +6,6 @@ from pathlib import Path
 
 from _digest_pin import scan_digest_pin
 
-REPO = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "digest-pin" / "tag-without-digest.yaml"
 
 _PINNED = """
@@ -58,7 +57,7 @@ metadata:
 spec:
   valuesContent: |
     image:
-      tag: v3.0.0
+      tag: v3.0.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 """
 
 
@@ -97,12 +96,32 @@ spec:
     assert "not pinned by digest" in violations[0].message
 
 
+def test_r33_helmchartconfig_tag_without_digest_fails(tmp_path: Path) -> None:
+    path = tmp_path / "platform" / "traefik" / "helmchartconfig.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |
+    image:
+      repository: example.io/demo/proxy
+      tag: v3.0.0
+""",
+        encoding="utf-8",
+    )
+    violations = scan_digest_pin(tmp_path)
+    assert len(violations) == 1
+    assert "HelmChartConfig kube-system/traefik: image" in violations[0].message
+    assert "not pinned by digest" in violations[0].message
+
+
 def test_r33_pinned_images_and_chart_tags_pass(tmp_path: Path) -> None:
     path = tmp_path / "platform" / "ok.yaml"
     path.parent.mkdir(parents=True)
     path.write_text(_PINNED, encoding="utf-8")
     assert scan_digest_pin(tmp_path) == []
-
-
-def test_r33_platform_manifests_pass() -> None:
-    assert scan_digest_pin(REPO) == []

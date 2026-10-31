@@ -9,6 +9,8 @@ from typing import Any, Iterable
 
 import yaml
 
+from _manifests import load_documents
+
 BACKUP_NONE_ANNOTATION = "backup"
 BACKUP_NONE_VALUE = "none"
 
@@ -18,10 +20,9 @@ BACKUP_NONE_ALLOWED_PREFIXES: tuple[str, ...] = (
     "services/observability/victoria-logs/",
 )
 
-_SCAN_ROOTS = ("apps/", "platform/", "services/", "envs/")
 _HANDWRITTEN_ROOTS = ("services/", "apps/")
-_SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
 _POLICY_KUSTOMIZATION = "platform/backups/kustomization.yaml"
+_POLICY_NAME = "pvc-backup"
 _VOLSYNC_KIND = re.compile(
     r"(?m)^[ \t]*kind:[ \t]*(ReplicationSource|ReplicationDestination)[ \t]*$"
 )
@@ -61,20 +62,19 @@ def scan_pvc_backup(repo_root: Path | str) -> list[PvcBackupViolation]:
             PvcBackupViolation(
                 _POLICY_KUSTOMIZATION,
                 "cluster",
-                "pvc-backup",
+                _POLICY_NAME,
                 "ClusterPolicy",
                 "backup enrollment ClusterPolicy is missing",
             )
         )
 
-    for rel_path in _manifest_yaml_files(root):
-        try:
-            text = (root / rel_path).read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+    for rel_path, doc, error in load_documents(root):
+        if doc is None:
+            violations.append(
+                PvcBackupViolation(rel_path, "-", "-", "document", error or "unreadable YAML")
+            )
             continue
-        for doc in yaml.safe_load_all(text):
-            if isinstance(doc, dict):
-                violations.extend(_document_violations(doc, rel_path))
+        violations.extend(_document_violations(doc, rel_path))
 
     violations.extend(_handwritten_violations(root))
     return sorted(
@@ -110,10 +110,23 @@ def _enrollment_policy_listed(repo_root: Path) -> bool:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        for doc in yaml.safe_load_all(text):
-            if isinstance(doc, dict) and doc.get("kind") == "ClusterPolicy":
-                return True
+        if any(_is_enrollment_policy(doc) for doc in yaml.safe_load_all(text)):
+            return True
     return False
+
+
+def _is_enrollment_policy(doc: object) -> bool:
+    """The named ClusterPolicy with a rule that generates a ReplicationSource."""
+    if not isinstance(doc, dict) or doc.get("kind") != "ClusterPolicy" or _name(doc) != _POLICY_NAME:
+        return False
+    spec = doc.get("spec")
+    rules = spec.get("rules") if isinstance(spec, dict) else None
+    return isinstance(rules, list) and any(
+        isinstance(rule, dict)
+        and isinstance(rule.get("generate"), dict)
+        and rule["generate"].get("kind") == "ReplicationSource"
+        for rule in rules
+    )
 
 
 def _document_violations(doc: dict[str, Any], rel_path: str) -> list[PvcBackupViolation]:
@@ -222,23 +235,3 @@ def _namespace(doc: dict[str, Any]) -> str:
     if isinstance(namespace, str) and namespace.strip():
         return namespace.strip()
     return "default"
-
-
-def _manifest_yaml_files(repo_root: Path) -> list[str]:
-    paths: list[str] = []
-    for scan_root in _SCAN_ROOTS:
-        base = repo_root / scan_root.rstrip("/")
-        if not base.is_dir():
-            continue
-        for path in sorted(base.rglob("*")):
-            if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
-                continue
-            rel = path.relative_to(repo_root).as_posix()
-            if rel.endswith(".sops.yaml") or ".sops." in rel:
-                continue
-            if rel.startswith("envs/"):
-                rest = rel.split("/", 2)
-                if len(rest) == 3 and rest[2].startswith(_SKIP_ENV_PREFIXES):
-                    continue
-            paths.append(rel)
-    return paths
