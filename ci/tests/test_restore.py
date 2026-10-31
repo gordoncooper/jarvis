@@ -16,21 +16,12 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CHECKSUM = "a" * 64
-OTHER = "b" * 64
-ETCD = "c" * 64
 
 _RESTORE = SourceFileLoader("restore_tool", str(REPO_ROOT / "tools" / "restore"))
 _RESTORE_SPEC = importlib.util.spec_from_loader(_RESTORE.name, _RESTORE)
 assert _RESTORE_SPEC is not None
 restore_tool = importlib.util.module_from_spec(_RESTORE_SPEC)
 _RESTORE.exec_module(restore_tool)
-
-_P0B = SourceFileLoader("verify_p0b", str(REPO_ROOT / "tools" / "verify" / "p0b"))
-_P0B_SPEC = importlib.util.spec_from_loader(_P0B.name, _P0B)
-assert _P0B_SPEC is not None
-verify_p0b = importlib.util.module_from_spec(_P0B_SPEC)
-_P0B.exec_module(verify_p0b)
 
 
 def _completed(
@@ -374,80 +365,6 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     )
     restored = {doc["metadata"]["namespace"] + "/" + doc["spec"]["restic"]["destinationPVC"] for doc in everyone.applied}
     assert restored == {"demo/drill", "other/keep"}
-
-
-def _write_env(root: Path) -> str:
-    env = "env-test"
-    values = root / "envs" / env / "values"
-    values.mkdir(parents=True)
-    (values / "cluster-vars.yaml").write_text("dns_suffix: test.example\n", encoding="utf-8")
-    return env
-
-
-def _log(second: str, *, snapshot: bool, deleted: bool = True) -> str:
-    lines = [
-        f"{CHECKSUM}  /data/payload",
-        'persistentvolumeclaim "drill" deleted'
-        if deleted
-        else "kubectl delete pod drill",
-        "restore demo/drill as-of 2026-10-29T00:00:09Z",
-        f"{second}  /data/payload",
-    ]
-    if snapshot:
-        lines.append(f"{ETCD}  /snapshots/etcd-snapshot-node-1710000000")
-        lines.append(f"{ETCD}  /restore/snapshots/etcd-snapshot-node-1710000000")
-    return "\n".join(lines) + "\n"
-
-
-def test_verify_p0b_reads_drill_log(tmp_path: Path, capsys) -> None:
-    env = _write_env(tmp_path)
-    log = tmp_path / "drill.log"
-    log.write_text(_log(CHECKSUM, snapshot=True), encoding="utf-8")
-
-    ca = tmp_path / "envs" / env / "ca.crt"
-    ca.write_text("dummy\n", encoding="utf-8")
-
-    def fetch(host: str, ca_file: Path) -> tuple[int, str]:
-        assert host == "testapp.test.example"
-        assert ca_file == ca
-        return 0, "testapp\n"
-
-    def issuer(host: str, ca_file: Path) -> tuple[int, str]:
-        assert host == "testapp.test.example"
-        assert ca_file == ca
-        return 0, "issuer=CN = test-ca"
-
-    assert verify_p0b.run(tmp_path, env, log, fetch, issuer) == 0
-    out = capsys.readouterr().out
-    assert "PASS lan curl https://testapp.test.example/" in out
-    assert "testapp" in out.splitlines()
-    assert "PASS cert issuer issuer=CN = test-ca" in out
-    assert f"PASS restore checksum {CHECKSUM}" in out
-    assert "tailnet curl of https://testapp.test.example/ [G]:" in out
-    assert out.splitlines()[-1] == "automatic checks passed; 1 owner items remain"
-
-    log.write_text(_log(OTHER, snapshot=True), encoding="utf-8")
-    assert verify_p0b.run(tmp_path, env, log, fetch, issuer) != 0
-    bad = capsys.readouterr().out
-    assert "FAIL drill log:" in bad
-    assert "automatic checks passed" not in bad
-
-    log.write_text(_log(CHECKSUM, snapshot=False), encoding="utf-8")
-    assert verify_p0b.run(tmp_path, env, log, fetch, issuer) != 0
-    assert "etcd snapshot" in capsys.readouterr().out
-
-    log.write_text(_log(CHECKSUM, snapshot=True, deleted=False), encoding="utf-8")
-    assert verify_p0b.run(tmp_path, env, log, fetch, issuer) != 0
-    assert "PVC deletion" in capsys.readouterr().out
-
-    digest = "d" * 64
-    log.write_text(
-        f"IMAGE=restic/restic@sha256:{digest}\n" + _log(CHECKSUM, snapshot=True),
-        encoding="utf-8",
-    )
-    assert verify_p0b.run(tmp_path, env, log, fetch, issuer) == 0
-    assert f"PASS restore checksum {CHECKSUM}" in capsys.readouterr().out
-    assert digest not in capsys.readouterr().out
 
 
 def _run(cluster: _Cluster, **kwargs: object) -> int:

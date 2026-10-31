@@ -1,0 +1,488 @@
+#!/usr/bin/env python3
+"""Read-only, fail-closed verification of one environment's standing state."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import subprocess
+import sys
+from collections.abc import Callable, Sequence
+from datetime import datetime, timezone
+from pathlib import Path
+from subprocess import CompletedProcess
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+
+from lib._env import (
+    EnvError,
+    json_object,
+    kubeconfig_for,
+    kubectl as run_kubectl,
+    not_found,
+    reason,
+    repository_values,
+    tool_env,
+    validate_cluster,
+)
+
+FLUX_RESOURCES = (
+    "kustomizations.kustomize.toolkit.fluxcd.io",
+    "gitrepositories.source.toolkit.fluxcd.io",
+    "helmreleases.helm.toolkit.fluxcd.io",
+)
+HOLD_NAMESPACE = "kube-system"
+HOLD_NAME = "backup-rebuild-hold"
+ENABLELB = "svccontroller.k3s.cattle.io/enablelb"
+CANARY_SHA256 = "60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7"
+HTTP_TIMEOUT_SECONDS = 30
+Kubectl = Callable[..., CompletedProcess[str]]
+Fetch = Callable[[str, Path], tuple[int, str]]
+Issuer = Callable[[str, Path], tuple[int, str]]
+
+
+class CheckError(Exception):
+    pass
+
+
+def _line(text: str) -> None:
+    print(text, flush=True)
+
+
+def _run(
+    argv: Sequence[str], *, input: str | None = None, cwd: Path | None = None
+) -> CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            list(argv),
+            input=input,
+            cwd=cwd,
+            env=tool_env(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError:
+        _line("run make deps")
+        raise SystemExit(1) from None
+    except subprocess.TimeoutExpired:
+        return CompletedProcess(list(argv), 1, "", f"{argv[0]} timed out")
+
+
+def _fetch(host: str, ca_file: Path) -> tuple[int, str]:
+    proc = _run(
+        [
+            "curl",
+            "-fsS",
+            "--max-time",
+            str(HTTP_TIMEOUT_SECONDS),
+            "--cacert",
+            str(ca_file),
+            f"https://{host}/",
+        ]
+    )
+    if proc.returncode:
+        return 1, reason(proc)
+    return 0, proc.stdout
+
+
+def _issuer(host: str, ca_file: Path) -> tuple[int, str]:
+    proc = _run(
+        [
+            "openssl",
+            "s_client",
+            "-connect",
+            f"{host}:443",
+            "-servername",
+            host,
+            "-CAfile",
+            str(ca_file),
+            "-no-CApath",
+            "-no-CAstore",
+            "-verify_return_error",
+        ],
+        input="",
+    )
+    if proc.returncode:
+        lines = (proc.stderr or proc.stdout).strip().splitlines()
+        useful = next(
+            (
+                line.strip()
+                for line in lines
+                if "verify error:" in line.lower()
+                or "verify return code:" in line.lower()
+            ),
+            lines[0].strip() if lines else "certificate verify failed",
+        )
+        return 1, useful
+    cert = _run(["openssl", "x509", "-noout", "-issuer"], input=proc.stdout)
+    if cert.returncode or not cert.stdout.strip():
+        return 1, "no certificate issuer"
+    return 0, cert.stdout.strip()
+
+
+def _items(proc: CompletedProcess[str], what: str) -> list[dict]:
+    body = json_object(proc, what)
+    items = body.get("items")
+    if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+        raise CheckError(f"{what}: invalid items")
+    return items
+
+
+def _check_flux(kubectl: Kubectl) -> None:
+    for resource in FLUX_RESOURCES:
+        items = _items(kubectl(["get", resource, "-A", "-o", "json"]), f"list {resource}")
+        if not items:
+            raise CheckError(f"{resource}: none found")
+        proc = kubectl(
+            [
+                "wait",
+                "--for=condition=Ready",
+                "--all",
+                "-A",
+                "--timeout=10s",
+                resource,
+            ]
+        )
+        if proc.returncode:
+            raise CheckError(f"{resource}: {reason(proc)}")
+
+
+def _check_secret(kubectl: Kubectl) -> None:
+    body = json_object(
+        kubectl(
+            [
+                "get",
+                "secret",
+                "backups-restic",
+                "-n",
+                "platform-backups",
+                "-o",
+                "json",
+            ]
+        ),
+        "read backups-restic",
+    )
+    data = body.get("data")
+    if not isinstance(data, dict) or not data:
+        raise CheckError("backups-restic has no data keys")
+
+
+def _inventory(repo_root: Path, env: str) -> dict[str, set[str]]:
+    proc = _run(
+        ["ansible-inventory", "-i", f"envs/{env}/inventory", "--list"],
+        cwd=repo_root,
+    )
+    if proc.returncode:
+        raise CheckError(f"inventory: {reason(proc)}")
+    try:
+        hostvars = json.loads(proc.stdout)["_meta"]["hostvars"]
+        return {name: set(host["node_roles"]) for name, host in hostvars.items()}
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise CheckError("inventory: invalid node_roles") from exc
+
+
+def _check_nodes(
+    kubectl: Kubectl, roles: dict[str, set[str]], dns_suffix: str
+) -> None:
+    items = _items(kubectl(["get", "nodes", "-o", "json"]), "list nodes")
+    try:
+        nodes = {
+            item["metadata"]["name"]: item["metadata"].get("labels") or {}
+            for item in items
+        }
+    except (KeyError, TypeError) as exc:
+        raise CheckError("nodes: invalid metadata") from exc
+    if set(nodes) != set(roles):
+        raise CheckError(
+            f"node names: inventory={sorted(roles)} cluster={sorted(nodes)}"
+        )
+    prefix = f"role.{dns_suffix}/"
+    for name, expected in sorted(roles.items()):
+        labels = nodes[name]
+        got = {
+            key.removeprefix(prefix)
+            for key, value in labels.items()
+            if key.startswith(prefix) and value == "true"
+        }
+        prefixed = {key for key in labels if key.startswith(prefix)}
+        if got != expected or len(prefixed) != len(got):
+            raise CheckError(
+                f"{name}: role labels {sorted(got)} != node_roles {sorted(expected)}"
+            )
+    edge = {name for name, assigned in roles.items() if "edge" in assigned}
+    present = {
+        name
+        for name, labels in nodes.items()
+        if labels.get(ENABLELB) == "true"
+    }
+    malformed = {
+        name for name, labels in nodes.items() if ENABLELB in labels and name not in present
+    }
+    if present != edge or malformed:
+        raise CheckError(f"enablelb nodes {sorted(present)} != edge nodes {sorted(edge)}")
+
+
+def _number(token: str, names: dict[str, int] | None) -> int:
+    folded = token.lower()
+    if names and folded in names:
+        return names[folded]
+    return int(token)
+
+
+def _cron_field(
+    text: str, low: int, high: int, names: dict[str, int] | None = None
+) -> tuple[set[int], bool]:
+    values: set[int] = set()
+    wildcard = text.startswith("*")
+    try:
+        for part in text.split(","):
+            base, slash, step_text = part.partition("/")
+            step = int(step_text) if slash else 1
+            if step < 1:
+                raise ValueError
+            if base == "*":
+                start, stop = low, high
+            elif "-" in base:
+                first, last = base.split("-", 1)
+                start, stop = _number(first, names), _number(last, names)
+            else:
+                start = _number(base, names)
+                stop = high if slash else start
+            if start < low or stop > high or start > stop:
+                raise ValueError
+            values.update(range(start, stop + 1, step))
+    except (ValueError, TypeError) as exc:
+        raise CheckError(f"unsupported cron field {text!r}") from exc
+    return values, wildcard
+
+
+def _cron(schedule: str) -> tuple[set[int], set[int], set[int], set[int], set[int], bool, bool]:
+    parts = schedule.split()
+    if len(parts) != 5:
+        raise CheckError(f"invalid five-field schedule {schedule!r}")
+    months = dict(zip("jan feb mar apr may jun jul aug sep oct nov dec".split(), range(1, 13)))
+    days = dict(zip("sun mon tue wed thu fri sat".split(), range(7)))
+    minute, _ = _cron_field(parts[0], 0, 59)
+    hour, _ = _cron_field(parts[1], 0, 23)
+    dom, dom_any = _cron_field(parts[2], 1, 31)
+    month, _ = _cron_field(parts[3], 1, 12, months)
+    dow, dow_any = _cron_field(parts[4], 0, 7, days)
+    if 7 in dow:
+        dow.add(0)
+        dow.discard(7)
+    return minute, hour, dom, month, dow, dom_any, dow_any
+
+
+def _recent(
+    stamp: str, schedule: str, zone_name: str, now: datetime
+) -> bool:
+    try:
+        completed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        zone = ZoneInfo(zone_name)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise CheckError("invalid backup timestamp or time zone") from exc
+    if completed.tzinfo is None:
+        raise CheckError("backup timestamp has no timezone")
+    minute, hour, dom, month, dow, dom_any, dow_any = _cron(schedule)
+    cursor = now.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    previous: list[datetime] = []
+    for _ in range(2 * 366 * 24 * 60):
+        local = cursor.astimezone(zone)
+        dom_match = local.day in dom
+        dow_match = ((local.weekday() + 1) % 7) in dow
+        day_match = (
+            dom_match and dow_match
+            if dom_any or dow_any
+            else dom_match or dow_match
+        )
+        if (
+            local.minute in minute
+            and local.hour in hour
+            and local.month in month
+            and day_match
+        ):
+            previous.append(cursor)
+            if len(previous) == 2:
+                return completed.astimezone(timezone.utc) >= previous[1]
+        cursor = cursor.fromtimestamp(cursor.timestamp() - 60, timezone.utc)
+    raise CheckError(f"schedule {schedule!r} has fewer than two runs in two years")
+
+
+def _check_backups(
+    kubectl: Kubectl, *, zone_name: str, now: datetime
+) -> None:
+    pvcs = _items(kubectl(["get", "pvc", "-A", "-o", "json"]), "list PVCs")
+    sources = _items(
+        kubectl(["get", "replicationsource", "-A", "-o", "json"]),
+        "list ReplicationSources",
+    )
+    indexed = {
+        (
+            (item.get("metadata") or {}).get("namespace"),
+            (item.get("metadata") or {}).get("name"),
+        ): item
+        for item in sources
+    }
+    for pvc in pvcs:
+        meta = pvc.get("metadata") or {}
+        spec = pvc.get("spec") or {}
+        if not spec.get("volumeName"):
+            continue
+        if (meta.get("annotations") or {}).get("backup") == "none":
+            continue
+        if (meta.get("labels") or {}).get("app.kubernetes.io/created-by") == "volsync":
+            continue
+        namespace, name = meta.get("namespace"), meta.get("name")
+        if not namespace or not name:
+            raise CheckError("PVC has no namespace or name")
+        source = indexed.get((namespace, name))
+        if source is None:
+            raise CheckError(f"{namespace}/{name}: no ReplicationSource")
+        status = source.get("status") or {}
+        schedule = (((source.get("spec") or {}).get("trigger") or {}).get("schedule"))
+        if not isinstance(schedule, str) or not isinstance(status.get("lastSyncTime"), str):
+            raise CheckError(f"{namespace}/{name}: no completed scheduled sync")
+        if not _recent(status["lastSyncTime"], schedule, zone_name, now):
+            raise CheckError(f"{namespace}/{name}: last successful sync is stale")
+    cronjob = json_object(
+        kubectl(
+            [
+                "get",
+                "cronjob",
+                "etcd-snapshots",
+                "-n",
+                "platform-backups",
+                "-o",
+                "json",
+            ]
+        ),
+        "read etcd-snapshots CronJob",
+    )
+    spec, status = cronjob.get("spec") or {}, cronjob.get("status") or {}
+    cron_zone = spec.get("timeZone")
+    if not all(
+        isinstance(value, str)
+        for value in (spec.get("schedule"), cron_zone, status.get("lastSuccessfulTime"))
+    ):
+        raise CheckError("etcd snapshot copy has no successful scheduled run")
+    if not _recent(
+        status["lastSuccessfulTime"], spec["schedule"], cron_zone, now
+    ):
+        raise CheckError("etcd snapshot copy is stale")
+
+    hold = kubectl(
+        ["get", "configmap", HOLD_NAME, "-n", HOLD_NAMESPACE, "-o", "json"]
+    )
+    if hold.returncode == 0:
+        raise CheckError("backup rebuild hold is present")
+    if not not_found(hold):
+        raise CheckError(f"read backup rebuild hold: {reason(hold)}")
+
+
+def _check_https(
+    repo_root: Path, env: str, dns_suffix: str, fetch: Fetch, issuer: Issuer
+) -> str:
+    host = f"testapp.{dns_suffix}"
+    ca_file = repo_root / "envs" / env / "ca.crt"
+    if not ca_file.is_file():
+        raise CheckError(f"missing envs/{env}/ca.crt")
+    code, body = fetch(host, ca_file)
+    if code or not body:
+        raise CheckError(f"LAN HTTPS {host}: {body or 'empty body'}")
+    if hashlib.sha256(body.encode()).hexdigest() != CANARY_SHA256:
+        raise CheckError(f"LAN HTTPS {host}: unexpected body")
+    code, cert_issuer = issuer(host, ca_file)
+    if code or not cert_issuer:
+        raise CheckError(f"certificate chain {host}: {cert_issuer or 'empty issuer'}")
+    return cert_issuer
+
+
+def run(
+    repo_root: Path,
+    env: str,
+    kubectl: Kubectl,
+    fetch: Fetch,
+    issuer: Issuer,
+    *,
+    now: datetime | None = None,
+) -> int:
+    try:
+        values = repository_values(repo_root, env)
+        validate_cluster(kubectl, env)
+    except EnvError as exc:
+        _line(f"FAIL environment: {exc}")
+        return 1
+
+    checks: list[tuple[str, Callable[[], object]]] = [
+        ("Flux Ready", lambda: _check_flux(kubectl)),
+        ("backups-restic present", lambda: _check_secret(kubectl)),
+    ]
+    try:
+        roles = _inventory(repo_root, env)
+    except CheckError as exc:
+        _line(f"FAIL inventory: {exc}")
+        return 1
+    checks.extend(
+        [
+            (
+                "node roles and enablelb",
+                lambda: _check_nodes(kubectl, roles, str(values["dns_suffix"])),
+            ),
+            (
+                "backup freshness",
+                lambda: _check_backups(
+                    kubectl,
+                    zone_name=str(values["time_zone"]),
+                    now=now or datetime.now(timezone.utc),
+                ),
+            ),
+        ]
+    )
+    failed = 0
+    for label, check in checks:
+        try:
+            check()
+        except (CheckError, EnvError, KeyError, TypeError) as exc:
+            _line(f"FAIL {label}: {exc}")
+            failed += 1
+        else:
+            _line(f"PASS {label}")
+    try:
+        cert_issuer = _check_https(
+            repo_root, env, str(values["dns_suffix"]), fetch, issuer
+        )
+    except (CheckError, KeyError, TypeError) as exc:
+        _line(f"FAIL LAN HTTPS and certificate: {exc}")
+        failed += 1
+    else:
+        _line(f"PASS LAN HTTPS and certificate issuer={cert_issuer}")
+    return int(bool(failed))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env", required=True, help="Environment under envs/")
+    args = parser.parse_args(argv)
+    kubeconfig = kubeconfig_for(args.env)
+    if not kubeconfig.is_file():
+        _line(f"FAIL kubeconfig does not exist: {kubeconfig}")
+        return 1
+
+    def bound(args_: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+        return run_kubectl(
+            args_,
+            input=input,
+            repo_root=REPO_ROOT,
+            kubeconfig=kubeconfig,
+        )
+
+    return run(REPO_ROOT, args.env, bound, _fetch, _issuer)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

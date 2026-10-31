@@ -24,6 +24,16 @@ from subprocess import CompletedProcess
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+
+from lib._env import (
+    EnvError,
+    kubectl as run_kubectl,
+    repository_values,
+    tool_env,
+    validate_cluster,
+)
+
 PAUSE_BUDGET_SECONDS = 120
 RESTORE_BUDGET_SECONDS = 30 * 60
 _POLL_SECONDS = 5.0
@@ -79,15 +89,7 @@ def _line(text: str) -> None:
 
 
 def _tool_env() -> dict[str, str]:
-    env = os.environ.copy()
-    prefix = os.pathsep.join(
-        (
-            str(REPO_ROOT / ".venv" / "bin"),
-            str(Path.home() / ".local" / "bin"),
-        )
-    )
-    env["PATH"] = prefix + os.pathsep + env.get("PATH", "")
-    return env
+    return tool_env(REPO_ROOT)
 
 
 def _kubectl(
@@ -96,18 +98,7 @@ def _kubectl(
     *,
     kubeconfig: Path,
 ) -> CompletedProcess[str]:
-    try:
-        return subprocess.run(
-            ["kubectl", "--kubeconfig", str(kubeconfig), *args],
-            input=input,
-            env=_tool_env(),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        _line("run make deps")
-        raise SystemExit(1) from None
+    return run_kubectl(args, input=input, repo_root=REPO_ROOT, kubeconfig=kubeconfig)
 
 
 def _reason(proc: CompletedProcess[str]) -> str:
@@ -851,20 +842,11 @@ def _names(values: Sequence[str] | None) -> set[str]:
 
 
 def _validate_environment(kubectl: Kubectl, env: str) -> None:
-    values_path = REPO_ROOT / "envs" / env / "values" / "cluster-vars.yaml"
     try:
-        values = yaml.safe_load(values_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise Fail(f"ENV={env} is not a valid repository environment") from exc
-    if not isinstance(values, dict) or values.get("jarvis_env") != env:
-        raise Fail(f"ENV={env} does not match its repository marker")
-    body = _load(
-        kubectl(["get", "configmap", "cluster-vars", "-n", "flux-system", "-o", "json"]),
-        "read cluster environment marker",
-    )
-    actual = (body.get("data") or {}).get("jarvis_env")
-    if actual != env:
-        raise Fail(f"refusing cluster whose environment marker is not ENV={env}")
+        repository_values(REPO_ROOT, env)
+        validate_cluster(kubectl, env)
+    except EnvError as exc:
+        raise Fail(str(exc)) from exc
 
 
 def _hold_body(hold: list[str]) -> str:

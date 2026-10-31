@@ -516,7 +516,8 @@ def test_make_targets_require_env() -> None:
     commands = (
         ["make", "bootstrap-secrets"],
         ["make", "seal", "NAME=example"],
-        ["make", "verify", "PHASE=p0a"],
+        ["make", "verify"],
+        ["make", "drill"],
     )
     for cmd in commands:
         proc = subprocess.run(
