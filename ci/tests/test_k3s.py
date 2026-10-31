@@ -375,3 +375,112 @@ def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "k3s is already present" in output
+
+
+_PRIVATE_DATA_DIRS = (
+    "{{ local_path_data }}",
+    "{{ backup_path }}",
+    "{{ backup_path }}/etcd-snapshots",
+)
+
+
+def _file_targets(node: object, found: set[str]) -> None:
+    if isinstance(node, dict):
+        file_task = node.get("ansible.builtin.file")
+        if isinstance(file_task, dict):
+            path = file_task.get("path")
+            if isinstance(path, str):
+                found.add(path)
+            loop = node.get("loop")
+            if isinstance(loop, list):
+                found.update(item for item in loop if isinstance(item, str))
+        for value in node.values():
+            _file_targets(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _file_targets(item, found)
+
+
+def _role_file_targets(role: Path) -> set[str]:
+    found: set[str] = set()
+    tasks = role / "tasks"
+    if not tasks.is_dir():
+        return found
+    for path in tasks.glob("*.yml"):
+        _file_targets(yaml.safe_load(path.read_text(encoding="utf-8")), found)
+    return found
+
+
+def test_k3s_is_the_only_owner_of_private_data_directories() -> None:
+    """One owner per path: only the k3s role creates the private data directories."""
+    roles = ANSIBLE_DIR / "roles"
+    owners = {path: set() for path in _PRIVATE_DATA_DIRS}
+    for role in roles.iterdir():
+        if not role.is_dir():
+            continue
+        for target in _role_file_targets(role):
+            for owned in _PRIVATE_DATA_DIRS:
+                if target == owned:
+                    owners[owned].add(role.name)
+    for owned, role_names in owners.items():
+        assert role_names == {"k3s"}, (owned, role_names)
+
+
+def test_private_data_directories_are_mode_0700(tmp_path: Path) -> None:
+    """k3s sets local_path_data, backup_path, and etcd-snapshots to mode 0700."""
+    require_cli("ansible-playbook")
+    local_path = tmp_path / "local-path"
+    backup = tmp_path / "backup"
+    snapshots = backup / "etcd-snapshots"
+    for path in (local_path, backup, snapshots):
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o755)
+    play = tmp_path / "play.yml"
+    tasks = K3S_ROLE_DIR / "tasks" / "data-dirs.yml"
+    play.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - name: Private data directories
+              hosts: localhost
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_tasks: {tasks}
+            """
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    result = subprocess.run(
+        [
+            "ansible-playbook",
+            str(play),
+            "-i",
+            "localhost,",
+            "-e",
+            "ansible_connection=local",
+            "-e",
+            json.dumps(
+                {
+                    "local_path_data": str(local_path),
+                    "backup_path": str(backup),
+                }
+            ),
+            "--check",
+            "--diff",
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    for path in (local_path, backup, snapshots):
+        assert str(path) in output, output
+        assert path.stat().st_mode & 0o777 == 0o755
+    assert output.count('"mode": "0700"') + output.count("mode: '0700'") >= 3, output

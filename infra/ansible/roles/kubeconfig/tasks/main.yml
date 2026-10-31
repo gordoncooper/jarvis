@@ -1,38 +1,38 @@
 ---
-- name: Stage kubeconfig for the site.yml runner
+- name: Install the per-env kubeconfig for the site.yml runner
   vars:
     k3s_kubeconfig_home: "{{ lookup('env', 'HOME') }}"
     k3s_kubeconfig_dir: "{{ k3s_kubeconfig_home }}/.kube"
-    k3s_kubeconfig_runner_path: "{{ k3s_kubeconfig_dir }}/config"
+    k3s_kubeconfig_runner_path: "{{ k3s_kubeconfig_dir }}/jarvis-{{ jarvis_env }}.yaml"
+    k3s_kubeconfig_server_pattern: 'https://127\.0\.0\.1:6443'
   block:
-    - name: Create temp directory for kubeconfig staging
-      ansible.builtin.tempfile:
-        state: directory
-        prefix: jarvis-kubeconfig-
-      register: k3s_kubeconfig_staging
-      delegate_to: localhost
-      become: false
-      changed_when: false
-
-    - name: Fetch kubeconfig from node
-      ansible.builtin.fetch:
+    - name: Read the node kubeconfig
+      ansible.builtin.slurp:
         src: "{{ k3s_kubeconfig_path }}"
-        dest: "{{ k3s_kubeconfig_staging.path }}/k3s.yaml"
-        flat: true
+      register: k3s_kubeconfig_slurp
+      no_log: true
+
+    - name: Rewrite the kubeconfig server to the control-plane hostname
+      ansible.builtin.set_fact:
+        k3s_kubeconfig_rewritten: >-
+          {{
+            (k3s_kubeconfig_slurp.content | b64decode)
+            | regex_replace(
+              k3s_kubeconfig_server_pattern,
+              'https://' ~ inventory_hostname ~ ':6443'
+            )
+          }}
       changed_when: false
       no_log: true
 
-    - name: Point kubeconfig server at inventory hostname
-      ansible.builtin.replace:
-        path: "{{ k3s_kubeconfig_staging.path }}/k3s.yaml"
-        regexp: 'https://127\.0\.0\.1:6443'
-        replace: "https://{{ inventory_hostname }}:6443"
-      delegate_to: localhost
-      become: false
-      changed_when: false
+    - name: Fail when the kubeconfig server line did not change
+      ansible.builtin.assert:
+        that:
+          - k3s_kubeconfig_rewritten != (k3s_kubeconfig_slurp.content | b64decode)
+        fail_msg: kubeconfig server line was not rewritten
       no_log: true
 
-    - name: Ensure .kube directory exists for site.yml runner
+    - name: Ensure the runner kubeconfig directory exists
       ansible.builtin.file:
         path: "{{ k3s_kubeconfig_dir }}"
         state: directory
@@ -40,21 +40,13 @@
       delegate_to: localhost
       become: false
 
-    - name: Install kubeconfig for site.yml runner
+    - name: Write the per-env kubeconfig
       ansible.builtin.copy:
-        src: "{{ k3s_kubeconfig_staging.path }}/k3s.yaml"
+        content: "{{ k3s_kubeconfig_rewritten }}"
         dest: "{{ k3s_kubeconfig_runner_path }}"
         mode: "0600"
-        backup: true
+        backup: false
       delegate_to: localhost
       become: false
       no_log: true
-  always:
-    - name: Remove kubeconfig staging directory
-      ansible.builtin.file:
-        path: "{{ k3s_kubeconfig_staging.path }}"
-        state: absent
-      when: k3s_kubeconfig_staging is defined and k3s_kubeconfig_staging.path is defined
-      delegate_to: localhost
-      become: false
-      changed_when: false
+      diff: false
