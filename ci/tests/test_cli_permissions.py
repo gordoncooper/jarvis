@@ -8,10 +8,17 @@ import pytest
 
 from _cli_permissions import (
     DENY_CLASS_NAMES,
+    DRY_RUN_MUST_ALLOW,
     KUBECTL_VERBS,
+    MAIN_MUST_ALLOW_PATH,
+    MAIN_MUST_BLOCK_PATH,
     ToolVerbs,
+    _HELM_DENIED_READS,
+    _HELM_MUTATIONS,
+    _HELM_READS,
     classification_failures,
     command_allowed,
+    corpus_read_cases,
     corpus_shell_cases,
     deny_by_default_failures,
     deny_without_class,
@@ -19,6 +26,7 @@ from _cli_permissions import (
     matches_shell,
     parse_kubectl_help,
     policy_failures,
+    read_allowed,
     split_commands,
 )
 
@@ -128,6 +136,73 @@ def test_named_read_must_stay_allowed():
     tool = ToolVerbs("kubectl", ("get",), frozenset(), frozenset({"get"}))
     failures = classification_failures([], ["Shell(*get*)"], tools=(tool,))
     assert failures == ["kubectl read get is denied"]
+
+
+def test_denied_read_must_stay_denied():
+    """R34: a denied read is a lie if the guard allows it."""
+    tool = ToolVerbs(
+        "helm", ("history",), frozenset(), frozenset(), frozenset({"history"})
+    )
+    failures = classification_failures([], [], tools=(tool,))
+    assert failures == ["helm denied read history is allowed"]
+
+
+def test_helm_history_is_a_denied_read():
+    """R34: helm history reads release revisions; the guard denies that read."""
+    assert _HELM_DENIED_READS == frozenset({"hist", "history"})
+    assert not (_HELM_DENIED_READS & _HELM_MUTATIONS)
+    assert not (_HELM_DENIED_READS & _HELM_READS)
+    perms = load_cli_permissions(_CLI)
+    assert classification_failures(
+        perms["allow"], perms["deny"], kubectl=KUBECTL_VERBS
+    ) == []
+    assert not command_allowed(perms["allow"], perms["deny"], "helm history")
+    assert not command_allowed(perms["allow"], perms["deny"], "helm hist")
+    assert command_allowed(perms["allow"], perms["deny"], "helm histogram")
+
+
+def test_helm_un_alias_spares_a_longer_name():
+    """R34: the uninstall alias deny does not block a longer helm name."""
+    perms = load_cli_permissions(_CLI)
+    assert not command_allowed(perms["allow"], perms["deny"], 'helm un "<name>"')
+    assert not command_allowed(perms["allow"], perms["deny"], 'helm uninstall "<name>"')
+    assert command_allowed(perms["allow"], perms["deny"], "helm unittest")
+    assert command_allowed(perms["allow"], perms["deny"], "helm unit")
+    assert command_allowed(perms["allow"], perms["deny"], "helm plugin list")
+
+
+def test_main_must_block_cases_stay_in_the_corpus():
+    """R34: the dry-run corpus is a superset of main's must-block list."""
+    rows: list[tuple[str, str]] = []
+    for line in MAIN_MUST_BLOCK_PATH.read_text(encoding="utf-8").splitlines():
+        if not line:
+            continue
+        category, command = line.split("\t", 1)
+        rows.append((category, command))
+    assert len(rows) == 149
+    assert len({command for _, command in rows}) == 149
+    corpus = {case.command for case in corpus_shell_cases()}
+    perms = load_cli_permissions(_CLI)
+    for category, command in rows:
+        assert category in DENY_CLASS_NAMES
+        assert command in corpus
+        assert not command_allowed(perms["allow"], perms["deny"], command)
+    assert ".config/sops/age/keys.txt" in {case.path for case in corpus_read_cases()}
+    assert not read_allowed(perms["allow"], perms["deny"], ".config/sops/age/keys.txt")
+
+
+def test_must_allow_cases_unchanged():
+    """R34: the 37 must-allow cases stay the ones main allowed."""
+    got = tuple(
+        line
+        for line in MAIN_MUST_ALLOW_PATH.read_text(encoding="utf-8").splitlines()
+        if line
+    )
+    assert len(got) == 37
+    assert got == DRY_RUN_MUST_ALLOW
+    perms = load_cli_permissions(_CLI)
+    for command in got:
+        assert command_allowed(perms["allow"], perms["deny"], command)
 
 
 @pytest.mark.parametrize("category", DENY_CLASS_NAMES)

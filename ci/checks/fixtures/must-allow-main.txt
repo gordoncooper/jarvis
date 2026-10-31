@@ -1,0 +1,37 @@
+kubectl get pods -A
+kubectl describe pod demo -n default
+kubectl logs deploy/demo -n default --tail=20
+flux get kustomizations -A
+flux get sources git -A
+flux logs kustomization demo
+flux tree kustomization demo
+flux events --for Kustomization/demo
+flux reconcile kustomization demo --with-source
+kubectl get nodes --show-labels
+kubectl get statefulsets -A
+kubectl get replicasets -A
+kubectl get pods --field-selector=status.phase=Running
+kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'
+docker images -d
+python3 manage.py --dry-run
+rg -n 'kubectl apply' docs
+helm template demo ./chart
+ls | xargs docker image ls
+rg -n timeout docs
+rg -n nohup docs
+git commit -m 'add env check'
+cd x && env A=1 docker image ls
+cd x && timeout 5 du -sh storage
+helm --debug template demo ./chart
+helm lint ./chart
+git push origin my-branch
+git push -u origin my-feature
+gh pr view 98
+rsync -av ./a/ ./b/
+kubectl get pods | grep secret
+pytest -q
+make ci-verify
+command -v kubectl
+helm template cm jetstack/cert-manager --set installCRDs=true
+timeout 60 docker image ls
+nohup python3 -m http.server --directory coverage 8000

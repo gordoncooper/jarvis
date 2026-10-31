@@ -408,9 +408,9 @@ _GUARDED: tuple[tuple[str, str], ...] = (
     ("flux mutations", 'flux delete kustomization "<name>"'),
 )
 
-# Deny families the cross product does not cover, plus broad-pattern collisions
-# that already block on main. Not crossed with wrappers.
-_RETAINED: tuple[tuple[str, str], ...] = (
+# Forms the cross product does not spell. Not crossed with wrappers.
+# Main's must-block list is appended from the checked-in fixture.
+_RETAINED_EXTRA: tuple[tuple[str, str], ...] = (
     ("gh merge", 'gh pr merge "<name>"'),
     ("gh merge", 'gh api -X PUT "repos/<name>/<name>/pulls/1/merge"'),
     ("git force-push", 'git push --force origin "<name>"'),
@@ -489,11 +489,17 @@ def _absolute_form(command: str) -> str:
 
 def corpus_shell_cases() -> tuple[ShellCase, ...]:
     cases: list[ShellCase] = []
+    seen: set[str] = set()
     for category, base in _GUARDED:
         for name, template in _WRAPPERS:
             command = _absolute_form(base) if name == "absolute" else template.format(c=base)
             cases.append(ShellCase(category, name, command))
-    cases.extend(ShellCase(category, "retained", command) for category, command in _RETAINED)
+            seen.add(command)
+    for category, command in _RETAINED:
+        if command in seen:
+            continue
+        seen.add(command)
+        cases.append(ShellCase(category, "retained", command))
     return tuple(cases)
 
 
@@ -625,6 +631,30 @@ _DENY_CLASS: dict[str, Callable[[str], bool]] = {
 
 DENY_CLASS_NAMES: tuple[str, ...] = tuple(_DENY_CLASS)
 
+_CHECKS_DIR = Path(__file__).resolve().parents[1]
+MAIN_MUST_BLOCK_PATH = _CHECKS_DIR / "fixtures" / "must-block-main.tsv"
+MAIN_MUST_ALLOW_PATH = _CHECKS_DIR / "fixtures" / "must-allow-main.txt"
+
+
+def _load_main_must_block(path: Path) -> tuple[tuple[str, str], ...]:
+    """Category and command rows from main's must-block list."""
+    rows: list[tuple[str, str]] = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line:
+            continue
+        category, sep, command = line.partition("\t")
+        if not sep or not command or category not in _DENY_CLASS:
+            raise ValueError(f"must-block fixture line {lineno} is missing a known category")
+        rows.append((category, command))
+    if len(rows) != 149 or len({command for _, command in rows}) != 149:
+        raise ValueError(f"must-block fixture has {len(rows)} cases, expected 149")
+    return tuple(rows)
+
+
+_RETAINED: tuple[tuple[str, str], ...] = _RETAINED_EXTRA + _load_main_must_block(
+    MAIN_MUST_BLOCK_PATH
+)
+
 
 def deny_without_class(deny: list[str], category: str) -> list[str]:
     """Drop one deny class. The corpus must then fail and name that category."""
@@ -673,9 +703,11 @@ _KUBECTL_READS = frozenset({
     "kustomize", "logs", "plugin", "top", "version", "wait",
 })
 _HELM_MUTATIONS = frozenset({
-    "del", "delete", "get", "hist", "history", "install", "list", "ls",
-    "rollback", "status", "test", "un", "uninstall", "upgrade",
+    "del", "delete", "get", "install", "list", "ls", "rollback", "status",
+    "test", "un", "uninstall", "upgrade",
 })
+# helm history (alias hist) is a release-revision read the guard denies on purpose.
+_HELM_DENIED_READS = frozenset({"hist", "history"})
 _HELM_READS = frozenset({
     "completion", "create", "dependencies", "dependency", "dep", "docs", "env",
     "fetch", "help", "inspect", "lint", "package", "plugin", "pull", "push",
@@ -711,12 +743,15 @@ class ToolVerbs:
     verbs: tuple[str, ...]
     mutations: frozenset[str]
     reads: frozenset[str]
+    denied_reads: frozenset[str] = frozenset()
 
 
 def _default_tools(kubectl: tuple[str, ...]) -> tuple[ToolVerbs, ...]:
     return (
         ToolVerbs("kubectl", kubectl, _KUBECTL_MUTATIONS, _KUBECTL_READS),
-        ToolVerbs("helm", _HELM_VERBS, _HELM_MUTATIONS, _HELM_READS),
+        ToolVerbs(
+            "helm", _HELM_VERBS, _HELM_MUTATIONS, _HELM_READS, _HELM_DENIED_READS
+        ),
         ToolVerbs("flux", _FLUX_VERBS, _FLUX_MUTATIONS, _FLUX_READS),
     )
 
@@ -736,25 +771,40 @@ def classification_failures(
     tools: tuple[ToolVerbs, ...] | None = None,
     kubectl: tuple[str, ...] | None = None,
 ) -> list[str]:
-    """Every known subcommand is a denied mutation or a named read."""
+    """Every known subcommand is a denied mutation, a denied read, or a named read."""
     chosen = tools if tools is not None else _default_tools(
         kubectl if kubectl is not None else KUBECTL_VERBS
     )
     failures: list[str] = []
     for tool in chosen:
         for verb in tool.verbs:
-            in_mutation = verb in tool.mutations
-            in_read = verb in tool.reads
-            if in_mutation and in_read:
+            classes = [
+                name
+                for name, present in (
+                    ("mutation", verb in tool.mutations),
+                    ("read", verb in tool.reads),
+                    ("denied read", verb in tool.denied_reads),
+                )
+                if present
+            ]
+            if len(classes) > 1:
                 failures.append(f"{tool.name} subcommand {verb} is classed as both")
                 continue
-            if not in_mutation and not in_read:
+            if not classes:
                 failures.append(f"unclassified {tool.name} subcommand: {verb}")
                 continue
-            if in_mutation and command_allowed(allow, deny, _mutation_probe(tool.name, verb)):
+            if classes == ["mutation"] and command_allowed(
+                allow, deny, _mutation_probe(tool.name, verb)
+            ):
                 failures.append(f"{tool.name} mutation {verb} is not denied")
-            if in_read and not command_allowed(allow, deny, _read_probe(tool.name, verb)):
+            if classes == ["read"] and not command_allowed(
+                allow, deny, _read_probe(tool.name, verb)
+            ):
                 failures.append(f"{tool.name} read {verb} is denied")
+            if classes == ["denied read"] and command_allowed(
+                allow, deny, f"{tool.name} {verb}"
+            ):
+                failures.append(f"{tool.name} denied read {verb} is allowed")
     return failures
 
 
