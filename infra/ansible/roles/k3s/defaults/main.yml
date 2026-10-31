@@ -3,6 +3,7 @@
 # k3s_binary_path is playbook group_vars (shared with flux-operator).
 k3s_config_path: /etc/rancher/k3s/config.yaml
 k3s_data_dir: /var/lib/rancher/k3s
+k3s_unit_dir: /etc/systemd/system
 jarvis_marker_path: /etc/jarvis/env
 # k3s v1.36.5+k3s1 built-in defaults (D6); snapshot dir comes from backup_path.
 k3s_etcd_snapshot_schedule_cron: "0 */12 * * *"

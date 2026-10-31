@@ -35,7 +35,7 @@
   roles:
     - base-os
 
-- name: Prepare data disk
+- name: Check data disk
   hosts: data_disk
   become: true
   gather_facts: false

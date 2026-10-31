@@ -10,6 +10,7 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ansible_role_proof import (
@@ -23,6 +24,7 @@ from ansible_role_proof import (
     non_example_env_names,
     load_cluster_vars,
     load_role_defaults,
+    playbook_recap_field,
     roles_inventory_path,
 )
 from conftest import require_cli
@@ -484,3 +486,206 @@ def test_private_data_directories_are_mode_0700(tmp_path: Path) -> None:
         assert str(path) in output, output
         assert path.stat().st_mode & 0o777 == 0o755
     assert output.count('"mode": "0700"') + output.count("mode: '0700'") >= 3, output
+
+
+def _systemctl(bin_dir: Path, *, fail: str = "") -> None:
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "state").write_text("active enabled\n", encoding="utf-8")
+    (bin_dir / "fail").write_text(fail, encoding="utf-8")
+    (bin_dir / "systemctl.log").write_text("", encoding="utf-8")
+    (bin_dir / "systemctl").write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import sys
+            from pathlib import Path
+
+            root = Path(__file__).parent
+            log = root / "systemctl.log"
+            state_path = root / "state"
+            args = sys.argv[1:]
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(" ".join(args) + "\\n")
+            if not args:
+                sys.stderr.write("systemctl: missing command\\n")
+                sys.exit(1)
+            command = args[0]
+            if command == "daemon-reload":
+                sys.exit(0)
+            fail = (root / "fail").read_text(encoding="utf-8").strip()
+            if command == fail:
+                sys.stderr.write(f"{command} failed\\n")
+                sys.exit(1)
+
+            def read_state():
+                active, enabled = state_path.read_text(encoding="utf-8").split()
+                return active, enabled
+
+            def write_state(active, enabled):
+                state_path.write_text(f"{active} {enabled}\\n", encoding="utf-8")
+
+            if command == "show":
+                active, _enabled = read_state()
+                sys.stdout.write(f"LoadState=loaded\\nActiveState={active}\\n")
+                sys.exit(0)
+            if command == "is-enabled":
+                _active, enabled = read_state()
+                sys.stdout.write(enabled + "\\n")
+                sys.exit(0 if enabled == "enabled" else 1)
+            if command == "disable":
+                active, _enabled = read_state()
+                write_state(active, "disabled")
+                sys.exit(0)
+            if command == "stop":
+                _active, enabled = read_state()
+                write_state("inactive", enabled)
+                sys.exit(0)
+            sys.stderr.write("unexpected systemctl " + " ".join(args) + "\\n")
+            sys.exit(1)
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bin_dir / "systemctl").chmod(0o755)
+
+
+def _dropin_play(tmp_path: Path, bin_dir: Path) -> Path:
+    play = tmp_path / "play.yml"
+    play.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - name: k3s unit
+              hosts: localhost
+              gather_facts: false
+              become: false
+              environment:
+                PATH: "{bin_dir}:/usr/bin:/bin"
+              tasks:
+                - ansible.builtin.import_role:
+                    name: k3s
+                    tasks_from: service-unit.yml
+            """
+        ),
+        encoding="utf-8",
+    )
+    return play
+
+
+def _run_dropin(
+    play: Path,
+    *,
+    mode: str,
+    unit_dir: Path,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    service = "k3s" if mode == "server" else "k3s-agent"
+    cluster = load_cluster_vars()
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    cmd = [
+        "ansible-playbook",
+        str(play),
+        "-i",
+        "localhost,",
+        "-e",
+        "ansible_connection=local",
+        "-e",
+        json.dumps(
+            {
+                "k3s_mode": mode,
+                "k3s_service_name": service,
+                "k3s_unit_dir": str(unit_dir),
+                "local_path_data": cluster["local_path_data"],
+                "backup_path": cluster["backup_path"],
+            }
+        ),
+    ]
+    if check:
+        cmd.append("--check")
+    return subprocess.run(
+        cmd,
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
+@pytest.mark.parametrize("mode", ["server", "agent"])
+def test_k3s_writes_mount_dropin_and_disables_opposite_unit(tmp_path: Path, mode: str) -> None:
+    """The drop-in matches the configured paths and the opposite unit is stopped."""
+    require_cli("ansible-playbook")
+    bin_dir = tmp_path / "bin"
+    _systemctl(bin_dir)
+    unit_dir = tmp_path / "systemd"
+    unit_dir.mkdir()
+    service = "k3s" if mode == "server" else "k3s-agent"
+    opposite = "k3s-agent" if mode == "server" else "k3s"
+    (unit_dir / f"{opposite}.service").write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    play = _dropin_play(tmp_path, bin_dir)
+    cluster = load_cluster_vars()
+    expected = (
+        "# Managed by Ansible (k3s role).\n"
+        "[Unit]\n"
+        f"RequiresMountsFor={cluster['local_path_data']} {cluster['backup_path']}\n"
+    )
+
+    checked = _run_dropin(play, mode=mode, unit_dir=unit_dir, check=True)
+    checked_out = checked.stdout + checked.stderr
+    assert checked.returncode == 0, checked_out
+
+    first = _run_dropin(play, mode=mode, unit_dir=unit_dir)
+    output = first.stdout + first.stderr
+    assert first.returncode == 0, output
+    dropin = unit_dir / f"{service}.service.d" / "jarvis-mount.conf"
+    assert dropin.read_text(encoding="utf-8") == expected
+    assert dropin.stat().st_mode & 0o777 == 0o644
+    log = (bin_dir / "systemctl.log").read_text(encoding="utf-8")
+    assert f"disable {opposite}" in log
+    assert f"stop {opposite}" in log
+    assert "daemon-reload" in log
+    assert "restart" not in log
+
+    second = _run_dropin(play, mode=mode, unit_dir=unit_dir)
+    second_out = second.stdout + second.stderr
+    assert second.returncode == 0, second_out
+    assert playbook_recap_field(second_out, "changed") == 0
+    assert dropin.read_text(encoding="utf-8") == expected
+
+    again = _run_dropin(play, mode=mode, unit_dir=unit_dir, check=True)
+    again_out = again.stdout + again.stderr
+    assert again.returncode == 0, again_out
+    assert playbook_recap_field(again_out, "changed") == 0
+
+
+def test_k3s_missing_opposite_unit_is_fine(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    bin_dir = tmp_path / "bin"
+    _systemctl(bin_dir, fail="show")
+    unit_dir = tmp_path / "systemd"
+    unit_dir.mkdir()
+    play = _dropin_play(tmp_path, bin_dir)
+    result = _run_dropin(play, mode="server", unit_dir=unit_dir)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    log = (bin_dir / "systemctl.log").read_text(encoding="utf-8")
+    assert "daemon-reload" in log
+    assert "disable" not in log
+    assert "stop" not in log
+
+
+def test_k3s_opposite_unit_error_fails(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    bin_dir = tmp_path / "bin"
+    _systemctl(bin_dir, fail="disable")
+    unit_dir = tmp_path / "systemd"
+    unit_dir.mkdir()
+    (unit_dir / "k3s-agent.service").write_text("[Service]\n", encoding="utf-8")
+    play = _dropin_play(tmp_path, bin_dir)
+    result = _run_dropin(play, mode="server", unit_dir=unit_dir)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "Unable to disable" in output

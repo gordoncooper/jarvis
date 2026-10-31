@@ -442,17 +442,35 @@ def test_unknown_host_key_fails(tmp_path: Path):
     assert "ansible_host" in msg
 
 
+def test_data_disk_true_passes(tmp_path: Path) -> None:
+    """data_disk: true is the only accepted value (p0a-11a)."""
+    _write_env(
+        tmp_path,
+        hosts_yml=_hosts(
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup, edge]
+                  data_disk: true
+            """
+        ),
+    )
+    resolved = validate_env_tree(tmp_path)
+    assert "env-test" in resolved
+
+
 @pytest.mark.parametrize(
-    "disk_id",
+    "disk_yml",
     [
-        "/dev/nvme0n1",
-        "/dev/sda",
-        "/dev/disk/by-path/pci-0000:01:00.0-nvme-1",
-        "/dev/disk/by-id/example-disk-part1",
-        "/dev/disk/by-id/nvme-example-part2",
+        "false",
+        '"true"',
+        "1",
+        "{id: /dev/disk/by-id/example, wipe_confirmed: true}",
     ],
 )
-def test_data_disk_id_must_be_whole_disk_by_id(tmp_path: Path, disk_id: str):
+def test_data_disk_other_than_true_fails(tmp_path: Path, disk_yml: str) -> None:
+    """Any value other than true, including the old mapping, fails (p0a-11a)."""
     _write_env(
         tmp_path,
         hosts_yml=_hosts(
@@ -460,16 +478,14 @@ def test_data_disk_id_must_be_whole_disk_by_id(tmp_path: Path, disk_id: str):
             all:
               hosts:
                 node.example:
-                  node_roles: [control_plane, backup]
-                  data_disk:
-                    id: {disk_id}
-                    wipe_confirmed: false
+                  node_roles: [control_plane, backup, edge]
+                  data_disk: {disk_yml}
             """
         ),
     )
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    assert "whole-disk /dev/disk/by-id path" in "\n".join(excinfo.value.messages)
+    assert "data_disk must be true" in "\n".join(excinfo.value.messages)
 
 
 def test_example_env_must_declare_a_new_known_role(monkeypatch: pytest.MonkeyPatch):

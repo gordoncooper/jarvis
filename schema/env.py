@@ -73,10 +73,7 @@ _NODE_ROLES = frozenset(
     {"control_plane", "workers", "storage", "backup", "gpu", "edge"}
 )
 _HOST_KEYS = frozenset({"node_roles", "data_disk"})
-_DATA_DISK_KEYS = frozenset({"id", "wipe_confirmed"})
 _SINGLETON_ROLES = ("control_plane", "backup")
-_DISK_ID = re.compile(r"^/dev/disk/by-id/[A-Za-z0-9][A-Za-z0-9._+-]*$")
-_DISK_PARTITION = re.compile(r"-part[0-9]+$")
 
 
 class ValidationError(Exception):
@@ -688,34 +685,9 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
 
 
 def _validate_data_disk(disk: Any, rel_path: str, hostname: str) -> list[str]:
-    errors: list[str] = []
-    if not isinstance(disk, dict):
-        errors.append(f"{rel_path}: host {hostname}: data_disk must be a mapping")
-        return errors
-
-    allowed = ", ".join(sorted(_DATA_DISK_KEYS))
-    for key in sorted(set(disk) - _DATA_DISK_KEYS):
-        errors.append(
-            f"{rel_path}: host {hostname}: data_disk unknown key '{key}' (allowed: {allowed})"
-        )
-    for key in sorted(_DATA_DISK_KEYS - set(disk)):
-        errors.append(f"{rel_path}: host {hostname}: data_disk missing required key: {key}")
-
-    disk_id = disk.get("id")
-    if "id" in disk and (
-        not isinstance(disk_id, str)
-        or _DISK_ID.match(disk_id) is None
-        or _DISK_PARTITION.search(disk_id) is not None
-    ):
-        errors.append(
-            f"{rel_path}: host {hostname}: data_disk.id must be a whole-disk /dev/disk/by-id path"
-        )
-
-    if "wipe_confirmed" in disk and not isinstance(disk.get("wipe_confirmed"), bool):
-        errors.append(
-            f"{rel_path}: host {hostname}: data_disk.wipe_confirmed must be a boolean"
-        )
-    return errors
+    if disk is True:
+        return []
+    return [f"{rel_path}: host {hostname}: data_disk must be true"]
 
 
 def _looks_like_ip(value: str) -> bool:

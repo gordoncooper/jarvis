@@ -13,3 +13,4 @@ Do not copy those documents into `jarvis`; link here instead.
 | [CONTRACT.template.md](CONTRACT.template.md) | Shared contract section layout |
 | [code-delivery/CONTRACT.md](code-delivery/CONTRACT.md) | Code delivery provider (`github`) |
 | [../schema/CONTRACT.md](../schema/CONTRACT.md) | Env schema |
+| [deploy.md](deploy.md) | Prepare a data disk |

@@ -1,89 +1,174 @@
 ---
-- name: Check the data disk
+- name: Check a declared data disk
   tags: [node-disk]
+  when: data_disk | default(false) is sameas true
   block:
-    - ansible.builtin.command:
-        argv: [readlink, -f, "{{ data_disk.id }}"]
-      register: node_disk_resolved
-      changed_when: false
-    - ansible.builtin.command:
-        argv: [findmnt, -no, SOURCE, /]
-      register: node_disk_root_src
-      changed_when: false
-    - ansible.builtin.command:
-        argv: [blkid, -o, device, -t, "LABEL={{ node_disk_label }}"]
-      register: node_disk_label_dev
-      changed_when: false
-      failed_when: false
-    - ansible.builtin.set_fact:
-        node_disk_path: "{{ node_disk_resolved.stdout }}"
-        node_disk_root: "{{ node_disk_root_src.stdout }}"
-        node_disk_labeled: "{{ node_disk_label_dev.stdout_lines }}"
-    - ansible.builtin.command:
-        argv:
-          - readlink
-          - -f
-          - "{{ node_disk_root | regex_replace('\\[[^\\]]*\\]$', '') | trim }}"
-      register: node_disk_root_resolved
-      changed_when: false
-    - ansible.builtin.set_fact:
-        node_disk_root_follow: "{{ node_disk_root_resolved.stdout | trim }}"
-    - ansible.builtin.command:
-        argv:
-          - lsblk
-          - -nso
-          - NAME,TYPE
-          - "{{ node_disk_root_follow }}"
-      register: node_disk_root_lsblk_cmd
-      changed_when: false
-    - ansible.builtin.set_fact:
-        node_disk_root_lsblk_lines: "{{ node_disk_root_lsblk_cmd.stdout_lines }}"
-    - ansible.builtin.import_tasks: guards.yml
-      tags: [node-disk]
+    - name: Require data paths from cluster-vars
+      ansible.builtin.assert:
+        that:
+          - local_path_data is defined
+          - local_path_data is string
+          - local_path_data | length > 0
+          - backup_path is defined
+          - backup_path is string
+          - backup_path | length > 0
+        fail_msg: node-disk requires local_path_data and backup_path from cluster-vars.
 
-- name: Mount the data disk
-  tags: [node-disk]
-  block:
-    - ansible.builtin.apt:
-        name: [parted, e2fsprogs]
-        state: present
-      when: not (node_disk_ours | bool)
-    - ansible.builtin.command:
-        argv: [wipefs, -a, "{{ node_disk_path }}"]
-      when: not (node_disk_ours | bool)
-    - community.general.parted:
-        device: "{{ node_disk_path }}"
-        label: gpt
-        name: "{{ node_disk_label }}"
-        number: 1
-        state: present
-        part_start: 1MiB
-        part_end: 100%
-        fs_type: "{{ node_disk_fstype }}"
-      when: not (node_disk_ours | bool)
-    - ansible.builtin.command:
-        argv: [udevadm, settle]
-      when: not (node_disk_ours | bool)
-      changed_when: false
-    - community.general.filesystem:
-        fstype: "{{ node_disk_fstype }}"
-        dev: "{{ node_disk_path ~ ('p1' if node_disk_path is match('.*[0-9]$') else '1') }}"
-        force: true
-        opts: "-L {{ node_disk_label }}"
-      when: not (node_disk_ours | bool)
-    - ansible.posix.mount:
+    - name: Stat the data path
+      ansible.builtin.stat:
         path: "{{ node_disk_mount }}"
-        src: "LABEL={{ node_disk_label }}"
-        fstype: "{{ node_disk_fstype }}"
-        opts: defaults,nofail
-        state: mounted
-    - ansible.builtin.import_tasks: k3s-service.yml
-    - ansible.builtin.file:
-        path: "/etc/systemd/system/{{ node_disk_k3s_service }}.service.d"
-        state: directory
-        mode: "0755"
-    - ansible.builtin.template:
-        src: k3s-mount.conf.j2
-        dest: "/etc/systemd/system/{{ node_disk_k3s_service }}.service.d/jarvis-mount.conf"
-        mode: "0644"
-      notify: Reload systemd
+        follow: false
+      register: node_disk_stat
+
+    - name: Refuse a missing data path
+      ansible.builtin.assert:
+        that:
+          - node_disk_stat.stat.exists
+          - node_disk_stat.stat.isdir
+        fail_msg: "data path {{ node_disk_mount }} does not exist or is not a directory."
+
+    - name: Read the mount target of the data path
+      ansible.builtin.command:
+        argv: [findmnt, -n, -T, "{{ node_disk_mount }}", -o, TARGET]
+      register: node_disk_mount_target
+      changed_when: false
+      check_mode: false
+
+    - name: Read the filesystem id of the data path
+      ansible.builtin.command:
+        argv: [findmnt, -n, -T, "{{ node_disk_mount }}", -o, "MAJ:MIN"]
+      register: node_disk_mount_id
+      changed_when: false
+      check_mode: false
+
+    - name: Read the filesystem id of root
+      ansible.builtin.command:
+        argv: [findmnt, -n, -T, /, -o, "MAJ:MIN"]
+      register: node_disk_root_id
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse a data path that is not a mount
+      ansible.builtin.assert:
+        that:
+          - (node_disk_mount_target.stdout | trim) == node_disk_mount
+        fail_msg: >-
+          {{ node_disk_mount }} is not a mount; it is part of
+          {{ node_disk_mount_target.stdout | trim }}.
+
+    - name: Refuse a data path on the root filesystem
+      ansible.builtin.assert:
+        that:
+          - (node_disk_mount_id.stdout | trim) != (node_disk_root_id.stdout | trim)
+        fail_msg: "{{ node_disk_mount }} is not its own filesystem; it is part of /."
+
+    - name: Refuse local_path_data or backup_path outside the data mount
+      ansible.builtin.assert:
+        that:
+          - >-
+            local_path_data == node_disk_mount
+            or local_path_data is match('^' ~ (node_disk_mount | regex_escape) ~ '/')
+          - >-
+            backup_path == node_disk_mount
+            or backup_path is match('^' ~ (node_disk_mount | regex_escape) ~ '/')
+          - "'/../' not in ('/' ~ local_path_data ~ '/')"
+          - "'/../' not in ('/' ~ backup_path ~ '/')"
+        fail_msg: >-
+          local_path_data ({{ local_path_data }}) or backup_path ({{ backup_path }})
+          is outside {{ node_disk_mount }}.
+
+    - name: Stat local_path_data
+      ansible.builtin.stat:
+        path: "{{ local_path_data }}"
+        follow: false
+      register: node_disk_local_stat
+
+    - name: Read the mount that holds local_path_data
+      when: node_disk_local_stat.stat.exists
+      ansible.builtin.command:
+        argv: [findmnt, -n, -T, "{{ local_path_data }}", -o, TARGET]
+      register: node_disk_local_mount
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse local_path_data on another mount
+      when: node_disk_local_stat.stat.exists
+      ansible.builtin.assert:
+        that:
+          - (node_disk_local_mount.stdout | trim) == node_disk_mount
+        fail_msg: >-
+          local_path_data ({{ local_path_data }}) is outside {{ node_disk_mount }}
+          (mounted at {{ node_disk_local_mount.stdout | trim }}).
+
+    - name: Stat backup_path
+      ansible.builtin.stat:
+        path: "{{ backup_path }}"
+        follow: false
+      register: node_disk_backup_stat
+
+    - name: Read the mount that holds backup_path
+      when: node_disk_backup_stat.stat.exists
+      ansible.builtin.command:
+        argv: [findmnt, -n, -T, "{{ backup_path }}", -o, TARGET]
+      register: node_disk_backup_mount
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse backup_path on another mount
+      when: node_disk_backup_stat.stat.exists
+      ansible.builtin.assert:
+        that:
+          - (node_disk_backup_mount.stdout | trim) == node_disk_mount
+        fail_msg: >-
+          backup_path ({{ backup_path }}) is outside {{ node_disk_mount }}
+          (mounted at {{ node_disk_backup_mount.stdout | trim }}).
+
+    - name: List the data path
+      ansible.builtin.find:
+        paths: "{{ node_disk_mount }}"
+        file_type: any
+        recurse: false
+        hidden: true
+      register: node_disk_listing
+
+    - name: Record names on the data path
+      ansible.builtin.set_fact:
+        node_disk_names: "{{ node_disk_listing.files | map(attribute='path') | map('basename') | list }}"
+        node_disk_jarvis_names: >-
+          {{
+            [local_path_data, backup_path]
+            | map('regex_replace', '^' ~ (node_disk_mount | regex_escape) ~ '/', '')
+            | map('regex_replace', '/.*$', '')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+      changed_when: false
+
+    - name: Refuse entries that are not Jarvis data
+      vars:
+        node_disk_allowed: "{{ (node_disk_jarvis_names + ['lost+found']) | unique }}"
+        node_disk_foreign: "{{ node_disk_names | difference(node_disk_allowed) }}"
+      ansible.builtin.assert:
+        that:
+          - node_disk_foreign | length == 0
+        fail_msg: >-
+          {{ node_disk_mount }} holds entries that are not Jarvis data:
+          {{ node_disk_foreign | join(', ') }}.
+
+    - name: Stat this env's marker
+      ansible.builtin.stat:
+        path: "{{ jarvis_marker_path | default('/etc/jarvis/env') }}"
+      register: node_disk_marker_stat
+
+    - name: Refuse an empty data path when this env's marker is present
+      when: node_disk_marker_stat.stat.exists
+      vars:
+        node_disk_held: "{{ node_disk_names | intersect(node_disk_jarvis_names) }}"
+      ansible.builtin.assert:
+        that:
+          - node_disk_held | length > 0
+        fail_msg: >-
+          {{ node_disk_mount }} has no Jarvis data but
+          {{ jarvis_marker_path | default('/etc/jarvis/env') }} is present,
+          so existing data is missing or hidden under the mount.
