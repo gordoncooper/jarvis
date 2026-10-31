@@ -44,9 +44,8 @@
   loop:
     - /etc/jarvis
     - /etc/rancher/k3s
-    - "{{ local_path_data }}"
-    - "{{ backup_path }}"
-    - "{{ backup_path }}/etcd-snapshots"
+
+- ansible.builtin.import_tasks: data-dirs.yml
 
 - name: Install k3s server config
   ansible.builtin.template:

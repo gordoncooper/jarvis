@@ -103,3 +103,25 @@ def test_missing_binary_prints_deps_hint(capsys: pytest.CaptureFixture[str]) -> 
         verify_p0a._run(["jarvis-missing-binary"])
     assert raised.value.code == 1
     assert capsys.readouterr().out == "run make deps\n"
+
+
+def test_p0a_kubectl_uses_per_env_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """p0a kubectl reads ~/.kube/jarvis-<env>.yaml for the requested env."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    seen: dict[str, object] = {}
+
+    def fake_run(argv: Sequence[str], **kwargs: object) -> CompletedProcess[str]:
+        seen["argv"] = list(argv)
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        seen["kubeconfig"] = env["KUBECONFIG"]
+        return _completed(list(argv), "")
+
+    monkeypatch.setattr(verify_p0a.subprocess, "run", fake_run)
+    verify_p0a._kubectl_for("fixture")(["get", "nodes"])
+    assert seen["argv"] == ["kubectl", "get", "nodes"]
+    assert seen["kubeconfig"] == str(home / ".kube" / "jarvis-fixture.yaml")
