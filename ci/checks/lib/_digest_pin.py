@@ -1,9 +1,8 @@
 """R33: container images the repo adds are pinned by digest.
 
-Pod image fields and HelmRelease image values are checked. A pin is
-`@sha256:` on the reference, `tag: <version>@sha256:...`, or the chart
-`digest:` field. Chart versions and OCI chart tags are not images.
-HelmChartConfig is the k3s chart and is not scanned.
+Pod image fields, HelmRelease values and HelmChartConfig valuesContent are
+checked. A pin is `@sha256:` on the reference, `tag: <version>@sha256:...`,
+or the chart `digest:` field. Chart versions and OCI chart tags are not images.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from _manifests import kind_of, load_documents, pod_spec, ref_of
+from _manifests import helm_values, load_documents, pod_spec, ref_of
 
 _SHA = re.compile(r"sha256:[a-f0-9]{64}\Z")
 _SHA_REF = re.compile(r"@sha256:[a-f0-9]{64}\Z")
@@ -34,10 +33,11 @@ def scan_digest_pin(repo_root: Path | str) -> list[DigestPinViolation]:
         pod = pod_spec(doc)
         if pod is not None:
             _pod_images(rel, doc, pod, violations)
-        if kind_of(doc) == "HelmRelease":
-            values = (doc.get("spec") or {}).get("values") if isinstance(doc.get("spec"), dict) else None
-            if isinstance(values, dict):
-                _walk_images(values, rel, ref_of(doc), "", violations)
+        values, values_error = helm_values(doc)
+        if values_error:
+            violations.append(DigestPinViolation(rel, f"{ref_of(doc)}: {values_error}"))
+        elif values is not None:
+            _walk_images(values, rel, ref_of(doc), "", violations)
     return sorted(violations, key=lambda item: (item.path, item.message))
 
 

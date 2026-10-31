@@ -6,7 +6,6 @@ from pathlib import Path
 
 from _manifest_lint import scan_manifest_lint
 
-REPO = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "manifest-lint" / "missing-memory-limit.yaml"
 
 
@@ -193,5 +192,9 @@ spec:
     assert "logs to a file" in violations[0].message
 
 
-def test_r5_platform_manifests_pass() -> None:
-    assert scan_manifest_lint(REPO) == []
+def test_r5_non_mapping_document_fails(tmp_path: Path) -> None:
+    _write(tmp_path, "platform/list.yaml", "- kind: Deployment\n---\n")
+    violations = scan_manifest_lint(tmp_path)
+    assert len(violations) == 1
+    assert violations[0].path == "platform/list.yaml"
+    assert "not a mapping" in violations[0].message

@@ -156,10 +156,7 @@
       "customType": "regex",
       "description": "VolSync container image digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": [
-        "/^platform\\/backups\\/controller\\/helmrelease.yaml$/",
-        "/^platform\\/backups\\/test\\/.+\\.yaml$/"
-      ],
+      "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "image: (?<depName>quay.io/backube/volsync)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# CI rule check: every ${name} Flux substitutes is a key the env publishes (R4, D45).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _flux_substitute import format_violations, scan_flux_substitute
+
+violations = scan_flux_substitute(Path("."))
+if violations:
+    for line in format_violations(violations):
+        print(line, flush=True)
+    raise SystemExit(1)
+PY
