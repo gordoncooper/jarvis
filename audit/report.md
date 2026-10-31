@@ -51,6 +51,7 @@ The weak point is not shape but **proof**. Several safety paths report success w
   - `Makefile:38-40` runs `python3 tools/restore --app "$(APP)"` with no `ENV`, no `--context` and no confirmation, against whatever `~/.kube/config` points at. J4 makes that file whichever cluster Ansible touched last.
   - `_quiesce` (`tools/restore:409-429`) scales only Deployments and StatefulSets. CronJobs, Jobs and DaemonSets keep writing during a `copyMethod: Direct, enableFileDeletion: True` restore (`destination_body`).
   - The undo lines print only in `except Fail:` (`:709`). A `KeyboardInterrupt` injected at the ReplicationDestination apply in the fake printed no undo lines (`undo lines printed? False`), leaving workloads scaled to 0 and sources paused with no instructions.
+  - The tests cannot catch a scale-down regression: the `_Cluster` fake answers every `get deployment`/`get statefulset` with `{"items": []}` (`ci/tests/test_restore.py:126-127`), so no test ever scales a workload.
   - `AS_OF=` *does* reach the tool: command-line make variables are exported (verified with a toy Makefile). That part of A's F2 is withdrawn.
 - **Effect if left:** a restore aimed at the wrong cluster deletes live files. A CronJob can write into a volume mid-restore. An interrupted run leaves an app down with no recovery hint.
 - **Suggested fix:** require `ENV=` in `make restore`/`restore-all`. The tool derives the expected API server from `envs/<env>` (or a per-env kubeconfig, J4), refuses on mismatch, and passes `--context`/`--kubeconfig` to every `kubectl` call. Suspend CronJobs (`spec.suspend`) alongside scaling, and refuse when a non-owned Pod mounts the PVC. Catch `BaseException` around the mutation section to print the undo plan, then re-raise. Tests: wrong-context refusal, CronJob suspend/resume, KeyboardInterrupt prints undo. **Done check:** `pytest ci/tests/test_restore.py`.
@@ -120,6 +121,7 @@ The weak point is not shape but **proof**. Several safety paths report success w
   - `tools/verify/p0a` exits 0 printing "automatic checks passed; N owner items remain" (the baseline shows 14 owner items, exit 0).
   - `tools/verify/p0b` proves a restore by regex over a free-text transcript (`_RESTORE = r"\brestore\b"`, `_SNAPSHOT = r"etcd-snapshot-\S+"`, checksum lines). A seeded transcript containing `restore failed: no data` plus a repeated hash returned `recorded_checksum` = that hash, i.e. pass.
   - The drill script itself is "in the PR description" (`platform/backups/CONTRACT.md:51`), not in the repo.
+  - The p0a test fake answers every `wait --for=condition=Ready --all` with success (`ci/tests/test_verify_p0a.py:68-69`), so the not-Ready path is never exercised.
 - **Effect if left:** a PVC created during a Kyverno blip is never backed up, and nothing says so. The exit checks certify a restore that did not happen.
 - **Suggested fix:** replace `tools/verify/p0a` and `p0b` with one `make verify ENV=<env>` that is read-only and fail-closed:
   - every Flux object is Ready;
@@ -237,7 +239,13 @@ The weak point is not shape but **proof**. Several safety paths report success w
   - `envs/env-01/README.md` carries one-time cleanup, R/D/p-codes and "admin-gate after P2 exit".
   - `Makefile:11,29-35` exposes `PHASE=p0a|p0b`; `tools/verify/p0a:206` lists `p0a-16` milestones; `docs/code-delivery/CONTRACT.md:60` defines repo hosting by "P0a exit".
   - `README.md:5`, `docs/README.md:5` and `AGENTS.md` point at `https://github.com/<owner>/project-plans`, a private plan repo an adopter cannot see.
-  - `rulebooks/coding-agents.md` is dense with R/D codes.
+  - `rulebooks/coding-agents.md` is dense with R/D codes. Across the repo, `git grep` counts about 92 lines with `R<n>`, 56 with `D<n>`, 25 with `§<n>` and 35 with `p<n>-<nn>` plan IDs, concentrated in `schema/CONTRACT.md` and `docs/code-delivery/CONTRACT.md`.
+  - Some CONTRACT claims are false or describe things not yet in the tree:
+    - `platform/backups/CONTRACT.md:46` ends "The command is not in Git", but `tools/restore` and `Makefile:38-43` are tracked.
+    - `docs/code-delivery/CONTRACT.md:14,17,28` names a required `ci/checks/admin-gate` (absent) and a `build.yml` publish workflow (only `ci.yml` exists).
+    - `schema/CONTRACT.md:3` points at `services/hermes/core/schema/CONTRACT.md` (absent).
+    - The traefik and testapp contracts make Gatus the health signal; Gatus is absent.
+  - `infra/ansible/README.md:5` says "Run from this directory", while its `:22` step is `make bootstrap-secrets` (root Makefile only).
 - **Effect if left:** an adopter cannot tell interface from history, and the core docs depend on a repo they don't have.
 - **Suggested fix:** each CONTRACT gets a fixed shape: *Provides / Requires / Config keys / Operations / Limits*, with no history and no phase codes. Move history to git log or the plan repo. Put the restore drill in the repo (J7). Root README: one adopter path (J17) and no project-plans link (keep that in `AGENTS.md`/`rulebooks/` only, for agents). **Done check:** extend `contract-md` to reject `\b(P\d|p0[ab]|R\d+|D\d+|OQ\d+)\b` in CONTRACTs and READMEs outside `rulebooks/`.
 - **Fix risk:** docs plus one check. No render change.
@@ -245,8 +253,8 @@ The weak point is not shape but **proof**. Several safety paths report success w
 ### J17. No repository-only path from a fresh copy to a running cluster
 - **Type / severity:** complexity (adoption). **Medium.**
 - **Found by:** both (A F13, F20, F24; B F20), confirmed.
-- **Evidence:** the adopter walk is in section 6. It took **14 files** to assemble the order prep-node → bootstrap-secrets → seal → site.yml → verify. `make ci-verify` fails with `OWNER_NAME is unset` and the Makefile never mentions it (`ci-verify-no-owner.log`). The `infra/ansible/README.md:44-46` tag examples omit `-i`/`-e`.
-- **Suggested fix:** one `docs/deploy.md` (prerequisites, then numbered commands, then what each produces). `make ci-verify` defaults `OWNER_NAME` to `git config user.name` with a message. Fix the tag examples. **Done check:** a doc-link test that every `make` target named in `docs/deploy.md` exists.
+- **Evidence:** the adopter walk is in section 6. It took **14 files** to assemble the order prep-node → bootstrap-secrets → seal → site.yml → verify. `make ci-verify` fails with `OWNER_NAME is unset` and the Makefile never mentions it (`ci-verify-no-owner.log`). The `infra/ansible/README.md:44-46` tag examples omit `-i`/`-e` (run as written: "No inventory was parsed"). Nothing in the repo says how to get `k3s_sha256` for a chosen `k3s_version` (`schema/CONTRACT.md:50`), or how to point router/LAN DNS for `*.${dns_suffix}` at the App DNS address. That step is a deliberate prerequisite, but it is undocumented.
+- **Suggested fix:** one `docs/deploy.md` (prerequisites including the router DNS forward, then numbered commands, then what each produces, including the `k3s_sha256` lookup). `make ci-verify` defaults `OWNER_NAME` to `git config user.name` with a message. Fix the tag examples. **Done check:** a doc-link test that every `make` target named in `docs/deploy.md` exists.
 - **Fix risk:** docs plus Makefile. None.
 
 ### J18. Duplicated helpers and boilerplate across `ci/`, `tools/` and `schema/`
@@ -266,7 +274,9 @@ The weak point is not shape but **proof**. Several safety paths report success w
   - `ci/tests/test_flux_operator.py:61-92` locks all eight `site.yml` plays, while the safety fact is "the first play has no roles and runs before base-os".
   - The fresh-cluster test accepts a non-zero play exit when the output contains `chown failed` (`test_flux_operator.py:~521-522`).
   - The three scanner tests also re-run `scan_*(REPO) == []`, which `ci/run-checks` already does.
-  - Test modules import from each other (`test_prune_guards` imports `test_flux_entry._kustomize_build`).
+  - Hard-coded object inventories restate the manifests: `test_cert_manager.py:13-33,76,87,91,184` (full platform resource lists and object sets) and `test_bootstrap_secrets.py:304` (`test_secret_manifest_shape`).
+  - Test modules import from each other: six modules import `test_flux_entry._kustomize_build`, and `test_core_names` imports from `test_env_schema`. `REPO_ROOT = parents[2]` is redefined in 15 test files, and the SourceFileLoader bootstrap is copied six times.
+  - The Renovate regex tests rewrite `(?<` to `(?P<` and match with Python `re` (`test_renovate.py:37`, and the same pattern in the app-dns, cert-manager and backup-enrollment tests), so a pattern that Renovate's own regex engine reads differently still passes.
   - Largest files: `test_restore.py` 589, `test_flux_operator.py` 573, `test_env_schema.py` 526.
 - **Suggested fix:** replace the order lock with the safety fact; delete the three tree-rescan asserts (keep the seeded cases); move shared helpers to `ci/tests/support.py`; make the fixture require success. **Done check:** pytest.
 - **Fix risk:** tests only.
@@ -449,7 +459,10 @@ Stuck points, ranked with the smallest fix:
 - phase-milestone tooling (`p0a`/`p0b`) and the private-plan links in product docs;
 - the drill script living in a PR description;
 - the derived-vs-hand-written prune guard set;
-- the `ci/checks` heredoc boilerplate and `_tool_env` copies.
+- the `ci/checks` heredoc boilerplate and `_tool_env` copies;
+- restore and p0a test fakes that hide the scale-down and not-Ready paths;
+- the false "command is not in Git" line and the absent `admin-gate`/`build.yml`/Hermes-schema targets in CONTRACTs;
+- the missing router-DNS and `k3s_sha256` instructions.
 
 ---
 
