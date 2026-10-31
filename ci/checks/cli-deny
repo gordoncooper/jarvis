@@ -11,7 +11,7 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
-from _cli_permissions import load_cli_permissions, run_dry_run, validate_deny_coverage
+from _cli_permissions import check_cli_policy
 
 cli_path = Path(".cursor/cli.json")
 if not cli_path.is_file():
@@ -24,14 +24,7 @@ except json.JSONDecodeError as exc:
     print(f".cursor/cli.json is not valid JSON: {exc}", flush=True)
     raise SystemExit(1)
 
-perms = load_cli_permissions(cli_path)
-coverage_errors = validate_deny_coverage(perms["deny"])
-if coverage_errors:
-    for line in coverage_errors:
-        print(line, flush=True)
-    raise SystemExit(1)
-
-failures, _ = run_dry_run(cli_path)
+failures = check_cli_policy(cli_path)
 if failures:
     for line in failures:
         print(line, flush=True)
