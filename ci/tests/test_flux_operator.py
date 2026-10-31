@@ -492,6 +492,8 @@ def test_sops_age_refuses_wrong_owner_from_stat(tmp_path: Path) -> None:
     proc = _run_localhost_role(play, tmp_path, [], env=_ansible_env())
     _assert_key_was_not_read(proc, sentinel)
 
+
+def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     binary = tmp_path / "k3s"

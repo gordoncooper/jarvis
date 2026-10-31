@@ -349,6 +349,24 @@ def test_sops_failure_leaves_no_target_file(tmp_path):
     assert not target.exists()
 
 
+def test_bootstrap_refuses_a_bad_env_before_sops(tmp_path, monkeypatch):
+    mod = _load_module()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    marker = tmp_path / "sops-ran"
+    wrapper = tmp_path / "sops-wrap"
+    wrapper.write_text(
+        "#!/bin/sh\n" + f"touch {shlex.quote(str(marker))}\n" + "exit 99\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    for env in ("../x", "env-missing"):
+        marker.unlink(missing_ok=True)
+        with pytest.raises(SystemExit):
+            mod.bootstrap(env, sops_bin=str(wrapper))
+        assert not marker.exists()
+
+
 def test_new_ca_and_restic_secrets_are_prune_guarded(tmp_path, monkeypatch):
     mod = _load_module()
     public, _keyfile = _generate_throwaway_age_keypair(tmp_path)

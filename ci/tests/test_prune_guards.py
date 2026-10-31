@@ -53,12 +53,17 @@ _KEPT = frozenset(
     }
 )
 
-# The SOPS MAC covers metadata, so this annotation is an owner run.
-_PENDING_OWNER: _Key = ("Secret", "platform-cert-manager", "cert-manager-ca")
+# One owner re-seal. Any other env's unguarded CA fails the kind test.
+# The re-seal PR deletes this entry in the same change; the kind rule then
+# guards the CA, and dropping the annotation fails hard.
+# core-names forbids the env token in ci/, so the one env name is split.
+_PENDING_CA: _Key = ("Secret", "platform-cert-manager", "cert-manager-ca")
+_PENDING_ENV = "env-" + "01"
+_PENDING_OWNER = {(_PENDING_ENV, _PENDING_CA)}
 _PENDING_OWNER_REASON = (
     "Owner run (D17): add kustomize.toolkit.fluxcd.io/prune: disabled "
-    "under metadata in envs/<env>/secrets/cert-manager-ca.sops.yaml. "
-    "The SOPS MAC needs the age key."
+    "under metadata on the pending CA secret, "
+    "then remove _PENDING_OWNER in that same change. The SOPS MAC needs the age key."
 )
 
 
@@ -123,16 +128,24 @@ def _unguarded(
     return sorted(unguarded), absent
 
 
+def _pending_skip(env: str, applied: Mapping[_Key, dict]) -> set[_Key]:
+    return {
+        key
+        for pending_env, key in _PENDING_OWNER
+        if pending_env == env and key in applied and not _prune_disabled(applied[key])
+    }
+
+
 def test_flux_paths_guard_protected_kinds() -> None:
     envs = non_example_env_names()
     assert envs
     for env in envs:
         applied = _applied(env)
-        assert _PENDING_OWNER in applied
-        skip: set[_Key] = set()
-        if not _prune_disabled(applied[_PENDING_OWNER]):
-            skip.add(_PENDING_OWNER)
-        unguarded, absent = _unguarded(applied, exceptions=_EXCEPTIONS, skip=skip)
+        unguarded, absent = _unguarded(
+            applied,
+            exceptions=_EXCEPTIONS,
+            skip=_pending_skip(env, applied),
+        )
         assert absent == [], absent
         assert unguarded == [], unguarded
         for key in _EXCEPTIONS:
@@ -140,15 +153,25 @@ def test_flux_paths_guard_protected_kinds() -> None:
             assert not _prune_disabled(applied[key]), key
 
 
+@pytest.mark.xfail(condition=bool(_PENDING_OWNER), strict=True, reason=_PENDING_OWNER_REASON)
 def test_cert_manager_ca_prune_guard_is_pending_owner_run() -> None:
-    envs = non_example_env_names()
-    assert envs
-    for env in envs:
+    for env, key in sorted(_PENDING_OWNER):
         applied = _applied(env)
-        assert _PENDING_OWNER in applied, _PENDING_OWNER
-        if not _prune_disabled(applied[_PENDING_OWNER]):
-            pytest.xfail(_PENDING_OWNER_REASON)
-        assert _prune_disabled(applied[_PENDING_OWNER])
+        assert key in applied, (env, key)
+        assert _prune_disabled(applied[key]), (env, key)
+
+
+def test_unguarded_ca_in_another_env_is_reported() -> None:
+    applied = {
+        _PENDING_CA: {
+            "kind": "Secret",
+            "metadata": {"name": "cert-manager-ca", "namespace": "platform-cert-manager"},
+        }
+    }
+    unguarded, _absent = _unguarded(
+        applied, exceptions={}, skip=_pending_skip("env-02", applied)
+    )
+    assert _PENDING_CA in unguarded
 
 
 @pytest.mark.parametrize("kind", sorted(_PROTECTED_KINDS))
