@@ -1,8 +1,9 @@
 """R28: the only LoadBalancer Services are Traefik and App DNS.
 
 Traefik is the HelmChartConfig under platform/traefik/. App DNS is the
-HelmRelease under platform/app-dns/. Those two directory prefixes are the
-allow-list. The check does not match a DNS name or an address.
+HelmRelease under platform/app-dns/. The allow-list is those two objects by
+(kind, namespace, name), each in its own folder. The check does not match a
+DNS name or an address.
 """
 
 from __future__ import annotations
@@ -13,8 +14,10 @@ from typing import Iterable
 
 from _manifests import helm_values, load_documents, ref_of
 
-# Component directories, not hostnames.
-ALLOW_PREFIXES = ("platform/traefik/", "platform/app-dns/")
+ALLOWED: dict[tuple[str, str, str], str] = {
+    ("HelmChartConfig", "kube-system", "traefik"): "platform/traefik/",
+    ("HelmRelease", "flux-system", "k8s-gateway"): "platform/app-dns/",
+}
 
 
 @dataclass(frozen=True)
@@ -31,7 +34,8 @@ def scan_loadbalancer(repo_root: Path | str) -> list[LoadBalancerViolation]:
             continue
         if not _is_loadbalancer(doc):
             continue
-        if rel.startswith(ALLOW_PREFIXES):
+        folder = ALLOWED.get(_identity(doc))
+        if folder is not None and rel.startswith(folder):
             continue
         violations.append(
             LoadBalancerViolation(
@@ -44,6 +48,15 @@ def scan_loadbalancer(repo_root: Path | str) -> list[LoadBalancerViolation]:
 
 def format_violations(violations: Iterable[LoadBalancerViolation]) -> list[str]:
     return [f"{item.path}: {item.message}" for item in violations]
+
+
+def _identity(doc: dict) -> tuple[str, str, str]:
+    metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+    return (
+        str(doc.get("kind") or ""),
+        str(metadata.get("namespace") or ""),
+        str(metadata.get("name") or ""),
+    )
 
 
 def _is_loadbalancer(doc: dict) -> bool:

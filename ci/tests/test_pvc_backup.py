@@ -32,7 +32,7 @@ spec:
 """
 
 
-def _policy(root: Path) -> None:
+def _policy(root: Path, text: str = _POLICY) -> None:
     dest = root / "platform" / "backups"
     dest.mkdir(parents=True)
     (dest / "kustomization.yaml").write_text(
@@ -42,7 +42,7 @@ def _policy(root: Path) -> None:
         "  - enrollment.yaml\n",
         encoding="utf-8",
     )
-    (dest / "enrollment.yaml").write_text(_POLICY, encoding="utf-8")
+    (dest / "enrollment.yaml").write_text(text, encoding="utf-8")
 
 
 def _reasons(root: Path) -> list[str]:
@@ -101,6 +101,27 @@ def test_missing_policy_fails(tmp_path: Path) -> None:
     pvc.write_text(_PVC, encoding="utf-8")
     reasons = _reasons(tmp_path)
     assert reasons == ["backup enrollment ClusterPolicy is missing"]
+
+
+def test_r31_decoy_policy_name_fails(tmp_path: Path) -> None:
+    _policy(tmp_path, _POLICY.replace("name: pvc-backup", "name: decoy"))
+    assert _reasons(tmp_path) == ["backup enrollment ClusterPolicy is missing"]
+
+
+def test_r31_policy_without_a_replication_source_rule_fails(tmp_path: Path) -> None:
+    _policy(tmp_path, _POLICY.replace("kind: ReplicationSource", "kind: ConfigMap"))
+    assert _reasons(tmp_path) == ["backup enrollment ClusterPolicy is missing"]
+
+
+def test_r31_non_mapping_document_fails(tmp_path: Path) -> None:
+    _policy(tmp_path)
+    listed = tmp_path / "services" / "app" / "pvc.yaml"
+    listed.parent.mkdir(parents=True)
+    listed.write_text("- kind: PersistentVolumeClaim\n", encoding="utf-8")
+    violations = scan_pvc_backup(tmp_path)
+    assert len(violations) == 1
+    assert violations[0].rel_path == "services/app/pvc.yaml"
+    assert "not a mapping" in violations[0].reason
 
 
 def test_backup_none_outside_the_allow_list_fails(tmp_path: Path) -> None:

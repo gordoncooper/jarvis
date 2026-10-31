@@ -40,6 +40,8 @@ def load_documents(repo_root: Path | str) -> list[tuple[str, dict | None, str | 
             for doc in docs:
                 if isinstance(doc, dict):
                     found.append((rel, doc, None))
+                elif doc is not None:
+                    found.append((rel, None, f"YAML document is a {type(doc).__name__}, not a mapping"))
     return found
 
 
