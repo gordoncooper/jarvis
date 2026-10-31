@@ -55,6 +55,7 @@ class Cluster:
         cleanup_signal: int | None = None,
         etcd_restored_sum: str = SUM,
         leftover_pods: set[str] | None = None,
+        repo_exists: bool = False,
     ) -> None:
         self.hold = hold
         self.namespace = namespace
@@ -65,6 +66,7 @@ class Cluster:
         self.marker = marker
         self.cleanup_signal = cleanup_signal
         self.etcd_restored_sum = etcd_restored_sum
+        self.repo_exists = repo_exists
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
@@ -254,6 +256,10 @@ class Cluster:
                     f"ETCD {SUM} {self.etcd_restored_sum}"
                     " etcd-snapshot-fixture\n",
                 )
+            if name == drill_tool.PROBE_POD:
+                return _completed(
+                    argv, "PRESENT\n" if self.repo_exists else "ABSENT\n"
+                )
             return _completed(argv)
         if argv[:2] == ["get", "replicationsource"]:
             return _completed(argv, {"status": {"lastSyncTime": "2026-10-31T00:00:00Z"}})
@@ -313,6 +319,7 @@ def _assert_cleanup(cluster: Cluster) -> None:
     assert cluster.cleanup_applied
     assert ("namespace", drill_tool.NAMESPACE) in cluster.deleted
     assert ("pod", drill_tool.ETCD_POD) in cluster.deleted
+    assert ("pod", drill_tool.PROBE_POD) in cluster.deleted
     cleanup = next(
         body
         for body in cluster.applied
@@ -379,7 +386,10 @@ def test_failure_and_interrupt_cleanup(
     ("cluster", "message"),
     [
         (Cluster(hold=True), "backup rebuild hold is present"),
-        (Cluster(namespace=True), "namespace platform-drill already exists"),
+        (
+            Cluster(namespace=True),
+            "run make drill-cleanup ENV=env-test first.",
+        ),
     ],
 )
 def test_existing_hold_or_namespace_refuses_without_cleanup(
@@ -511,7 +521,8 @@ def test_namespace_cleanup_timeout_is_bounded_and_preserves_original_error(
 
 
 @pytest.mark.parametrize(
-    "leftover", [drill_tool.ETCD_POD, drill_tool.CLEANUP_POD]
+    "leftover",
+    [drill_tool.ETCD_POD, drill_tool.CLEANUP_POD, drill_tool.PROBE_POD],
 )
 def test_preflight_refuses_leftover_backup_namespace_drill_pods(
     tmp_path: Path,
@@ -523,9 +534,35 @@ def test_preflight_refuses_leftover_backup_namespace_drill_pods(
     code, restores = _run(tmp_path, monkeypatch, cluster)
     assert code != 0
     assert restores == []
-    output = capsys.readouterr().out
-    assert f"{drill_tool.BACKUP_NAMESPACE}/{leftover} already exists" in output
-    assert "make drill-cleanup ENV=env-test" in output
+    assert (
+        "FAIL drill: run make drill-cleanup ENV=env-test first."
+        in capsys.readouterr().out
+    )
+
+
+def test_preflight_refuses_leftover_repository_path_and_cleans_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster(repo_exists=True)
+    code, restores = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    assert restores == []
+    assert ("pod", drill_tool.PROBE_POD) in cluster.deleted
+    probe = next(
+        body
+        for body in cluster.applied
+        if body.get("kind") == "Pod"
+        and body["metadata"]["name"] == drill_tool.PROBE_POD
+    )
+    mount = probe["spec"]["containers"][0]["volumeMounts"][0]
+    assert mount == {"name": "data", "mountPath": "/data", "readOnly": True}
+    assert probe["spec"]["volumes"][0]["hostPath"]["type"] == "Directory"
+    assert (
+        "FAIL drill: run make drill-cleanup ENV=env-test first."
+        in capsys.readouterr().out
+    )
 
 
 def _run_cleanup_only(
@@ -556,6 +593,7 @@ def test_cleanup_only_checks_markers_and_deletes_all_drill_state(
     assert ("namespace", drill_tool.NAMESPACE) in cluster.deleted
     assert ("pod", drill_tool.ETCD_POD) in cluster.deleted
     assert ("pod", drill_tool.CLEANUP_POD) in cluster.deleted
+    assert ("pod", drill_tool.PROBE_POD) in cluster.deleted
     cleanup = next(
         body
         for body in cluster.applied

@@ -38,6 +38,7 @@ WRITER = "drill-writer"
 READER = "drill-reader"
 ETCD_POD = "drill-etcd-restore"
 CLEANUP_POD = "jarvis-drill-repo-cleanup"
+PROBE_POD = "jarvis-drill-repo-probe"
 BACKUP_NAMESPACE = "platform-backups"
 HOLD_NAME = "backup-rebuild-hold"
 POLL_SECONDS = 2.0
@@ -339,7 +340,51 @@ def _cleanup_pod(template: dict) -> dict:
                     "volumeMounts": [{"name": "data", "mountPath": "/data"}],
                 }
             ],
-            "volumes": [{"name": "data", "hostPath": template["dataHostPath"]}],
+            "volumes": [
+                {
+                    "name": "data",
+                    "hostPath": {
+                        "path": template["dataHostPath"]["path"],
+                        "type": "Directory",
+                    },
+                }
+            ],
+        },
+    }
+
+
+def _probe_pod(template: dict) -> dict:
+    command = (
+        "if [ -e /data/ns-platform-drill/pvc-drill ];"
+        " then echo PRESENT; else echo ABSENT; fi"
+    )
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": PROBE_POD, "namespace": BACKUP_NAMESPACE},
+        "spec": {
+            "restartPolicy": "Never",
+            "nodeSelector": template["nodeSelector"],
+            "containers": [
+                {
+                    "name": "probe",
+                    "image": template["image"],
+                    "securityContext": {"runAsUser": 0},
+                    "command": ["/bin/sh", "-c", command],
+                    "volumeMounts": [
+                        {"name": "data", "mountPath": "/data", "readOnly": True}
+                    ],
+                }
+            ],
+            "volumes": [
+                {
+                    "name": "data",
+                    "hostPath": {
+                        "path": template["dataHostPath"]["path"],
+                        "type": "Directory",
+                    },
+                }
+            ],
         },
     }
 
@@ -373,6 +418,13 @@ def _cleanup(kubectl: Kubectl, template: dict) -> bool:
     if not namespace_deleted:
         return False
     try:
+        _delete(
+            kubectl,
+            "pod",
+            PROBE_POD,
+            BACKUP_NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
         _delete(kubectl, "pod", CLEANUP_POD, BACKUP_NAMESPACE)
         _apply(kubectl, _cleanup_pod(template), "apply repository cleanup pod")
         _wait(
@@ -386,7 +438,43 @@ def _cleanup(kubectl: Kubectl, template: dict) -> bool:
     return ok
 
 
-def _preflight(kubectl: Kubectl, env: str) -> None:
+def _leftover(env: str) -> DrillError:
+    return DrillError(f"run make drill-cleanup ENV={env} first.")
+
+
+def _repo_exists(kubectl: Kubectl, template: dict, env: str) -> bool:
+    failure: BaseException | None = None
+    result = ""
+    try:
+        _create(kubectl, _probe_pod(template), "create repository probe pod")
+        _wait(
+            lambda: _pod_succeeded(kubectl, PROBE_POD, BACKUP_NAMESPACE),
+            "repository probe",
+        )
+        result = _logs(kubectl, PROBE_POD, BACKUP_NAMESPACE).strip()
+        if result not in {"PRESENT", "ABSENT"}:
+            raise DrillError("repository probe returned an invalid result")
+    except BaseException as exc:
+        failure = exc
+    try:
+        _delete(
+            kubectl,
+            "pod",
+            PROBE_POD,
+            BACKUP_NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
+        _line(f"RECOVERY make drill-cleanup ENV={env}")
+        if failure is None:
+            raise
+        raise DrillError(f"{failure}; repository probe cleanup failed: {exc}") from exc
+    if failure is not None:
+        raise failure
+    return result == "PRESENT"
+
+
+def _preflight(kubectl: Kubectl, env: str, cleanup_template: dict) -> None:
     hold = kubectl(
         ["get", "configmap", HOLD_NAME, "-n", "kube-system", "-o", "json"]
     )
@@ -396,20 +484,19 @@ def _preflight(kubectl: Kubectl, env: str) -> None:
         raise DrillError(f"read backup rebuild hold: {reason(hold)}")
     namespace = kubectl(["get", "namespace", NAMESPACE, "-o", "json"])
     if namespace.returncode == 0:
-        raise DrillError(f"namespace {NAMESPACE} already exists")
+        raise _leftover(env)
     if not not_found(namespace):
         raise DrillError(f"read namespace {NAMESPACE}: {reason(namespace)}")
-    for pod in (ETCD_POD, CLEANUP_POD):
+    for pod in (ETCD_POD, CLEANUP_POD, PROBE_POD):
         proc = kubectl(
             ["get", "pod", pod, "-n", BACKUP_NAMESPACE, "-o", "json"]
         )
         if proc.returncode == 0:
-            raise DrillError(
-                f"pod {BACKUP_NAMESPACE}/{pod} already exists;"
-                f" run make drill-cleanup ENV={env}"
-            )
+            raise _leftover(env)
         if not not_found(proc):
             raise DrillError(f"read pod {BACKUP_NAMESPACE}/{pod}: {reason(proc)}")
+    if _repo_exists(kubectl, cleanup_template, env):
+        raise _leftover(env)
 
 
 def _restore_command(args: Sequence[str]) -> CompletedProcess[str]:
@@ -456,7 +543,7 @@ def _run(
                 return 1
             _line("PASS drill cleanup complete")
             return 0
-        _preflight(kubectl, env)
+        _preflight(kubectl, env, cleanup_template)
 
         raw = payload if payload is not None else secrets.token_bytes(64)
         content = raw.hex()
