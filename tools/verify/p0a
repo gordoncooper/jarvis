@@ -46,12 +46,17 @@ def _tool_env() -> dict[str, str]:
     return env
 
 
-def _run(argv: Sequence[str], *, cwd: Path | None = None) -> CompletedProcess[str]:
+def _run(
+    argv: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> CompletedProcess[str]:
     try:
         return subprocess.run(
             list(argv),
             cwd=cwd,
-            env=_tool_env(),
+            env=_tool_env() if env is None else env,
             capture_output=True,
             text=True,
             check=False,
@@ -61,8 +66,14 @@ def _run(argv: Sequence[str], *, cwd: Path | None = None) -> CompletedProcess[st
         raise SystemExit(1) from None
 
 
-def _kubectl(args: Sequence[str]) -> CompletedProcess[str]:
-    return _run(["kubectl", *args])
+def _kubectl_for(env_name: str) -> Kubectl:
+    env = _tool_env()
+    env["KUBECONFIG"] = str(Path.home() / ".kube" / f"jarvis-{env_name}.yaml")
+
+    def kubectl(args: Sequence[str]) -> CompletedProcess[str]:
+        return _run(["kubectl", *args], env=env)
+
+    return kubectl
 
 
 def _reason(proc: CompletedProcess[str]) -> str:
@@ -236,7 +247,8 @@ def run(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Env under envs/")
-    return run(REPO_ROOT, parser.parse_args(argv).env, _kubectl)
+    args = parser.parse_args(argv)
+    return run(REPO_ROOT, args.env, _kubectl_for(args.env))
 
 
 if __name__ == "__main__":

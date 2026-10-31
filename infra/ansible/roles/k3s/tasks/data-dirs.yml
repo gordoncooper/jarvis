@@ -1,0 +1,12 @@
+---
+- name: Ensure private data directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ local_path_data }}"
+    - "{{ backup_path }}"
+    - "{{ backup_path }}/etcd-snapshots"
