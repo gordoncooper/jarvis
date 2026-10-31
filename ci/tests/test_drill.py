@@ -52,6 +52,9 @@ class Cluster:
         cleanup_fails: bool = False,
         namespace_delete_fails: bool = False,
         marker: str = "env-test",
+        cleanup_signal: int | None = None,
+        etcd_restored_sum: str = SUM,
+        leftover_pods: set[str] | None = None,
     ) -> None:
         self.hold = hold
         self.namespace = namespace
@@ -60,10 +63,16 @@ class Cluster:
         self.cleanup_fails = cleanup_fails
         self.namespace_delete_fails = namespace_delete_fails
         self.marker = marker
+        self.cleanup_signal = cleanup_signal
+        self.etcd_restored_sum = etcd_restored_sum
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
         self.cleanup_applied = False
+        self.pods = {
+            (drill_tool.BACKUP_NAMESPACE, name)
+            for name in (leftover_pods or set())
+        }
         self.pod_errors: dict[tuple[str, str], str] = {}
         self.secrets = {
             drill_tool.BACKUP_NAMESPACE: {"backups-restic"},
@@ -166,7 +175,7 @@ class Cluster:
                 returncode=1,
                 stderr="Error from server (NotFound): namespace not found",
             )
-        if argv[:2] == ["apply", "-f"]:
+        if argv[:2] in (["apply", "-f"], ["create", "-f"]):
             assert input is not None
             body = yaml.safe_load(input)
             self.applied.append(body)
@@ -175,6 +184,12 @@ class Cluster:
             if body["kind"] == "Pod":
                 name = body["metadata"]["name"]
                 namespace = body["metadata"]["namespace"]
+                key = (namespace, name)
+                if argv[0] == "create" and key in self.pods:
+                    return _completed(
+                        argv, "", returncode=1, stderr=f'pod "{name}" already exists'
+                    )
+                self.pods.add(key)
                 if name == drill_tool.CLEANUP_POD:
                     self.cleanup_applied = True
                 for container in body["spec"]["containers"]:
@@ -188,6 +203,13 @@ class Cluster:
         if argv[:2] == ["get", "pod"]:
             name = argv[2]
             namespace = argv[argv.index("-n") + 1]
+            if (namespace, name) not in self.pods:
+                return _completed(
+                    argv,
+                    "",
+                    returncode=1,
+                    stderr=f'Error from server (NotFound): pod "{name}" not found',
+                )
             if self.interrupt is not None and name == drill_tool.READER:
                 if self.interrupt == "keyboard":
                     raise KeyboardInterrupt
@@ -228,7 +250,9 @@ class Cluster:
                 return _completed(argv, f"VOLUME {self.reader_sum}\n")
             if name == drill_tool.ETCD_POD:
                 return _completed(
-                    argv, f"ETCD {SUM} {SUM} etcd-snapshot-fixture\n"
+                    argv,
+                    f"ETCD {SUM} {self.etcd_restored_sum}"
+                    " etcd-snapshot-fixture\n",
                 )
             return _completed(argv)
         if argv[:2] == ["get", "replicationsource"]:
@@ -238,11 +262,23 @@ class Cluster:
         if argv[0] == "delete":
             self.deleted.append((argv[1], argv[2]))
             if argv[1] == "namespace":
+                if self.cleanup_signal is not None:
+                    signum = self.cleanup_signal
+                    self.cleanup_signal = None
+                    handler = signal.getsignal(signum)
+                    assert callable(handler)
+                    handler(signum, None)
                 if self.namespace_delete_fails:
                     return _completed(
                         argv, "", returncode=1, stderr="timed out waiting for namespace"
                     )
                 self.namespace = False
+                self.pods = {
+                    key for key in self.pods if key[0] != drill_tool.NAMESPACE
+                }
+            if argv[1] == "pod":
+                namespace = argv[argv.index("-n") + 1]
+                self.pods.discard((namespace, argv[2]))
             return _completed(argv, "deleted\n")
         return _completed(argv, "", returncode=1, stderr=f"unexpected {argv}")
 
@@ -276,6 +312,7 @@ def _run(
 def _assert_cleanup(cluster: Cluster) -> None:
     assert cluster.cleanup_applied
     assert ("namespace", drill_tool.NAMESPACE) in cluster.deleted
+    assert ("pod", drill_tool.ETCD_POD) in cluster.deleted
     cleanup = next(
         body
         for body in cluster.applied
@@ -470,4 +507,113 @@ def test_namespace_cleanup_timeout_is_bounded_and_preserves_original_error(
     assert f"--timeout={drill_tool.DELETE_TIMEOUT_SECONDS}s" in namespace_delete
     output = capsys.readouterr().out
     assert "FAIL drill: make restore failed" in output
+    assert "RECOVERY make drill-cleanup ENV=env-test" in output
+
+
+@pytest.mark.parametrize(
+    "leftover", [drill_tool.ETCD_POD, drill_tool.CLEANUP_POD]
+)
+def test_preflight_refuses_leftover_backup_namespace_drill_pods(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    leftover: str,
+) -> None:
+    cluster = Cluster(leftover_pods={leftover})
+    code, restores = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    assert restores == []
+    output = capsys.readouterr().out
+    assert f"{drill_tool.BACKUP_NAMESPACE}/{leftover} already exists" in output
+    assert "make drill-cleanup ENV=env-test" in output
+
+
+def _run_cleanup_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cluster: Cluster,
+    *,
+    repo_marker: str = "env-test",
+) -> int:
+    _write_env(tmp_path)
+    if repo_marker != "env-test":
+        values = tmp_path / "envs" / "env-test" / "values" / "cluster-vars.yaml"
+        values.write_text(f"jarvis_env: {repo_marker}\n", encoding="utf-8")
+    monkeypatch.setattr(drill_tool, "REPO_ROOT", tmp_path)
+    return drill_tool.run(cluster.kubectl, env="env-test", cleanup_only=True)
+
+
+def test_cleanup_only_checks_markers_and_deletes_all_drill_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster(
+        namespace=True,
+        leftover_pods={drill_tool.ETCD_POD, drill_tool.CLEANUP_POD},
+    )
+    assert _run_cleanup_only(tmp_path, monkeypatch, cluster) == 0
+    assert ("namespace", drill_tool.NAMESPACE) in cluster.deleted
+    assert ("pod", drill_tool.ETCD_POD) in cluster.deleted
+    assert ("pod", drill_tool.CLEANUP_POD) in cluster.deleted
+    cleanup = next(
+        body
+        for body in cluster.applied
+        if body.get("kind") == "Pod"
+        and body["metadata"]["name"] == drill_tool.CLEANUP_POD
+    )
+    assert "ns-platform-drill/pvc-drill" in cleanup["spec"]["containers"][0]["command"][2]
+    marker_at = cluster.calls.index(
+        ["get", "configmap", "cluster-vars", "-n", "flux-system", "-o", "json"]
+    )
+    first_delete = next(
+        index for index, call in enumerate(cluster.calls) if call[0] == "delete"
+    )
+    assert marker_at < first_delete
+    assert "PASS drill cleanup complete" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("repo_marker", "cluster_marker"),
+    [("wrong", "env-test"), ("env-test", "wrong")],
+)
+def test_cleanup_only_refuses_wrong_env_before_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    repo_marker: str,
+    cluster_marker: str,
+) -> None:
+    cluster = Cluster(
+        marker=cluster_marker,
+        namespace=True,
+        leftover_pods={drill_tool.ETCD_POD},
+    )
+    assert _run_cleanup_only(
+        tmp_path, monkeypatch, cluster, repo_marker=repo_marker
+    ) != 0
+    assert not any(call[0] == "delete" for call in cluster.calls)
+
+
+def test_etcd_checksum_mismatch_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster(etcd_restored_sum=OTHER)
+    code, _ = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    assert "etcd snapshot checksum mismatch" in capsys.readouterr().out
+    _assert_cleanup(cluster)
+
+
+def test_second_signal_during_cleanup_preserves_original_exit_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster(interrupt=signal.SIGTERM, cleanup_signal=signal.SIGHUP)
+    code, _ = _run(tmp_path, monkeypatch, cluster)
+    assert code == 128 + signal.SIGTERM
+    output = capsys.readouterr().out
+    assert "FAIL drill: interrupted by SIGTERM" in output
     assert "RECOVERY make drill-cleanup ENV=env-test" in output

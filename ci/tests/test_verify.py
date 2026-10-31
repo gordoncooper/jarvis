@@ -380,6 +380,11 @@ def test_wrong_repository_marker_refuses_before_kubectl(
             "Etc/UTC",
             "schedule",
         ),
+        (
+            lambda cluster: setattr(cluster, "source_schedule", "60 1 * * *"),
+            "Etc/UTC",
+            "cron field",
+        ),
         (lambda cluster: None, "Not/AZone", "time zone"),
         (lambda cluster: None, None, "time_zone"),
         (

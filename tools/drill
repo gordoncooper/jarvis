@@ -84,6 +84,13 @@ def _apply(kubectl: Kubectl, body: dict, what: str) -> None:
     )
 
 
+def _create(kubectl: Kubectl, body: dict, what: str) -> None:
+    _ok(
+        kubectl(["create", "-f", "-"], input=yaml.safe_dump(body, sort_keys=False)),
+        what,
+    )
+
+
 def _delete(
     kubectl: Kubectl,
     kind: str,
@@ -379,7 +386,7 @@ def _cleanup(kubectl: Kubectl, template: dict) -> bool:
     return ok
 
 
-def _preflight(kubectl: Kubectl) -> None:
+def _preflight(kubectl: Kubectl, env: str) -> None:
     hold = kubectl(
         ["get", "configmap", HOLD_NAME, "-n", "kube-system", "-o", "json"]
     )
@@ -392,6 +399,17 @@ def _preflight(kubectl: Kubectl) -> None:
         raise DrillError(f"namespace {NAMESPACE} already exists")
     if not not_found(namespace):
         raise DrillError(f"read namespace {NAMESPACE}: {reason(namespace)}")
+    for pod in (ETCD_POD, CLEANUP_POD):
+        proc = kubectl(
+            ["get", "pod", pod, "-n", BACKUP_NAMESPACE, "-o", "json"]
+        )
+        if proc.returncode == 0:
+            raise DrillError(
+                f"pod {BACKUP_NAMESPACE}/{pod} already exists;"
+                f" run make drill-cleanup ENV={env}"
+            )
+        if not not_found(proc):
+            raise DrillError(f"read pod {BACKUP_NAMESPACE}/{pod}: {reason(proc)}")
 
 
 def _restore_command(args: Sequence[str]) -> CompletedProcess[str]:
@@ -434,8 +452,11 @@ def _run(
         validate_cluster(kubectl, env)
         etcd_template, cleanup_template = _templates(kubectl)
         if cleanup_only:
-            return 0 if _cleanup(kubectl, cleanup_template) else 1
-        _preflight(kubectl)
+            if not _cleanup(kubectl, cleanup_template):
+                return 1
+            _line("PASS drill cleanup complete")
+            return 0
+        _preflight(kubectl, env)
 
         raw = payload if payload is not None else secrets.token_bytes(64)
         content = raw.hex()
@@ -517,7 +538,7 @@ def _run(
             raise DrillError("restored volume checksum mismatch")
         _line(f"RESTORED volume checksum {after}")
 
-        _apply(kubectl, _etcd_pod(etcd_template), "create etcd restore pod")
+        _create(kubectl, _etcd_pod(etcd_template), "create etcd restore pod")
         _wait(
             lambda: _pod_succeeded(kubectl, ETCD_POD, BACKUP_NAMESPACE),
             "etcd restore pod",
