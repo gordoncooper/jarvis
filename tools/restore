@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -67,6 +68,7 @@ class _Quiesce:
     def __init__(self) -> None:
         self.deployments: dict[str, int] = {}
         self.statefulsets: dict[str, int] = {}
+        self.cronjobs: list[str] = []
         self.kustomizations: list[tuple[str, str]] = []
         self.paused = False
         self.destination = False
@@ -88,10 +90,15 @@ def _tool_env() -> dict[str, str]:
     return env
 
 
-def _kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+def _kubectl(
+    args: Sequence[str],
+    input: str | None = None,
+    *,
+    kubeconfig: Path,
+) -> CompletedProcess[str]:
     try:
         return subprocess.run(
-            ["kubectl", *args],
+            ["kubectl", "--kubeconfig", str(kubeconfig), *args],
             input=input,
             env=_tool_env(),
             capture_output=True,
@@ -349,6 +356,15 @@ def _items(kubectl: Kubectl, kind: str, namespace: str) -> list[dict]:
     return list(body.get("items") or [])
 
 
+def _cronjob_owns(cronjob: dict, pvc: str) -> bool:
+    template = (
+        (((cronjob.get("spec") or {}).get("jobTemplate") or {}).get("spec") or {})
+        .get("template", {})
+        .get("spec", {})
+    )
+    return _claim_in_pod_spec(template, pvc)
+
+
 def _suspend(kubectl: Kubectl, owners: list[dict], state: _Quiesce) -> None:
     refs: list[tuple[str, str]] = []
     for obj in owners:
@@ -384,6 +400,37 @@ def _suspend(kubectl: Kubectl, owners: list[dict], state: _Quiesce) -> None:
         state.kustomizations.append((ref_ns, ref_name))
 
 
+def _suspend_cronjobs(
+    kubectl: Kubectl,
+    namespace: str,
+    cronjobs: list[dict],
+    pvc: str,
+    state: _Quiesce,
+) -> None:
+    for cronjob in cronjobs:
+        name = (cronjob.get("metadata") or {}).get("name")
+        spec = cronjob.get("spec") or {}
+        if not name or not _cronjob_owns(cronjob, pvc) or spec.get("suspend") is True:
+            continue
+        _ok(
+            kubectl(
+                [
+                    "patch",
+                    "cronjob",
+                    name,
+                    "-n",
+                    namespace,
+                    "--type",
+                    "merge",
+                    "-p",
+                    json.dumps({"spec": {"suspend": True}}),
+                ]
+            ),
+            f"suspend cronjob {namespace}/{name}",
+        )
+        state.cronjobs.append(name)
+
+
 def _scale_kind(
     kubectl: Kubectl,
     namespace: str,
@@ -409,8 +456,13 @@ def _scale_kind(
 def _quiesce(kubectl: Kubectl, namespace: str, pvc: str, pvc_body: dict, state: _Quiesce) -> None:
     deployments = _items(kubectl, "deployment", namespace)
     statefulsets = _items(kubectl, "statefulset", namespace)
-    owners = [pvc_body, *deployments, *statefulsets]
+    cronjobs = _items(kubectl, "cronjob", namespace)
+    mounting_cronjobs = [
+        cronjob for cronjob in cronjobs if _cronjob_owns(cronjob, pvc)
+    ]
+    owners = [pvc_body, *deployments, *statefulsets, *mounting_cronjobs]
     _suspend(kubectl, owners, state)
+    _suspend_cronjobs(kubectl, namespace, mounting_cronjobs, pvc, state)
     _scale_kind(
         kubectl,
         namespace,
@@ -440,6 +492,23 @@ def _unquiesce(kubectl: Kubectl, namespace: str, state: _Quiesce) -> None:
             kubectl(["scale", "statefulset", name, "-n", namespace, f"--replicas={replicas}"]),
             f"scale statefulset {namespace}/{name}",
         )
+    for name in state.cronjobs:
+        _ok(
+            kubectl(
+                [
+                    "patch",
+                    "cronjob",
+                    name,
+                    "-n",
+                    namespace,
+                    "--type",
+                    "merge",
+                    "-p",
+                    json.dumps({"spec": {"suspend": False}}),
+                ]
+            ),
+            f"resume cronjob {namespace}/{name}",
+        )
     for ref_ns, ref_name in state.kustomizations:
         _ok(
             kubectl(
@@ -459,24 +528,44 @@ def _unquiesce(kubectl: Kubectl, namespace: str, state: _Quiesce) -> None:
         )
     state.deployments.clear()
     state.statefulsets.clear()
+    state.cronjobs.clear()
     state.kustomizations.clear()
 
 
-def _print_left(namespace: str, pvc: str, state: _Quiesce) -> None:
+def _kubectl_prefix(kubeconfig: Path | None) -> str:
+    if kubeconfig is None:
+        return "kubectl"
+    return f"kubectl --kubeconfig {shlex.quote(str(kubeconfig))}"
+
+
+def _print_left(
+    namespace: str,
+    pvc: str,
+    state: _Quiesce,
+    *,
+    kubeconfig: Path | None,
+) -> None:
+    command = _kubectl_prefix(kubeconfig)
     if state.paused:
-        _line(f"kubectl annotate pvc {pvc} -n {namespace} backup-")
+        _line(f"{command} annotate pvc {pvc} -n {namespace} backup-")
     for name, replicas in state.deployments.items():
-        _line(f"kubectl scale deployment {name} -n {namespace} --replicas={replicas}")
+        _line(f"{command} scale deployment {name} -n {namespace} --replicas={replicas}")
     for name, replicas in state.statefulsets.items():
-        _line(f"kubectl scale statefulset {name} -n {namespace} --replicas={replicas}")
+        _line(f"{command} scale statefulset {name} -n {namespace} --replicas={replicas}")
+    for name in state.cronjobs:
+        _line(
+            f"{command} patch cronjob {name} -n {namespace}"
+            " --type merge -p '{\"spec\":{\"suspend\":false}}'"
+        )
     for ref_ns, ref_name in state.kustomizations:
         _line(
-            f"kubectl patch kustomization {ref_name} -n {ref_ns}"
+            f"{command} patch kustomization {ref_name} -n {ref_ns}"
             " --type merge -p '{\"spec\":{\"suspend\":false}}'"
         )
     if state.destination:
         _line(
-            f"kubectl delete replicationdestination restore-{pvc} -n {namespace} --wait=true"
+            f"{command} delete replicationdestination restore-{pvc}"
+            f" -n {namespace} --wait=true"
         )
 
 
@@ -621,7 +710,8 @@ def _restore_one(
     *,
     as_of: str | None,
     resume: bool,
-    skip_missing: bool,
+    accept_empty: bool,
+    kubeconfig: Path | None,
     monotonic: Mono,
     sleep: Sleeper,
     now: Callable[[], float],
@@ -666,8 +756,9 @@ def _restore_one(
             destination_body(namespace, pvc, chosen_as_of, manual),
             sort_keys=False,
         )
-        _ok(kubectl(["apply", "-f", "-"], input=body), f"apply {namespace}/{name}")
+        # An interrupted apply may still have reached the API server.
         state.destination = True
+        _ok(kubectl(["apply", "-f", "-"], input=body), f"apply {namespace}/{name}")
         if not _wait(
             lambda: _restored(kubectl, namespace, name, manual),
             budget_s=restore_budget_s,
@@ -681,7 +772,7 @@ def _restore_one(
             raise Fail(f"{namespace}/{pvc}: mover log has no restore result")
         if _NO_SNAPSHOT in logs:
             # The mover exits 0 and still sets lastManualSync. That is not a restore.
-            if not skip_missing:
+            if not accept_empty:
                 raise Fail(f"{namespace}/{pvc}: no eligible snapshots")
             _delete_destination(kubectl, namespace, pvc)
             state.destination = False
@@ -706,19 +797,22 @@ def _restore_one(
         _line(f"PASS restore {namespace}/{pvc} snapshot {_snapshot_id(logs)}")
     except NoSnapshot:
         raise
-    except Fail:
-        kubectl(
-            [
-                "delete",
-                "pod",
-                _binder_name(pvc),
-                "-n",
-                namespace,
-                "--wait=false",
-                "--ignore-not-found=true",
-            ]
-        )
-        _print_left(namespace, pvc, state)
+    except BaseException:
+        try:
+            kubectl(
+                [
+                    "delete",
+                    "pod",
+                    _binder_name(pvc),
+                    "-n",
+                    namespace,
+                    "--wait=false",
+                    "--ignore-not-found=true",
+                ]
+            )
+        except BaseException:
+            pass
+        _print_left(namespace, pvc, state, kubeconfig=kubeconfig)
         raise
 
 
@@ -748,12 +842,82 @@ def _select(kubectl: Kubectl, app: str | None) -> tuple[list[tuple[str, str, str
     return chosen, present
 
 
-def _retired(values: Sequence[str] | None) -> set[str]:
+def _names(values: Sequence[str] | None) -> set[str]:
     found: set[str] = set()
     for value in values or []:
         for part in value.replace(",", " ").split():
             found.add(part)
     return found
+
+
+def _validate_environment(kubectl: Kubectl, env: str) -> None:
+    values_path = REPO_ROOT / "envs" / env / "values" / "cluster-vars.yaml"
+    try:
+        values = yaml.safe_load(values_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise Fail(f"ENV={env} is not a valid repository environment") from exc
+    if not isinstance(values, dict) or values.get("jarvis_env") != env:
+        raise Fail(f"ENV={env} does not match its repository marker")
+    body = _load(
+        kubectl(["get", "configmap", "cluster-vars", "-n", "flux-system", "-o", "json"]),
+        "read cluster environment marker",
+    )
+    actual = (body.get("data") or {}).get("jarvis_env")
+    if actual != env:
+        raise Fail(f"refusing cluster whose environment marker is not ENV={env}")
+
+
+def _hold_body(hold: list[str]) -> str:
+    return yaml.safe_dump(
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": HOLD_NAME, "namespace": HOLD_NAMESPACE},
+            "data": {"repos": "".join(f"{repo}\n" for repo in hold)},
+        },
+        sort_keys=False,
+    )
+
+
+def _restore_hold(
+    kubectl: Kubectl,
+    hold: list[str],
+    done: list[tuple[str, str]],
+) -> bool:
+    ok = True
+    for namespace, pvc in done:
+        proc = kubectl(
+            [
+                "annotate",
+                "pvc",
+                pvc,
+                "-n",
+                namespace,
+                "backup=paused",
+                "--overwrite",
+            ]
+        )
+        ok = proc.returncode == 0 and ok
+    proc = kubectl(["apply", "-f", "-"], input=_hold_body(hold))
+    return proc.returncode == 0 and ok
+
+
+def _print_hold_recovery(
+    hold: list[str],
+    done: list[tuple[str, str]],
+    *,
+    kubeconfig: Path | None,
+) -> None:
+    command = _kubectl_prefix(kubeconfig)
+    for namespace, pvc in done:
+        _line(
+            f"{command} annotate pvc {pvc} -n {namespace}"
+            " backup=paused --overwrite"
+        )
+    delimiter = "JARVIS_REBUILD_HOLD"
+    _line(f"cat <<'{delimiter}' | {command} apply -f -")
+    _line(_hold_body(hold).rstrip())
+    _line(delimiter)
 
 
 def _lift_hold(
@@ -763,10 +927,11 @@ def _lift_hold(
     done: list[tuple[str, str]],
     retired: set[str],
     *,
+    kubeconfig: Path | None,
     monotonic: Mono,
     sleep: Sleeper,
     pause_budget_s: float,
-) -> None:
+) -> int:
     missing = [
         repo for repo in hold if parse_repo(repo) not in present and repo not in retired
     ]
@@ -775,9 +940,11 @@ def _lift_hold(
             _line(f"HOLD kept: no PVC for {repo}")
         _line("HOLD kept: backup=paused remains")
         raise Fail("rebuild hold kept")
+    retired_count = 0
     for repo in hold:
         if repo in retired and parse_repo(repo) not in present:
             _line(f"HOLD retired {repo}")
+            retired_count += 1
     # Deleting the hold does not re-run generate. Remove backup: paused after it is gone.
     _ok(
         kubectl(
@@ -793,25 +960,46 @@ def _lift_hold(
         ),
         "delete rebuild hold",
     )
+    try:
+        for namespace, pvc in done:
+            _resume(kubectl, namespace, pvc)
+        for namespace, pvc in done:
+            if not _wait(
+                lambda namespace=namespace, pvc=pvc: _source_unpaused(
+                    kubectl, namespace, pvc
+                ),
+                budget_s=pause_budget_s,
+                monotonic=monotonic,
+                sleep=sleep,
+            ):
+                raise Fail(
+                    f"{namespace}/{pvc}: source stayed paused after the hold was lifted"
+                )
+    except BaseException:
+        try:
+            restored = _restore_hold(kubectl, hold, done)
+        except BaseException:
+            restored = False
+        if restored:
+            _line("HOLD restored after lift failure; backup=paused remains")
+        else:
+            _line("RECOVERY required after hold lift failure:")
+            _print_hold_recovery(hold, done, kubeconfig=kubeconfig)
+        raise
     _line("HOLD lifted")
-    for namespace, pvc in done:
-        _resume(kubectl, namespace, pvc)
-        if not _wait(
-            lambda namespace=namespace, pvc=pvc: _source_unpaused(kubectl, namespace, pvc),
-            budget_s=pause_budget_s,
-            monotonic=monotonic,
-            sleep=sleep,
-        ):
-            raise Fail(f"{namespace}/{pvc}: source stayed paused after the hold was lifted")
+    return retired_count
 
 
 def run(
     kubectl: Kubectl,
     *,
+    env: str,
     app: str | None,
     all_pvcs: bool,
     as_of: str | None = None,
     retire: Sequence[str] | None = None,
+    accept_empty: Sequence[str] | None = None,
+    kubeconfig: Path | None = None,
     monotonic: Mono | None = None,
     sleep: Sleeper | None = None,
     now: Callable[[], float] | None = None,
@@ -827,12 +1015,35 @@ def run(
     override = as_of if as_of is not None else os.environ.get("AS_OF") or None
     if override == "":
         override = None
+    restored: list[tuple[str, str]] = []
+    accepted: list[tuple[str, str]] = []
+    retired_count = 0
     try:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", env):
+            raise Fail(f"invalid ENV={env}")
+        _validate_environment(kubectl, env)
         if override is not None:
             override = normalize_as_of(override)
         chosen, present = _select(kubectl, None if all_pvcs else app)
         hold = _hold_repos(kubectl)
-        retired = _retired(retire)
+        retired = _names(retire)
+        accepted_names = _names(accept_empty)
+        if not all_pvcs and (retired or accepted_names):
+            raise Fail("--retire and --accept-empty are only valid with --all")
+        chosen_names = {f"{namespace}/{pvc}" for namespace, pvc, _created in chosen}
+        unknown_accepted = sorted(accepted_names - chosen_names)
+        if unknown_accepted:
+            raise Fail(f"accepted PVC is not selected: {unknown_accepted[0]}")
+        invalid_retired = sorted(
+            repo
+            for repo in retired
+            if hold is None
+            or repo not in hold
+            or parse_repo(repo) is None
+            or parse_repo(repo) in present
+        )
+        if invalid_retired:
+            raise Fail(f"retired repository is not missing from the hold: {invalid_retired[0]}")
         if not chosen and (hold is None or not all_pvcs):
             raise Fail("no PVC to restore")
         done: list[tuple[str, str]] = []
@@ -845,7 +1056,8 @@ def run(
                     created,
                     as_of=override,
                     resume=hold is None,
-                    skip_missing=all_pvcs,
+                    accept_empty=f"{namespace}/{pvc}" in accepted_names,
+                    kubeconfig=kubeconfig,
                     monotonic=clock,
                     sleep=pause,
                     now=stamp,
@@ -853,29 +1065,42 @@ def run(
                     restore_budget_s=restore_budget_s,
                 )
             except NoSnapshot:
-                _line(f"SKIP no snapshot {namespace}/{pvc}")
+                accepted.append((namespace, pvc))
+                _line(f"ACCEPT empty {namespace}/{pvc}")
+            else:
+                restored.append((namespace, pvc))
             done.append((namespace, pvc))
         if hold is not None and not all_pvcs:
             _line("HOLD still set; backup=paused remains until make restore-all lifts it")
         if all_pvcs and hold is not None:
-            _lift_hold(
+            retired_count = _lift_hold(
                 kubectl,
                 hold,
                 present,
                 done,
                 retired,
+                kubeconfig=kubeconfig,
                 monotonic=clock,
                 sleep=pause,
                 pause_budget_s=pause_budget_s,
             )
     except Fail as exc:
+        _line(
+            f"SUMMARY restored={len(restored)} accepted={len(accepted)}"
+            f" retired={retired_count}"
+        )
         _line(f"FAIL {exc.message}")
         return 1
+    _line(
+        f"SUMMARY restored={len(restored)} accepted={len(accepted)}"
+        f" retired={retired_count}"
+    )
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env", required=True, help="Environment under envs/")
     parser.add_argument("--app", help="Namespace whose PVCs to restore")
     parser.add_argument("--all", action="store_true", help="Restore every enrolled PVC")
     parser.add_argument(
@@ -888,9 +1113,32 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Hold repo id with no PVC that the owner retired (repeat, or comma-separate)",
     )
+    parser.add_argument(
+        "--accept-empty",
+        action="append",
+        default=[],
+        help="PVC namespace/name explicitly accepted as empty (repeat, or comma-separate)",
+    )
     args = parser.parse_args(argv)
     app = args.app or None
-    return run(_kubectl, app=app, all_pvcs=args.all, as_of=args.as_of, retire=args.retire)
+    kubeconfig = Path.home() / ".kube" / f"jarvis-{args.env}.yaml"
+    if not kubeconfig.is_file():
+        _line(f"FAIL kubeconfig does not exist: {kubeconfig}")
+        return 1
+
+    def kubectl(args_: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+        return _kubectl(args_, input=input, kubeconfig=kubeconfig)
+
+    return run(
+        kubectl,
+        env=args.env,
+        app=app,
+        all_pvcs=args.all,
+        as_of=args.as_of,
+        retire=args.retire,
+        accept_empty=args.accept_empty,
+        kubeconfig=kubeconfig,
+    )
 
 
 if __name__ == "__main__":
