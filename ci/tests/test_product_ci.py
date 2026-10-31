@@ -15,7 +15,7 @@ def test_product_file_referencing_ci_fails_and_verify_read_passes(tmp_path: Path
     leak.write_text('open("ci/checks/secret-scan")\n', encoding="utf-8")
     verify = tmp_path / "tools" / "verify"
     verify.mkdir()
-    (verify / "p0a").write_text(
+    (verify / "run").write_text(
         'checks = (REPO_ROOT / "ci/rule-checks.txt").read_text(encoding="utf-8").split()\n'
         "import ci.checks.lib._core_names\n",
         encoding="utf-8",
@@ -25,7 +25,7 @@ def test_product_file_referencing_ci_fails_and_verify_read_passes(tmp_path: Path
     violations = scan_product_ci(tmp_path)
     assert [(item.path, item.line, item.reference) for item in violations] == [
         ("tools/leak.py", 1, "ci/checks/secret-scan"),
-        ("tools/verify/p0a", 2, "import ci"),
+        ("tools/verify/run", 2, "import ci"),
     ]
 
 
