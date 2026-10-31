@@ -646,6 +646,30 @@ def test_lift_does_not_treat_a_missing_source_as_unpaused(capsys) -> None:
     assert "HOLD restored after lift failure" in out
 
 
+def test_printed_hold_recovery_preserves_repo_lines(capsys) -> None:
+    hold = ["ns-demo/pvc-drill", "ns-other/pvc-data"]
+    restore_tool._print_hold_recovery(hold, [], kubeconfig=None)
+    lines = capsys.readouterr().out.splitlines()
+    start = lines.index("cat <<'JARVIS_REBUILD_HOLD' | kubectl apply -f -") + 1
+    end = lines.index("JARVIS_REBUILD_HOLD", start)
+    configmap = yaml.safe_load("\n".join(lines[start:end]))
+
+    def kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+        assert input is None
+        assert list(args) == [
+            "get",
+            "configmap",
+            restore_tool.HOLD_NAME,
+            "-n",
+            restore_tool.HOLD_NAMESPACE,
+            "-o",
+            "json",
+        ]
+        return _completed(list(args), json.dumps(configmap))
+
+    assert restore_tool._hold_repos(kubectl) == hold
+
+
 def test_restore_all_fails_closed_on_no_snapshot(capsys) -> None:
     cluster = _Cluster(
         [_pvc("demo", "drill")],

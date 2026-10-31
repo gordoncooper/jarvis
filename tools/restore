@@ -911,12 +911,10 @@ def _print_hold_recovery(
             f"{command} annotate pvc {pvc} -n {namespace}"
             " backup=paused --overwrite"
         )
-    repos = "\\n".join(hold) + "\\n"
-    _line(
-        f"{command} create configmap {HOLD_NAME} -n {HOLD_NAMESPACE}"
-        f" --from-literal=repos={shlex.quote(repos)} --dry-run=client -o yaml"
-        f" | {command} apply -f -"
-    )
+    delimiter = "JARVIS_REBUILD_HOLD"
+    _line(f"cat <<'{delimiter}' | {command} apply -f -")
+    _line(_hold_body(hold).rstrip())
+    _line(delimiter)
 
 
 def _lift_hold(
