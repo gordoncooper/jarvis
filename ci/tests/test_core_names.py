@@ -23,12 +23,24 @@ def _owner_name(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_owner_name_unset_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset OWNER_NAME fails with a message that names it and carries no value (D44)."""
     monkeypatch.delenv("OWNER_NAME", raising=False)
-    with pytest.raises(OwnerNameUnset, match="OWNER_NAME is unset"):
+    with pytest.raises(OwnerNameUnset) as unset:
         scan_core_names(tmp_path)
-    monkeypatch.setenv("OWNER_NAME", "   ")
-    with pytest.raises(OwnerNameUnset, match="OWNER_NAME is unset"):
+    message = str(unset.value)
+    assert "OWNER_NAME" in message
+    assert "personal name" in message
+    assert "repository variable" in message
+    assert _FIXTURE_OWNER_NAME not in message
+
+    blank = "   "
+    monkeypatch.setenv("OWNER_NAME", blank)
+    with pytest.raises(OwnerNameUnset) as blanked:
         scan_core_names(tmp_path)
+    blank_message = str(blanked.value)
+    assert blank_message == message
+    assert blank not in blank_message
+    assert _FIXTURE_OWNER_NAME not in blank_message
 
 
 def test_hardcoded_dns_suffix_under_platform_fails(tmp_path: Path) -> None:

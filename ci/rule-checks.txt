@@ -3,6 +3,7 @@ contract-md
 core-names
 digest-pin
 env-schema
+flux-substitute
 loadbalancer
 manifest-lint
 product-ci

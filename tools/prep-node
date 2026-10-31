@@ -29,6 +29,7 @@ if str(_TOOLS_LIB) not in sys.path:
     sys.path.insert(0, str(_TOOLS_LIB))
 
 from render_cluster_vars_configmap import render_document  # noqa: E402
+from schema.env import ValidationError, validate_env_tree  # noqa: E402
 
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 _TOOLS = ("ssh", "ssh-keygen", "git", "make")
@@ -1000,17 +1001,14 @@ def sync_age_key(repo: Path, env: str) -> None:
 
 
 def run_env_schema(repo: Path) -> None:
-    result = subprocess.run(
-        [str(repo / "tools" / "checks" / "env-schema")],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stdout)
-        sys.stderr.write(result.stderr)
-        raise PrepError("env-schema check failed")
+    """Validate the env tree in-process. Failures are a PrepError, not a traceback."""
+    try:
+        validate_env_tree(repo)
+    except ValidationError as exc:
+        detail = str(exc).strip() or "env schema check failed"
+        raise PrepError(detail) from exc
+    except OSError as exc:
+        raise PrepError(f"env schema check failed: {exc}") from exc
 
 
 def show_git_diff(repo: Path, env: str) -> None:

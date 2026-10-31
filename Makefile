@@ -16,6 +16,7 @@ help:
 	@echo
 	@echo "Developer commands"
 	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
+	@echo "                          Set OWNER_NAME to the owner's personal name, the same value as the GitHub Actions repository variable"
 
 deps:
 	python3 tools/install-deps

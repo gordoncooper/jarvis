@@ -6,7 +6,6 @@ from pathlib import Path
 
 from _loadbalancer import scan_loadbalancer
 
-REPO = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "loadbalancer" / "extra-service.yaml"
 
 
@@ -24,9 +23,17 @@ def test_r28_seeded_loadbalancer_fails(tmp_path: Path) -> None:
     assert "LoadBalancer" in violations[0].message
 
 
-def test_r28_traefik_and_app_dns_paths_pass(tmp_path: Path) -> None:
+def test_r28_extra_loadbalancer_under_an_allowed_folder_fails(tmp_path: Path) -> None:
     _copy(tmp_path, "platform/traefik/service.yaml")
+    violations = scan_loadbalancer(tmp_path)
+    assert len(violations) == 1
+    assert violations[0].path == "platform/traefik/service.yaml"
+    assert "Service demo/extra" in violations[0].message
+
+
+def test_r28_traefik_and_app_dns_owners_pass(tmp_path: Path) -> None:
     (tmp_path / "platform" / "app-dns").mkdir(parents=True)
+    (tmp_path / "platform" / "traefik").mkdir(parents=True)
     (tmp_path / "platform" / "app-dns" / "helmrelease.yaml").write_text(
         """
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -79,5 +86,22 @@ spec:
     assert violations[0].path == "platform/other/helmrelease.yaml"
 
 
-def test_r28_platform_manifests_pass() -> None:
-    assert scan_loadbalancer(REPO) == []
+def test_r28_unlisted_helmrelease_under_app_dns_fails(tmp_path: Path) -> None:
+    path = tmp_path / "platform" / "app-dns" / "second.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: second
+  namespace: flux-system
+spec:
+  values:
+    serviceType: LoadBalancer
+""",
+        encoding="utf-8",
+    )
+    violations = scan_loadbalancer(tmp_path)
+    assert len(violations) == 1
+    assert "HelmRelease flux-system/second" in violations[0].message

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -462,3 +464,49 @@ def test_matching_age_key_does_not_warn_about_another_env(
     out = capsys.readouterr().out
     assert "another env" not in out
     assert "Age recipient already matches." in out
+
+
+def test_env_schema_accepts_the_real_env_tree() -> None:
+    """prep-node schema step accepts the real env tree, including env-00 (J5)."""
+    module = _load()
+    assert (REPO_ROOT / "envs" / "env-00").is_dir()
+    module.run_env_schema(REPO_ROOT)
+
+
+def test_env_schema_rejects_a_seeded_bad_copy(tmp_path: Path) -> None:
+    """A seeded invalid copy of env-00 fails as PrepError, not a traceback (J5)."""
+    module = _load()
+    dest = tmp_path / "envs" / "env-00"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    original = cluster.read_text(encoding="utf-8")
+    seeded = original.replace("build_agent: cursor", "build_agent: not-a-provider", 1)
+    assert seeded != original
+    cluster.write_text(seeded, encoding="utf-8")
+
+    with pytest.raises(module.PrepError) as excinfo:
+        module.run_env_schema(tmp_path)
+    message = str(excinfo.value)
+    assert "build_agent" in message
+    assert "Traceback" not in message
+    assert "FileNotFoundError" not in message
+
+
+def test_env_schema_oserror_is_prep_error(tmp_path: Path) -> None:
+    """An unreadable env tree is a PrepError message, not a traceback (J5)."""
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses directory mode 000")
+    module = _load()
+    envs = tmp_path / "envs"
+    envs.mkdir()
+    envs.chmod(0)
+    try:
+        with pytest.raises(module.PrepError) as excinfo:
+            module.run_env_schema(tmp_path)
+    finally:
+        envs.chmod(0o755)
+    message = str(excinfo.value)
+    assert "env schema check failed" in message
+    assert "Permission denied" in message
+    assert "Traceback" not in message
+    assert isinstance(excinfo.value.__cause__, OSError)

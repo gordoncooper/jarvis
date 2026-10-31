@@ -58,11 +58,17 @@ _PRODUCT_WORD_RE = re.compile(
 )
 
 
+_OWNER_NAME_UNSET = (
+    "OWNER_NAME is unset. Set OWNER_NAME to the owner's personal name, "
+    "the same value as the GitHub Actions repository variable."
+)
+
+
 class OwnerNameUnset(Exception):
     """OWNER_NAME is missing or blank. The message never carries a value."""
 
     def __init__(self) -> None:
-        super().__init__("OWNER_NAME is unset")
+        super().__init__(_OWNER_NAME_UNSET)
 
 
 @dataclass(frozen=True)
