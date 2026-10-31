@@ -30,16 +30,19 @@ def _completed(
     return CompletedProcess(list(args), returncode, stdout, stderr)
 
 
-def _write_env(root: Path) -> str:
+def _write_env(
+    root: Path,
+    *,
+    marker: str = "env-test",
+    time_zone: str | None = "Etc/UTC",
+) -> str:
     env = "env-test"
     values = root / "envs" / env / "values"
-    values.mkdir(parents=True)
-    (values / "cluster-vars.yaml").write_text(
-        "jarvis_env: env-test\n"
-        "dns_suffix: test.example\n"
-        "time_zone: Etc/UTC\n",
-        encoding="utf-8",
-    )
+    values.mkdir(parents=True, exist_ok=True)
+    text = f"jarvis_env: {marker}\ndns_suffix: test.example\n"
+    if time_zone is not None:
+        text += f"time_zone: {time_zone}\n"
+    (values / "cluster-vars.yaml").write_text(text, encoding="utf-8")
     (root / "envs" / env / "ca.crt").write_text("fixture CA\n", encoding="utf-8")
     return env
 
@@ -54,7 +57,10 @@ class Cluster:
         self.node_roles = {"control_plane", "edge"}
         self.enablelb = True
         self.source = True
+        self.source_schedule = "0 1 * * *"
         self.source_sync = "2026-10-31T01:01:00Z"
+        self.etcd_schedule = "5 */12 * * *"
+        self.etcd_zone: str | None = "Etc/UTC"
         self.etcd_sync = "2026-10-31T05:10:00Z"
         self.hold = False
         self.bad_sources_json = False
@@ -113,7 +119,7 @@ class Cluster:
                 items.append(
                     {
                         "metadata": {"namespace": "app", "name": "data"},
-                        "spec": {"trigger": {"schedule": "0 1 * * *"}},
+                        "spec": {"trigger": {"schedule": self.source_schedule}},
                         "status": {"lastSyncTime": self.source_sync},
                     }
                 )
@@ -122,7 +128,10 @@ class Cluster:
             return _completed(
                 argv,
                 {
-                    "spec": {"schedule": "5 */12 * * *", "timeZone": "Etc/UTC"},
+                    "spec": {
+                        "schedule": self.etcd_schedule,
+                        "timeZone": self.etcd_zone,
+                    },
                     "status": {"lastSuccessfulTime": self.etcd_sync},
                 },
             )
@@ -144,7 +153,10 @@ def _run(
     monkeypatch: pytest.MonkeyPatch,
     *,
     fetch_code: int = 0,
+    repo_marker: str = "env-test",
+    time_zone: str | None = "Etc/UTC",
 ) -> int:
+    _write_env(root, marker=repo_marker, time_zone=time_zone)
     monkeypatch.setattr(
         verify_tool,
         "_inventory",
@@ -163,6 +175,46 @@ def _run(
     )
 
 
+def _assert_read_only_calls(
+    kubectl_calls: list[list[str]], external_calls: list[list[str]]
+) -> None:
+    assert all(call and call[0] in {"get", "wait"} for call in kubectl_calls)
+    for call in external_calls:
+        if not call or call[0] != "curl":
+            continue
+        method = "GET"
+        for index, arg in enumerate(call):
+            if arg in {"-X", "--request"}:
+                method = call[index + 1].upper()
+            elif arg.startswith("-X") and len(arg) > 2:
+                method = arg[2:].upper()
+            elif arg.startswith("--request="):
+                method = arg.partition("=")[2].upper()
+            elif arg in {"-I", "--head"}:
+                method = "HEAD"
+        assert method == "GET"
+        data_flags = {
+            "-d",
+            "--data",
+            "--data-ascii",
+            "--data-binary",
+            "--data-raw",
+            "--data-urlencode",
+            "--json",
+            "-F",
+            "--form",
+            "--form-string",
+            "-T",
+            "--upload-file",
+        }
+        assert not any(
+            arg in data_flags
+            or (arg.startswith(("-d", "-F", "-T")) and len(arg) > 2)
+            or any(arg.startswith(f"{flag}=") for flag in data_flags if flag.startswith("--"))
+            for arg in call
+        )
+
+
 def test_verify_passes_without_writes_or_secret_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -175,8 +227,62 @@ def test_verify_passes_without_writes_or_secret_output(
     assert SECRET_VALUE not in output
     assert "owner" not in output.lower()
     assert "PASS LAN HTTPS and certificate issuer=issuer=CN = fixture-ca" in output
-    writes = {"apply", "patch", "annotate", "delete", "exec", "port-forward", "scale"}
-    assert not any(call[0] in writes for call in cluster.calls)
+    _assert_read_only_calls(cluster.calls, [])
+
+
+def test_verify_curl_is_get_only_without_request_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_env(tmp_path)
+    cluster = Cluster()
+    external: list[list[str]] = []
+    monkeypatch.setattr(
+        verify_tool,
+        "_inventory",
+        lambda _root, _env: {"n1": {"control_plane", "edge"}},
+    )
+
+    def invoke(
+        argv: Sequence[str], *, input: str | None = None, cwd: Path | None = None
+    ) -> CompletedProcess[str]:
+        del input, cwd
+        call = list(argv)
+        external.append(call)
+        if call[0] == "curl":
+            return _completed(call, "testapp\n")
+        if call[:2] == ["openssl", "s_client"]:
+            return _completed(call, "CERT\n")
+        if call[:2] == ["openssl", "x509"]:
+            return _completed(call, "issuer=CN = fixture-ca\n")
+        raise AssertionError(call)
+
+    monkeypatch.setattr(verify_tool, "_run", invoke)
+    assert verify_tool.run(
+        tmp_path,
+        "env-test",
+        cluster.kubectl,
+        verify_tool._fetch,
+        verify_tool._issuer,
+        now=NOW,
+    ) == 0
+    _assert_read_only_calls(cluster.calls, external)
+
+
+@pytest.mark.parametrize(
+    ("kubectl_calls", "external_calls"),
+    [
+        ([["label", "node", "fixture", "x=y"]], []),
+        ([["create", "namespace", "fixture"]], []),
+        ([], [["curl", "-X", "POST", "https://fixture"]]),
+        ([], [["curl", "--data", "x=y", "https://fixture"]]),
+    ],
+)
+def test_read_only_guard_rejects_seeded_writes(
+    kubectl_calls: list[list[str]], external_calls: list[list[str]]
+) -> None:
+    with pytest.raises(AssertionError):
+        _assert_read_only_calls(kubectl_calls, external_calls)
 
 
 @pytest.mark.parametrize(
@@ -246,6 +352,62 @@ def test_wrong_cluster_marker_stops_after_marker_read(
         ["get", "configmap", "cluster-vars", "-n", "flux-system", "-o", "json"]
     ]
     assert "environment marker is not ENV=env-test" in capsys.readouterr().out
+
+
+def test_wrong_repository_marker_refuses_before_kubectl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster()
+    assert _run(
+        tmp_path, cluster, monkeypatch, repo_marker="wrong"
+    ) != 0
+    assert cluster.calls == []
+    assert "does not match its repository marker" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("change", "time_zone", "message"),
+    [
+        (
+            lambda cluster: setattr(cluster, "source_schedule", "not a cron"),
+            "Etc/UTC",
+            "schedule",
+        ),
+        (
+            lambda cluster: setattr(cluster, "etcd_schedule", "not a cron"),
+            "Etc/UTC",
+            "schedule",
+        ),
+        (lambda cluster: None, "Not/AZone", "time zone"),
+        (lambda cluster: None, None, "time_zone"),
+        (
+            lambda cluster: setattr(cluster, "etcd_zone", "Not/AZone"),
+            "Etc/UTC",
+            "time zone",
+        ),
+        (
+            lambda cluster: setattr(cluster, "etcd_zone", None),
+            "Etc/UTC",
+            "no successful scheduled run",
+        ),
+    ],
+)
+def test_bad_schedule_or_timezone_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    change,
+    time_zone: str | None,
+    message: str,
+) -> None:
+    cluster = Cluster()
+    change(cluster)
+    assert _run(
+        tmp_path, cluster, monkeypatch, time_zone=time_zone
+    ) != 0
+    assert message in capsys.readouterr().out
 
 
 def test_kubectl_uses_environment_kubeconfig(

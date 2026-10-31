@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help deps ci-verify verify drill bootstrap-secrets seal restore restore-all
+.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all
 help:
 	@echo "JARVIS Makefile"
 	@echo
@@ -10,6 +10,7 @@ help:
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
 	@echo "  make verify             Read-only standing-state checks (ENV=<env> required)"
 	@echo "  make drill              Scratch volume and etcd restore drill (ENV=<env> required)"
+	@echo "  make drill-cleanup      Retry drill namespace/repository cleanup (ENV=<env> required)"
 	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339)"
 	@echo "  make restore-all        Restore all PVCs (ENV required; optional RETIRE, ACCEPT_EMPTY)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
@@ -34,6 +35,10 @@ verify:
 drill:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@python3 tools/drill --env "$(ENV)"
+
+drill-cleanup:
+	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
+	@python3 tools/drill --env "$(ENV)" --cleanup-only
 
 restore:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)

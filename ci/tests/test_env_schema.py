@@ -518,6 +518,7 @@ def test_make_targets_require_env() -> None:
         ["make", "seal", "NAME=example"],
         ["make", "verify"],
         ["make", "drill"],
+        ["make", "drill-cleanup"],
     )
     for cmd in commands:
         proc = subprocess.run(

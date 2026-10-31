@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import signal
 from collections.abc import Sequence
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -47,18 +48,27 @@ class Cluster:
         hold: bool = False,
         namespace: bool = False,
         reader_sum: str = SUM,
-        interrupt: bool = False,
+        interrupt: str | int | None = None,
         cleanup_fails: bool = False,
+        namespace_delete_fails: bool = False,
+        marker: str = "env-test",
     ) -> None:
         self.hold = hold
         self.namespace = namespace
         self.reader_sum = reader_sum
         self.interrupt = interrupt
         self.cleanup_fails = cleanup_fails
+        self.namespace_delete_fails = namespace_delete_fails
+        self.marker = marker
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
         self.cleanup_applied = False
+        self.pod_errors: dict[tuple[str, str], str] = {}
+        self.secrets = {
+            drill_tool.BACKUP_NAMESPACE: {"backups-restic"},
+            drill_tool.NAMESPACE: {"restic-drill"},
+        }
 
     def kubectl(
         self, args: Sequence[str], input: str | None = None
@@ -66,7 +76,7 @@ class Cluster:
         argv = list(args)
         self.calls.append(argv)
         if argv[:3] == ["get", "configmap", "cluster-vars"]:
-            return _completed(argv, {"data": {"jarvis_env": "env-test"}})
+            return _completed(argv, {"data": {"jarvis_env": self.marker}})
         if argv[:3] == ["get", "cronjob", "etcd-snapshots"]:
             return _completed(
                 argv,
@@ -162,13 +172,48 @@ class Cluster:
             self.applied.append(body)
             if body["kind"] == "Namespace":
                 self.namespace = True
-            if body["kind"] == "Pod" and body["metadata"]["name"] == drill_tool.CLEANUP_POD:
-                self.cleanup_applied = True
+            if body["kind"] == "Pod":
+                name = body["metadata"]["name"]
+                namespace = body["metadata"]["namespace"]
+                if name == drill_tool.CLEANUP_POD:
+                    self.cleanup_applied = True
+                for container in body["spec"]["containers"]:
+                    for env in container.get("env") or []:
+                        secret = ((env.get("valueFrom") or {}).get("secretKeyRef") or {}).get("name")
+                        if secret and secret not in self.secrets.get(namespace, set()):
+                            self.pod_errors[(namespace, name)] = (
+                                f'secret "{secret}" not found'
+                            )
             return _completed(argv, "applied\n")
         if argv[:2] == ["get", "pod"]:
             name = argv[2]
-            if self.interrupt and name == drill_tool.READER:
-                raise KeyboardInterrupt
+            namespace = argv[argv.index("-n") + 1]
+            if self.interrupt is not None and name == drill_tool.READER:
+                if self.interrupt == "keyboard":
+                    raise KeyboardInterrupt
+                handler = signal.getsignal(int(self.interrupt))
+                assert callable(handler)
+                handler(int(self.interrupt), None)
+            pod_error = self.pod_errors.get((namespace, name))
+            if pod_error:
+                return _completed(
+                    argv,
+                    {
+                        "status": {
+                            "phase": "Pending",
+                            "containerStatuses": [
+                                {
+                                    "state": {
+                                        "waiting": {
+                                            "reason": "CreateContainerConfigError",
+                                            "message": pod_error,
+                                        }
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                )
             phase = (
                 "Failed"
                 if self.cleanup_fails and name == drill_tool.CLEANUP_POD
@@ -193,6 +238,10 @@ class Cluster:
         if argv[0] == "delete":
             self.deleted.append((argv[1], argv[2]))
             if argv[1] == "namespace":
+                if self.namespace_delete_fails:
+                    return _completed(
+                        argv, "", returncode=1, stderr="timed out waiting for namespace"
+                    )
                 self.namespace = False
             return _completed(argv, "deleted\n")
         return _completed(argv, "", returncode=1, stderr=f"unexpected {argv}")
@@ -249,6 +298,14 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     assert restores == [
         ["make", "restore", "ENV=env-test", "APP=platform-drill"]
     ]
+    etcd_pod = next(
+        body
+        for body in cluster.applied
+        if body.get("kind") == "Pod"
+        and body["metadata"]["name"] == drill_tool.ETCD_POD
+    )
+    assert etcd_pod["metadata"]["namespace"] == drill_tool.BACKUP_NAMESPACE
+    assert not any(call[:2] == ["get", "secret"] for call in cluster.calls)
     _assert_cleanup(cluster)
     output = capsys.readouterr().out
     assert f"ORIGINAL volume checksum {SUM}" in output
@@ -262,7 +319,7 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     [
         (Cluster(reader_sum=OTHER), 0, "restored volume checksum mismatch"),
         (Cluster(), 1, "make restore failed"),
-        (Cluster(interrupt=True), 0, "interrupted"),
+        (Cluster(interrupt="keyboard"), 0, "interrupted"),
     ],
 )
 def test_failure_and_interrupt_cleanup(
@@ -311,7 +368,106 @@ def test_cleanup_failure_prints_exact_env_bound_recovery(
     code, _ = _run(tmp_path, monkeypatch, cluster, restore_rc=1)
     assert code != 0
     assert ("namespace", drill_tool.NAMESPACE) in cluster.deleted
-    assert (
-        "RECOVERY python3 tools/drill --env env-test --cleanup-only"
-        in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "FAIL drill: make restore failed" in output
+    assert "RECOVERY make drill-cleanup ENV=env-test" in output
+
+
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP])
+def test_process_signals_cleanup_and_return_shell_signal_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    signum: int,
+) -> None:
+    cluster = Cluster(interrupt=signum)
+    code, _ = _run(tmp_path, monkeypatch, cluster)
+    assert code == 128 + signum
+    _assert_cleanup(cluster)
+    assert signal.Signals(signum).name in capsys.readouterr().out
+
+
+def test_wrong_cluster_marker_refuses_before_drill_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster(marker="wrong")
+    code, restores = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    assert restores == []
+    assert cluster.calls == [
+        ["get", "configmap", "cluster-vars", "-n", "flux-system", "-o", "json"]
+    ]
+    assert "environment marker is not ENV=env-test" in capsys.readouterr().out
+
+
+def test_namespaced_secret_error_fails_fast() -> None:
+    cluster = Cluster()
+    pod = drill_tool._etcd_pod(
+        {
+            "image": "restic/restic@sha256:" + "a" * 64,
+            "env": [
+                {
+                    "name": "RESTIC_PASSWORD",
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": "backups-restic",
+                            "key": "RESTIC_PASSWORD",
+                        }
+                    },
+                }
+            ],
+            "nodeSelector": {},
+            "snapshotHostPath": {"path": "/fixture/etcd-snapshots"},
+        }
     )
+    pod["metadata"]["namespace"] = drill_tool.NAMESPACE
+    drill_tool._apply(cluster.kubectl, pod, "fixture")
+    with pytest.raises(drill_tool.DrillError, match="secret.*not found"):
+        drill_tool._pod_succeeded(
+            cluster.kubectl, drill_tool.ETCD_POD, drill_tool.NAMESPACE
+        )
+
+
+def test_unschedulable_pod_fails_fast() -> None:
+    def kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+        assert input is None
+        return _completed(
+            args,
+            {
+                "status": {
+                    "phase": "Pending",
+                    "conditions": [
+                        {
+                            "type": "PodScheduled",
+                            "status": "False",
+                            "reason": "Unschedulable",
+                            "message": "no matching node",
+                        }
+                    ],
+                }
+            },
+        )
+
+    with pytest.raises(drill_tool.DrillError, match="unschedulable"):
+        drill_tool._pod_succeeded(kubectl, "fixture", "fixture")
+
+
+def test_namespace_cleanup_timeout_is_bounded_and_preserves_original_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster(namespace_delete_fails=True)
+    code, _ = _run(tmp_path, monkeypatch, cluster, restore_rc=1)
+    assert code != 0
+    namespace_delete = next(
+        call
+        for call in cluster.calls
+        if call[:3] == ["delete", "namespace", drill_tool.NAMESPACE]
+    )
+    assert f"--timeout={drill_tool.DELETE_TIMEOUT_SECONDS}s" in namespace_delete
+    output = capsys.readouterr().out
+    assert "FAIL drill: make restore failed" in output
+    assert "RECOVERY make drill-cleanup ENV=env-test" in output

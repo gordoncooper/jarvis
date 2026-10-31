@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import secrets
+import signal
 import subprocess
 import sys
 import time
@@ -41,12 +42,23 @@ BACKUP_NAMESPACE = "platform-backups"
 HOLD_NAME = "backup-rebuild-hold"
 POLL_SECONDS = 2.0
 WAIT_SECONDS = 20 * 60
+DELETE_TIMEOUT_SECONDS = 60
 Kubectl = Callable[..., CompletedProcess[str]]
 Restore = Callable[[Sequence[str]], CompletedProcess[str]]
 
 
 class DrillError(Exception):
     pass
+
+
+class DrillSignal(BaseException):
+    def __init__(self, signum: int) -> None:
+        super().__init__(signal.Signals(signum).name)
+        self.signum = signum
+
+
+def _raise_signal(signum: int, _frame: object) -> None:
+    raise DrillSignal(signum)
 
 
 def _line(text: str) -> None:
@@ -73,12 +85,20 @@ def _apply(kubectl: Kubectl, body: dict, what: str) -> None:
 
 
 def _delete(
-    kubectl: Kubectl, kind: str, name: str, namespace: str, *, wait: bool = True
+    kubectl: Kubectl,
+    kind: str,
+    name: str,
+    namespace: str,
+    *,
+    wait: bool = True,
+    timeout: int | None = None,
 ) -> None:
     args = ["delete", kind, name]
     if kind != "namespace":
         args.extend(["-n", namespace])
     args.extend([f"--wait={'true' if wait else 'false'}", "--ignore-not-found=true"])
+    if timeout is not None:
+        args.append(f"--timeout={timeout}s")
     _ok(
         kubectl(args),
         f"delete {kind} {namespace}/{name}",
@@ -111,6 +131,33 @@ def _pod_succeeded(kubectl: Kubectl, name: str, namespace: str) -> bool:
     phase = (pod.get("status") or {}).get("phase")
     if phase == "Failed":
         raise DrillError(f"pod {namespace}/{name} failed")
+    status = pod.get("status") or {}
+    for condition in status.get("conditions") or []:
+        if (
+            condition.get("type") == "PodScheduled"
+            and condition.get("status") == "False"
+            and condition.get("reason") == "Unschedulable"
+        ):
+            raise DrillError(
+                f"pod {namespace}/{name} unschedulable:"
+                f" {condition.get('message') or 'no reason'}"
+            )
+    for container in [
+        *(status.get("initContainerStatuses") or []),
+        *(status.get("containerStatuses") or []),
+    ]:
+        waiting = ((container.get("state") or {}).get("waiting") or {})
+        wait_reason = waiting.get("reason") or ""
+        message = waiting.get("message") or ""
+        missing_config = (
+            ("secret" in message.lower() or "configmap" in message.lower())
+            and "not found" in message.lower()
+        )
+        if wait_reason in {"CreateContainerConfigError", "CreateContainerError"} or missing_config:
+            raise DrillError(
+                f"pod {namespace}/{name} configuration failed:"
+                f" {message or wait_reason}"
+            )
     return phase == "Succeeded"
 
 
@@ -238,7 +285,7 @@ printf 'ETCD %s %s %s\n' "$original" "$restored" "$name"
     return {
         "apiVersion": "v1",
         "kind": "Pod",
-        "metadata": {"name": ETCD_POD, "namespace": NAMESPACE},
+        "metadata": {"name": ETCD_POD, "namespace": BACKUP_NAMESPACE},
         "spec": {
             "restartPolicy": "Never",
             "nodeSelector": template["nodeSelector"],
@@ -291,10 +338,32 @@ def _cleanup_pod(template: dict) -> dict:
 
 
 def _cleanup(kubectl: Kubectl, template: dict) -> bool:
+    ok = True
+    namespace_deleted = True
     try:
-        _delete(kubectl, "namespace", NAMESPACE, NAMESPACE)
-    except (DrillError, KeyboardInterrupt) as exc:
+        _delete(
+            kubectl,
+            "namespace",
+            NAMESPACE,
+            NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
         _line(f"FAIL cleanup namespace: {exc}")
+        namespace_deleted = False
+        ok = False
+    try:
+        _delete(
+            kubectl,
+            "pod",
+            ETCD_POD,
+            BACKUP_NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
+        _line(f"FAIL cleanup etcd pod: {exc}")
+        ok = False
+    if not namespace_deleted:
         return False
     try:
         _delete(kubectl, "pod", CLEANUP_POD, BACKUP_NAMESPACE)
@@ -304,10 +373,10 @@ def _cleanup(kubectl: Kubectl, template: dict) -> bool:
             "repository cleanup",
         )
         _delete(kubectl, "pod", CLEANUP_POD, BACKUP_NAMESPACE)
-    except (DrillError, KeyboardInterrupt) as exc:
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
         _line(f"FAIL cleanup repository: {exc}")
         return False
-    return True
+    return ok
 
 
 def _preflight(kubectl: Kubectl) -> None:
@@ -348,7 +417,7 @@ def _checksum_line(text: str, prefix: str) -> str:
     raise DrillError(f"{prefix.lower()} checksum missing")
 
 
-def run(
+def _run(
     kubectl: Kubectl,
     *,
     env: str,
@@ -358,7 +427,7 @@ def run(
 ) -> int:
     started = False
     cleanup_template: dict | None = None
-    interrupted = False
+    exit_signal: int | None = None
     failed: str | None = None
     try:
         repository_values(REPO_ROOT, env)
@@ -449,8 +518,11 @@ def run(
         _line(f"RESTORED volume checksum {after}")
 
         _apply(kubectl, _etcd_pod(etcd_template), "create etcd restore pod")
-        _wait(lambda: _pod_succeeded(kubectl, ETCD_POD, NAMESPACE), "etcd restore pod")
-        etcd = _logs(kubectl, ETCD_POD, NAMESPACE)
+        _wait(
+            lambda: _pod_succeeded(kubectl, ETCD_POD, BACKUP_NAMESPACE),
+            "etcd restore pod",
+        )
+        etcd = _logs(kubectl, ETCD_POD, BACKUP_NAMESPACE)
         line = next((line for line in etcd.splitlines() if line.startswith("ETCD ")), "")
         parts = line.split()
         try:
@@ -463,20 +535,48 @@ def run(
             raise DrillError("etcd snapshot checksum mismatch")
         _line(f"ETCD snapshot {parts[3]} checksum {parts[1]}")
     except KeyboardInterrupt:
-        interrupted = True
+        exit_signal = signal.SIGINT
         failed = "interrupted"
+    except DrillSignal as exc:
+        exit_signal = exc.signum
+        failed = f"interrupted by {signal.Signals(exc.signum).name}"
     except (DrillError, EnvError, json.JSONDecodeError) as exc:
         failed = str(exc)
     finally:
         if started and cleanup_template is not None:
             if not _cleanup(kubectl, cleanup_template):
-                _line(f"RECOVERY python3 tools/drill --env {env} --cleanup-only")
+                _line(f"RECOVERY make drill-cleanup ENV={env}")
                 failed = failed or "cleanup incomplete"
     if failed:
         _line(f"FAIL drill: {failed}")
-        return 130 if interrupted else 1
+        return 128 + exit_signal if exit_signal is not None else 1
     _line("PASS drill cleanup complete")
     return 0
+
+
+def run(
+    kubectl: Kubectl,
+    *,
+    env: str,
+    restore: Restore = _restore_command,
+    cleanup_only: bool = False,
+    payload: bytes | None = None,
+) -> int:
+    previous = {
+        signum: signal.signal(signum, _raise_signal)
+        for signum in (signal.SIGTERM, signal.SIGHUP)
+    }
+    try:
+        return _run(
+            kubectl,
+            env=env,
+            restore=restore,
+            cleanup_only=cleanup_only,
+            payload=payload,
+        )
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def main(argv: list[str] | None = None) -> int:
