@@ -53,18 +53,40 @@ _KEPT = frozenset(
     }
 )
 
-# One owner re-seal. Any other env's unguarded CA fails the kind test.
-# The re-seal PR deletes this entry in the same change; the kind rule then
-# guards the CA, and dropping the annotation fails hard.
-# core-names forbids the env token in ci/, so the one env name is split.
+# One owner re-seal. The pending envs are the ones that still have this file.
+# The re-seal PR deletes the file; the kind rule then guards the CA, and
+# dropping the annotation fails hard. Any other env's unguarded CA fails now.
 _PENDING_CA: _Key = ("Secret", "platform-cert-manager", "cert-manager-ca")
-_PENDING_ENV = "env-" + "01"
-_PENDING_OWNER = {(_PENDING_ENV, _PENDING_CA)}
+_PENDING_FILE = "pending-prune.yaml"
 _PENDING_OWNER_REASON = (
     "Owner run (D17): add kustomize.toolkit.fluxcd.io/prune: disabled "
     "under metadata on the pending CA secret, "
-    "then remove _PENDING_OWNER in that same change. The SOPS MAC needs the age key."
+    "then delete envs/<env>/values/pending-prune.yaml in that same change. "
+    "The SOPS MAC needs the age key."
 )
+
+
+def _pending_owner() -> set[tuple[str, _Key]]:
+    pending: set[tuple[str, _Key]] = set()
+    for env in non_example_env_names():
+        path = REPO_ROOT / "envs" / env / "values" / _PENDING_FILE
+        if not path.is_file():
+            continue
+        rows = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(rows, list) or not rows:
+            raise AssertionError(f"{path.name}: expected a non-empty list")
+        for row in rows:
+            if (
+                not isinstance(row, list)
+                or len(row) != 3
+                or not all(isinstance(part, str) for part in row)
+            ):
+                raise AssertionError(f"{path.name}: each row is kind, namespace, name")
+            pending.add((env, (row[0], row[1], row[2])))
+    return pending
+
+
+_PENDING_OWNER = _pending_owner()
 
 
 def _flux_build_path(env: str, name: str) -> str:
