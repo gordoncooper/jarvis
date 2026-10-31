@@ -41,15 +41,15 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 
 | Tag | Purpose | Example |
 | --- | --- | --- |
-| `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone; edge hosts also turn off the resolved stub) | `../../.venv/bin/ansible-playbook site.yml --tags base-os` |
-| `node-disk` | Partition, label, and mount a declared data disk. A wipe also needs `-e jarvis_wipe_confirm` set to comma-separated `<node>:<disk id>` pairs | `../../.venv/bin/ansible-playbook site.yml --tags node-disk -e "jarvis_wipe_confirm=<node>:<disk id>,<node>:<disk id>"` |
-| `k3s` | k3s server, agents, and node labels | `../../.venv/bin/ansible-playbook site.yml --tags k3s` |
-| `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `../../.venv/bin/ansible-playbook site.yml --tags flux-operator` |
-| `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `../../.venv/bin/ansible-playbook site.yml --tags kubeconfig` |
-| `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `../../.venv/bin/ansible-playbook site.yml --tags time` |
-| `apt-policy` | Apt list refresh timers and inert unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml --tags apt-policy` |
-| `journald` | journald drop-in and restart | `../../.venv/bin/ansible-playbook site.yml --tags journald` |
-| `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `../../.venv/bin/ansible-playbook site.yml --tags resolved` |
+| `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone; edge hosts also turn off the resolved stub) | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags base-os` |
+| `node-disk` | Partition, label, and mount a declared data disk. A wipe also needs `-e jarvis_wipe_confirm` set to comma-separated `<node>:<disk id>` pairs | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags node-disk -e "jarvis_wipe_confirm=<node>:<disk id>,<node>:<disk id>"` |
+| `k3s` | k3s server, agents, and node labels | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags k3s` |
+| `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags flux-operator` |
+| `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags kubeconfig` |
+| `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags time` |
+| `apt-policy` | Apt list refresh timers and inert unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags apt-policy` |
+| `journald` | journald drop-in and restart | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags journald` |
+| `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags resolved` |
 
 The kubeconfig role reads `k3s_kubeconfig_path` on the control-plane node, rewrites the server to that node's inventory hostname, and writes `~/.kube/jarvis-<jarvis_env>.yaml` (mode `0600`) on the playbook runner. `~/.kube` is mode `0700`. The role does not write `~/.kube/config` and does not keep a backup. kubectl on that machine uses `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. A run whose server line does not change fails.
 
