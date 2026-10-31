@@ -1,0 +1,21 @@
+---
+# Mode and owner come from the stat result. These tasks do not read the key.
+- name: Record the runner uid
+  ansible.builtin.command:
+    cmd: id -u
+  register: sops_age_runner_uid
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Refuse an age private key that is not mode 0600 and owned by the runner
+  ansible.builtin.assert:
+    that:
+      - sops_age_key_stat.stat.mode == '0600'
+      - (sops_age_key_stat.stat.uid | int) == (sops_age_runner_uid.stdout | trim | int)
+    fail_msg: >-
+      The age private key file must be mode 0600 and owned by the user
+      running this play.
+  no_log: true

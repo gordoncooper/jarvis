@@ -332,6 +332,7 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply(tmp_path: Path) -> N
     binary = tmp_path / "k3s"
     keyfile = tmp_path / "age.key"
     keyfile.write_text("fixture-age-key\n", encoding="utf-8")
+    keyfile.chmod(0o600)
     _write_executable(
         binary,
         textwrap.dedent(
@@ -372,7 +373,125 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply(tmp_path: Path) -> N
     assert "kubectl apply" not in invocations
 
 
-def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Path) -> None:
+def _assert_key_was_not_read(proc: subprocess.CompletedProcess[str], sentinel: str) -> None:
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert "Refuse an age private key" in output
+    assert sentinel not in output
+    assert "Load age private key from the controller" not in output
+
+
+def test_sops_age_refuses_mode_0644_without_reading_the_key(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    sentinel = "SENTINEL-AGE-KEY-NOT-READ"
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    keyfile = tmp_path / "age.key"
+    keyfile.write_text(sentinel + "\n", encoding="utf-8")
+    keyfile.chmod(0o644)
+    _write_executable(
+        binary,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            printf '%s\\n' "$*" >> {log}
+            joined="$*"
+            if [[ "$joined" == *"get secret sops-age -o name"* ]]; then
+              exit 1
+            fi
+            echo "unexpected k3s invocation: $*" >&2
+            exit 1
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: Refuse a world-readable age key
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: sops_age.yml
+        """
+    )
+    env = _ansible_env()
+    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+    proc = _run_localhost_role(play, tmp_path, ["-e", f"k3s_binary_path={binary}"], env=env)
+    _assert_key_was_not_read(proc, sentinel)
+    invocations = log.read_text(encoding="utf-8")
+    assert "get secret sops-age -o name" in invocations
+    assert "create" not in invocations
+    assert "-o json" not in invocations
+
+
+def test_sops_age_refuses_wrong_owner_from_stat(tmp_path: Path) -> None:
+    """Stat uid is faked when this user cannot chown a file to someone else."""
+    require_cli("ansible-playbook")
+    sentinel = "SENTINEL-AGE-KEY-NOT-READ"
+    other = os.getuid() + 1
+    keyfile = tmp_path / "age.key"
+    keyfile.write_text(sentinel + "\n", encoding="utf-8")
+    keyfile.chmod(0o600)
+    try:
+        os.chown(keyfile, other, os.getgid())
+    except OSError:
+        chowned = False
+    else:
+        chowned = keyfile.stat().st_uid == other
+    if chowned:
+        log = tmp_path / "k3s.log"
+        binary = tmp_path / "k3s"
+        _write_executable(
+            binary,
+            "#!/bin/bash\n"
+            f"printf '%s\\n' \"$*\" >> {log}\n"
+            'if [[ "$*" == *"get secret sops-age -o name"* ]]; then exit 1; fi\n'
+            'echo "unexpected k3s: $*" >&2\nexit 1\n',
+        )
+        play = textwrap.dedent(
+            """\
+            ---
+            - name: Refuse an age key owned by someone else
+              hosts: localhost
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_role:
+                    name: flux-operator
+                    tasks_from: sops_age.yml
+            """
+        )
+        env = _ansible_env()
+        env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+        proc = _run_localhost_role(play, tmp_path, ["-e", f"k3s_binary_path={binary}"], env=env)
+        _assert_key_was_not_read(proc, sentinel)
+        assert "create" not in log.read_text(encoding="utf-8")
+        return
+    play = textwrap.dedent(
+        f"""\
+        ---
+        - name: Fake age key stat for a different owner
+          hosts: localhost
+          gather_facts: false
+          become: false
+          vars:
+            sops_age_key_stat:
+              stat:
+                exists: true
+                mode: "0600"
+                uid: {other}
+          tasks:
+            - ansible.builtin.include_role:
+                name: flux-operator
+                tasks_from: sops_age_key_mode.yml
+        """
+    )
+    proc = _run_localhost_role(play, tmp_path, [], env=_ansible_env())
+    _assert_key_was_not_read(proc, sentinel)
+
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     binary = tmp_path / "k3s"

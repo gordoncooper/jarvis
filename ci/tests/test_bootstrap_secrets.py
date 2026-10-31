@@ -328,6 +328,7 @@ def test_sops_failure_leaves_no_target_file(tmp_path):
     fail_sops.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     fail_sops.chmod(0o755)
 
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
     target = tmp_path / "envs/env-test/secrets/backups-restic.sops.yaml"
     doc = {
         "apiVersion": "v1",
@@ -340,8 +341,27 @@ def test_sops_failure_leaves_no_target_file(tmp_path):
     with pytest.raises(subprocess.CalledProcessError):
         sops_mod.encrypt_secret_to_file(
             repo_root=tmp_path,
-            destination=target,
+            env="env-test",
+            name="backups-restic",
             document=doc,
             sops_bin=str(fail_sops),
         )
     assert not target.exists()
+
+
+def test_new_ca_and_restic_secrets_are_prune_guarded(tmp_path, monkeypatch):
+    mod = _load_module()
+    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
+    _write_test_sops_yaml(tmp_path, public)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    (tmp_path / "envs" / "env-test" / "secrets").mkdir(parents=True)
+    mod.bootstrap("env-test", sops_bin=_require_tool("sops"))
+    secrets = tmp_path / "envs" / "env-test" / "secrets"
+    for name in ("cert-manager-ca", "backups-restic"):
+        doc = yaml.safe_load((secrets / f"{name}.sops.yaml").read_text(encoding="utf-8"))
+        annotations = doc["metadata"]["annotations"]
+        assert annotations["kustomize.toolkit.fluxcd.io/prune"] == "disabled"
+        for value in doc["stringData"].values():
+            assert isinstance(value, str) and value.startswith("ENC[")
