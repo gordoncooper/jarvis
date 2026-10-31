@@ -457,9 +457,12 @@ def _quiesce(kubectl: Kubectl, namespace: str, pvc: str, pvc_body: dict, state: 
     deployments = _items(kubectl, "deployment", namespace)
     statefulsets = _items(kubectl, "statefulset", namespace)
     cronjobs = _items(kubectl, "cronjob", namespace)
-    owners = [pvc_body, *deployments, *statefulsets, *cronjobs]
+    mounting_cronjobs = [
+        cronjob for cronjob in cronjobs if _cronjob_owns(cronjob, pvc)
+    ]
+    owners = [pvc_body, *deployments, *statefulsets, *mounting_cronjobs]
     _suspend(kubectl, owners, state)
-    _suspend_cronjobs(kubectl, namespace, cronjobs, pvc, state)
+    _suspend_cronjobs(kubectl, namespace, mounting_cronjobs, pvc, state)
     _scale_kind(
         kubectl,
         namespace,

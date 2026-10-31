@@ -52,7 +52,7 @@ Namespace exists; Secret `backups-restic` is present (value not logged); Service
   1. Create namespace `platform-drill`, PVC `drill`, and a pod that writes a file. Read its sha256.
   2. Delete the ReplicationSource and wait until Kyverno's replacement finishes a sync. The first sync can run before the file exists.
   3. Annotate the PVC `backup: paused`, delete the pod and the PVC, and recreate the PVC already annotated `backup: paused`. Do not wait for Bound. local-path binds on first use.
-  4. `make restore APP=platform-drill`. It binds the claim. Wait until ReplicationSource `drill` has `status.lastSyncTime`, then read the sha256 back. VolSync deletes the mover Job after the sync.
+  4. `make restore ENV=<env> APP=platform-drill`. It binds the claim. Wait until ReplicationSource `drill` has `status.lastSyncTime`, then read the sha256 back. VolSync deletes the mover Job after the sync.
   5. Run a pod with CronJob `etcd-snapshots`' image, node selector, and snapshot hostPath, as root. It restores the newest snapshot from `host-etcd-snapshots` into an emptyDir on that node and prints the sha256 of the k3s file and of the restored file. Do not print Secret values. Do not reset the cluster. The emptyDir is removed with the pod.
   6. Delete that pod, the drill repository `ns-platform-drill/pvc-drill`, the empty `ns-platform-drill` directory on the rest-server data volume, and the namespace.
 
