@@ -12,6 +12,7 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from subprocess import CompletedProcess
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -72,6 +73,11 @@ class _Cluster:
         hold: list[str] | None = None,
         pods: list[dict] | None = None,
         drop_source_after_hold: bool = False,
+        deployments: list[dict] | None = None,
+        statefulsets: list[dict] | None = None,
+        cronjobs: list[dict] | None = None,
+        interrupt_destination: bool = False,
+        env: str = "env-00",
     ) -> None:
         self.items = items
         self.will_pause = will_pause
@@ -79,12 +85,18 @@ class _Cluster:
         self.hold = hold
         self.pods = pods or []
         self.drop_source_after_hold = drop_source_after_hold
+        self.deployments = deployments or []
+        self.statefulsets = statefulsets or []
+        self.cronjobs = cronjobs or []
+        self.interrupt_destination = interrupt_destination
+        self.env = env
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
         self.paused: set[str] = set()
         self.resumed: set[str] = set()
         self.bound: set[str] = set()
         self.hold_deleted = False
+        self.suspended_cronjobs: set[str] = set()
 
     def _pvc(self, namespace: str, name: str) -> dict:
         item = next(
@@ -123,8 +135,14 @@ class _Cluster:
             return _completed(argv, json.dumps({"items": shown}))
         if argv[:2] == ["get", "pods"]:
             return _completed(argv, json.dumps({"items": self.pods}))
-        if argv[:2] in (["get", "deployment"], ["get", "statefulset"]):
-            return _completed(argv, json.dumps({"items": []}))
+        if argv[:2] == ["get", "deployment"]:
+            return _completed(argv, json.dumps({"items": self.deployments}))
+        if argv[:2] == ["get", "statefulset"]:
+            return _completed(argv, json.dumps({"items": self.statefulsets}))
+        if argv[:2] == ["get", "cronjob"]:
+            return _completed(argv, json.dumps({"items": self.cronjobs}))
+        if argv[:3] == ["get", "configmap", "cluster-vars"]:
+            return _completed(argv, json.dumps({"data": {"jarvis_env": self.env}}))
         if argv[:3] == ["get", "configmap", restore_tool.HOLD_NAME]:
             if self.hold is None:
                 return _completed(
@@ -171,10 +189,16 @@ class _Cluster:
         if argv[:2] == ["apply", "-f"]:
             assert input is not None
             doc = yaml.safe_load(input)
+            if doc["kind"] == "ConfigMap":
+                self.hold = doc["data"]["repos"].splitlines()
+                self.hold_deleted = False
+                return _completed(argv, "applied\n")
             if doc["kind"] == "Pod":
                 claim = doc["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"]
                 self.bound.add(claim)
                 return _completed(argv, "applied\n")
+            if self.interrupt_destination:
+                raise KeyboardInterrupt
             self.applied.append(doc)
             return _completed(argv, "applied\n")
         if argv[:2] == ["get", "replicationdestination"]:
@@ -198,11 +222,37 @@ class _Cluster:
             self.hold = None
             self.hold_deleted = True
             return _completed(argv, "deleted\n")
+        if argv[:2] == ["scale", "deployment"] or argv[:2] == ["scale", "statefulset"]:
+            return _completed(argv, "scaled\n")
+        if argv[:2] == ["patch", "cronjob"]:
+            patch = json.loads(argv[argv.index("-p") + 1])
+            if patch["spec"]["suspend"]:
+                self.suspended_cronjobs.add(argv[2])
+            else:
+                self.suspended_cronjobs.discard(argv[2])
+            return _completed(argv, "patched\n")
+        if argv[:2] == ["patch", "kustomization"]:
+            return _completed(argv, "patched\n")
         return _completed(argv, "", returncode=1, stderr=f"unexpected kubectl: {argv}")
 
 
 def _boom(_seconds: float) -> None:
     raise AssertionError("slept")
+
+
+def test_kubectl_is_bound_to_the_environment_file(monkeypatch) -> None:
+    seen: list[list[str]] = []
+
+    def invoke(args: Sequence[str], **_kwargs: object) -> CompletedProcess[str]:
+        seen.append(list(args))
+        return _completed(list(args), "{}")
+
+    monkeypatch.setattr(restore_tool.subprocess, "run", invoke)
+    kubeconfig = Path("/tmp/jarvis-env-test.yaml")
+    restore_tool._kubectl(["get", "pvc"], kubeconfig=kubeconfig)
+    assert seen == [
+        ["kubectl", "--kubeconfig", str(kubeconfig), "get", "pvc"]
+    ]
 
 
 def test_restore_pauses_before_direct_destination(capsys) -> None:
@@ -216,7 +266,17 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
         env=env,
     )
     assert missing.returncode != 0
-    assert "APP is required" in missing.stderr
+    assert "ENV is required" in missing.stderr
+
+    missing_app = subprocess.run(
+        ["make", "restore", "ENV=env-00"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert missing_app.returncode != 0
+    assert "APP is required" in missing_app.stderr
 
     long_name = "p" * 60
     assert restore_tool.job_name("drill") == "volsync-src-drill"
@@ -234,6 +294,7 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     assert (
         restore_tool.run(
             cluster.kubectl,
+            env="env-00",
             app="demo",
             all_pvcs=False,
             monotonic=lambda: 0.0,
@@ -279,6 +340,7 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     assert (
         restore_tool.run(
             stuck.kubectl,
+            env="env-00",
             app="demo",
             all_pvcs=False,
             monotonic=lambda: 0.0,
@@ -296,6 +358,7 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     assert (
         restore_tool.run(
             everyone.kubectl,
+            env="env-00",
             app=None,
             all_pvcs=True,
             monotonic=lambda: 0.0,
@@ -384,6 +447,7 @@ def test_verify_p0b_reads_drill_log(tmp_path: Path, capsys) -> None:
 
 def _run(cluster: _Cluster, **kwargs: object) -> int:
     args = {
+        "env": "env-00",
         "monotonic": lambda: 0.0,
         "sleep": _boom,
         "now": lambda: 1000.0,
@@ -576,14 +640,127 @@ def test_lift_does_not_treat_a_missing_source_as_unpaused(capsys) -> None:
         drop_source_after_hold=True,
     )
     assert _run(cluster, app=None, all_pvcs=True, pause_budget_s=0) != 0
-    assert cluster.hold_deleted is True
-    assert "source stayed paused" in capsys.readouterr().out
-
-
-def test_restore_all_skips_a_volume_with_no_snapshot(capsys) -> None:
-    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=_NO_SNAPSHOT_LOG)
-    assert _run(cluster, app=None, all_pvcs=True) == 0
+    assert cluster.hold_deleted is False
     out = capsys.readouterr().out
-    assert "SKIP no snapshot demo/drill" in out
+    assert "source stayed paused" in out
+    assert "HOLD restored after lift failure" in out
+
+
+def test_restore_all_fails_closed_on_no_snapshot(capsys) -> None:
+    cluster = _Cluster(
+        [_pvc("demo", "drill")],
+        will_pause=True,
+        logs=_NO_SNAPSHOT_LOG,
+        hold=["ns-demo/pvc-drill"],
+    )
+    assert _run(cluster, app=None, all_pvcs=True) != 0
+    out = capsys.readouterr().out
+    assert "no eligible snapshots" in out
     assert "PASS restore" not in out
-    assert any("backup-" in call for call in cluster.calls)
+    assert cluster.hold_deleted is False
+    assert not any("backup-" in call for call in cluster.calls)
+    assert "SUMMARY restored=0 accepted=0 retired=0" in out
+
+
+def test_restore_all_accepts_an_explicit_empty_volume(capsys) -> None:
+    cluster = _Cluster(
+        [_pvc("demo", "drill")],
+        will_pause=True,
+        logs=_NO_SNAPSHOT_LOG,
+        hold=["ns-demo/pvc-drill"],
+    )
+    assert (
+        _run(
+            cluster,
+            app=None,
+            all_pvcs=True,
+            accept_empty=["demo/drill"],
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "ACCEPT empty demo/drill" in out
+    assert "SUMMARY restored=0 accepted=1 retired=0" in out
+    assert cluster.hold_deleted is True
+
+
+def test_wrong_cluster_marker_refuses_before_mutation(capsys) -> None:
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, env="wrong-env")
+    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    assert "environment marker is not ENV=env-00" in capsys.readouterr().out
+    mutating = {"annotate", "apply", "delete", "patch", "scale"}
+    assert not any(call[0] in mutating for call in cluster.calls)
+
+
+def test_restore_suspends_and_restores_real_workloads(capsys) -> None:
+    pod_spec = {
+        "volumes": [
+            {"name": "data", "persistentVolumeClaim": {"claimName": "drill"}}
+        ]
+    }
+    deployment = {
+        "metadata": {"name": "writer"},
+        "spec": {"replicas": 2, "template": {"spec": pod_spec}},
+    }
+    cronjob = {
+        "metadata": {"name": "scheduled-writer"},
+        "spec": {
+            "suspend": False,
+            "jobTemplate": {"spec": {"template": {"spec": pod_spec}}},
+        },
+    }
+    cluster = _Cluster(
+        [_pvc("demo", "drill")],
+        will_pause=True,
+        deployments=[deployment],
+        cronjobs=[cronjob],
+    )
+    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    assert cluster.suspended_cronjobs == set()
+    assert [
+        call for call in cluster.calls if call[:3] == ["scale", "deployment", "writer"]
+    ] == [
+        ["scale", "deployment", "writer", "-n", "demo", "--replicas=0"],
+        ["scale", "deployment", "writer", "-n", "demo", "--replicas=2"],
+    ]
+    cron_patches = [
+        json.loads(call[call.index("-p") + 1])["spec"]["suspend"]
+        for call in cluster.calls
+        if call[:3] == ["patch", "cronjob", "scheduled-writer"]
+    ]
+    assert cron_patches == [True, False]
+    assert "PASS restore demo/drill" in capsys.readouterr().out
+
+
+def test_interrupt_prints_complete_undo_plan(capsys) -> None:
+    pod_spec = {
+        "volumes": [
+            {"name": "data", "persistentVolumeClaim": {"claimName": "drill"}}
+        ]
+    }
+    cluster = _Cluster(
+        [_pvc("demo", "drill")],
+        will_pause=True,
+        deployments=[
+            {
+                "metadata": {"name": "writer"},
+                "spec": {"replicas": 2, "template": {"spec": pod_spec}},
+            }
+        ],
+        cronjobs=[
+            {
+                "metadata": {"name": "scheduled-writer"},
+                "spec": {
+                    "jobTemplate": {"spec": {"template": {"spec": pod_spec}}},
+                },
+            }
+        ],
+        interrupt_destination=True,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        _run(cluster, app="demo", all_pvcs=False)
+    out = capsys.readouterr().out
+    assert "kubectl annotate pvc drill -n demo backup-" in out
+    assert "kubectl scale deployment writer -n demo --replicas=2" in out
+    assert "kubectl patch cronjob scheduled-writer -n demo" in out
+    assert "kubectl delete replicationdestination restore-drill -n demo" in out

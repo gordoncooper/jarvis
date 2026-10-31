@@ -9,8 +9,8 @@ help:
 	@echo "Operator commands"
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
 	@echo "  make verify             Phase exit check (PHASE=p0a|p0b ENV=<env>; p0b needs DRILL_LOG)"
-	@echo "  make restore            Restore PVCs in namespace APP (optional AS_OF=RFC3339)"
-	@echo "  make restore-all        Restore every enrolled PVC (optional RETIRE=ns-a/pvc-a,ns-b/pvc-b)"
+	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339)"
+	@echo "  make restore-all        Restore all PVCs (ENV required; optional RETIRE, ACCEPT_EMPTY)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
 	@echo
@@ -36,11 +36,15 @@ verify:
 	esac
 
 restore:
+	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
-	@python3 tools/restore --app "$(APP)"
+	@python3 tools/restore --env "$(ENV)" --app "$(APP)"
 
 restore-all:
-	@python3 tools/restore --all $(if $(RETIRE),--retire "$(RETIRE)")
+	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
+	@python3 tools/restore --env "$(ENV)" --all \
+		$(if $(RETIRE),--retire "$(RETIRE)") \
+		$(if $(ACCEPT_EMPTY),--accept-empty "$(ACCEPT_EMPTY)")
 
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
