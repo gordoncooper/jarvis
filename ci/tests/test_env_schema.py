@@ -442,6 +442,24 @@ def test_unknown_host_key_fails(tmp_path: Path):
     assert "ansible_host" in msg
 
 
+@pytest.mark.parametrize(
+    "local_path",
+    ["/var/lib/jarvis", "/var/lib/jarvis/", "/var/lib/other", "relative"],
+)
+def test_local_path_data_must_be_a_subdirectory(tmp_path: Path, local_path: str) -> None:
+    """local_path_data is a directory under the data mount, not the mount itself."""
+    cluster = _valid_cluster_vars()
+    cluster["local_path_data"] = local_path
+    _write_env(tmp_path, cluster_vars=cluster)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    message = "\n".join(excinfo.value.messages)
+    if local_path.startswith("/"):
+        assert "subdirectory of /var/lib/jarvis" in message
+    else:
+        assert "absolute path" in message
+
+
 def test_data_disk_true_passes(tmp_path: Path) -> None:
     """data_disk: true is the only accepted value (p0a-11a)."""
     _write_env(

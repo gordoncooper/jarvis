@@ -413,6 +413,18 @@ def _role_file_targets(role: Path) -> set[str]:
     return found
 
 
+def test_k3s_main_imports_the_mount_dropin() -> None:
+    """Every host that runs the k3s role gets the data-mount drop-in."""
+    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    assert isinstance(tasks, list)
+    imported = [
+        task.get("ansible.builtin.import_tasks")
+        for task in tasks
+        if isinstance(task, dict)
+    ]
+    assert "service-unit.yml" in imported
+
+
 def test_k3s_is_the_only_owner_of_private_data_directories() -> None:
     """One owner per path: only the k3s role creates the private data directories."""
     roles = ANSIBLE_DIR / "roles"

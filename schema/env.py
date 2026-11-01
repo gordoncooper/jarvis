@@ -73,6 +73,7 @@ _NODE_ROLES = frozenset(
     {"control_plane", "workers", "storage", "backup", "gpu", "edge"}
 )
 _HOST_KEYS = frozenset({"node_roles", "data_disk"})
+_DATA_MOUNT = "/var/lib/jarvis"
 _SINGLETON_ROLES = ("control_plane", "backup")
 
 
@@ -357,9 +358,7 @@ def _validate_cluster_vars(
                 "(v<major>.<minor>.<patch>+k3s<n>)"
             )
 
-    local_path = data.get("local_path_data")
-    if isinstance(local_path, str) and local_path and not local_path.startswith("/"):
-        errors.append(f"{rel_path}: local_path_data must be an absolute path")
+    errors.extend(_validate_local_path_data(rel_path, data.get("local_path_data")))
 
     for key in (
         "backup_retention_daily",
@@ -688,6 +687,19 @@ def _validate_data_disk(disk: Any, rel_path: str, hostname: str) -> list[str]:
     if disk is True:
         return []
     return [f"{rel_path}: host {hostname}: data_disk must be true"]
+
+
+def _validate_local_path_data(rel_path: str, value: Any) -> list[str]:
+    if not isinstance(value, str) or not value:
+        return []
+    if not value.startswith("/"):
+        return [f"{rel_path}: local_path_data must be an absolute path"]
+    path = value.rstrip("/") or "/"
+    if path == _DATA_MOUNT or not path.startswith(_DATA_MOUNT + "/"):
+        return [f"{rel_path}: local_path_data must be a subdirectory of {_DATA_MOUNT}"]
+    if "/../" in f"/{path}/":
+        return [f"{rel_path}: local_path_data must be a subdirectory of {_DATA_MOUNT}"]
+    return []
 
 
 def _looks_like_ip(value: str) -> bool:

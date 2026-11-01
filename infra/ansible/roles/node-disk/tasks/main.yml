@@ -3,7 +3,7 @@
   tags: [node-disk]
   when: data_disk | default(false) is sameas true
   block:
-    - name: Require data paths from cluster-vars
+    - name: Require data paths and the k3s data dir
       ansible.builtin.assert:
         that:
           - local_path_data is defined
@@ -12,7 +12,18 @@
           - backup_path is defined
           - backup_path is string
           - backup_path | length > 0
-        fail_msg: node-disk requires local_path_data and backup_path from cluster-vars.
+          - k3s_data_dir is defined
+          - k3s_data_dir is string
+          - k3s_data_dir | length > 0
+        fail_msg: node-disk requires local_path_data, backup_path, and k3s_data_dir.
+
+    - name: Refuse local_path_data that is the data mount
+      ansible.builtin.assert:
+        that:
+          - (local_path_data | regex_replace('/+$', '')) != node_disk_mount
+        fail_msg: >-
+          local_path_data ({{ local_path_data }}) must be a subdirectory of
+          {{ node_disk_mount }}.
 
     - name: Stat the data path
       ansible.builtin.stat:
@@ -65,9 +76,7 @@
     - name: Refuse local_path_data or backup_path outside the data mount
       ansible.builtin.assert:
         that:
-          - >-
-            local_path_data == node_disk_mount
-            or local_path_data is match('^' ~ (node_disk_mount | regex_escape) ~ '/')
+          - local_path_data is match('^' ~ (node_disk_mount | regex_escape) ~ '/.+')
           - >-
             backup_path == node_disk_mount
             or backup_path is match('^' ~ (node_disk_mount | regex_escape) ~ '/')
@@ -156,19 +165,51 @@
           {{ node_disk_mount }} holds entries that are not Jarvis data:
           {{ node_disk_foreign | join(', ') }}.
 
-    - name: Stat this env's marker
+    - name: Stat the k3s server data directory
       ansible.builtin.stat:
-        path: "{{ jarvis_marker_path | default('/etc/jarvis/env') }}"
-      register: node_disk_marker_stat
+        path: "{{ k3s_data_dir }}/server"
+      register: node_disk_k3s_server
 
-    - name: Refuse an empty data path when this env's marker is present
-      when: node_disk_marker_stat.stat.exists
+    - name: Stat the k3s agent data directory
+      ansible.builtin.stat:
+        path: "{{ k3s_data_dir }}/agent"
+      register: node_disk_k3s_agent
+
+    - name: List the k3s server data directory
+      when: node_disk_k3s_server.stat.isdir | default(false)
+      ansible.builtin.find:
+        paths: "{{ k3s_data_dir }}/server"
+        file_type: any
+        recurse: false
+        hidden: true
+      register: node_disk_k3s_server_files
+
+    - name: List the k3s agent data directory
+      when: node_disk_k3s_agent.stat.isdir | default(false)
+      ansible.builtin.find:
+        paths: "{{ k3s_data_dir }}/agent"
+        file_type: any
+        recurse: false
+        hidden: true
+      register: node_disk_k3s_agent_files
+
+    - name: Record whether k3s has stored server or agent state
+      ansible.builtin.set_fact:
+        node_disk_k3s_ran: >-
+          {{
+            (node_disk_k3s_server_files.files | default([]) | length > 0)
+            or (node_disk_k3s_agent_files.files | default([]) | length > 0)
+          }}
+      changed_when: false
+
+    - name: Refuse an empty data path when k3s has already run
+      when: node_disk_k3s_ran | bool
       vars:
         node_disk_held: "{{ node_disk_names | intersect(node_disk_jarvis_names) }}"
       ansible.builtin.assert:
         that:
           - node_disk_held | length > 0
         fail_msg: >-
-          {{ node_disk_mount }} has no Jarvis data but
-          {{ jarvis_marker_path | default('/etc/jarvis/env') }} is present,
-          so existing data is missing or hidden under the mount.
+          {{ node_disk_mount }} has no Jarvis data, but {{ k3s_data_dir }}
+          already holds k3s server or agent state, so existing data is missing
+          or hidden under the mount.
