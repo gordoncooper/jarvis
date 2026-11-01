@@ -226,12 +226,19 @@ def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
 
 
 def _assert_play_order(plays: list[dict[str, object]]) -> None:
-    """D42: play order is the safety fact, not the full play list."""
+    """Play order and host targets are the safety fact, not the full play list."""
     fact_indexes = [index for index, play in enumerate(plays) if _is_fact_play(play)]
     assert fact_indexes == [0], plays
     fact = plays[0]
     assert not fact.get("roles"), "fact-assert play applies a role"
-    assert _read_only_errors(fact.get("tasks"), set()) == []
+    seen: set[Path] = set()
+    errors = _read_only_errors(fact.get("tasks"), seen)
+    for section in ("pre_tasks", "post_tasks", "handlers"):
+        body = fact.get(section)
+        if body is None:
+            continue
+        errors.extend(_read_only_errors(body, seen))
+    assert errors == []
 
     def indexes(role: str) -> list[int]:
         return [
@@ -252,6 +259,10 @@ def _assert_play_order(plays: list[dict[str, object]]) -> None:
     assert len(agent) == 1, agent
     assert kubeconfig, "kubeconfig play is missing"
     assert flux, "flux-operator play is missing"
+    assert plays[server[0]].get("hosts") == "control_plane"
+    assert plays[agent[0]].get("hosts") == "all:!control_plane"
+    assert all(plays[index].get("hosts") == "control_plane" for index in kubeconfig)
+    assert all(plays[index].get("hosts") == "control_plane" for index in flux)
     assert all(index < min(k3s) for index in base_os)
     assert server[0] < agent[0]
     assert all(index > server[0] for index in kubeconfig)
@@ -272,20 +283,30 @@ def _site_plays() -> list[dict[str, object]]:
 
 
 def test_site_play_order_is_the_safety_fact() -> None:
-    """D42: fact-assert play first and read-only; base-os before k3s; server before agent; kubeconfig and flux-operator after the server."""
+    """Fact-assert play first and read-only; base-os before k3s; server before agent; kubeconfig and flux-operator after the server, on control_plane; the agent on every host except control_plane."""
     _assert_play_order(_site_plays())
 
 
 def test_play_before_the_fact_assert_play_fails() -> None:
-    """D42: a play inserted before the fact-assert play is not the safety order."""
+    """A play inserted before the fact-assert play is not the required order."""
     plays = _site_plays()
     plays.insert(0, {"name": "early", "hosts": "all", "tasks": [{"ansible.builtin.debug": {"msg": "x"}}]})
     with pytest.raises(AssertionError):
         _assert_play_order(plays)
 
 
+def test_copy_before_tasks_fails() -> None:
+    """A copy task in the fact-assert play's pre_tasks is a change."""
+    plays = _site_plays()
+    plays[0]["pre_tasks"] = [
+        {"ansible.builtin.copy": {"dest": "/tmp/x", "content": "x"}}
+    ]
+    with pytest.raises(AssertionError):
+        _assert_play_order(plays)
+
+
 def test_unrelated_play_at_the_end_passes() -> None:
-    """D42: a play that is not part of the safety order does not fail it."""
+    """A play that is not part of the safety order does not fail it."""
     plays = _site_plays()
     plays.append(
         {

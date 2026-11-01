@@ -171,9 +171,9 @@ How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume chec
 
 Owner-run. It is not a make target and it is not part of the drill. Do not print Secret values. Do not run it as a drill on the live env.
 
-k3s writes snapshot files on the server node to `<backup_path>/etcd-snapshots`. That directory is `etcd-snapshot-dir` in the k3s config. The reset uses one of those files. It does not use restic, and it does not need the cluster to be up.
+k3s writes snapshot files on the server node to `<backup_path>/etcd-snapshots`. That directory is `etcd-snapshot-dir` in the k3s config. The reset uses one of those files. It does not use restic, and it does not need the cluster to be up. Run these steps as root on the server node.
 
-1. On the server node, run `/usr/local/bin/k3s etcd-snapshot ls` and choose a file in `<backup_path>/etcd-snapshots`.
+1. Run `ls -l <backup_path>/etcd-snapshots` and choose a file.
 2. Stop k3s (`systemctl stop k3s`). Run `/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path=<backup_path>/etcd-snapshots/<file>` once. Start k3s (`systemctl start k3s`).
 
 What it changes: the node's k3s datastore is replaced by that snapshot.

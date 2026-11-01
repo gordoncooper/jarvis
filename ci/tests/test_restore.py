@@ -546,6 +546,7 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
         (True, "restic/restic:0.18@sha256:" + ("c" * 64), "must be restic/restic@sha256:"),
         (True, "restic/restic@sha256:" + ("A" * 64), "must be restic/restic@sha256:"),
         (True, "restic/restic@sha256:" + ("d" * 64) + "\n", "must be restic/restic@sha256:"),
+        (True, "restic/restic@sha256:" + ("e" * 64) + "x", "must be restic/restic@sha256:"),
     ],
 )
 def test_bad_etcd_image_fails_before_any_change(

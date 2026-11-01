@@ -52,6 +52,7 @@ class Cluster:
         leftover_pods: set[str] | None = None,
         repo_exists: bool = False,
         etcd_image: str = "restic/restic@sha256:" + "a" * 64,
+        etcd_present: bool = True,
     ) -> None:
         self.hold = hold
         self.namespace = namespace
@@ -64,6 +65,7 @@ class Cluster:
         self.etcd_restored_sum = etcd_restored_sum
         self.repo_exists = repo_exists
         self.etcd_image = etcd_image
+        self.etcd_present = etcd_present
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
@@ -86,6 +88,16 @@ class Cluster:
         if argv[:3] == ["get", "configmap", "cluster-vars"]:
             return _completed(argv, {"data": {"jarvis_env": self.marker}})
         if argv[:3] == ["get", "cronjob", "etcd-snapshots"]:
+            if not self.etcd_present:
+                return _completed(
+                    argv,
+                    "",
+                    returncode=1,
+                    stderr=(
+                        "Error from server (NotFound): "
+                        'cronjobs.batch "etcd-snapshots" not found'
+                    ),
+                )
             return _completed(
                 argv,
                 {
@@ -639,7 +651,7 @@ def test_trailing_restic_image_fails_before_any_change(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """R33: a restic image with trailing text changes nothing, including cleanup-only."""
+    """A restic image with trailing text changes nothing, including cleanup-only."""
     image = "restic/restic@sha256:" + ("a" * 64) + "\n"
     drill = Cluster(etcd_image=image)
     code, restores = _run(tmp_path / "drill", monkeypatch, drill)
@@ -652,6 +664,25 @@ def test_trailing_restic_image_fails_before_any_change(
     assert _run_cleanup_only(tmp_path / "cleanup", monkeypatch, cleanup) != 0
     assert _mutating(cleanup.calls) == []
     assert "must be restic/restic@sha256:" in capsys.readouterr().out
+
+
+def test_missing_etcd_cronjob_fails_before_any_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A missing etcd-snapshots CronJob changes nothing, including cleanup-only."""
+    drill = Cluster(etcd_present=False)
+    code, restores = _run(tmp_path / "drill", monkeypatch, drill)
+    assert code != 0
+    assert restores == []
+    assert _mutating(drill.calls) == []
+    assert "CronJob platform-backups/etcd-snapshots not found" in capsys.readouterr().out
+
+    cleanup = Cluster(namespace=True, etcd_present=False)
+    assert _run_cleanup_only(tmp_path / "cleanup", monkeypatch, cleanup) != 0
+    assert _mutating(cleanup.calls) == []
+    assert "CronJob platform-backups/etcd-snapshots not found" in capsys.readouterr().out
 
 
 def test_etcd_checksum_mismatch_fails(
