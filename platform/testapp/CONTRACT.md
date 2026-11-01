@@ -1,8 +1,8 @@
 # CONTRACT: test app
 
-The platform canary. The P0b exit check, Gatus, the P1 log proof, and the P1 alert drill use it. It never depends on services or apps, and nothing depends on it.
+The platform canary. It never depends on services or apps, and nothing depends on it.
 
-It answers `https://testapp.<dns_suffix>/` through one Traefik Ingress. The certificate is the internal CA wildcard on TLSStore `default`, not a secret in this namespace (R28).
+It answers `https://testapp.<dns_suffix>/` through one Traefik Ingress. The certificate is the internal CA wildcard on TLSStore `default`, not a secret in this namespace.
 
 ## Offers
 
@@ -12,14 +12,14 @@ It answers `https://testapp.<dns_suffix>/` through one Traefik Ingress. The cert
 
 ## Expects
 
-- Flux `platform-configs`, which depends on `platform-controllers` and substitutes `dns_suffix` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode the suffix (R3, R28).
+- Flux `platform-configs`, which depends on `platform-controllers` and substitutes `dns_suffix` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode the suffix (`ci/checks/core-names`).
 - TLSStore `default` and Certificate `wildcard` in `platform-cert-manager` (the cert-manager contract).
 - Traefik Ingress class `traefik` and entrypoint `websecure` (the exposure contract). Chart v40 enables TLS on that entrypoint.
-- App DNS publishes Ingress hosts in the zone. This fixture does not add a Gatus check; that lands with Gatus.
+- App DNS publishes Ingress hosts in the zone. This fixture does not add a Gatus check. That check is planned.
 
 ## Health
 
-The Deployment is Ready. The container sets a memory request of `64Mi` and limit of `128Mi`, and a CPU request of `50m` with no CPU limit (R5). Readiness and liveness are HTTP `GET /` on port 8080. The image writes access and error logs to stdout and stderr.
+The Deployment is Ready. The container sets a memory request of `64Mi` and limit of `128Mi`, and a CPU request of `50m` with no CPU limit (`ci/checks/manifest-lint`). Readiness and liveness are HTTP `GET /` on port 8080. The image writes access and error logs to stdout and stderr.
 
 An HTTPS response on `testapp.<dns_suffix>` whose body is the file above and whose certificate chains to the internal CA. That check is the post-merge curl.
 

@@ -2,7 +2,7 @@
 
 `site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, a committed `envs/<env>/flux/flux-instance.yaml`), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent, reconciles node labels, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
 
-Run from this directory after `make deps`. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
+`make deps` runs from the repo root. `site.yml` runs from this directory (`infra/ansible`) after that. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
 
 ## Prepare a node
 
@@ -16,7 +16,7 @@ The host name must already be an inventory key and must resolve with `getent hos
 
 When you are not using the default age key file, set the same `SOPS_AGE_KEY_FILE` for `prep-node`, `bootstrap-secrets`, and `site.yml`.
 
-Next, create secrets and commit, then run `site.yml`:
+Next, create secrets and commit, then run `site.yml`. `make bootstrap-secrets` runs from the repo root:
 
 ```bash
 make bootstrap-secrets ENV=<env>

@@ -1,6 +1,6 @@
 # CONTRACT: kyverno
 
-Kyverno 1.19 admits and generates the backup policy (R31, D47). Classic ClusterPolicy only.
+Kyverno 1.19 admits and generates the backup policy (`ci/checks/pvc-backup`). Classic ClusterPolicy only.
 
 ## Offers
 

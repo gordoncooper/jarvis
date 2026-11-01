@@ -6,6 +6,7 @@ env-schema
 flux-substitute
 loadbalancer
 manifest-lint
+plan-codes
 product-ci
 python-pins
 pvc-backup
