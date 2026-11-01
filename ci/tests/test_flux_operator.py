@@ -63,7 +63,6 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     assert [play.get("hosts") for play in plays] == [
         "all",
         "all",
-        "data_disk",
         "control_plane",
         "all:!control_plane",
         "control_plane",
@@ -73,22 +72,22 @@ def test_site_yml_role_order_and_ssh_user() -> None:
     for play in plays:
         assert play.get("become") is True
         assert "ssh_user | default(" in str(play.get("vars", {}).get("ansible_user"))
-    assert _role_names(plays[0]) == []
     assert plays[0].get("tags") == ["always"]
+    assert plays[0].get("any_errors_fatal") is True
+    assert _role_names(plays[0]) == ["k3s", "node-disk"]
     assert _role_names(plays[1]) == ["base-os"]
-    assert _role_names(plays[2]) == ["node-disk"]
+    assert _role_names(plays[2]) == ["k3s"]
+    assert plays[2]["roles"][0]["vars"]["k3s_mode"] == "server"
     assert _role_names(plays[3]) == ["k3s"]
-    assert plays[3]["roles"][0]["vars"]["k3s_mode"] == "server"
+    assert plays[3]["roles"][0]["vars"]["k3s_mode"] == "agent"
     assert _role_names(plays[4]) == ["k3s"]
-    assert plays[4]["roles"][0]["vars"]["k3s_mode"] == "agent"
-    assert _role_names(plays[5]) == ["k3s"]
-    assert _role_names(plays[6]) == ["kubeconfig"]
-    assert _role_names(plays[7]) == ["flux-operator"]
+    assert _role_names(plays[5]) == ["kubeconfig"]
+    assert _role_names(plays[6]) == ["flux-operator"]
+    assert plays[2].get("tags") == ["k3s"]
     assert plays[3].get("tags") == ["k3s"]
     assert plays[4].get("tags") == ["k3s"]
-    assert plays[5].get("tags") == ["k3s"]
-    assert plays[6].get("tags") == ["kubeconfig"]
-    assert plays[7].get("tags") == ["flux-operator"]
+    assert plays[5].get("tags") == ["kubeconfig"]
+    assert plays[6].get("tags") == ["flux-operator"]
     connection = plays[0].get("vars")
     assert all(play.get("vars") == connection for play in plays)
 
@@ -327,6 +326,7 @@ def test_existing_sops_age_skips_key_when_unset(tmp_path: Path) -> None:
 
 
 def test_sops_age_secret_task_uses_kubectl_create_not_apply(tmp_path: Path) -> None:
+    """NotFound on flux-system/sops-age takes the bootstrap path (kubectl create)."""
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     binary = tmp_path / "k3s"
@@ -341,6 +341,7 @@ def test_sops_age_secret_task_uses_kubectl_create_not_apply(tmp_path: Path) -> N
             printf '%s\\n' "$*" >> {log}
             joined="$*"
             if [[ "$joined" == *"get secret sops-age -o name"* ]]; then
+              echo 'Error from server (NotFound): secrets "sops-age" not found' >&2
               exit 1
             fi
             if [[ "$joined" == *"kubectl create"* ]]; then
@@ -397,6 +398,7 @@ def test_sops_age_refuses_mode_0644_without_reading_the_key(tmp_path: Path) -> N
             printf '%s\\n' "$*" >> {log}
             joined="$*"
             if [[ "$joined" == *"get secret sops-age -o name"* ]]; then
+              echo 'Error from server (NotFound): secrets "sops-age" not found' >&2
               exit 1
             fi
             echo "unexpected k3s invocation: $*" >&2
@@ -448,7 +450,10 @@ def test_sops_age_refuses_wrong_owner_from_stat(tmp_path: Path) -> None:
             binary,
             "#!/bin/bash\n"
             f"printf '%s\\n' \"$*\" >> {log}\n"
-            'if [[ "$*" == *"get secret sops-age -o name"* ]]; then exit 1; fi\n'
+            'if [[ "$*" == *"get secret sops-age -o name"* ]]; then\n'
+            '  echo \'Error from server (NotFound): secrets "sops-age" not found\' >&2\n'
+            "  exit 1\n"
+            "fi\n"
             'echo "unexpected k3s: $*" >&2\nexit 1\n',
         )
         play = textwrap.dedent(
@@ -692,3 +697,164 @@ def test_fluxinstance_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None
     assert "Check whether FluxInstance exists" in output
     assert "Stat restic data on the backup host" not in output
     assert "backup-rebuild-hold" not in log.read_text(encoding="utf-8")
+
+
+def _lookup_binary(log: Path, *, kind: str) -> str:
+    """kind is not_found or error. The absent case prints NotFound; any other error does not."""
+    if kind == "not_found":
+        message = "echo 'Error from server (NotFound): missing' >&2"
+    else:
+        message = 'echo "The connection to the server 127.0.0.1:6443 was refused" >&2'
+    return textwrap.dedent(
+        f"""\
+        #!/bin/bash
+        set -euo pipefail
+        printf '%s\\n' "$*" >> {log}
+        joined="$*"
+        if [[ "$joined" == *"get deployment flux-operator"* || "$joined" == *"get secret sops-age -o name"* ]]; then
+          {message}
+          exit 1
+        fi
+        if [[ "$joined" == *" wait "* || "$joined" == *"kubectl create"* ]]; then
+          exit 0
+        fi
+        echo "unexpected k3s invocation: $*" >&2
+        exit 1
+        """
+    )
+
+
+def test_operator_not_found_bootstraps(tmp_path: Path) -> None:
+    """A NotFound deployment lookup installs the operator chart."""
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    helm_log = tmp_path / "helm.log"
+    binary = tmp_path / "k3s"
+    helm = tmp_path / "helm"
+    _write_executable(binary, _lookup_binary(log, kind="not_found"))
+    _write_executable(
+        helm,
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            printf '%s\\n' "$*" >> {helm_log}
+            exit 0
+            """
+        ),
+    )
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: Operator absent
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: operator.yml
+        """
+    )
+    env = _ansible_env()
+    proc = _run_localhost_role(
+        play,
+        tmp_path,
+        [
+            "-e",
+            f"k3s_binary_path={binary}",
+            "-e",
+            f"helm_binary_path={helm}",
+            "-e",
+            "flux_operator_chart_version=0.0.0-test",
+            "-e",
+            f"k3s_kubeconfig_path={tmp_path / 'kubeconfig'}",
+            "-e",
+            '{"ansible_facts":{"architecture":"x86_64"}}',
+        ],
+        env=env,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert "upgrade --install" in helm_log.read_text(encoding="utf-8")
+    assert "kubectl wait" in log.read_text(encoding="utf-8")
+
+
+def test_operator_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
+    """An API error is not NotFound, so the operator chart is not installed."""
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    helm_log = tmp_path / "helm.log"
+    binary = tmp_path / "k3s"
+    helm = tmp_path / "helm"
+    _write_executable(binary, _lookup_binary(log, kind="error"))
+    _write_executable(helm, "#!/bin/bash\nexit 99\n")
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: Operator lookup error
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: operator.yml
+        """
+    )
+    env = _ansible_env()
+    proc = _run_localhost_role(
+        play,
+        tmp_path,
+        [
+            "-e",
+            f"k3s_binary_path={binary}",
+            "-e",
+            f"helm_binary_path={helm}",
+            "-e",
+            "flux_operator_chart_version=0.0.0-test",
+            "-e",
+            '{"ansible_facts":{"architecture":"x86_64"}}',
+        ],
+        env=env,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert "Check whether Flux Operator deployment exists" in output
+    assert "Bootstrap Flux Operator when absent" not in output
+    assert not helm_log.exists()
+    assert "wait" not in log.read_text(encoding="utf-8")
+
+
+def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
+    """An API error is not NotFound, so the sops-age secret is not created."""
+    require_cli("ansible-playbook")
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    sentinel = "SENTINEL-AGE-KEY-NOT-READ"
+    keyfile = tmp_path / "age.key"
+    keyfile.write_text(sentinel + "\n", encoding="utf-8")
+    keyfile.chmod(0o600)
+    _write_executable(binary, _lookup_binary(log, kind="error"))
+    play = textwrap.dedent(
+        """\
+        ---
+        - name: sops-age lookup error
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator
+                tasks_from: sops_age.yml
+        """
+    )
+    env = _ansible_env()
+    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+    proc = _run_localhost_role(play, tmp_path, ["-e", f"k3s_binary_path={binary}"], env=env)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert "Check whether flux-system sops-age secret exists" in output
+    assert "Create flux-system sops-age secret once" not in output
+    assert "Stat the age private key file" not in output
+    assert sentinel not in output
+    assert "create" not in log.read_text(encoding="utf-8")

@@ -9,26 +9,8 @@
     k3s_service_name: "{{ 'k3s' if k3s_mode == 'server' else 'k3s-agent' }}"
   changed_when: false
 
-- name: k3s guard and env marker
+- name: Write the jarvis env marker
   ansible.builtin.import_tasks: guard.yml
-
-- name: Require k3s cluster-vars
-  ansible.builtin.assert:
-    that:
-      - k3s_version is defined
-      - k3s_version | length > 0
-      - k3s_sha256 is defined
-      - k3s_sha256 | length == 64
-      - pod_cidr is defined
-      - service_cidr is defined
-      - backup_path is defined
-      - local_path_data is defined
-    fail_msg: k3s role requires k3s_version, k3s_sha256, CIDRs, and paths in cluster-vars.
-
-- name: Require an amd64 host
-  ansible.builtin.assert:
-    that: ansible_facts['architecture'] == 'x86_64'
-    fail_msg: k3s role supports only amd64 hosts.
 
 - name: Read the server node token
   ansible.builtin.import_tasks: token.yml

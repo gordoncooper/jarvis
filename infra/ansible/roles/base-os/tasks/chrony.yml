@@ -1,0 +1,14 @@
+---
+# AppArmor usr.sbin.chronyd only allows chronyd to read /etc/chrony/**; validate must copy there.
+- name: Install chrony configuration with NTS
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: "{{ chrony_config_dir }}/chrony.conf"
+    owner: "{{ chrony_config_owner }}"
+    group: "{{ chrony_config_group }}"
+    mode: "0644"
+    validate: "/bin/sh -c 'f={{ chrony_config_dir }}/.ansible-validate.conf; install -m 0644 \"$1\" \"$f\" && chronyd -p -f \"$f\" >/dev/null; rc=$?; rm -f \"$f\"; exit $rc' _ %s"
+  notify: Restart chrony
+  tags:
+    - base-os
+    - time

@@ -6,14 +6,17 @@
       get deployment {{ flux_operator_deployment_name }} -o name
   register: flux_operator_deploy_lookup
   changed_when: false
-  failed_when: false
+  failed_when: >-
+    flux_operator_deploy_lookup.rc != 0
+    and 'NotFound' not in (
+      (flux_operator_deploy_lookup.stderr | default(''))
+      ~ (flux_operator_deploy_lookup.stdout | default(''))
+    )
   check_mode: false
 
 - name: Record Flux Operator deployment presence
   ansible.builtin.set_fact:
-    flux_operator_deployed: >-
-      {{ flux_operator_deploy_lookup.rc == 0
-         and (flux_operator_deploy_lookup.stdout | trim | length) > 0 }}
+    flux_operator_deployed: "{{ flux_operator_deploy_lookup.rc == 0 }}"
 
 - name: Bootstrap Flux Operator when absent
   when: not (flux_operator_deployed | bool)

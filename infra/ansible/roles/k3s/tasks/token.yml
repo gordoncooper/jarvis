@@ -6,6 +6,7 @@
       - hosts
       - "{{ groups['control_plane'] | first }}"
   changed_when: false
+  # A missing name exits non-zero. The next assert fails the run, so this is not read as success.
   failed_when: false
   register: k3s_control_plane_lookup
 

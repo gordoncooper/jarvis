@@ -329,7 +329,7 @@ def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
     systemctl.write_text("#!/bin/sh\necho active\nexit 0\n", encoding="utf-8")
     systemctl.chmod(0o755)
     play = tmp_path / "play.yml"
-    guard = K3S_ROLE_DIR / "tasks" / "guard.yml"
+    guard = K3S_ROLE_DIR / "tasks" / "refuse.yml"
     play.write_text(
         textwrap.dedent(
             f"""\
@@ -377,6 +377,7 @@ def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "k3s is already present" in output
+    assert not (tmp_path / "missing-marker").exists()
 
 
 _PRIVATE_DATA_DIRS = (

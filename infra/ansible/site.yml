@@ -1,31 +1,32 @@
 ---
-# Fact asserts run before any change. Tags for k3s, kubeconfig, and flux-operator are on the plays.
+# Fact asserts run before any change. One bad host stops the run. Tags for k3s,
+# kubeconfig, and flux-operator are on the plays.
 # ansible_user uses ssh_user, or the schema default when cluster-vars omits it (D34).
 - name: Assert facts before any change
   hosts: all
   become: true
   gather_facts: false
+  any_errors_fatal: true
   tags: [always]
   vars: &jarvis_play_vars
     ansible_user: "{{ ssh_user | default('ubuntu') }}"
   vars_files: &jarvis_vars_files
     - "{{ jarvis_cluster_vars }}"
   tasks:
-    - name: Assert exactly one control_plane host
-      ansible.builtin.assert:
-        that:
-          - groups['control_plane'] | default([]) | length == 1
-        fail_msg: >-
-          control_plane has {{ groups['control_plane'] | default([]) | length }} hosts;
-          expected exactly one.
-          Pass both inventories, as in infra/ansible/README.md:
-          ../../.venv/bin/ansible-playbook site.yml
-          -i ../../envs/<env>/inventory/hosts.yml
-          -i ../inventory/roles.yml
-          -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml
+    - name: Assert architecture, cluster-vars, and host facts
+      ansible.builtin.import_tasks: tasks/preflight.yml
 
     - name: Assert a declared gpu host has an NVIDIA device
       ansible.builtin.import_tasks: tasks/assert-gpu.yml
+
+    - name: Refuse a foreign or unmarked k3s
+      ansible.builtin.import_role:
+        name: k3s
+        tasks_from: refuse.yml
+
+    - name: Check a declared data disk
+      ansible.builtin.import_role:
+        name: node-disk
 
 - name: Base OS
   hosts: all
@@ -34,15 +35,6 @@
   vars_files: *jarvis_vars_files
   roles:
     - base-os
-
-- name: Check data disk
-  hosts: data_disk
-  become: true
-  gather_facts: false
-  vars: *jarvis_play_vars
-  vars_files: *jarvis_vars_files
-  roles:
-    - node-disk
 
 - name: Install k3s server
   hosts: control_plane
