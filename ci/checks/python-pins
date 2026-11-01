@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# CI rule check: requirements-dev.txt pins every package with == (R33).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _python_pins import scan_python_pins
+
+violations = scan_python_pins(Path("."))
+if violations:
+    for line in violations:
+        print(line, flush=True)
+    raise SystemExit(1)
+PY

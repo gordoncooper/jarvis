@@ -52,6 +52,7 @@ def _pvc(
 
 _SNAPSHOT_LOG = "restoring abc to /data\n"
 _NO_SNAPSHOT_LOG = "No eligible snapshots found\n=== No data will be restored ===\n"
+_FAKE_RESTIC_IMAGE = "restic/restic@sha256:" + ("a" * 64)
 
 
 class _Cluster:
@@ -70,6 +71,8 @@ class _Cluster:
         interrupt_destination: bool = False,
         interrupt_resume: bool = False,
         env: str = "env-00",
+        etcd_image: str | None = _FAKE_RESTIC_IMAGE,
+        etcd_present: bool = True,
     ) -> None:
         self.items = items
         self.will_pause = will_pause
@@ -83,8 +86,11 @@ class _Cluster:
         self.interrupt_destination = interrupt_destination
         self.interrupt_resume = interrupt_resume
         self.env = env
+        self.etcd_image = etcd_image
+        self.etcd_present = etcd_present
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
+        self.binders: list[dict] = []
         self.paused: set[str] = set()
         self.resumed: set[str] = set()
         self.bound: set[str] = set()
@@ -132,6 +138,36 @@ class _Cluster:
             return _completed(argv, json.dumps({"items": self.deployments}))
         if argv[:2] == ["get", "statefulset"]:
             return _completed(argv, json.dumps({"items": self.statefulsets}))
+        if argv[:3] == ["get", "cronjob", "etcd-snapshots"]:
+            if not self.etcd_present:
+                return _completed(
+                    argv,
+                    "",
+                    returncode=1,
+                    stderr=(
+                        "Error from server (NotFound): "
+                        'cronjobs.batch "etcd-snapshots" not found'
+                    ),
+                )
+            container: dict = {}
+            if self.etcd_image is not None:
+                container["image"] = self.etcd_image
+            return _completed(
+                argv,
+                json.dumps(
+                    {
+                        "spec": {
+                            "jobTemplate": {
+                                "spec": {
+                                    "template": {
+                                        "spec": {"containers": [container]},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+            )
         if argv[:2] == ["get", "cronjob"]:
             return _completed(argv, json.dumps({"items": self.cronjobs}))
         if argv[:3] == ["get", "configmap", "cluster-vars"]:
@@ -191,6 +227,7 @@ class _Cluster:
                 return _completed(argv, "applied\n")
             if doc["kind"] == "Pod":
                 claim = doc["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"]
+                self.binders.append(doc)
                 self.bound.add(claim)
                 return _completed(argv, "applied\n")
             if self.interrupt_destination:
@@ -463,6 +500,76 @@ def test_unbound_pvc_is_paused_then_bound(capsys) -> None:
     assert pause_at < applies[0] < applies[1]
     assert cluster.applied[0]["spec"]["restic"]["destinationPVC"] == "pending"
     assert "PASS restore demo/pending" in capsys.readouterr().out
+
+
+def _mutation_at(calls: list[list[str]]) -> int:
+    verbs = {"annotate", "apply", "delete", "patch", "scale"}
+    for index, call in enumerate(calls):
+        if call and call[0] in verbs:
+            return index
+    raise AssertionError("no mutation")
+
+
+def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
+    """R33: the binder uses the live etcd-snapshots image, read once before any change."""
+    image = "restic/restic@sha256:" + ("b" * 64)
+    repo = yaml.safe_load(
+        (REPO_ROOT / "platform/backups/etcd-snapshots.yaml").read_text(encoding="utf-8")
+    )
+    repo_image = repo["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0][
+        "image"
+    ]
+    assert image != repo_image
+    cluster = _Cluster(
+        [_pvc("demo", "one", volume=""), _pvc("demo", "two", volume="")],
+        will_pause=True,
+        etcd_image=image,
+    )
+    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    reads = [
+        index
+        for index, call in enumerate(cluster.calls)
+        if call[:3] == ["get", "cronjob", "etcd-snapshots"]
+    ]
+    assert len(reads) == 1
+    assert cluster.calls[reads[0]][cluster.calls[reads[0]].index("-n") + 1] == (
+        restore_tool._ETCD_NAMESPACE
+    )
+    assert reads[0] < _mutation_at(cluster.calls)
+    assert [pod["spec"]["containers"][0]["image"] for pod in cluster.binders] == [
+        image,
+        image,
+    ]
+    assert all("nodeSelector" not in pod["spec"] for pod in cluster.binders)
+    out = capsys.readouterr().out
+    assert "PASS restore demo/one" in out
+    assert "PASS restore demo/two" in out
+
+
+@pytest.mark.parametrize(
+    ("present", "image", "message"),
+    [
+        (False, _FAKE_RESTIC_IMAGE, "not found"),
+        (True, None, "has no container image"),
+        (True, "restic/restic:latest", "must be restic/restic@sha256:"),
+    ],
+)
+def test_bad_etcd_image_fails_before_any_change(
+    present: bool,
+    image: str | None,
+    message: str,
+    capsys,
+) -> None:
+    """J1/J2: a missing CronJob, missing image, or undigested tag changes nothing."""
+    cluster = _Cluster(
+        [_pvc("demo", "pending", volume="")],
+        will_pause=True,
+        etcd_present=present,
+        etcd_image=image,
+    )
+    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    assert message in capsys.readouterr().out
+    _assert_no_mutation(cluster)
 
 
 def test_terminating_pod_blocks_the_volume(capsys) -> None:
