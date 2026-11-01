@@ -1,6 +1,6 @@
 # Ansible (node bootstrap)
 
-`site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, a foreign or unmarked k3s, and a declared data disk), applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent, reconciles node labels, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
+`site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent, reconciles node labels, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
 
 Run from this directory after `make deps`. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
 
@@ -37,7 +37,7 @@ Every env run passes the env hosts file, then the constructed role groups. The s
 
 ## Operator tags
 
-Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and `flux-operator` are play tags. The opening play is tagged `always`, so its asserts run first. `--tags kubeconfig` then runs only the kubeconfig role. Proof runs are localhost plays with fake binaries.
+Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and `flux-operator` are play tags. The opening play is tagged `always`, so its asserts run first. The opening play checks every host, so for a narrow run while a node is down, add `--limit` with the control plane or the target hosts. `--tags kubeconfig` then runs only the kubeconfig role. Proof runs are localhost plays with fake binaries.
 
 | Tag | Purpose | Example |
 | --- | --- | --- |

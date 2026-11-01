@@ -214,6 +214,17 @@ def test_site_yml_syntax_check() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+def _restarted_units(text: str) -> list[str]:
+    units: list[str] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if "restart" not in parts:
+            continue
+        unit = parts[parts.index("restart") + 1]
+        units.append(unit.removesuffix(".service"))
+    return units
+
+
 def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> None:
     """A changed chrony.conf notifies Restart chrony. An unchanged file does not."""
     require_cli("ansible-playbook")
@@ -269,6 +280,8 @@ def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> N
     extra = json.dumps(
         {
             "chrony_config_dir": str(config_dir),
+            # Defaults are root:root. This play does not become root, and the
+            # template module chowns before the dest write.
             "chrony_config_owner": getpass.getuser(),
             "chrony_config_group": grp.getgrgid(os.getgid()).gr_name,
             "ntp_pools": pools,
@@ -309,18 +322,18 @@ def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> N
     assert " nts" in written
     for pool in pools:
         assert f"pool {pool}" in written
-    assert log.read_text(encoding="utf-8").count("restart") == 1
+    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
 
     second = run()
     second_out = second.stdout + second.stderr
     assert second.returncode == 0, second_out
     assert playbook_recap_field(second_out, "changed") == 0
     assert "RUNNING HANDLER" not in second_out
-    assert log.read_text(encoding="utf-8").count("restart") == 1
+    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
 
     checked = run(check=True)
     checked_out = checked.stdout + checked.stderr
     assert checked.returncode == 0, checked_out
     assert playbook_recap_field(checked_out, "changed") == 0
     assert "RUNNING HANDLER" not in checked_out
-    assert log.read_text(encoding="utf-8").count("restart") == 1
+    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]

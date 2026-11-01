@@ -156,14 +156,17 @@ def test_non_x86_host_fails_before_any_change(tmp_path: Path) -> None:
         tmp_path,
         extra=["-e", '{"ansible_facts":{"architecture":"aarch64"}}'],
     )
-    _stopped_before_base_os(result, "amd64")
+    _stopped_before_base_os(result, "k3s role supports only amd64 hosts.")
 
 
 @pytest.mark.parametrize("key", _REQUIRED)
 def test_missing_cluster_var_fails_before_any_change(tmp_path: Path, key: str) -> None:
     """Each required cluster-vars key fails the opening play and changes nothing."""
     result = _run_site(tmp_path, drop=key)
-    _stopped_before_base_os(result, "Require k3s cluster-vars")
+    _stopped_before_base_os(
+        result,
+        "site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env",
+    )
 
 
 def test_unmarked_k3s_fails_before_any_change(tmp_path: Path) -> None:
@@ -193,6 +196,57 @@ def test_failing_data_disk_stops_every_host(tmp_path: Path) -> None:
         path_prefix=bin_dir,
     )
     _stopped_before_base_os(result, "does not exist")
+
+
+def test_systemctl_inactive_rc_is_allowed(tmp_path: Path) -> None:
+    """is-active exit 3 (inactive or failed) is success and is not 'k3s is present'."""
+    bin_dir = tmp_path / "bin"
+    _install_systemctl(bin_dir, active_rc=3)
+    play = tmp_path / "play.yml"
+    play.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - name: Refuse unmarked k3s
+              hosts: localhost
+              gather_facts: false
+              become: false
+              environment:
+                PATH: "{bin_dir}:/usr/bin:/bin"
+              tasks:
+                - ansible.builtin.import_role:
+                    name: k3s
+                    tasks_from: refuse.yml
+            """
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    result = subprocess.run(
+        [
+            "ansible-playbook",
+            str(play),
+            "-i",
+            "localhost,",
+            "-e",
+            "ansible_connection=local",
+            "-e",
+            "jarvis_env=fixture",
+            *_k3s_paths(tmp_path),
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "k3s is already present" not in output
+    assert "Probe whether k3s service is active" in output
+    assert playbook_recap_field(output, "changed") == 0
 
 
 def test_systemctl_probe_error_is_not_treated_as_inactive(tmp_path: Path) -> None:

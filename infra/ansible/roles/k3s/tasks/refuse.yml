@@ -2,8 +2,6 @@
 - name: Record the k3s service this host will run
   ansible.builtin.set_fact:
     k3s_service_name: "{{ 'k3s' if 'control_plane' in group_names else 'k3s-agent' }}"
-  when: k3s_service_name is not defined
-  changed_when: false
 
 # LSB is-active: 0 active, 3 not active, 4 no such unit. Any other exit is an error.
 - name: Probe whether k3s service is active

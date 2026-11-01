@@ -7,6 +7,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ansible_role_proof import (
@@ -73,7 +74,6 @@ def test_site_yml_role_order_and_ssh_user() -> None:
         assert play.get("become") is True
         assert "ssh_user | default(" in str(play.get("vars", {}).get("ansible_user"))
     assert plays[0].get("tags") == ["always"]
-    assert plays[0].get("any_errors_fatal") is True
     assert _role_names(plays[0]) == ["k3s", "node-disk"]
     assert _role_names(plays[1]) == ["base-os"]
     assert _role_names(plays[2]) == ["k3s"]
@@ -724,40 +724,42 @@ def _lookup_binary(log: Path, *, kind: str) -> str:
     )
 
 
-def test_operator_not_found_bootstraps(tmp_path: Path) -> None:
-    """A NotFound deployment lookup installs the operator chart."""
+@pytest.mark.parametrize("kind", ["not_found", "error"])
+def test_operator_lookup_classifies_not_found(tmp_path: Path, kind: str) -> None:
+    """NotFound installs the operator chart. Any other lookup error does not."""
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     helm_log = tmp_path / "helm.log"
     binary = tmp_path / "k3s"
     helm = tmp_path / "helm"
-    _write_executable(binary, _lookup_binary(log, kind="not_found"))
-    _write_executable(
-        helm,
+    _write_executable(binary, _lookup_binary(log, kind=kind))
+    if kind == "not_found":
+        _write_executable(
+            helm,
+            textwrap.dedent(
+                f"""\
+                #!/bin/bash
+                printf '%s\\n' "$*" >> {helm_log}
+                exit 0
+                """
+            ),
+        )
+    else:
+        _write_executable(helm, "#!/bin/bash\nexit 99\n")
+    proc = _run_localhost_role(
         textwrap.dedent(
-            f"""\
-            #!/bin/bash
-            printf '%s\\n' "$*" >> {helm_log}
-            exit 0
+            """\
+            ---
+            - name: Operator lookup
+              hosts: localhost
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_role:
+                    name: flux-operator
+                    tasks_from: operator.yml
             """
         ),
-    )
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: Operator absent
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-                tasks_from: operator.yml
-        """
-    )
-    env = _ansible_env()
-    proc = _run_localhost_role(
-        play,
         tmp_path,
         [
             "-e",
@@ -771,58 +773,20 @@ def test_operator_not_found_bootstraps(tmp_path: Path) -> None:
             "-e",
             '{"ansible_facts":{"architecture":"x86_64"}}',
         ],
-        env=env,
+        env=_ansible_env(),
     )
     output = proc.stdout + proc.stderr
-    assert proc.returncode == 0, output
-    assert "upgrade --install" in helm_log.read_text(encoding="utf-8")
-    assert "kubectl wait" in log.read_text(encoding="utf-8")
-
-
-def test_operator_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
-    """An API error is not NotFound, so the operator chart is not installed."""
-    require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
-    helm_log = tmp_path / "helm.log"
-    binary = tmp_path / "k3s"
-    helm = tmp_path / "helm"
-    _write_executable(binary, _lookup_binary(log, kind="error"))
-    _write_executable(helm, "#!/bin/bash\nexit 99\n")
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: Operator lookup error
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-                tasks_from: operator.yml
-        """
-    )
-    env = _ansible_env()
-    proc = _run_localhost_role(
-        play,
-        tmp_path,
-        [
-            "-e",
-            f"k3s_binary_path={binary}",
-            "-e",
-            f"helm_binary_path={helm}",
-            "-e",
-            "flux_operator_chart_version=0.0.0-test",
-            "-e",
-            '{"ansible_facts":{"architecture":"x86_64"}}',
-        ],
-        env=env,
-    )
-    output = proc.stdout + proc.stderr
+    k3s_text = log.read_text(encoding="utf-8")
+    if kind == "not_found":
+        assert proc.returncode == 0, output
+        assert "upgrade --install" in helm_log.read_text(encoding="utf-8")
+        assert "kubectl wait" in k3s_text
+        return
     assert proc.returncode != 0, output
     assert "Check whether Flux Operator deployment exists" in output
     assert "Bootstrap Flux Operator when absent" not in output
     assert not helm_log.exists()
-    assert "wait" not in log.read_text(encoding="utf-8")
+    assert "wait" not in k3s_text
 
 
 def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
