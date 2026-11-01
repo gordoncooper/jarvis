@@ -43,3 +43,10 @@
     fail_msg: >-
       site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env
       in cluster-vars.
+
+- name: Require the env FluxInstance in Git
+  ansible.builtin.assert:
+    that: flux_instance_file is file
+    fail_msg: >-
+      envs/{{ jarvis_env }}/flux/flux-instance.yaml is missing. flux-operator
+      applies it on a new cluster; commit it before running site.yml.

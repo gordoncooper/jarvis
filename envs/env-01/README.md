@@ -28,4 +28,8 @@ Create the env empty. Do not copy this folder or its secrets, and do not retarge
 2. Add an age creation rule in the repo root `.sops.yaml` for `envs/<env>/secrets/`.
 3. `make bootstrap-secrets ENV=<env>`
 4. Render the ConfigMap with `python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`.
-5. Add a `flux/` tree whose git paths use `envs/<env>/`.
+5. Add the rest of `envs/<env>/flux/`, with every git path under `envs/<env>/`:
+   - `flux-instance.yaml`: sync `url`, `ref` and `path` are this env's `flux_git_repo_url`, `flux_git_ref` and `envs/<env>/flux`. It is the env's only Flux version pin. `site.yml` applies it once on a new cluster, and stops before any change when it is missing.
+   - `kustomizations/`: the four Flux Kustomizations `platform-controllers` (`./platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./services`) and `apps` (`./apps`), chained in that order with `dependsOn`.
+   - `platform-configs/kustomization.yaml`: `platform/configs` plus this env's `secrets/` files.
+   - `kustomization.yaml`: the generated ConfigMap, the FluxInstance and the four Kustomizations.

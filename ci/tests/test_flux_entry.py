@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shutil
@@ -14,22 +15,17 @@ import yaml
 
 from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_DIR,
-    FLUX_OPERATOR_ROLE_TEMPLATES,
     REPO_ROOT,
-    ansible_render_template,
     env_name,
     load_cluster_vars,
+    load_role_defaults,
     non_example_env_names,
 )
 from render_cluster_vars_configmap import cluster_vars_configmap, render_document
 from schema.env import kubernetes_version_from_k3s
 
-FLUX_KUSTOMIZATION_CHAIN: tuple[str, ...] = (
-    "platform-controllers",
-    "platform-configs",
-    "services",
-    "apps",
-)
+_FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
+_STRICT_SUBSTITUTION = "--feature-gates=StrictPostBuildSubstitutions=true"
 
 # datreeio/CRDs-catalog commit. Tags through v0.0.12 omit these Flux CRDs.
 _FLUX_SCHEMA_REF = "3eb90d47aba8d61919d4419dd38301536e32a94b"
@@ -102,14 +98,76 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
     assert int(skipped.group(1)) == 0, output
 
 
-def _load_flux_kustomizations(env: str) -> list[dict[str, object]]:
-    docs: list[dict[str, object]] = []
-    for name in FLUX_KUSTOMIZATION_CHAIN:
-        path = REPO_ROOT / "envs" / env / "flux" / "kustomizations" / f"{name}.yaml"
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert isinstance(doc, dict)
-        docs.append(doc)
-    return docs
+def _flux_kustomizations(env: str) -> list[dict]:
+    """The Flux Kustomizations the env entry applies, from its kustomize build."""
+    return [
+        doc
+        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux"))
+        if isinstance(doc, dict)
+        and doc.get("kind") == "Kustomization"
+        and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION_API)
+    ]
+
+
+def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
+    """The four standard Kustomizations, in dependsOn order, with their paths."""
+    expected = {
+        "platform-controllers": "./platform",
+        "platform-configs": f"./envs/{env}/flux/platform-configs",
+        "services": "./services",
+        "apps": "./apps",
+    }
+    chain = list(expected)
+    names = [doc["metadata"]["name"] for doc in docs]
+    errors = []
+    if sorted(names) != sorted(chain):
+        errors.append(f"Flux Kustomizations are {sorted(names)}, expected {sorted(chain)}")
+    by_name = {doc["metadata"]["name"]: doc["spec"] for doc in docs}
+    for index, name in enumerate(chain):
+        spec = by_name.get(name)
+        if spec is None:
+            continue
+        if spec.get("path") != expected[name]:
+            errors.append(f"{name} path is {spec.get('path')!r}, expected {expected[name]!r}")
+        depends = [] if index == 0 else [{"name": chain[index - 1]}]
+        if (spec.get("dependsOn") or []) != depends:
+            errors.append(f"{name} dependsOn is {spec.get('dependsOn')!r}, expected {depends!r}")
+    return errors
+
+
+def _flux_instance(env: str) -> dict:
+    path = REPO_ROOT / "envs" / env / "flux" / "flux-instance.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict)
+    return doc
+
+
+def _flux_instance_errors(doc: dict, env: str) -> list[str]:
+    """Ansible applies this file once and looks it up by name; Flux then syncs it."""
+    role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
+    cluster = load_cluster_vars(env=env)
+    errors = []
+    metadata = doc.get("metadata") or {}
+    lookup = (role["flux_system_namespace"], role["flux_instance_name"])
+    if (metadata.get("namespace"), metadata.get("name")) != lookup:
+        errors.append(f"metadata is not {lookup}, the flux-operator lookup")
+    sync = doc.get("spec", {}).get("sync") or {}
+    expected = {
+        "url": cluster["flux_git_repo_url"],
+        "ref": cluster["flux_git_ref"],
+        "path": f"envs/{env}/flux",
+    }
+    for key, want in expected.items():
+        if sync.get(key) != want:
+            errors.append(f"spec.sync.{key} is {sync.get(key)!r}, expected {want!r}")
+    patches = doc.get("spec", {}).get("kustomize", {}).get("patches") or []
+    if not any(
+        _STRICT_SUBSTITUTION in str(patch.get("patch"))
+        and patch.get("target", {}).get("name") == "kustomize-controller"
+        for patch in patches
+    ):
+        errors.append("kustomize-controller does not run StrictPostBuildSubstitutions")
+    return errors
 
 
 @pytest.mark.parametrize("env", non_example_env_names())
@@ -133,59 +191,73 @@ def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
     assert data["ntp_pools"] == json.dumps(raw["ntp_pools"], separators=(",", ":"))
 
 
-def _flux_distribution_version() -> str:
-    defaults = yaml.safe_load(
-        (FLUX_OPERATOR_ROLE_DIR / "defaults" / "main.yml").read_text(encoding="utf-8")
-    )
-    assert isinstance(defaults, dict)
-    version = defaults["flux_distribution_version"]
-    parts = version.split(".") if isinstance(version, str) else []
-    assert len(parts) == 3 and all(part.isdigit() for part in parts)
-    return version
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_flux_instance_syncs_its_env_from_cluster_vars(env: str) -> None:
+    """R1, D45: the committed FluxInstance is the one Ansible applies."""
+    assert _flux_instance_errors(_flux_instance(env), env) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (("spec", "sync", "url"), "https://example.invalid/other"),
+        (("spec", "sync", "ref"), "refs/heads/other"),
+        (("spec", "sync", "path"), "envs/env-other/flux"),
+        (("metadata", "name"), "other"),
+        (("spec", "kustomize", "patches"), []),
+    ],
+)
+def test_flux_instance_drift_from_cluster_vars_fails(field: tuple[str, ...], value: object) -> None:
+    env = non_example_env_names()[0]
+    doc = copy.deepcopy(_flux_instance(env))
+    parent = doc
+    for key in field[:-1]:
+        parent = parent[key]
+    parent[field[-1]] = value
+    assert _flux_instance_errors(doc, env)
 
 
 @pytest.mark.parametrize("env", non_example_env_names())
-def test_git_flux_instance_matches_ansible_template(env: str) -> None:
-    git_path = REPO_ROOT / "envs" / env / "flux" / "flux-instance.yaml"
-    git_text = git_path.read_text(encoding="utf-8")
-    if git_text.startswith("#"):
-        git_text = "\n".join(
-            line for line in git_text.splitlines() if not line.startswith("#")
-        ).lstrip()
-    cluster = load_cluster_vars(env=env)
-    variables = {
-        "flux_instance_name": "flux",
-        "flux_system_namespace": "flux-system",
-        "flux_distribution_version": _flux_distribution_version(),
-        "flux_git_repo_url": cluster["flux_git_repo_url"],
-        "flux_git_ref": cluster["flux_git_ref"],
-        "jarvis_env": env,
-    }
-    rendered = ansible_render_template(
-        "flux-instance.yaml.j2",
-        variables,
-        templates_dir=FLUX_OPERATOR_ROLE_TEMPLATES,
+def test_flux_entry_has_the_four_standard_kustomizations(env: str) -> None:
+    """R1: four layers, one path each, chained with dependsOn."""
+    assert _flux_kustomization_errors(_flux_kustomizations(env), env) == []
+
+
+def _drop_apps(docs: list[dict]) -> None:
+    docs[:] = [doc for doc in docs if doc["metadata"]["name"] != "apps"]
+
+
+def _add_extra(docs: list[dict]) -> None:
+    extra = copy.deepcopy(docs[-1])
+    extra["metadata"]["name"] = "extra"
+    docs.append(extra)
+
+
+def _move_platform_configs(docs: list[dict]) -> None:
+    next(d for d in docs if d["metadata"]["name"] == "platform-configs")["spec"]["path"] = (
+        "./platform/configs"
     )
-    rendered_no_comment = "\n".join(
-        line for line in rendered.splitlines() if not line.startswith("#")
-    ).lstrip()
-    assert yaml.safe_load(git_text) == yaml.safe_load(rendered_no_comment)
-    assert "--feature-gates=StrictPostBuildSubstitutions=true" in rendered_no_comment
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_flux_kustomization_depends_on_chain(env: str) -> None:
-    docs = _load_flux_kustomizations(env)
-    assert docs[0]["metadata"]["name"] == "platform-controllers"
-    assert docs[0].get("spec", {}).get("dependsOn") in (None, [])
-    for idx in range(1, len(FLUX_KUSTOMIZATION_CHAIN)):
-        depends = docs[idx].get("spec", {}).get("dependsOn")
-        assert depends == [{"name": FLUX_KUSTOMIZATION_CHAIN[idx - 1]}]
+def _skip_platform_configs(docs: list[dict]) -> None:
+    next(d for d in docs if d["metadata"]["name"] == "services")["spec"]["dependsOn"] = [
+        {"name": "platform-controllers"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutate", [_drop_apps, _add_extra, _move_platform_configs, _skip_platform_configs]
+)
+def test_nonstandard_flux_kustomizations_fail(mutate) -> None:
+    env = non_example_env_names()[0]
+    docs = copy.deepcopy(_flux_kustomizations(env))
+    mutate(docs)
+    assert _flux_kustomization_errors(docs, env)
 
 
 @pytest.mark.parametrize("env", non_example_env_names())
 def test_platform_configs_decryption_uses_sops_age(env: str) -> None:
-    doc = _load_flux_kustomizations(env)[1]
+    doc = next(d for d in _flux_kustomizations(env) if d["metadata"]["name"] == "platform-configs")
     decryption = doc["spec"]["decryption"]
     assert decryption["provider"] == "sops"
     assert decryption["secretRef"]["name"] == "sops-age"

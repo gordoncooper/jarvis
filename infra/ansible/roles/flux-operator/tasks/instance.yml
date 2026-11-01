@@ -22,34 +22,8 @@
   when: not (flux_instance_present | bool)
   ansible.builtin.import_tasks: rebuild_hold.yml
 
-- name: Bootstrap FluxInstance when absent
+- name: Apply the env FluxInstance from Git once
   when: not (flux_instance_present | bool)
-  block:
-    - name: Create staging directory for FluxInstance bootstrap
-      ansible.builtin.tempfile:
-        state: directory
-        prefix: jarvis-flux-instance-
-      register: flux_instance_staging
-      changed_when: false
-
-    - name: Render FluxInstance manifest
-      ansible.builtin.template:
-        src: flux-instance.yaml.j2
-        dest: "{{ flux_instance_staging.path }}/flux-instance.yaml"
-        owner: root
-        group: root
-        mode: "0600"
-      changed_when: false
-
-    - name: Apply FluxInstance manifest once
-      ansible.builtin.command:
-        cmd: >-
-          {{ k3s_binary_path }} kubectl apply -f
-          {{ flux_instance_staging.path }}/flux-instance.yaml
-  always:
-    - name: Remove FluxInstance staging directory
-      ansible.builtin.file:
-        path: "{{ flux_instance_staging.path }}"
-        state: absent
-      when: flux_instance_staging is defined and flux_instance_staging.path is defined
-      changed_when: false
+  ansible.builtin.command:
+    cmd: "{{ k3s_binary_path }} kubectl apply -f -"
+    stdin: "{{ lookup('file', flux_instance_file) }}"

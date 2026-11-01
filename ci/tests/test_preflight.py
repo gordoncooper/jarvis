@@ -12,7 +12,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ansible_role_proof import ANSIBLE_DIR, load_cluster_vars, playbook_recap_field
+from ansible_role_proof import (
+    ANSIBLE_DIR,
+    REPO_ROOT,
+    load_cluster_vars,
+    non_example_env_names,
+    playbook_recap_field,
+)
 from conftest import require_cli
 
 _REQUIRED = (
@@ -43,9 +49,11 @@ def _inventory(path: Path, *, data_disk_hosts: set[str] | None = None) -> None:
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
-def _vars_file(path: Path, *, drop: str | None = None) -> None:
+def _vars_file(path: Path, *, drop: str | None = None, jarvis_env: str | None = None) -> None:
+    """Example-env values. jarvis_env names an env with a committed FluxInstance."""
     cluster = load_cluster_vars()
     body = {key: cluster[key] for key in _REQUIRED}
+    body["jarvis_env"] = jarvis_env or non_example_env_names()[0]
     if drop is not None:
         del body[drop]
     path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
@@ -67,12 +75,13 @@ def _run_site(
     check: bool = True,
     tags: str | None = None,
     path_prefix: Path | None = None,
+    jarvis_env: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     require_cli("ansible-playbook")
     inventory = tmp_path / "hosts.yml"
     _inventory(inventory, data_disk_hosts=data_disk_hosts)
     vars_path = tmp_path / "cluster-vars.yaml"
-    _vars_file(vars_path, drop=drop)
+    _vars_file(vars_path, drop=drop, jarvis_env=jarvis_env)
     cmd = [
         "ansible-playbook",
         "site.yml",
@@ -167,6 +176,12 @@ def test_missing_cluster_var_fails_before_any_change(tmp_path: Path, key: str) -
         result,
         "site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env",
     )
+
+
+def test_missing_env_flux_instance_fails_before_any_change(tmp_path: Path) -> None:
+    """R1: site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
+    result = _run_site(tmp_path, jarvis_env="env-absent")
+    _stopped_before_base_os(result, "envs/env-absent/flux/flux-instance.yaml is missing")
 
 
 def test_unmarked_k3s_fails_before_any_change(tmp_path: Path) -> None:
@@ -302,9 +317,12 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    flux_instance = REPO_ROOT / "envs" / non_example_env_names()[0] / "flux" / "flux-instance.yaml"
     extra = [
         "-e",
         "ansible_connection=local",
+        "-e",
+        f"flux_instance_file={flux_instance}",
         *_k3s_paths(tmp_path),
     ]
     env = os.environ.copy()
