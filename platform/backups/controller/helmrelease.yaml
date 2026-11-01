@@ -63,7 +63,7 @@ spec:
   values:
     image: &volsyncImage
       # renovate: datasource=docker depName=quay.io/backube/volsync
-      image: quay.io/backube/volsync@sha256:bbc884d4fa108534260025bf1255a1010ebb6bb8dac9ba4f4a77f437ca7f8fbd
+      image: quay.io/backube/volsync@sha256:26d06379bf89a9eb1e66ab45b42740c95e8330de51d7229c470845bdf44dbddd
       pullPolicy: IfNotPresent
     rclone: *volsyncImage
     restic: *volsyncImage
