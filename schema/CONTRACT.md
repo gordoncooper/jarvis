@@ -9,13 +9,13 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
   - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
   - `inventory/hosts.yml` — one block per host: `node_roles` and an optional `data_disk` (no IPs; R25, D42).
-- Rejection of unknown `code_delivery` and `build_agent` values (only built providers are accepted; §9 alternatives are named as stubs, not valid values).
-- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user` and `age_key_file`.
+- Rejection of an unknown `code_delivery` or `build_agent` when that key is set (only built providers are accepted; §9 alternatives are named as stubs, not valid values). Omitting either key is valid.
+- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `apps_git_repo_url`, and `llm_provider_host`.
 - Default `ssh_user: ubuntu` when omitted (D34). The example env still sets `ssh_user`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
 - Rejection of a `time_zone` that is not an IANA zone, and of a `k3s_version` that is not a k3s version string (`v<major>.<minor>.<patch>+k3s<n>`).
-- `apps_git_repo_url` required and https, validated like `flux_git_repo_url`. Both URLs use one owner handle, and that handle is the same across every non-example env (D45).
-- `llm_provider_host` required, a bare hostname with no scheme or path (D45).
+- `apps_git_repo_url`, when set, is https and validated like `flux_git_repo_url`. The two URLs use one owner handle. When `apps_git_repo_url` is unset, that handle comes from `flux_git_repo_url`. The handle is the same across every non-example env (D45).
+- `llm_provider_host`, when set, is a bare hostname with no scheme or path (D45). Omitting it is valid.
 
 ## Expects
 
@@ -38,9 +38,9 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `time_zone` | yes | IANA time zone name for the node, VolSync schedules, and Hermes cron (e.g. `<time_zone>`; D21). Unknown names fail validation. |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`; D34). |
 | `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
-| `code_delivery` | yes | `github` only. `forgejo` is the planned second provider (§9); any other value fails validation. |
-| `build_agent` | yes | `cursor` only. `grok-build` and `opencode-local` are §9 stubs; any other value fails validation. |
-| `backup_path` | yes | Parent of `backup_path/etcd-snapshots` and of one restic repository per PVC (`backup_path/restic/ns-<namespace>/pvc-<pvc>`). The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names. |
+| `code_delivery` | no | When set, `github` only. `forgejo` is the planned second provider (§9); any other value fails validation. |
+| `build_agent` | no | When set, `cursor` only. `grok-build` and `opencode-local` are §9 stubs; any other value fails validation. |
+| `backup_path` | yes | Absolute path. Parent of `backup_path/etcd-snapshots` and of one restic repository per PVC (`backup_path/restic/ns-<namespace>/pvc-<pvc>`). The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names. |
 | `backup_retention_daily` | yes | Restic keep count for daily snapshots (§7). |
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots (§7). |
 | `backup_retention_monthly` | yes | Restic keep count for monthly snapshots (§7). |
@@ -53,9 +53,9 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `app_dns_cluster_ip` | yes | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |
 | `local_path_data` | yes | k3s local-path provisioner data directory (D3). A subdirectory of `/var/lib/jarvis`, not that mount itself. |
 | `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; R25). |
-| `apps_git_repo_url` | yes | https Git remote for the apps repo. Same owner handle as `flux_git_repo_url`. That handle is the same across every non-example env (D45). |
+| `apps_git_repo_url` | no | When set, an https Git remote for the apps repo, with the same owner handle as `flux_git_repo_url`. When unset, the env owner is the `flux_git_repo_url` handle. That handle is the same across every non-example env (D45). |
 | `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
-| `llm_provider_host` | yes | AI provider API hostname, with no scheme, path, or port (D45). |
+| `llm_provider_host` | no | When set, an AI provider API hostname, with no scheme, path, or port (D45). |
 | `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4 nts` line. |
 | `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
 | `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
@@ -109,6 +109,12 @@ The example env declares every known role. A new known role is declared on that 
 
 The FluxInstance sets kustomize-controller `StrictPostBuildSubstitutions=true`. A missing postBuild variable fails the reconcile. `$${...}` escapes a literal `${...}`.
 
+The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluster-vars.yaml` for host settings, including every key that is not published. `jarvis_env` is published because verify, drill and restore read it from the live ConfigMap.
+
+Published: `jarvis_env`, `dns_suffix`, `time_zone`, `app_dns_cluster_ip`, `backup_path`, `backup_schedule`, `backup_retention_daily`, `backup_retention_weekly`, `backup_retention_monthly`.
+
+Host-only: `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `k3s_version`, `k3s_sha256`, `pod_cidr`, `service_cidr`, `local_path_data`, `flux_git_repo_url`, `apps_git_repo_url`, `flux_git_ref`, `ntp_pools`, `k3s_kubelet_kube_reserved`, `k3s_kubelet_system_reserved`, `k3s_kubelet_eviction_hard`, `llm_provider_host`.
+
 ### Identity values and product rules
 
 `ci/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user`, `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
@@ -132,6 +138,10 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - `ci/checks/env-schema` in the required `ci` workflow (added in `p0a-05`).
 - P0a exit check: a seeded PR that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - pytest in `p0a-05`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
+- A behavior test accepts an env that omits any one of `code_delivery`, `build_agent`, `apps_git_repo_url`, and `llm_provider_host`, and an env that omits all four. A value that is set still has to be allowed.
+- A behavior test rejects two non-example envs whose `flux_git_repo_url` owners differ when `apps_git_repo_url` is unset.
+- A behavior test rejects a relative `backup_path`.
+- The cluster-vars ConfigMap render publishes only the allow-list in the postBuild section. Host-only keys stay out. A stale render fails the flux entry test.
 - A behavior test rejects an unknown `time_zone` and a `k3s_version` that is not `v<major>.<minor>.<patch>+k3s<n>`.
 - A behavior test rejects a `backup_schedule` that is not a five-field cron.
 - A behavior test rejects an `app_dns_cluster_ip` that is not an IP address, is outside `service_cidr`, is not a host address, or is the first or tenth address of `service_cidr`.

@@ -109,7 +109,8 @@ def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
     from render_cluster_vars_configmap import render_document
 
     rendered = render_document(cluster)
-    assert "ssh_user: ops" in rendered
+    assert "backup_path: /var/lib/jarvis/backup" in rendered
+    assert "ssh_user" not in rendered
     assert generated.read_text(encoding="utf-8") == rendered
     generated_mtime = generated.stat().st_mtime_ns
 
