@@ -52,7 +52,7 @@ HOLD_NAMESPACE = "kube-system"
 HOLD_NAME = "backup-rebuild-hold"
 _ETCD_NAMESPACE = "platform-backups"
 _ETCD_CRONJOB = "etcd-snapshots"
-_RESTIC_IMAGE = re.compile(r"restic/restic@sha256:[0-9a-f]{64}\Z")
+_RESTIC_IMAGE = re.compile(r"restic/restic@sha256:[0-9a-f]{64}")
 _DONE_PHASES = {"Succeeded", "Failed"}
 
 Kubectl = Callable[..., CompletedProcess[str]]

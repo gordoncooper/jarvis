@@ -552,6 +552,10 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
         (False, _FAKE_RESTIC_IMAGE, "not found"),
         (True, None, "has no container image"),
         (True, "restic/restic:latest", "must be restic/restic@sha256:"),
+        (True, "restic/restic@sha256:" + ("a" * 63), "must be restic/restic@sha256:"),
+        (True, "other/restic@sha256:" + ("b" * 64), "must be restic/restic@sha256:"),
+        (True, "restic/restic:0.18@sha256:" + ("c" * 64), "must be restic/restic@sha256:"),
+        (True, "restic/restic@sha256:" + ("A" * 64), "must be restic/restic@sha256:"),
     ],
 )
 def test_bad_etcd_image_fails_before_any_change(
@@ -560,7 +564,7 @@ def test_bad_etcd_image_fails_before_any_change(
     message: str,
     capsys,
 ) -> None:
-    """J1/J2: a missing CronJob, missing image, or undigested tag changes nothing."""
+    """J1/J2: a missing CronJob, missing image, or non-digest restic image changes nothing."""
     cluster = _Cluster(
         [_pvc("demo", "pending", volume="")],
         will_pause=True,
