@@ -6,7 +6,8 @@ From a fresh copy of this repo to a running cluster, then `make verify` and `mak
 
 - amd64 Ubuntu Server nodes. Exactly one host has the `control_plane` role. A host with the `gpu` role must have an NVIDIA device. The opening play of `site.yml` checks this before it changes a node.
 - Internet access during the build, on the nodes and on the machine that runs the playbook.
-- An age private key, kept offline. The controller needs it during bootstrap and `site.yml`. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. The public half is a recipient in `.sops.yaml`.
+- Encrypting needs only the public age recipient in `.sops.yaml`. The private key is needed to decrypt. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. `site.yml` reads the private key to create `flux-system/sops-age` when that secret is absent. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. Keep the private key offline except for those reads.
+- Inventory hostnames must resolve from the controller and from every node.
 - A Git repository Flux can fetch over https. `flux_git_repo_url` is that remote.
 - The GitHub Actions repository variable `OWNER_NAME`, set to the owner's personal name. `make ci-verify` needs the same value in the environment. An unset value fails with a message that names `OWNER_NAME`.
 - `k3s_sha256` for the chosen `k3s_version` (`v<major>.<minor>.<patch>+k3s<n>`). Encode `+` as `%2B` in the URL. The line named `k3s` is the digest:
@@ -25,7 +26,7 @@ curl -fsSL "https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256
 make deps
 ```
 
-Produces the pinned `sops` and `age` binaries on `PATH` (`~/.local/bin`) and a `.venv` with Ansible and pytest. Put `~/.local/bin` on `PATH`.
+Installs the pinned `sops`, `age`, `age-keygen`, `kubectl`, `kustomize`, `kubeconform`, and `gitleaks` binaries into `~/.local/bin`, and creates `.venv`. Put `~/.local/bin` on `PATH`.
 
 ## New env
 
@@ -41,7 +42,7 @@ Create the env empty. Do not copy an existing env folder or its secrets, and do 
    - `platform-configs/kustomization.yaml`: `platform/configs` plus this env's `secrets/` files.
    - `kustomization.yaml`: the generated ConfigMap, the FluxInstance and the four Kustomizations.
 
-Produces `envs/<env>/` with values, inventory, an age rule, bootstrap secrets, the rendered ConfigMap, and the Flux entry. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). Step 3 runs from the repo root. Known ordering issue: these steps run before `tools/prep-node`. If prep-node creates the age key, step 2 could not yet name that key in `.sops.yaml`, and step 3 could not encrypt with it. After node prep, repeat steps 2 and 3. A second `make bootstrap-secrets` changes nothing once the files exist. The env template replaces this section; the numbered steps stay in this order.
+Produces `envs/<env>/` with values, inventory, an age rule, bootstrap secrets, the rendered ConfigMap, and the Flux entry. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). Step 3 runs from the repo root. Known ordering issue: these steps run before `tools/prep-node`. If prep-node creates the age key, step 2 could not yet name that key in `.sops.yaml`, and step 3 could not encrypt with it. After node prep, repeat steps 2 and 3. A second `make bootstrap-secrets` changes nothing once the files exist.
 
 ## Prepare a data disk
 

@@ -44,7 +44,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - Secret `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the server prefix `rest:http://restic.platform-backups.svc.cluster.local:8000/`), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`.
 - A volume secret sets `RESTIC_REPOSITORY` to that volume's URL and copies the password and `RESTIC_REST_*` keys. VolSync 0.17 passes those two keys into the mover.
 - The process runs with htpasswd auth and without `--append-only` or `--private-repos`. The mover forgets on every backup and prunes with the same credentials.
-- Retention is 7 daily, 4 weekly, and 3 monthly (`backup_retention_daily`, `backup_retention_weekly`, `backup_retention_monthly`).
+- Retention counts are the env settings `backup_retention_daily`, `backup_retention_weekly`, and `backup_retention_monthly`.
 - A ReplicationSource copies those into `restic.retain`, sets `retain.within: 7d`, and sets `pruneIntervalDays: 7`.
 - `within` keeps every snapshot from the last 7 days (VolSync passes `--keep-within`), so one backup of an empty recreated claim cannot forget that day's good snapshot yet.
 - It does not replace the rebuild hold: after 7 days, keep-daily still keeps only the newest snapshot of the loss day.
@@ -53,7 +53,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - Each generate rule sets `generateExisting` and `synchronize`. It skips a PVC annotated `backup: none` and a PVC labeled `app.kubernetes.io/created-by: volsync`.
 - A PVC is enrolled once it is bound (`spec.volumeName` is set). VolSync 0.17 starts the mover Job immediately, and generating it before local-path binds the claim races two `restic init`s on the new repository.
 - ClusterPolicy `pvc-backup` is annotated `kustomize.toolkit.fluxcd.io/force: Enabled`. Generate rules cannot be edited in place, so Flux recreates the policy. Recreating it deletes and regenerates the generated Secrets and ReplicationSources. Restic data on disk stays.
-- For every other PVC it generates Secret `restic-<pvc>` and ReplicationSource `<pvc>` in that namespace.
+- For every PVC that is not annotated `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`, it generates Secret `restic-<pvc>` and ReplicationSource `<pvc>` in that namespace.
 - `RESTIC_REPOSITORY` is Secret `backups-restic` key `RESTIC_REPOSITORY` plus `ns-<namespace>/pvc-<pvc>`.
 - `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` are copied from that Secret with a data generate and an apiCall lookup.
 - The ReplicationSource uses the restic mover, `copyMethod: Direct`, `cacheCapacity: 1Gi`, and `trigger.schedule` from `backup_schedule`.
@@ -169,11 +169,16 @@ How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume chec
 
 ### etcd cluster reset
 
-Owner-run. It is not a make target and it is not part of the drill. Do not print Secret values. The reset itself runs on the server node. Do not run it as a drill on the live env.
+Owner-run. It is not a make target and it is not part of the drill. Do not print Secret values. Do not run it as a drill on the live env.
+
+Not runnable from a node yet. No node has `restic` installed, and `rest:http://restic.platform-backups.svc.cluster.local:8000/` does not resolve from a node. These steps cannot be run as written:
 
 1. Set `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` from Secret `backups-restic`.
 2. Set `RESTIC_REPOSITORY` to that Secret's prefix plus `host-etcd-snapshots`.
-3. On the server node, run `restic snapshots`, then `restic restore <id> --target <dir> --include /snapshots/<file>`. The k3s file lands at `<dir>/snapshots/<file>`.
+3. On the server node, run `restic snapshots`, then `restic restore <id> --target <dir> --include /snapshots/<file>`. The k3s file would land at `<dir>/snapshots/<file>`.
+
+Once that snapshot file is already on the server node, this does run:
+
 4. Stop k3s. Run `/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path=<dir>/snapshots/<file>` once. Start k3s.
 
 What it changes: the node's k3s datastore is replaced by that snapshot.

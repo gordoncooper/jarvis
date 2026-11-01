@@ -17,7 +17,10 @@ def test_seeded_plan_codes_fail(tmp_path: Path) -> None:
     contract.parent.mkdir(parents=True)
     contract.write_text("Enrollment is R31 and D7.\n", encoding="utf-8")
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "note.md").write_text("See p0b-10, p2-24b, and §6.\n", encoding="utf-8")
+    (tmp_path / "docs" / "note.md").write_text(
+        "See p0b-10, p2-24b, OQ7, and §6.\n",
+        encoding="utf-8",
+    )
     readme = tmp_path / "envs" / "sample" / "README.md"
     readme.parent.mkdir(parents=True)
     readme.write_text("After P2 and p2-24.\n", encoding="utf-8")
@@ -25,6 +28,7 @@ def test_seeded_plan_codes_fail(tmp_path: Path) -> None:
     assert scan_plan_codes(tmp_path) == [
         "docs/note.md:1: p0b-10",
         "docs/note.md:1: p2-24b",
+        "docs/note.md:1: OQ7",
         "docs/note.md:1: §6",
         "envs/sample/README.md:1: P2",
         "envs/sample/README.md:1: p2-24",

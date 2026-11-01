@@ -22,7 +22,7 @@ Callers may rely on these six capabilities from the active provider. Rows marked
 | Capability | GitHub surface |
 | --- | --- |
 | Repo hosting | Repos under the account that owns `jarvis` and `jarvis-apps`. |
-| CI | GitHub Actions (`.github/workflows/ci.yml`). The required check is `ci`. |
+| CI | GitHub Actions (`.github/workflows/ci.yml`). The `fast` job runs the checks. The `ci` job requires `fast`. The required check is `ci`. |
 | Issue and label queue | Planned. GitHub Issues and the labels API on `jarvis-apps`. |
 | PR open and merge | GitHub Pull Requests. A coding-agent user token for agent PRs. Planned: a code-factory GitHub App for draft PRs and checker check runs. |
 | Approval-label check | Planned. Branch protection plus the required check `admin-gate`. |
@@ -56,7 +56,7 @@ No core manifest reads `code_delivery` until a second provider is built. Provide
 ## Proven by
 
 - `ci/checks/env-schema` rejects a `code_delivery` value other than `github`.
-- `.github/workflows/ci.yml` is the `ci` check. It runs every `ci/checks/` rule.
+- `.github/workflows/ci.yml`: the `fast` job runs every `ci/checks/` rule and pytest. The `ci` job requires `fast`. The required check name is `ci`.
 - Planned: `admin-gate` fails a protected-path PR without `admin-approved` from the human admin account, passes after that label, and fails for a bot, an App, or the coding-agent account.
 - Planned: `build.yml` publishes the demo app as a public package, and the cluster pulls it by digest.
 - Planned: a `code-factory:ready` issue becomes a draft PR with a green `ci` check and a `checker` check run.
