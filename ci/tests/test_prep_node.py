@@ -1,4 +1,4 @@
-"""prep-node env edits, DNS fail-fast, netplan rendering, and age keys."""
+"""prep-node env edits, DNS fail-fast, address report, and age keys."""
 
 from __future__ import annotations
 
@@ -23,9 +23,7 @@ all:
   hosts:
     cp-1: # primary
       node_roles: [control_plane]
-      data_disk:
-        id: /dev/disk/by-id/example-cp-1
-        wipe_confirmed: true
+      data_disk: true
     wk-1:
       # leave this comment
       node_roles: [workers, edge]
@@ -37,9 +35,7 @@ all:
   hosts:
     node-a: # primary
       node_roles: [control_plane]
-      data_disk:
-        id: /dev/disk/by-id/example-cp-1
-        wipe_confirmed: true
+      data_disk: true
     wk-1:
       # leave this comment
       node_roles: [workers, edge]
@@ -191,87 +187,59 @@ def test_resolved_host_missing_from_inventory_exits_before_ssh() -> None:
     assert _ssh_snapshot() == before_ssh
 
 
-def test_render_netplan_pins_the_current_address() -> None:
-    module = _load()
-    rendered = module.render_netplan("eth0", "192.0.2.10/24", "192.0.2.1", ["192.0.2.53"])
-    assert rendered == (
-        "network:\n"
-        "  version: 2\n"
-        "  ethernets:\n"
-        "    eth0:\n"
-        "      dhcp4: false\n"
-        "      addresses:\n"
-        "        - 192.0.2.10/24\n"
-        "      routes:\n"
-        "        - to: default\n"
-        "          via: 192.0.2.1\n"
-        "      nameservers:\n"
-        "        addresses:\n"
-        "          - 192.0.2.53\n"
-    )
-
-
-def test_netplan_try_is_accepted_only_when_the_output_says_so(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_dhcp_warns_and_static_does_not_and_nothing_is_written(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """DHCP warns that the address must stay stable. Static does not. No netplan or sudo write."""
     module = _load()
-    netplan = tmp_path / "netplan"
-    scripts: list[str] = []
+    calls: list[tuple[str, str]] = []
+
+    class _Session:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+            calls.append(("bash", script))
+            assert args == []
+            assert "netplan" not in script
+            assert "sudo" not in script
+            return subprocess.CompletedProcess([], 0, self._text, "")
+
+        def sudo_bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+            raise AssertionError(f"sudo write issued: {script}")
+
+    address = "192.0.2.10/24"
+    module.report_address(
+        _Session(f"iface=eth0\naddress={address}\ndhcp=yes\n")
+    )
+    dhcp_out = capsys.readouterr().out
+    assert address in dhcp_out
+    assert "DHCP" in dhcp_out
+    assert "stable" in dhcp_out
+    assert "k3s" in dhcp_out
+
+    module.report_address(
+        _Session(f"iface=eth0\naddress={address}\ndhcp=no\n")
+    )
+    static_out = capsys.readouterr().out
+    assert address in static_out
+    assert "static" in static_out
+    assert "Warning" not in static_out
+    assert "DHCP" not in static_out
+    assert calls
+    assert all(kind == "bash" for kind, _script in calls)
+
+
+def test_missing_primary_address_fails() -> None:
+    module = _load()
 
     class _Session:
         def bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
             assert script == module._DETECT_NET
-            text = (
-                "iface=eth0\naddress=192.0.2.10/24\ngateway=192.0.2.1\n"
-                "dns=192.0.2.53\ndhcp=yes\n"
-            )
-            return subprocess.CompletedProcess([], 0, text, "")
+            return subprocess.CompletedProcess([], 0, "iface=eth0\naddress=\ndhcp=yes\n", "")
 
-        def sudo_bash(self, script: str, args: list[str]) -> subprocess.CompletedProcess[str]:
-            scripts.append(script)
-            return subprocess.CompletedProcess([], 0, "", "")
-
-    def install(body: str) -> None:
-        netplan.write_text(body, encoding="utf-8")
-        netplan.chmod(0o755)
-
-    def fake_batch(
-        user: str,
-        host: str,
-        remote: str,
-        public: Path,
-        *,
-        tty: bool = False,
-        stdin: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        if remote == "sudo -n netplan try --timeout 120":
-            assert tty is True
-            return subprocess.run(
-                [str(netplan), "try", "--timeout", "120"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        assert "192.0.2.10/24" in remote
-        return subprocess.CompletedProcess([], 0, "", "")
-
-    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(module, "batch_ssh", fake_batch)
-    public = tmp_path / "id_ed25519.pub"
-
-    install("#!/bin/sh\nprintf '%s\\n' 'Configuration accepted.'\n")
-    relayed = module._relay_output([str(netplan), "try", "--timeout", "120"])
-    assert module.netplan_try_accepted(relayed)
-    module.configure_network(_Session(), "user", "host.example", public)
-    assert scripts == [module._WRITE_NETPLAN]
-
-    install("#!/bin/sh\nprintf '%s\\n' 'Reverting.'\nexit 0\n")
-    relayed = module._relay_output([str(netplan), "try", "--timeout", "120"])
-    assert not module.netplan_try_accepted(relayed)
-    scripts.clear()
-    with pytest.raises(module.PrepError, match="netplan try did not keep the static config"):
-        module.configure_network(_Session(), "user", "host.example", public)
-    assert scripts == [module._WRITE_NETPLAN, module._RESTORE_NETPLAN]
+    with pytest.raises(module.PrepError, match="primary address"):
+        module.report_address(_Session())
 
 
 def test_sshd_dropin_turns_off_password_login_only() -> None:

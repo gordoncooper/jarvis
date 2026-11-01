@@ -1,4 +1,2 @@
-# Product constants. Paths come from cluster-vars.
+# Product constants (D3, D42). Not env settings.
 node_disk_mount: /var/lib/jarvis
-node_disk_label: jarvis-data
-node_disk_fstype: ext4

@@ -81,11 +81,13 @@
 - name: Install k3s systemd unit
   ansible.builtin.template:
     src: k3s.service.j2
-    dest: "/etc/systemd/system/{{ k3s_service_name }}.service"
+    dest: "{{ k3s_unit_dir }}/{{ k3s_service_name }}.service"
     owner: root
     group: root
     mode: "0644"
   notify: Restart k3s
+
+- ansible.builtin.import_tasks: service-unit.yml
 
 - name: Enable and start k3s
   ansible.builtin.systemd:
