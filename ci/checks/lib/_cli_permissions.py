@@ -1,21 +1,32 @@
 """Cursor CLI shell permission matching for .cursor/cli.json (R34).
 
-Mirrors the matcher in cursor-agent 2026.10.22-27dcf5f:
+Mirrors the matcher in cursor-agent 2026.10.22-27dcf5f. The dry-run proves
+the checked-in policy against this corpus. It does not prove the client.
+The deny list is best-effort defense in depth: a pattern list cannot close
+every syntactic form.
+
+Matcher:
 - the line is split into commands at && || ; | & newlines, $( ), backticks
   and subshells, and leading FOO=1 assignments are dropped;
 - each command is matched as "name args" (raw word text, quotes kept);
 - only * is a wildcard (? is literal), matching is case-sensitive and
   anchored;
-- bash -c, eval, sudo, absolute paths and the like are NOT unwrapped, so
-  cli.json lists them itself.
-Read(pathOrGlob) keeps glob semantics. Deny beats allow.
+- bash -c, eval, sudo, absolute paths and the like are NOT unwrapped.
+  cli.json lists some wrappers. sh -c rsync remote-path forms (relative,
+  home-based, empty, daemon module) are not closed.
+Read(pathOrGlob) keeps glob semantics. Deny beats allow. An empty allow
+list is the default: a command no deny entry matches is allowed.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
+import shutil
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -356,250 +367,533 @@ def read_allowed(allow: list[str], deny: list[str], file_path: str) -> bool:
     return any(matches_read(token, file_path) for token in read_allow)
 
 
-DRY_RUN_MUST_BLOCK: tuple[str, ...] = (
-    "kubectl apply -f deployment.yaml",
-    "kubectl get secret -n flux-system sops-age",
-    "kubectl get secrets -A",
-    "bash -c 'kubectl get secret -n flux-system sops-age'",
-    "helm upgrade --install demo ./chart",
-    "bash -c 'helm list'",
-    "ssh user@node.example",
-    "bash -c 'ssh user@node.example'",
-    "bash -c 'scp file.yaml user@node.example:'",
-    "sops decrypt envs/<env>/secrets/grafana-admin.sops.yaml",
-    "sops -d envs/<env>/secrets/grafana-admin.sops.yaml",
-    "sops encrypt envs/<env>/secrets/grafana-admin.sops.yaml",
-    "sops -e envs/<env>/secrets/grafana-admin.sops.yaml",
-    "sops --encrypt envs/<env>/secrets/grafana-admin.sops.yaml",
-    "bash -c 'sops encrypt envs/<env>/secrets/grafana-admin.sops.yaml'",
-    "bash -c 'sops -e envs/<env>/secrets/grafana-admin.sops.yaml'",
-    "cat ~/.config/sops/age/keys.txt",
-    "cat /tmp/host.agekey",
-    "kubectl apply -f x.yaml",
-    "helm list",
-    "ssh user@host",
-    "flux bootstrap github",
-    "flux delete source git demo",
-    "flux install",
-    "flux suspend kustomization demo",
-    "sops -d file.yaml",
-    "sops decrypt file.yaml",
-    "sops -e file.yaml",
-    # Only * is a wildcard and matching is case-sensitive, so cli.json lists
-    # *kubectl*get*ecret* (secret, Secret) and *kubectl*get*ECRET*. Other
-    # mixed casings (for example SeCrEt) are a known gap.
-    "kubectl get secret/sops-age -n flux-system -o yaml",
-    "kubectl -n flux-system get secrets",
-    "kubectl get secret,configmap -A",
-    "kubectl get Secret/sops-age",
-    "kubectl -n flux-system get SECRETS",
-    "kubectl get secret",
-    "kubectl get secrets",
-    "kubectl get Secret",
-    "kubectl get Secrets",
-    "kubectl get SECRET",
-    "kubectl get SECRETS",
-    "kubectl get Secret -n flux-system sops-age",
-    "kubectl get Secrets -A",
-    "kubectl get SECRET -n flux-system sops-age",
-    "kubectl get SECRETS -A",
-    "kubectl -n kube-system rollout restart deployment/kustomize-controller",
-    "kubectl -n kube-system drain node.example",
-    "kubectl -n default label node.example app=demo",
-    "age -i /tmp/key.txt -d secret.txt",
-    "bash -c 'age -d secret.txt'",
-    "sh -c 'age --decrypt secret.txt'",
-    "bash -c 'age -i /tmp/key.txt -d secret.txt'",
-    "sh -c 'age -i /tmp/key.txt --decrypt secret.txt'",
-    # Leading global flag before the verb.
-    "kubectl --context x delete ns foo",
-    "helm --kube-context x upgrade demo ./chart",
-    # Chained: && | ; $( ).
-    "cd x && kubectl delete ns foo",
-    "cd x && ssh user@host",
-    "cd x && ssh",
-    "cat f | kubectl apply -f -",
-    "cat f | ssh user@host",
-    "true; sops -d file.yaml",
-    "true; ssh",
-    "echo $(kubectl get secret x -o yaml)",
-    "echo $(ssh user@host uptime)",
-    "kubectl get pods -o name | xargs kubectl delete",
-    "cat hosts | xargs -n1 ssh",
-    # bash -c / sh -c wrapped.
-    "bash -c 'kubectl delete ns foo'",
-    "sh -c \"kubectl apply -f x.yaml\"",
-    "bash -lc 'ssh user@host'",
-    "bash -c 'sops -d file.yaml'",
-    # Runner prefixes: env, timeout, xargs, nohup.
-    "env KUBECONFIG=x kubectl delete ns foo",
-    "env SOPS_AGE_KEY_FILE=k sops -d file.yaml",
-    "env FOO=1 ssh user@host",
-    "timeout 60 kubectl apply -f x.yaml",
-    "timeout 60 ssh user@host",
-    "timeout 5 sops -d file.yaml",
-    "xargs kubectl delete pod",
-    "xargs ssh user@host",
-    "xargs sops -d",
-    "nohup kubectl port-forward svc/demo 8080:80",
-    "nohup ssh user@host",
-    "nohup sops -d file.yaml",
-    # Runner after a chain (ssh, scp, sops, age).
-    "cd x && timeout 5 ssh user@host",
-    "true; env A=1 sops -d file.yaml",
-    "cat f | nohup ssh user@host",
-    "cd x && nohup scp file.yaml user@host:",
-    "cd x && env A=1 ssh",
-    "cd x && xargs -a hosts ssh",
-    "true; timeout 5 age -d secret.txt",
-    "ls | xargs -n1 age -d",
-    # Secret reads.
-    "kubectl get secret -n flux-system sops-age -o yaml",
-    "kubectl -n flux-system get secret sops-age -o jsonpath={.data}",
-    "kubectl describe secret -n flux-system sops-age",
-    "x=$(kubectl get secret -o yaml)",
-    # Wrappers the CLI does not unwrap, and path forms.
-    "zsh -c 'flux suspend kustomization demo'",
-    "eval 'ssh user@host'",
-    "command ssh user@host",
-    "exec ssh user@host",
-    "sudo kubectl apply -f x.yaml",
-    "nice sops -d file.yaml",
-    "stdbuf -o0 ssh user@host",
-    "env -i helm upgrade demo ./chart",
-    "/usr/bin/ssh user@host",
-    "~/.local/bin/sops -d file.yaml",
-    "./bin/kubectl delete ns foo",
-    "/usr/bin/age -d secret.txt",
-    "FOO=1 ssh user@host",
-    "for h in a b; do ssh $h; done",
-    "diff <(sops -d a.yaml) b.yaml",
-    # Other remote or irreversible calls.
-    "rsync -e ssh a user@host:/x",
-    "rsync a user@host:/x",
-    "sftp user@host",
-    "ssh-copy-id user@host",
-    "gh pr merge 98",
-    "gh -R owner/repo pr merge 98 --squash",
-    "git push --force origin main",
-    "git push --force-with-lease",
-    "git -C repo push -f origin main",
-    "git push origin +main",
-    # Wrappers and quoting the CLI does not unwrap (caught by broad patterns).
-    "watch kubectl get secret -A",
-    "kubectl get 'secret' -n flux-system sops-age",
-    "kubectl get secret.v1 -n flux-system sops-age -o yaml",
-    "kubectl get --raw '/api/v1/secrets?limit=500'",
-    "kubectl proxy --port 8001",
-    "time ssh user@host",
-    "strace -f ssh user@host",
-    "setsid ssh user@host",
-    "doas sops -d file.yaml",
-    "flock /tmp/lock ssh user@host",
-    "taskset -c 0 sops -d file.yaml",
-    "ionice -c3 ssh user@host",
-    "/usr/bin/env sops -d file.yaml",
-    "script -qc 'ssh user@host'",
-    "busybox sh -c 'ssh user@host'",
-    "perl -e 'system(\"ssh user@host\")'",
-    "python3 -c 'import os; os.system(\"ssh user@host\")'",
-    "find . -name '*.sops.yaml' -exec sops -d {} \\;",
-    "parallel ssh ::: h1 h2",
-    "bash -c 'ssh'",
-    "'ssh' user@host",
-    "strace age --decrypt secret.txt",
-    "age -i key.txt -d",
-    "gh api -X PUT repos/owner/repo/pulls/98/merge",
-    "time kubectl delete ns foo",
-    "/usr/bin/env kubectl delete ns foo",
-    # Blocked by design: the broad patterns also catch harmless text.
-    "rg ssh .",
-    "git commit -m 'tighten sops rule'",
-    "echo 'a | ssh b'",
-    "kubectl get secretstores -A",
-    "kubectl get clustersecretstores",
-    "command -v sops",
+
+# Quoted "<env>" / "<name>" stay one word. A bare < is a redirect to this splitter.
+_WRAPPERS: tuple[tuple[str, str], ...] = (
+    ("bare", "{c}"),
+    ("&&", "true && {c}"),
+    (";", "true; {c}"),
+    ("|", "true | {c}"),
+    ("$( )", "echo $({c})"),
+    ("backtick", "echo `{c}`"),
+    ("bash -c", "bash -c '{c}'"),
+    ("sh -c", "sh -c '{c}'"),
+    ("env", "env {c}"),
+    ("timeout", "timeout 5 {c}"),
+    ("xargs", "xargs {c}"),
+    ("nohup", "nohup {c}"),
+    ("sudo", "sudo {c}"),
+    ("absolute", ""),
 )
 
-DRY_RUN_MUST_BLOCK_READS: tuple[str, ...] = (
-    ".config/sops/age/keys.txt",
+# One command per guarded form. Wrappers are applied to every entry.
+_GUARDED: tuple[tuple[str, str], ...] = (
+    ("remote shell and copy", 'ssh "<name>"'),
+    ("remote shell and copy", 'scp "<name>" "<name>"'),
+    ("remote shell and copy", 'sftp "<name>"'),
+    ("remote shell and copy", 'ssh-copy-id "<name>"'),
+    # Not a closed remote-path set. Relative, home-based, empty, and daemon-module
+    # forms inside sh -c stay open.
+    ("remote shell and copy", 'rsync "<name>" "dest:<name>"'),
+    ("sops decrypt or edit", 'sops decrypt "envs/<env>/secrets/<name>.sops.yaml"'),
+    ("sops decrypt or edit", 'sops -d "envs/<env>/secrets/<name>.sops.yaml"'),
+    ("sops decrypt or edit", 'sops edit "envs/<env>/secrets/<name>.sops.yaml"'),
+    ("sops decrypt or edit", 'sops --encrypt "envs/<env>/secrets/<name>.sops.yaml"'),
+    ("age decrypt", 'age -d "<name>"'),
+    ("age decrypt", 'age --decrypt "<name>"'),
+    ("age decrypt", 'age -i "<name>" -d "<name>"'),
+    ("age key", 'cat ".config/sops/age/keys.txt"'),
+    ("age key", 'ls ".config/sops/age"'),
+    ("age key", 'cat "<name>.agekey"'),
+    ("kubectl Secret reads", 'kubectl get secret "<name>"'),
+    ("kubectl Secret reads", 'kubectl get SECRET "<name>"'),
+    ("kubectl Secret reads", 'kubectl describe secret "<name>"'),
+    ("kubectl mutations", 'kubectl delete "ns/<name>"'),
+    ("helm mutations", 'helm upgrade "<name>" "<name>"'),
+    ("flux mutations", 'flux delete kustomization "<name>"'),
 )
 
-DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
-    "kubectl get pods -A",
-    "kubectl describe pod demo -n default",
-    "kubectl logs deploy/demo -n default --tail=20",
-    "flux get kustomizations -A",
-    "flux get sources git -A",
-    "flux logs kustomization demo",
-    "flux tree kustomization demo",
-    "flux events --for Kustomization/demo",
-    "flux reconcile kustomization demo --with-source",
-    "kubectl get nodes --show-labels",
-    "kubectl get statefulsets -A",
-    "kubectl get replicasets -A",
-    "kubectl get pods --field-selector=status.phase=Running",
-    "kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'",
-    "docker images -d",
-    "python3 manage.py --dry-run",
-    # Normal work, including tool names that are not ssh/scp/sops/age.
-    "rg -n 'kubectl apply' docs",
-    "helm template demo ./chart",
-    "ls | xargs docker image ls",
-    "rg -n timeout docs",
-    "rg -n nohup docs",
-    "git commit -m 'add env check'",
-    "cd x && env A=1 docker image ls",
-    "cd x && timeout 5 du -sh storage",
-    "helm --debug template demo ./chart",
-    "helm lint ./chart",
-    "git push origin my-branch",
-    "git push -u origin my-feature",
-    "gh pr view 98",
-    "rsync -av ./a/ ./b/",
-    "kubectl get pods | grep secret",
-    "pytest -q",
-    "make ci-verify",
-    "command -v kubectl",
-    "helm template cm jetstack/cert-manager --set installCRDs=true",
-    "timeout 60 docker image ls",
-    "nohup python3 -m http.server --directory coverage 8000",
+# Forms the cross product does not spell. Not crossed with wrappers.
+# Main's must-block list is appended from the checked-in fixture.
+_RETAINED_EXTRA: tuple[tuple[str, str], ...] = (
+    ("gh merge", 'gh pr merge "<name>"'),
+    ("gh merge", 'gh api -X PUT "repos/<name>/<name>/pulls/1/merge"'),
+    ("git force-push", 'git push --force origin "<name>"'),
+    ("git force-push", 'git push -f origin "<name>"'),
+    ("git force-push", 'git push origin +"<name>"'),
+    ("kubectl Secret reads", "kubectl proxy --port 8001"),
+    ("kubectl Secret reads", "kubectl get secretstores"),
+    ("kubectl mutations", 'kubectl auth reconcile -f "<name>"'),
+    ("kubectl mutations", 'kubectl rollout restart "deploy/<name>"'),
+    ("kubectl mutations", 'kubectl --context "<name>" delete "ns/<name>"'),
+    ("helm mutations", 'helm --kube-context "<name>" upgrade "<name>" "<name>"'),
+    ("remote shell and copy", "rg ssh ."),
+    ("remote shell and copy", 'echo "a | ssh b"'),
+    ("sops decrypt or edit", "command -v sops"),
+    ("sops decrypt or edit", 'git commit -m "tighten sops rule"'),
 )
 
-
-def run_dry_run(permissions_path: Path) -> tuple[list[str], list[str]]:
-    perms = load_cli_permissions(permissions_path)
-    allow, deny = perms["allow"], perms["deny"]
-    failures: list[str] = []
-    for cmd in DRY_RUN_MUST_BLOCK:
-        if command_allowed(allow, deny, cmd):
-            failures.append(f"expected BLOCK, got ALLOW: {cmd}")
-    for path in DRY_RUN_MUST_BLOCK_READS:
-        if read_allowed(allow, deny, path):
-            failures.append(f"expected Read BLOCK, got ALLOW: {path}")
-    for cmd in DRY_RUN_MUST_ALLOW:
-        if not command_allowed(allow, deny, cmd):
-            failures.append(f"expected ALLOW, got BLOCK: {cmd}")
-    return failures, list(deny)
+def _load_must_allow(path: Path) -> tuple[str, ...]:
+    """Must-allow commands. The fixture is the only copy; a repeated row is an error."""
+    rows: list[str] = []
+    seen: set[str] = set()
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line:
+            continue
+        if line in seen:
+            raise ValueError(f"must-allow fixture line {lineno} duplicates an earlier row")
+        seen.add(line)
+        rows.append(line)
+    return tuple(rows)
 
 
-def validate_deny_coverage(deny: list[str]) -> list[str]:
-    """Ensure required families appear in the deny list."""
-    required_substrings = (
-        "kubectl",
-        "helm",
-        "ssh",
-        "scp",
-        "sops",
-        "flux",
+@dataclass(frozen=True)
+class ShellCase:
+    category: str
+    wrapper: str
+    command: str
+
+
+@dataclass(frozen=True)
+class ReadCase:
+    category: str
+    path: str
+
+
+def _absolute_form(command: str) -> str:
+    tool, _, rest = command.partition(" ")
+    return f"/usr/bin/{tool} {rest}" if rest else f"/usr/bin/{tool}"
+
+
+def corpus_shell_cases() -> tuple[ShellCase, ...]:
+    cases: list[ShellCase] = []
+    seen: set[str] = set()
+    for category, base in _GUARDED:
+        for name, template in _WRAPPERS:
+            command = _absolute_form(base) if name == "absolute" else template.format(c=base)
+            cases.append(ShellCase(category, name, command))
+            seen.add(command)
+    for category, command in _RETAINED:
+        if command in seen:
+            continue
+        seen.add(command)
+        cases.append(ShellCase(category, "retained", command))
+    return tuple(cases)
+
+
+def corpus_read_cases() -> tuple[ReadCase, ...]:
+    return (
+        ReadCase("age key", ".config/sops/age/keys.txt"),
+        ReadCase("age key", ".config/sops/age"),
+        ReadCase("age key", "<name>.agekey"),
     )
-    joined = "\n".join(deny).lower()
-    missing = [s for s in required_substrings if s not in joined]
-    if missing:
-        return [f"permissions.deny missing coverage for: {', '.join(missing)}"]
-    read_denies = [t for t in deny if t.strip().startswith("Read(")]
-    if not read_denies:
-        return ["permissions.deny should include Read(...) rules for the age key file"]
-    if not any("sops/age" in t for t in read_denies):
-        return ["permissions.deny should include Read(**/.config/sops/age/**)"]
-    return []
+
+
+def _uniq(lines: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        if line not in seen:
+            seen.add(line)
+            out.append(line)
+    return out
+
+
+def corpus_failures(allow: list[str], deny: list[str]) -> list[str]:
+    failures: list[str] = []
+    for case in corpus_shell_cases():
+        if command_allowed(allow, deny, case.command):
+            failures.append(f"expected block: {case.category} ({case.wrapper})")
+    for case in corpus_read_cases():
+        if read_allowed(allow, deny, case.path):
+            failures.append(f"expected block: {case.category} (read)")
+    for command in DRY_RUN_MUST_ALLOW:
+        if not command_allowed(allow, deny, command):
+            failures.append(f"expected allow: {command}")
+    return failures
+
+
+def deny_by_default_failures(allow: list[str]) -> list[str]:
+    """Empty allow is the default. No allow entry may match a must-block case."""
+    failures: list[str] = []
+    if any(token.strip() for token in allow):
+        failures.append("deny-by-default: allow list must stay empty")
+    for token in allow:
+        if parse_shell_entry(token):
+            hit: set[str] = set()
+            for case in corpus_shell_cases():
+                if case.category in hit:
+                    continue
+                if any(matches_shell(token, cmd) for cmd in split_commands(case.command)):
+                    hit.add(case.category)
+                    failures.append(
+                        "deny-by-default: allow entry matches must-block category "
+                        f"{case.category}"
+                    )
+        if parse_read_entry(token):
+            for case in corpus_read_cases():
+                if matches_read(token, case.path):
+                    failures.append(
+                        "deny-by-default: allow entry matches must-block category "
+                        f"{case.category}"
+                    )
+                    break
+    return _uniq(failures)
+
+
+def _shell_pattern(token: str) -> str:
+    entry = parse_shell_entry(token)
+    return "" if entry is None else entry.full_pattern
+
+
+def _is_remote(token: str) -> bool:
+    pattern = _shell_pattern(token)
+    return any(part in pattern for part in ("ssh", "scp", "sftp", "rsync"))
+
+
+def _is_sops(token: str) -> bool:
+    pattern = _shell_pattern(token)
+    return "sops" in pattern and "sops/age" not in pattern
+
+
+def _is_age_decrypt(token: str) -> bool:
+    pattern = _shell_pattern(token)
+    return "age" in pattern and ("-d" in pattern or "decrypt" in pattern)
+
+
+def _is_age_key(token: str) -> bool:
+    if parse_read_entry(token) is not None:
+        return "sops/age" in token or "agekey" in token
+    pattern = _shell_pattern(token)
+    return "sops/age" in pattern or "agekey" in pattern
+
+
+def _is_kubectl_secret(token: str) -> bool:
+    pattern = _shell_pattern(token).lower()
+    return "kubectl" in pattern and ("ecret" in pattern or "proxy" in pattern)
+
+
+def _is_kubectl_mutation(token: str) -> bool:
+    pattern = _shell_pattern(token)
+    return "kubectl" in pattern and not _is_kubectl_secret(token)
+
+
+def _is_helm(token: str) -> bool:
+    return "helm" in _shell_pattern(token)
+
+
+def _is_flux(token: str) -> bool:
+    return "flux" in _shell_pattern(token)
+
+
+def _is_gh(token: str) -> bool:
+    return _shell_pattern(token).startswith("gh:")
+
+
+def _is_git(token: str) -> bool:
+    return _shell_pattern(token).startswith("git:")
+
+
+_DENY_CLASS: dict[str, Callable[[str], bool]] = {
+    "remote shell and copy": _is_remote,
+    "sops decrypt or edit": _is_sops,
+    "age decrypt": _is_age_decrypt,
+    "age key": _is_age_key,
+    "kubectl Secret reads": _is_kubectl_secret,
+    "kubectl mutations": _is_kubectl_mutation,
+    "helm mutations": _is_helm,
+    "flux mutations": _is_flux,
+    "gh merge": _is_gh,
+    "git force-push": _is_git,
+}
+
+DENY_CLASS_NAMES: tuple[str, ...] = tuple(_DENY_CLASS)
+
+_CHECKS_DIR = Path(__file__).resolve().parents[1]
+MAIN_MUST_BLOCK_PATH = _CHECKS_DIR / "fixtures" / "must-block-main.tsv"
+MAIN_MUST_ALLOW_PATH = _CHECKS_DIR / "fixtures" / "must-allow-main.txt"
+
+
+def _load_main_must_block(path: Path) -> tuple[tuple[str, str], ...]:
+    """Category and command rows from main's must-block list."""
+    rows: list[tuple[str, str]] = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line:
+            continue
+        category, sep, command = line.partition("\t")
+        if not sep or not command or category not in _DENY_CLASS:
+            raise ValueError(f"must-block fixture line {lineno} is missing a known category")
+        rows.append((category, command))
+    if len(rows) != 149 or len({command for _, command in rows}) != 149:
+        raise ValueError(f"must-block fixture has {len(rows)} cases, expected 149")
+    return tuple(rows)
+
+
+_RETAINED: tuple[tuple[str, str], ...] = _RETAINED_EXTRA + _load_main_must_block(
+    MAIN_MUST_BLOCK_PATH
+)
+DRY_RUN_MUST_ALLOW: tuple[str, ...] = _load_must_allow(MAIN_MUST_ALLOW_PATH)
+
+
+def deny_without_class(deny: list[str], category: str) -> list[str]:
+    """Drop one deny class. The corpus must then fail and name that category."""
+    drop = _DENY_CLASS[category]
+    return [token for token in deny if not drop(token)]
+
+
+# Help-visible kubectl 1.36.5 commands (tools/versions.env). Plugins omitted.
+# Used when the pinned binary is not on PATH. Discovery replaces this when it is.
+KUBECTL_VERBS: tuple[str, ...] = (
+    "create", "expose", "run", "set", "explain", "get", "edit", "delete",
+    "rollout", "scale", "autoscale", "certificate", "cluster-info", "top",
+    "cordon", "uncordon", "drain", "taint", "describe", "logs", "attach",
+    "exec", "port-forward", "proxy", "cp", "auth", "debug", "events", "diff",
+    "apply", "patch", "replace", "wait", "kustomize", "label", "annotate",
+    "completion", "api-resources", "api-versions", "config", "kuberc",
+    "plugin", "version",
+)
+
+# Helm 3.16.4 help names, top-level aliases, and the hidden docs command.
+_HELM_VERBS: tuple[str, ...] = (
+    "completion", "create", "dependency", "dep", "dependencies", "env", "get",
+    "help", "history", "hist", "install", "lint", "list", "ls", "package",
+    "plugin", "pull", "fetch", "push", "registry", "repo", "rollback",
+    "search", "show", "inspect", "status", "template", "test", "uninstall",
+    "del", "delete", "un", "upgrade", "verify", "version", "docs",
+)
+
+# flux 2.8.8 root commands (flux_distribution_version), plus cobra help.
+_FLUX_VERBS: tuple[str, ...] = (
+    "bootstrap", "build", "check", "completion", "create", "debug", "delete",
+    "diff", "docgen", "envsubst", "events", "export", "get", "help", "install",
+    "list", "logs", "migrate", "pull", "push", "reconcile", "resume", "stats",
+    "suspend", "tag", "trace", "tree", "uninstall", "version",
+)
+
+_KUBECTL_MUTATIONS = frozenset({
+    "apply", "annotate", "attach", "autoscale", "certificate", "cordon", "cp",
+    "create", "debug", "delete", "drain", "edit", "exec", "expose", "label",
+    "patch", "port-forward", "proxy", "replace", "rollout", "run", "scale",
+    "set", "taint", "uncordon",
+})
+_KUBECTL_READS = frozenset({
+    "api-resources", "api-versions", "auth", "cluster-info", "completion",
+    "config", "describe", "diff", "events", "explain", "get", "kuberc",
+    "kustomize", "logs", "plugin", "top", "version", "wait",
+})
+_HELM_MUTATIONS = frozenset({
+    "del", "delete", "get", "install", "list", "ls", "rollback", "status",
+    "test", "un", "uninstall", "upgrade",
+})
+# helm history (alias hist) is a release-revision read the guard denies on purpose.
+_HELM_DENIED_READS = frozenset({"hist", "history"})
+_HELM_READS = frozenset({
+    "completion", "create", "dependencies", "dependency", "dep", "docs", "env",
+    "fetch", "help", "inspect", "lint", "package", "plugin", "pull", "push",
+    "registry", "repo", "search", "show", "template", "verify", "version",
+})
+_FLUX_MUTATIONS = frozenset({
+    "bootstrap", "create", "debug", "delete", "install", "migrate", "resume",
+    "suspend", "uninstall",
+})
+_FLUX_READS = frozenset({
+    "build", "check", "completion", "diff", "docgen", "envsubst", "events",
+    "export", "get", "help", "list", "logs", "pull", "push", "reconcile",
+    "stats", "tag", "trace", "tree", "version",
+})
+
+_BARE_PROBE = {
+    ("kubectl", "rollout"): 'kubectl rollout restart "deploy/<name>"',
+    ("kubectl", "proxy"): "kubectl proxy --port 8001",
+    # Approve/deny with a mid-flag is not closed.
+    ("kubectl", "certificate"): 'kubectl certificate approve "<name>"',
+    ("kubectl", "get"): "kubectl get pods",
+    ("kubectl", "describe"): "kubectl describe pods",
+    ("kubectl", "logs"): 'kubectl logs "deploy/<name>"',
+    ("kubectl", "auth"): "kubectl auth can-i get pods",
+    ("flux", "reconcile"): 'flux reconcile kustomization "<name>"',
+    ("helm", "template"): 'helm template "<name>" "<name>"',
+}
+
+
+@dataclass(frozen=True)
+class ToolVerbs:
+    name: str
+    verbs: tuple[str, ...]
+    mutations: frozenset[str]
+    reads: frozenset[str]
+    denied_reads: frozenset[str] = frozenset()
+
+
+def _default_tools(kubectl: tuple[str, ...]) -> tuple[ToolVerbs, ...]:
+    return (
+        ToolVerbs("kubectl", kubectl, _KUBECTL_MUTATIONS, _KUBECTL_READS),
+        ToolVerbs(
+            "helm", _HELM_VERBS, _HELM_MUTATIONS, _HELM_READS, _HELM_DENIED_READS
+        ),
+        ToolVerbs("flux", _FLUX_VERBS, _FLUX_MUTATIONS, _FLUX_READS),
+    )
+
+
+def _bare_probe(tool: str, verb: str) -> str:
+    return _BARE_PROBE.get((tool, verb), f'{tool} {verb} "<name>"')
+
+
+def _flag_first(command: str) -> str:
+    """Same command with a global flag before the subcommand."""
+    tool, _, rest = command.partition(" ")
+    flag = "--kube-context" if tool == "helm" else "--context"
+    head = f'{tool} {flag} "<name>"'
+    return f"{head} {rest}" if rest else head
+
+
+def _probes(tool: str, verb: str) -> tuple[str, str]:
+    bare = _bare_probe(tool, verb)
+    return bare, _flag_first(bare)
+
+
+def classification_failures(
+    allow: list[str],
+    deny: list[str],
+    *,
+    tools: tuple[ToolVerbs, ...] | None = None,
+    kubectl: tuple[str, ...] | None = None,
+) -> list[str]:
+    """Every known subcommand is a denied mutation, a denied read, or a named read."""
+    chosen = tools if tools is not None else _default_tools(
+        kubectl if kubectl is not None else KUBECTL_VERBS
+    )
+    failures: list[str] = []
+    for tool in chosen:
+        for verb in tool.verbs:
+            classes = [
+                name
+                for name, present in (
+                    ("mutation", verb in tool.mutations),
+                    ("read", verb in tool.reads),
+                    ("denied read", verb in tool.denied_reads),
+                )
+                if present
+            ]
+            if len(classes) > 1:
+                failures.append(f"{tool.name} subcommand {verb} is classed as both")
+                continue
+            if not classes:
+                failures.append(f"unclassified {tool.name} subcommand: {verb}")
+                continue
+            bare, flagged = _probes(tool.name, verb)
+            if classes == ["mutation"]:
+                if command_allowed(allow, deny, bare):
+                    failures.append(f"{tool.name} mutation {verb} is not denied")
+                if command_allowed(allow, deny, flagged):
+                    failures.append(f"{tool.name} mutation {verb} flag-first is not denied")
+            if classes == ["read"]:
+                if not command_allowed(allow, deny, bare):
+                    failures.append(f"{tool.name} read {verb} is denied")
+                if not command_allowed(allow, deny, flagged):
+                    failures.append(f"{tool.name} read {verb} flag-first is denied")
+            if classes == ["denied read"]:
+                if command_allowed(allow, deny, bare):
+                    failures.append(f"{tool.name} denied read {verb} is allowed")
+                if command_allowed(allow, deny, flagged):
+                    failures.append(
+                        f"{tool.name} denied read {verb} flag-first is allowed"
+                    )
+    return failures
+
+
+_KUBECTL_VERB_RE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s{2,}|\t)")
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def parse_kubectl_help(text: str) -> tuple[str, ...]:
+    """Built-in commands from `kubectl --help`. Plugin sections are skipped."""
+    verbs: list[str] = []
+    skip = False
+    for line in text.splitlines():
+        if "provided by plugins" in line.lower():
+            skip = True
+            continue
+        if line.startswith("Other Commands:"):
+            skip = False
+        if skip or not line.startswith("  "):
+            continue
+        match = _KUBECTL_VERB_RE.match(line)
+        if match and match.group(1) not in verbs:
+            verbs.append(match.group(1))
+    return tuple(verbs)
+
+
+def _pinned_kubectl_version() -> str | None:
+    path = _REPO_ROOT / "tools" / "versions.env"
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("kubectl_version="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def _discover_pinned_kubectl_verbs() -> tuple[str, ...] | None:
+    """Offline client help only, and only for the pinned kubectl version."""
+    binary = shutil.which("kubectl")
+    pinned = _pinned_kubectl_version()
+    if binary is None or pinned is None:
+        return None
+    env = os.environ.copy()
+    env["KUBECONFIG"] = os.devnull
+    env.pop("KUBERNETES_SERVICE_HOST", None)
+    env.pop("KUBERNETES_SERVICE_PORT", None)
+    try:
+        version = subprocess.run(
+            [binary, "version", "--client", "-o", "json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        help_proc = subprocess.run(
+            [binary, "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if version.returncode != 0 or help_proc.returncode != 0:
+        return None
+    try:
+        reported = str(json.loads(version.stdout)["clientVersion"]["gitVersion"])
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+    if reported.lstrip("v") != pinned:
+        return None
+    verbs = parse_kubectl_help(help_proc.stdout)
+    return verbs or None
+
+
+def kubectl_verbs() -> tuple[str, ...]:
+    discovered = _discover_pinned_kubectl_verbs()
+    return discovered if discovered is not None else KUBECTL_VERBS
+
+
+def policy_failures(
+    allow: list[str],
+    deny: list[str],
+    *,
+    kubectl: tuple[str, ...] | None = None,
+) -> list[str]:
+    verbs = kubectl if kubectl is not None else kubectl_verbs()
+    return _uniq(
+        corpus_failures(allow, deny)
+        + deny_by_default_failures(allow)
+        + classification_failures(allow, deny, kubectl=verbs)
+    )
+
+
+def check_cli_policy(path: Path) -> list[str]:
+    perms = load_cli_permissions(path)
+    return policy_failures(perms["allow"], perms["deny"])

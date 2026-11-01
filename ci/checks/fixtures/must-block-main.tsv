@@ -1,0 +1,149 @@
+kubectl mutations	kubectl apply -f deployment.yaml
+kubectl Secret reads	kubectl get secret -n flux-system sops-age
+kubectl Secret reads	kubectl get secrets -A
+kubectl Secret reads	bash -c 'kubectl get secret -n flux-system sops-age'
+helm mutations	helm upgrade --install demo ./chart
+helm mutations	bash -c 'helm list'
+remote shell and copy	ssh user@node.example
+remote shell and copy	bash -c 'ssh user@node.example'
+remote shell and copy	bash -c 'scp file.yaml user@node.example:'
+sops decrypt or edit	sops decrypt envs/<env>/secrets/grafana-admin.sops.yaml
+sops decrypt or edit	sops -d envs/<env>/secrets/grafana-admin.sops.yaml
+sops decrypt or edit	sops encrypt envs/<env>/secrets/grafana-admin.sops.yaml
+sops decrypt or edit	sops -e envs/<env>/secrets/grafana-admin.sops.yaml
+sops decrypt or edit	sops --encrypt envs/<env>/secrets/grafana-admin.sops.yaml
+sops decrypt or edit	bash -c 'sops encrypt envs/<env>/secrets/grafana-admin.sops.yaml'
+sops decrypt or edit	bash -c 'sops -e envs/<env>/secrets/grafana-admin.sops.yaml'
+age key	cat ~/.config/sops/age/keys.txt
+age key	cat /tmp/host.agekey
+kubectl mutations	kubectl apply -f x.yaml
+helm mutations	helm list
+remote shell and copy	ssh user@host
+flux mutations	flux bootstrap github
+flux mutations	flux delete source git demo
+flux mutations	flux install
+flux mutations	flux suspend kustomization demo
+sops decrypt or edit	sops -d file.yaml
+sops decrypt or edit	sops decrypt file.yaml
+sops decrypt or edit	sops -e file.yaml
+kubectl Secret reads	kubectl get secret/sops-age -n flux-system -o yaml
+kubectl Secret reads	kubectl -n flux-system get secrets
+kubectl Secret reads	kubectl get secret,configmap -A
+kubectl Secret reads	kubectl get Secret/sops-age
+kubectl Secret reads	kubectl -n flux-system get SECRETS
+kubectl Secret reads	kubectl get secret
+kubectl Secret reads	kubectl get secrets
+kubectl Secret reads	kubectl get Secret
+kubectl Secret reads	kubectl get Secrets
+kubectl Secret reads	kubectl get SECRET
+kubectl Secret reads	kubectl get SECRETS
+kubectl Secret reads	kubectl get Secret -n flux-system sops-age
+kubectl Secret reads	kubectl get Secrets -A
+kubectl Secret reads	kubectl get SECRET -n flux-system sops-age
+kubectl Secret reads	kubectl get SECRETS -A
+kubectl mutations	kubectl -n kube-system rollout restart deployment/kustomize-controller
+kubectl mutations	kubectl -n kube-system drain node.example
+kubectl mutations	kubectl -n default label node.example app=demo
+age decrypt	age -i /tmp/key.txt -d secret.txt
+age decrypt	bash -c 'age -d secret.txt'
+age decrypt	sh -c 'age --decrypt secret.txt'
+age decrypt	bash -c 'age -i /tmp/key.txt -d secret.txt'
+age decrypt	sh -c 'age -i /tmp/key.txt --decrypt secret.txt'
+kubectl mutations	kubectl --context x delete ns foo
+helm mutations	helm --kube-context x upgrade demo ./chart
+kubectl mutations	cd x && kubectl delete ns foo
+remote shell and copy	cd x && ssh user@host
+remote shell and copy	cd x && ssh
+kubectl mutations	cat f | kubectl apply -f -
+remote shell and copy	cat f | ssh user@host
+sops decrypt or edit	true; sops -d file.yaml
+remote shell and copy	true; ssh
+kubectl Secret reads	echo $(kubectl get secret x -o yaml)
+remote shell and copy	echo $(ssh user@host uptime)
+kubectl mutations	kubectl get pods -o name | xargs kubectl delete
+remote shell and copy	cat hosts | xargs -n1 ssh
+kubectl mutations	bash -c 'kubectl delete ns foo'
+kubectl mutations	sh -c "kubectl apply -f x.yaml"
+remote shell and copy	bash -lc 'ssh user@host'
+sops decrypt or edit	bash -c 'sops -d file.yaml'
+kubectl mutations	env KUBECONFIG=x kubectl delete ns foo
+sops decrypt or edit	env SOPS_AGE_KEY_FILE=k sops -d file.yaml
+remote shell and copy	env FOO=1 ssh user@host
+kubectl mutations	timeout 60 kubectl apply -f x.yaml
+remote shell and copy	timeout 60 ssh user@host
+sops decrypt or edit	timeout 5 sops -d file.yaml
+kubectl mutations	xargs kubectl delete pod
+remote shell and copy	xargs ssh user@host
+sops decrypt or edit	xargs sops -d
+kubectl mutations	nohup kubectl port-forward svc/demo 8080:80
+remote shell and copy	nohup ssh user@host
+sops decrypt or edit	nohup sops -d file.yaml
+remote shell and copy	cd x && timeout 5 ssh user@host
+sops decrypt or edit	true; env A=1 sops -d file.yaml
+remote shell and copy	cat f | nohup ssh user@host
+remote shell and copy	cd x && nohup scp file.yaml user@host:
+remote shell and copy	cd x && env A=1 ssh
+remote shell and copy	cd x && xargs -a hosts ssh
+age decrypt	true; timeout 5 age -d secret.txt
+age decrypt	ls | xargs -n1 age -d
+kubectl Secret reads	kubectl get secret -n flux-system sops-age -o yaml
+kubectl Secret reads	kubectl -n flux-system get secret sops-age -o jsonpath={.data}
+kubectl Secret reads	kubectl describe secret -n flux-system sops-age
+kubectl Secret reads	x=$(kubectl get secret -o yaml)
+flux mutations	zsh -c 'flux suspend kustomization demo'
+remote shell and copy	eval 'ssh user@host'
+remote shell and copy	command ssh user@host
+remote shell and copy	exec ssh user@host
+kubectl mutations	sudo kubectl apply -f x.yaml
+sops decrypt or edit	nice sops -d file.yaml
+remote shell and copy	stdbuf -o0 ssh user@host
+helm mutations	env -i helm upgrade demo ./chart
+remote shell and copy	/usr/bin/ssh user@host
+sops decrypt or edit	~/.local/bin/sops -d file.yaml
+kubectl mutations	./bin/kubectl delete ns foo
+age decrypt	/usr/bin/age -d secret.txt
+remote shell and copy	FOO=1 ssh user@host
+remote shell and copy	for h in a b; do ssh $h; done
+sops decrypt or edit	diff <(sops -d a.yaml) b.yaml
+remote shell and copy	rsync -e ssh a user@host:/x
+remote shell and copy	rsync a user@host:/x
+remote shell and copy	sftp user@host
+remote shell and copy	ssh-copy-id user@host
+gh merge	gh pr merge 98
+gh merge	gh -R owner/repo pr merge 98 --squash
+git force-push	git push --force origin main
+git force-push	git push --force-with-lease
+git force-push	git -C repo push -f origin main
+git force-push	git push origin +main
+kubectl Secret reads	watch kubectl get secret -A
+kubectl Secret reads	kubectl get 'secret' -n flux-system sops-age
+kubectl Secret reads	kubectl get secret.v1 -n flux-system sops-age -o yaml
+kubectl Secret reads	kubectl get --raw '/api/v1/secrets?limit=500'
+kubectl Secret reads	kubectl proxy --port 8001
+remote shell and copy	time ssh user@host
+remote shell and copy	strace -f ssh user@host
+remote shell and copy	setsid ssh user@host
+sops decrypt or edit	doas sops -d file.yaml
+remote shell and copy	flock /tmp/lock ssh user@host
+sops decrypt or edit	taskset -c 0 sops -d file.yaml
+remote shell and copy	ionice -c3 ssh user@host
+sops decrypt or edit	/usr/bin/env sops -d file.yaml
+remote shell and copy	script -qc 'ssh user@host'
+remote shell and copy	busybox sh -c 'ssh user@host'
+remote shell and copy	perl -e 'system("ssh user@host")'
+remote shell and copy	python3 -c 'import os; os.system("ssh user@host")'
+sops decrypt or edit	find . -name '*.sops.yaml' -exec sops -d {} \;
+remote shell and copy	parallel ssh ::: h1 h2
+remote shell and copy	bash -c 'ssh'
+remote shell and copy	'ssh' user@host
+age decrypt	strace age --decrypt secret.txt
+age decrypt	age -i key.txt -d
+gh merge	gh api -X PUT repos/owner/repo/pulls/98/merge
+kubectl mutations	time kubectl delete ns foo
+kubectl mutations	/usr/bin/env kubectl delete ns foo
+remote shell and copy	rg ssh .
+sops decrypt or edit	git commit -m 'tighten sops rule'
+remote shell and copy	echo 'a | ssh b'
+kubectl Secret reads	kubectl get secretstores -A
+kubectl Secret reads	kubectl get clustersecretstores
+sops decrypt or edit	command -v sops
