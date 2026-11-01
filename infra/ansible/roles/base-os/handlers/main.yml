@@ -14,3 +14,11 @@
   tags:
     - base-os
     - resolved
+
+- name: Restart chrony
+  ansible.builtin.service:
+    name: chrony
+    state: restarted
+  tags:
+    - base-os
+    - time

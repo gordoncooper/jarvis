@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import getpass
+import grp
 import json
 import os
 import subprocess
+import textwrap
 from pathlib import Path
 
 import yaml
@@ -17,6 +20,7 @@ from ansible_role_proof import (
     env_inventory_args,
     load_cluster_vars,
     load_role_defaults,
+    playbook_recap_field,
 )
 
 ROLE_TEMPLATES = ANSIBLE_DIR / "roles" / "base-os" / "templates"
@@ -208,3 +212,128 @@ def test_site_yml_syntax_check() -> None:
         check=False,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def _restarted_units(text: str) -> list[str]:
+    units: list[str] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if "restart" not in parts:
+            continue
+        unit = parts[parts.index("restart") + 1]
+        units.append(unit.removesuffix(".service"))
+    return units
+
+
+def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> None:
+    """A changed chrony.conf notifies Restart chrony. An unchanged file does not."""
+    require_cli("ansible-playbook")
+    config_dir = tmp_path / "chrony"
+    config_dir.mkdir()
+    log = tmp_path / "systemctl.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "chronyd").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bin_dir / "chronyd").chmod(0o755)
+    (bin_dir / "systemctl").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env python3
+            import sys
+            from pathlib import Path
+            log = Path({str(log)!r})
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(" ".join(sys.argv[1:]) + "\\n")
+            command = sys.argv[1] if len(sys.argv) > 1 else ""
+            if command == "show":
+                sys.stdout.write("LoadState=loaded\\nActiveState=active\\n")
+                sys.exit(0)
+            if command == "restart":
+                sys.exit(0)
+            sys.stderr.write("unexpected systemctl\\n")
+            sys.exit(1)
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bin_dir / "systemctl").chmod(0o755)
+    play = tmp_path / "play.yml"
+    play.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - name: Chrony config
+              hosts: localhost
+              gather_facts: false
+              become: false
+              environment:
+                PATH: "{bin_dir}:/usr/bin:/bin"
+              tasks:
+                - ansible.builtin.import_role:
+                    name: base-os
+                    tasks_from: chrony.yml
+            """
+        ),
+        encoding="utf-8",
+    )
+    pools = load_cluster_vars()["ntp_pools"]
+    extra = json.dumps(
+        {
+            "chrony_config_dir": str(config_dir),
+            # Defaults are root:root. This play does not become root, and the
+            # template module chowns before the dest write.
+            "chrony_config_owner": getpass.getuser(),
+            "chrony_config_group": grp.getgrgid(os.getgid()).gr_name,
+            "ntp_pools": pools,
+        }
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+
+    def run(*, check: bool = False) -> subprocess.CompletedProcess[str]:
+        cmd = [
+            "ansible-playbook",
+            str(play),
+            "-i",
+            "localhost,",
+            "-e",
+            "ansible_connection=local",
+            "-e",
+            extra,
+        ]
+        if check:
+            cmd.append("--check")
+        return subprocess.run(
+            cmd,
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    first = run()
+    output = first.stdout + first.stderr
+    assert first.returncode == 0, output
+    assert "RUNNING HANDLER" in output
+    assert "Restart chrony" in output
+    written = (config_dir / "chrony.conf").read_text(encoding="utf-8")
+    assert " nts" in written
+    for pool in pools:
+        assert f"pool {pool}" in written
+    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
+
+    second = run()
+    second_out = second.stdout + second.stderr
+    assert second.returncode == 0, second_out
+    assert playbook_recap_field(second_out, "changed") == 0
+    assert "RUNNING HANDLER" not in second_out
+    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
+
+    checked = run(check=True)
+    checked_out = checked.stdout + checked.stderr
+    assert checked.returncode == 0, checked_out
+    assert playbook_recap_field(checked_out, "changed") == 0
+    assert "RUNNING HANDLER" not in checked_out
+    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]

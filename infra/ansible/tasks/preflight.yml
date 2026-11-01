@@ -1,0 +1,45 @@
+---
+# Read-only. A failure here is fatal for every host (the play sets any_errors_fatal).
+- name: Assert exactly one control_plane host
+  ansible.builtin.assert:
+    that:
+      - groups['control_plane'] | default([]) | length == 1
+    fail_msg: >-
+      control_plane has {{ groups['control_plane'] | default([]) | length }} hosts;
+      expected exactly one.
+      Pass both inventories, as in infra/ansible/README.md:
+      ../../.venv/bin/ansible-playbook site.yml
+      -i ../../envs/<env>/inventory/hosts.yml
+      -i ../inventory/roles.yml
+      -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml
+
+- name: Collect host architecture
+  ansible.builtin.setup:
+    gather_subset:
+      - '!all'
+      - '!min'
+      - platform
+    filter:
+      - ansible_architecture
+
+- name: Require an amd64 host
+  ansible.builtin.assert:
+    that: ansible_facts['architecture'] == 'x86_64'
+    fail_msg: k3s role supports only amd64 hosts.
+
+- name: Require k3s cluster-vars
+  ansible.builtin.assert:
+    that:
+      - k3s_version is defined
+      - k3s_version | length > 0
+      - k3s_sha256 is defined
+      - k3s_sha256 | length == 64
+      - pod_cidr is defined
+      - service_cidr is defined
+      - backup_path is defined
+      - local_path_data is defined
+      - jarvis_env is defined
+      - jarvis_env | length > 0
+    fail_msg: >-
+      site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env
+      in cluster-vars.

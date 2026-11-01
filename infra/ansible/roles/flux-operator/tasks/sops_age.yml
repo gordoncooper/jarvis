@@ -6,13 +6,17 @@
       get secret sops-age -o name
   register: flux_sops_age_lookup
   changed_when: false
-  failed_when: false
+  failed_when: >-
+    flux_sops_age_lookup.rc != 0
+    and 'NotFound' not in (
+      (flux_sops_age_lookup.stderr | default(''))
+      ~ (flux_sops_age_lookup.stdout | default(''))
+    )
   check_mode: false
 
 - name: Record flux-system sops-age secret presence
   ansible.builtin.set_fact:
-    flux_sops_age_present: >-
-      {{ flux_sops_age_lookup.rc == 0 and (flux_sops_age_lookup.stdout | trim | length) > 0 }}
+    flux_sops_age_present: "{{ flux_sops_age_lookup.rc == 0 }}"
 
 - name: Record the age private key path
   ansible.builtin.set_fact:
