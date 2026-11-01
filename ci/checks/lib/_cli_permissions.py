@@ -2,6 +2,8 @@
 
 Mirrors the matcher in cursor-agent 2026.10.22-27dcf5f. The dry-run proves
 the checked-in policy against this corpus. It does not prove the client.
+The deny list is best-effort defense in depth: a pattern list cannot close
+every syntactic form.
 
 Matcher:
 - the line is split into commands at && || ; | & newlines, $( ), backticks
@@ -9,8 +11,9 @@ Matcher:
 - each command is matched as "name args" (raw word text, quotes kept);
 - only * is a wildcard (? is literal), matching is case-sensitive and
   anchored;
-- bash -c, eval, sudo, absolute paths and the like are NOT unwrapped, so
-  cli.json lists them itself.
+- bash -c, eval, sudo, absolute paths and the like are NOT unwrapped.
+  cli.json lists some wrappers. sh -c rsync remote-path forms (relative,
+  home-based, empty, daemon module) are not closed.
 Read(pathOrGlob) keeps glob semantics. Deny beats allow. An empty allow
 list is the default: a command no deny entry matches is allowed.
 """
@@ -389,6 +392,8 @@ _GUARDED: tuple[tuple[str, str], ...] = (
     ("remote shell and copy", 'scp "<name>" "<name>"'),
     ("remote shell and copy", 'sftp "<name>"'),
     ("remote shell and copy", 'ssh-copy-id "<name>"'),
+    # Not a closed remote-path set. Relative, home-based, empty, and daemon-module
+    # forms inside sh -c stay open.
     ("remote shell and copy", 'rsync "<name>" "dest:<name>"'),
     ("sops decrypt or edit", 'sops decrypt "envs/<env>/secrets/<name>.sops.yaml"'),
     ("sops decrypt or edit", 'sops -d "envs/<env>/secrets/<name>.sops.yaml"'),
@@ -700,6 +705,7 @@ _FLUX_READS = frozenset({
 _BARE_PROBE = {
     ("kubectl", "rollout"): 'kubectl rollout restart "deploy/<name>"',
     ("kubectl", "proxy"): "kubectl proxy --port 8001",
+    # Approve/deny with a mid-flag is not closed.
     ("kubectl", "certificate"): 'kubectl certificate approve "<name>"',
     ("kubectl", "get"): "kubectl get pods",
     ("kubectl", "describe"): "kubectl describe pods",
