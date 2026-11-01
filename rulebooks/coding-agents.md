@@ -10,6 +10,7 @@ Rules here are prose only for what `ci/checks/` and `.cursor/cli.json` cannot en
 - **R33 — Images the repo adds are digest-pinned:** `ci/checks/digest-pin`.
 - **Env schema (values under `envs/<env>/`):** `ci/checks/env-schema`.
 - **R2 — Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
+- **Plan codes stay out of product docs, CONTRACTs, and READMEs:** `ci/checks/plan-codes`.
 - **R25 — No plaintext secrets in Git:** `ci/checks/secret-scan`.
 - **Product trees do not use `ci/`:** `ci/checks/product-ci`. `tools/verify` may read `ci/rule-checks.txt`.
 - **R31 — The backup ClusterPolicy enrolls every PVC, or the PVC is `backup: none`:** `ci/checks/pvc-backup`.

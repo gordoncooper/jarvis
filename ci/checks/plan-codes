@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# CI rule check: product docs and CONTRACTs contain no plan codes.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _plan_codes import scan_plan_codes
+
+violations = scan_plan_codes(Path("."))
+if violations:
+    for line in violations:
+        print(line, flush=True)
+    raise SystemExit(1)
+PY

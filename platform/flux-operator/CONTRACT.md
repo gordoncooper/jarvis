@@ -2,12 +2,12 @@
 
 ## Offers
 
-Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-time Ansible `helm upgrade --install` bootstrap (R1).
+Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-time Ansible `helm upgrade --install` bootstrap.
 
 ## Expects
 
 - `flux-system` namespace and Flux controllers from `FluxInstance`.
-- OCI chart `ghcr.io/controlplaneio-fluxcd/charts/flux-operator` at the pinned tag (D11).
+- OCI chart `ghcr.io/controlplaneio-fluxcd/charts/flux-operator` at the pinned tag.
 
 ## Health
 
@@ -15,7 +15,7 @@ Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-ti
 
 ## Config
 
-Chart tag in `oci-repository.yaml` (`spec.ref.tag`) is the one pin. The flux-operator Ansible role reads it (Renovate-managed after p0a-15). Helm values use upstream defaults unless overridden here.
+Chart tag in `oci-repository.yaml` (`spec.ref.tag`) is the one pin. The flux-operator Ansible role reads it. Renovate manages that tag (`renovate.json`). Helm values use upstream defaults unless overridden here.
 
 ## Proven by
 

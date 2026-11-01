@@ -11,7 +11,7 @@ A second CoreDNS, with the k8s_gateway plugin, answers `${dns_suffix}` from Ingr
 
 ## Expects
 
-- `dns_suffix` and `app_dns_cluster_ip` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode them (R3, R28).
+- `dns_suffix` and `app_dns_cluster_ip` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode them (`ci/checks/core-names`).
 - Traefik's LoadBalancer Service and Ingress class `traefik` (the exposure contract).
 - The `edge` role. The k3s role sets `svccontroller.k3s.cattle.io/enablelb=true` on those nodes only.
 - Edge hosts do not use the systemd-resolved stub (`127.0.0.53`). base-os sets `DNSStubListener=no` and links `/etc/resolv.conf` to `/run/systemd/resolve/resolv.conf`.
@@ -19,7 +19,7 @@ A second CoreDNS, with the k8s_gateway plugin, answers `${dns_suffix}` from Ingr
 
 ## Health
 
-The k8s-gateway Deployment is Ready. The chart's liveness probe is `/health` on port 8080 and the readiness probe is `/ready` on port 8181, which requires the `health` and `ready` plugins. The container sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit (D30). The chart default sets a CPU limit; `resources.limits.cpu: null` drops it.
+The k8s-gateway Deployment is Ready. The chart's liveness probe is `/health` on port 8080 and the readiness probe is `/ready` on port 8181, which requires the `health` and `ready` plugins. The container sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit. The chart default sets a CPU limit; `resources.limits.cpu: null` drops it.
 
 From a pod, an Ingress host in the zone resolves through this Service and through cluster DNS to an edge node address. That check is the post-merge drill.
 
@@ -35,7 +35,7 @@ From a pod, an Ingress host in the zone resolves through this Service and throug
 
 ## Proven by
 
-- `ci/tests/test_app_dns.py` (LoadBalancer port 53, zone `${dns_suffix}`, forward target, D30 resources, probes).
+- `ci/tests/test_app_dns.py` (LoadBalancer port 53, zone `${dns_suffix}`, forward target, CPU request without a CPU limit, probes).
 - `ci/tests/test_base_os.py` (edge hosts: `DNSStubListener=no`, resolv.conf is resolved's upstream list).
 - `ci/tests/test_prune_guards.py` (namespace, chart source, HelmRelease, and `coredns-custom`).
 - The post-merge drill: a throwaway Ingress resolves from a pod through App DNS and through cluster DNS.
