@@ -17,13 +17,14 @@ def test_seeded_plan_codes_fail(tmp_path: Path) -> None:
     contract.parent.mkdir(parents=True)
     contract.write_text("Enrollment is R31 and D7.\n", encoding="utf-8")
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "note.md").write_text("See p0b-10 and §6.\n", encoding="utf-8")
+    (tmp_path / "docs" / "note.md").write_text("See p0b-10, p2-24b, and §6.\n", encoding="utf-8")
     readme = tmp_path / "envs" / "sample" / "README.md"
     readme.parent.mkdir(parents=True)
     readme.write_text("After P2 and p2-24.\n", encoding="utf-8")
 
     assert scan_plan_codes(tmp_path) == [
         "docs/note.md:1: p0b-10",
+        "docs/note.md:1: p2-24b",
         "docs/note.md:1: §6",
         "envs/sample/README.md:1: P2",
         "envs/sample/README.md:1: p2-24",
@@ -55,7 +56,7 @@ def test_ordinary_words_pass(tmp_path: Path) -> None:
                 "CPU request of 100m and a memory limit of 256Mi.",
                 "Checked chart v40 on k3s v1.36.5+k3s1.",
                 "restic/restic sha256 digest. Pull request. PVC.",
-                "section 5. A bare p2, r31, or d30 is ordinary.",
+                "section 5. A bare p2, r31, or d30 is ordinary. p2-24bit is a word.",
                 "OQ without digits, and P without digits.",
             ]
         )

@@ -41,7 +41,7 @@ Create the env empty. Do not copy an existing env folder or its secrets, and do 
    - `platform-configs/kustomization.yaml`: `platform/configs` plus this env's `secrets/` files.
    - `kustomization.yaml`: the generated ConfigMap, the FluxInstance and the four Kustomizations.
 
-Produces `envs/<env>/` with values, inventory, an age rule, bootstrap secrets, the rendered ConfigMap, and the Flux entry. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). Step 3 runs from the repo root. If `tools/prep-node` creates the age key, run step 3 again after that node prep. A second run changes nothing.
+Produces `envs/<env>/` with values, inventory, an age rule, bootstrap secrets, the rendered ConfigMap, and the Flux entry. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). Step 3 runs from the repo root. Known ordering issue: these steps run before `tools/prep-node`. If prep-node creates the age key, step 2 could not yet name that key in `.sops.yaml`, and step 3 could not encrypt with it. After node prep, repeat steps 2 and 3. A second `make bootstrap-secrets` changes nothing once the files exist. The env template replaces this section; the numbered steps stay in this order.
 
 ## Prepare a data disk
 
@@ -68,7 +68,7 @@ tools/prep-node --env <env> --host <hostname> --login-user <user>
 
 Run it from a checkout on the machine that drives the build. Omitted flags are prompted. Produces a node that accepts key login and passwordless sudo, with the host name and `ssh_user` recorded in the env. What the script changes, and what it refuses to change, is in [infra/ansible/README.md](../infra/ansible/README.md).
 
-## Bootstrap secrets and commit
+## Bootstrap secrets, commit, and push
 
 If the New env steps have not already created the secrets, run this from the repo root:
 
@@ -76,7 +76,7 @@ If the New env steps have not already created the secrets, run this from the rep
 make bootstrap-secrets ENV=<env>
 ```
 
-Commit the generated `envs/<env>/secrets/*.sops.yaml` files and `envs/<env>/ca.crt`. Do not commit the age private key. Produces the encrypted bootstrap secrets and the public CA certificate. What each file is, and how a second run behaves, is in that env's `secrets/README.md`.
+Commit all of `envs/<env>/`: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in that env's `secrets/README.md`.
 
 ## Bootstrap the cluster
 

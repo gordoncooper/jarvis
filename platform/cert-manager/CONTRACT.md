@@ -40,7 +40,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 
 1. Delete `envs/<env>/secrets/cert-manager-ca.sops.yaml` and `envs/<env>/ca.crt`.
 2. From the repo root, run `make bootstrap-secrets ENV=<env>`.
-3. Commit the new secret and `envs/<env>/ca.crt`.
+3. Commit the new secret and `envs/<env>/ca.crt`, and push to the branch `flux_git_ref` names. Flux syncs from that remote.
 4. Wait until Flux has applied Secret `platform-cert-manager/cert-manager-ca` and its `tls.crt` matches `ca.crt`.
 5. Secret `platform-cert-manager/wildcard-tls` keeps serving the old leaf until cert-manager renews it (about day 60, the default). That Secret is the only one this CA signs today. Delete it so cert-manager issues a new leaf. The default certificate is missing until that write finishes.
 

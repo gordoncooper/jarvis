@@ -15,11 +15,12 @@ import os
 import re
 from pathlib import Path
 
-# Phase names (P2, P0a, P4b), step ids (p0a-03, p0b-10, p2-24, p4a-04),
+# Phase names (P2, P0a, P4b), step ids (p0a-03, p0b-10, p2-24, p2-24b, p4a-04),
 # p0a/p0b with no step number, rule and decision ids, open questions, and §<n>.
+# A step id may end with one letter (p2-24b). A longer word after the digits does not match.
 _PLAN_CODE = re.compile(
     r"\bP\d+[a-z]?\b"
-    r"|\bp\d+[a-z]?-\d+\b"
+    r"|\bp\d+[a-z]?-\d+[a-z]?\b"
     r"|\bp0[ab]\b"
     r"|\bR\d+\b"
     r"|\bD\d+\b"

@@ -8,7 +8,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
-  - `inventory/hosts.yml` — one block per host: `node_roles` and an optional `data_disk` (no addresses; `ci/checks/secret-scan`).
+  - `inventory/hosts.yml` — one block per host: `node_roles` and an optional `data_disk`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
 - Rejection of an unknown `code_delivery` or `build_agent` when that key is set (only built providers are accepted; other named providers are stubs, not valid values). Omitting either key is valid.
 - Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `apps_git_repo_url`, and `llm_provider_host`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
@@ -80,7 +80,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 ### `inventory/hosts.yml`
 
-Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. It has no addresses (`ci/checks/secret-scan`).
+Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. `ci/checks/env-schema` rejects an IP used as a host name and any host key other than `node_roles` and `data_disk`.
 
 Each host is a mapping with `node_roles` and, when that host has a data disk, `data_disk`. No other host keys.
 

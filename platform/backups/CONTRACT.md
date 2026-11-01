@@ -1,6 +1,6 @@
 # CONTRACT: platform-backups
 
-Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. One CronJob copies k3s etcd snapshots into their own rest-server repository. `ci/checks/pvc-backup` enrolls every PVC, or the PVC is annotated `backup: none`.
+Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. One CronJob copies k3s etcd snapshots into their own rest-server repository. ClusterPolicy `pvc-backup` enrolls every PVC, or the PVC is annotated `backup: none`. `ci/checks/pvc-backup` checks that this policy and its `backup: none` allow-list are present.
 
 ## Offers
 
@@ -14,7 +14,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 
 ## Expects
 
-- Flux SOPS decryption via `flux-system/sops-age` (`ci/checks/secret-scan`).
+- Flux SOPS decryption via `flux-system/sops-age`. The file in Git has no plaintext secret.
 - `envs/<env>/secrets/backups-restic.sops.yaml`. Flux decrypts it.
 - Target path, retention counts, `backup_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
 - The backup-role node (`role.<dns_suffix>/backup=true`) for the rest-server hostPath.
@@ -87,6 +87,16 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - The recreated PVC must already carry `backup: paused` before it binds, because a new ReplicationSource starts its mover immediately and an unpaused source would snapshot the empty claim.
 - Direct copy needs the PVC free of other mounts.
 
+## Proven by
+
+- `ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption).
+- `ci/tests/test_restic_rest_server.py` (rest-server rules and the etcd CronJob rules) and `ci/tests/test_bootstrap_secrets.py`.
+- `ci/checks/pvc-backup` and `ci/tests/test_pvc_backup.py` (policy present, `backup: none` allow-list, no ReplicationSource in Git, no hand-written VolSync object or restic repository URL under `services/` or `apps/`).
+- `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles, policy rules, `backup: paused` sets `spec.paused`).
+- `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails from mover status; `AS_OF` restores a live volume; `restore-all` keeps, retires, or lifts the hold).
+- `ci/tests/test_verify.py` (read-only, fail-closed standing checks, including enrollment freshness and the rebuild hold).
+- `ci/tests/test_drill.py` and `make drill ENV=<env>` (real restore target, checksum comparisons, etcd-copy check, and in-cluster cleanup).
+
 ## Operations
 
 Do not merge a change to ClusterPolicy `pvc-backup` during a restore. The policy is annotated `kustomize.toolkit.fluxcd.io/force: Enabled`, so Flux recreates it and Kyverno regenerates every Secret and ReplicationSource.
@@ -155,7 +165,7 @@ What it changes:
 - On success, failure, SIGINT, SIGTERM, or SIGHUP, it removes the scratch namespace with a bounded wait, then runs a short-lived pod on the backup-role node that mounts the rest-server data path and removes `ns-platform-drill/pvc-drill`.
 - If either cleanup cannot finish, it prints `make drill-cleanup ENV=<env>` for an env-bound retry. Adopters do not clean a drill repository on a node by hand.
 
-How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume checksums match, and the etcd line shows the same sha256 for the k3s file and the restored copy.
+How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume checksums match. After the two etcd checksums match, the tool prints one `ETCD snapshot ... checksum` line.
 
 ### etcd cluster reset
 
@@ -179,13 +189,3 @@ k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the or
 - There is no on-demand backup. The policy does not set `trigger.manual`. VolSync ignores the schedule while `trigger.manual` is set.
 - Restore uses no VolumeSnapshot, volume populator, or snapshot class.
 - etcd cluster-reset is not a make target and is not part of the drill.
-
-## Proven by
-
-- `ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption).
-- `ci/tests/test_restic_rest_server.py` (rest-server rules and the etcd CronJob rules) and `ci/tests/test_bootstrap_secrets.py`.
-- `ci/checks/pvc-backup` and `ci/tests/test_pvc_backup.py` (policy present, `backup: none` allow-list, no ReplicationSource in Git, no hand-written VolSync object or restic repository URL under `services/` or `apps/`).
-- `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles, policy rules, `backup: paused` sets `spec.paused`).
-- `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails from mover status; `AS_OF` restores a live volume; `restore-all` keeps, retires, or lifts the hold).
-- `ci/tests/test_verify.py` (read-only, fail-closed standing checks, including enrollment freshness and the rebuild hold).
-- `ci/tests/test_drill.py` and `make drill ENV=<env>` (real restore target, checksum comparisons, etcd-copy check, and in-cluster cleanup).
