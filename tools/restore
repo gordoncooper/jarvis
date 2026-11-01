@@ -50,8 +50,9 @@ _FLUX_NAME = "kustomize.toolkit.fluxcd.io/name"
 _FLUX_NS = "kustomize.toolkit.fluxcd.io/namespace"
 HOLD_NAMESPACE = "kube-system"
 HOLD_NAME = "backup-rebuild-hold"
-# Same digest as CronJob etcd-snapshots. The binder only runs exit 0.
-_BIND_IMAGE = "restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510"
+_ETCD_NAMESPACE = "platform-backups"
+_ETCD_CRONJOB = "etcd-snapshots"
+_RESTIC_IMAGE = re.compile(r"restic/restic@sha256:[0-9a-f]{64}")
 _DONE_PHASES = {"Succeeded", "Failed"}
 
 Kubectl = Callable[..., CompletedProcess[str]]
@@ -564,7 +565,28 @@ def _binder_name(pvc: str) -> str:
     return job_name(pvc, prefix=_BIND_PREFIX)
 
 
-def _binder_body(namespace: str, pvc: str) -> dict:
+def _etcd_snapshot_image(kubectl: Kubectl) -> str:
+    """Image of the live etcd-snapshots CronJob. The rebuild hold is not a source."""
+    what = f"CronJob {_ETCD_NAMESPACE}/{_ETCD_CRONJOB}"
+    proc = kubectl(
+        ["get", "cronjob", _ETCD_CRONJOB, "-n", _ETCD_NAMESPACE, "-o", "json"]
+    )
+    if _not_found(proc):
+        raise Fail(f"{what} not found")
+    body = _load(proc, f"read {what}")
+    try:
+        container = body["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+        image = container.get("image") if isinstance(container, dict) else None
+    except (KeyError, IndexError, TypeError) as exc:
+        raise Fail(f"{what} has no container image") from exc
+    if not isinstance(image, str) or image == "":
+        raise Fail(f"{what} has no container image")
+    if _RESTIC_IMAGE.fullmatch(image) is None:
+        raise Fail(f"{what} image must be restic/restic@sha256: and 64 hex digits")
+    return image
+
+
+def _binder_body(namespace: str, pvc: str, image: str) -> dict:
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -574,7 +596,7 @@ def _binder_body(namespace: str, pvc: str) -> dict:
             "containers": [
                 {
                     "name": "bind",
-                    "image": _BIND_IMAGE,
+                    "image": image,
                     "command": ["sh", "-c", "exit 0"],
                     "volumeMounts": [{"name": "data", "mountPath": "/data"}],
                 }
@@ -603,11 +625,12 @@ def _bind(
     namespace: str,
     pvc: str,
     *,
+    image: str,
     monotonic: Mono,
     sleep: Sleeper,
     pause_budget_s: float,
 ) -> None:
-    body = yaml.safe_dump(_binder_body(namespace, pvc), sort_keys=False)
+    body = yaml.safe_dump(_binder_body(namespace, pvc, image), sort_keys=False)
     _ok(kubectl(["apply", "-f", "-"], input=body), f"bind {namespace}/{pvc}")
 
     def bound() -> bool:
@@ -699,6 +722,7 @@ def _restore_one(
     pvc: str,
     created: str,
     *,
+    image: str,
     as_of: str | None,
     resume: bool,
     accept_empty: bool,
@@ -725,6 +749,7 @@ def _restore_one(
                 kubectl,
                 namespace,
                 pvc,
+                image=image,
                 monotonic=monotonic,
                 sleep=sleep,
                 pause_budget_s=pause_budget_s,
@@ -1006,6 +1031,7 @@ def run(
         _validate_environment(kubectl, env)
         if override is not None:
             override = normalize_as_of(override)
+        image = _etcd_snapshot_image(kubectl)
         chosen, present = _select(kubectl, None if all_pvcs else app)
         hold = _hold_repos(kubectl)
         retired = _names(retire)
@@ -1036,6 +1062,7 @@ def run(
                     namespace,
                     pvc,
                     created,
+                    image=image,
                     as_of=override,
                     resume=hold is None,
                     accept_empty=f"{namespace}/{pvc}" in accepted_names,

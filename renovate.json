@@ -66,6 +66,12 @@
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["helm/helm"],
       "enabled": false
+    },
+    {
+      "description": "Python dev dependencies in requirements-dev.txt update as one PR. Exact == pins stay exact. The hold and automerge rules above still apply.",
+      "groupName": "python-dev",
+      "matchManagers": ["pip_requirements"],
+      "matchFileNames": ["requirements-dev.txt"]
     }
   ],
   "customManagers": [
