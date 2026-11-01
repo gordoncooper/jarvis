@@ -3,27 +3,22 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import signal
 from collections.abc import Sequence
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT, load_tool
+
 PAYLOAD = b"fixture payload"
 SUM = hashlib.sha256(PAYLOAD.hex().encode()).hexdigest()
 OTHER = "b" * 64
 
-_LOADER = SourceFileLoader("drill_tool", str(REPO_ROOT / "tools" / "drill"))
-_SPEC = importlib.util.spec_from_loader(_LOADER.name, _LOADER)
-assert _SPEC is not None
-drill_tool = importlib.util.module_from_spec(_SPEC)
-_LOADER.exec_module(drill_tool)
+drill_tool = load_tool("drill_tool", REPO_ROOT / "tools" / "drill")
 
 
 def _completed(
@@ -56,6 +51,7 @@ class Cluster:
         etcd_restored_sum: str = SUM,
         leftover_pods: set[str] | None = None,
         repo_exists: bool = False,
+        etcd_image: str = "restic/restic@sha256:" + "a" * 64,
     ) -> None:
         self.hold = hold
         self.namespace = namespace
@@ -67,6 +63,7 @@ class Cluster:
         self.cleanup_signal = cleanup_signal
         self.etcd_restored_sum = etcd_restored_sum
         self.repo_exists = repo_exists
+        self.etcd_image = etcd_image
         self.calls: list[list[str]] = []
         self.applied: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
@@ -100,7 +97,7 @@ class Cluster:
                                         "nodeSelector": {"role.test/control_plane": "true"},
                                         "containers": [
                                             {
-                                                "image": "restic/restic@sha256:" + "a" * 64,
+                                                "image": self.etcd_image,
                                                 "env": [
                                                     {
                                                         "name": "RESTIC_PASSWORD",
@@ -630,6 +627,31 @@ def test_cleanup_only_refuses_wrong_env_before_delete(
         tmp_path, monkeypatch, cluster, repo_marker=repo_marker
     ) != 0
     assert not any(call[0] == "delete" for call in cluster.calls)
+
+
+def _mutating(calls: list[list[str]]) -> list[list[str]]:
+    verbs = {"annotate", "apply", "create", "delete", "patch", "scale"}
+    return [call for call in calls if call and call[0] in verbs]
+
+
+def test_trailing_restic_image_fails_before_any_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R33: a restic image with trailing text changes nothing, including cleanup-only."""
+    image = "restic/restic@sha256:" + ("a" * 64) + "\n"
+    drill = Cluster(etcd_image=image)
+    code, restores = _run(tmp_path / "drill", monkeypatch, drill)
+    assert code != 0
+    assert restores == []
+    assert _mutating(drill.calls) == []
+    assert "must be restic/restic@sha256:" in capsys.readouterr().out
+
+    cleanup = Cluster(namespace=True, etcd_image=image)
+    assert _run_cleanup_only(tmp_path / "cleanup", monkeypatch, cleanup) != 0
+    assert _mutating(cleanup.calls) == []
+    assert "must be restic/restic@sha256:" in capsys.readouterr().out
 
 
 def test_etcd_checksum_mismatch_fails(

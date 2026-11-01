@@ -9,7 +9,7 @@ import hashlib
 
 import yaml
 
-from test_flux_entry import _kustomize_build
+from support import _kustomize_build
 
 _BODY = "testapp\n"
 _SHA = "60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7"
