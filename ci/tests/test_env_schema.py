@@ -460,6 +460,26 @@ def test_local_path_data_must_be_a_subdirectory(tmp_path: Path, local_path: str)
         assert "absolute path" in message
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("local_path_data", "/var/lib/jarvis/../etc"),
+        ("local_path_data", "/var/lib/jarvis/./local-path"),
+        ("backup_path", "/var/lib/jarvis/../etc"),
+        ("backup_path", "/var/lib/jarvis/./backup"),
+    ],
+)
+def test_data_paths_reject_dot_segments(tmp_path: Path, key: str, value: str) -> None:
+    """'.' and '..' path segments are refused in local_path_data and backup_path."""
+    cluster = _valid_cluster_vars()
+    cluster[key] = value
+    _write_env(tmp_path, cluster_vars=cluster)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    message = "\n".join(excinfo.value.messages)
+    assert "'.'" in message or "'..'" in message or "subdirectory" in message
+
+
 def test_data_disk_true_passes(tmp_path: Path) -> None:
     """data_disk: true is the only accepted value (p0a-11a)."""
     _write_env(

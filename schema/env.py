@@ -359,6 +359,7 @@ def _validate_cluster_vars(
             )
 
     errors.extend(_validate_local_path_data(rel_path, data.get("local_path_data")))
+    errors.extend(_validate_backup_path(rel_path, data.get("backup_path")))
 
     for key in (
         "backup_retention_daily",
@@ -689,16 +690,27 @@ def _validate_data_disk(disk: Any, rel_path: str, hostname: str) -> list[str]:
     return [f"{rel_path}: host {hostname}: data_disk must be true"]
 
 
+def _has_dot_segment(value: str) -> bool:
+    wrapped = f"/{value.strip('/')}/"
+    return "/../" in wrapped or "/./" in wrapped
+
+
 def _validate_local_path_data(rel_path: str, value: Any) -> list[str]:
     if not isinstance(value, str) or not value:
         return []
     if not value.startswith("/"):
         return [f"{rel_path}: local_path_data must be an absolute path"]
     path = value.rstrip("/") or "/"
-    if path == _DATA_MOUNT or not path.startswith(_DATA_MOUNT + "/"):
+    if path == _DATA_MOUNT or not path.startswith(_DATA_MOUNT + "/") or _has_dot_segment(path):
         return [f"{rel_path}: local_path_data must be a subdirectory of {_DATA_MOUNT}"]
-    if "/../" in f"/{path}/":
-        return [f"{rel_path}: local_path_data must be a subdirectory of {_DATA_MOUNT}"]
+    return []
+
+
+def _validate_backup_path(rel_path: str, value: Any) -> list[str]:
+    if not isinstance(value, str) or not value:
+        return []
+    if _has_dot_segment(value):
+        return [f"{rel_path}: backup_path must not contain a '.' or '..' path segment"]
     return []
 
 

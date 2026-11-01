@@ -245,6 +245,25 @@ def test_node_disk_refuses_an_empty_mount_when_k3s_has_run(tmp_path: Path, k3s_r
     assert playbook_recap_field(output, "changed") == 0
 
 
+@pytest.mark.parametrize("k3s_role", ["server", "agent"])
+def test_node_disk_accepts_jarvis_dirs_when_k3s_has_run(tmp_path: Path, k3s_role: str) -> None:
+    """A re-run passes when k3s state and Jarvis directories are both present."""
+    mount = tmp_path / "data"
+    for name in ("local-path", "backup", "lost+found"):
+        (mount / name).mkdir(parents=True)
+    (mount / "backup" / "etcd-snapshots").mkdir()
+    k3s_data = tmp_path / "k3s-data"
+    (k3s_data / k3s_role / "db").mkdir(parents=True)
+    mounts = _own_mount(mount)
+    for name in ("local-path", "backup"):
+        mounts[str(mount / name)] = _mount_row(str(mount), _DISK_ID)
+    result = _run(tmp_path, mount=mount, mounts=mounts, extra=_paths(mount, k3s_data))
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert playbook_recap_field(output, "changed") == 0
+    assert {path.name for path in mount.iterdir()} == {"local-path", "backup", "lost+found"}
+
+
 def test_node_disk_refuses_a_configured_path_outside_the_mount(tmp_path: Path) -> None:
     mount = tmp_path / "data"
     mount.mkdir()
