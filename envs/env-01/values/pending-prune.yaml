@@ -1,3 +1,0 @@
-# Owner re-seal deletes this file in the same change that adds
-# kustomize.toolkit.fluxcd.io/prune: disabled to the object below.
-- [Secret, platform-cert-manager, cert-manager-ca]
