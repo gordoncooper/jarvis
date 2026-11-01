@@ -35,3 +35,8 @@ command -v kubectl
 helm template cm jetstack/cert-manager --set installCRDs=true
 timeout 60 docker image ls
 nohup python3 -m http.server --directory coverage 8000
+kubectl get certificate "<name>"
+kubectl describe certificate "<name>"
+flux logs --level debug
+bash -c 'rsync -av ./a/ ./b/; echo a:b'
+helm delta

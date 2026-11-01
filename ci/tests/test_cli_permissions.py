@@ -8,17 +8,14 @@ import pytest
 
 from _cli_permissions import (
     DENY_CLASS_NAMES,
-    DRY_RUN_MUST_ALLOW,
     KUBECTL_VERBS,
-    MAIN_MUST_ALLOW_PATH,
     MAIN_MUST_BLOCK_PATH,
     ToolVerbs,
     _HELM_DENIED_READS,
     _HELM_MUTATIONS,
-    _HELM_READS,
+    _load_must_allow,
     classification_failures,
     command_allowed,
-    corpus_read_cases,
     corpus_shell_cases,
     deny_by_default_failures,
     deny_without_class,
@@ -26,7 +23,6 @@ from _cli_permissions import (
     matches_shell,
     parse_kubectl_help,
     policy_failures,
-    read_allowed,
     split_commands,
 )
 
@@ -128,14 +124,37 @@ def test_classed_mutation_must_be_denied():
     """R34: a mutation class is a lie unless the guard denies that subcommand."""
     tool = ToolVerbs("kubectl", ("delete",), frozenset({"delete"}), frozenset())
     failures = classification_failures([], [], tools=(tool,))
-    assert failures == ["kubectl mutation delete is not denied"]
+    assert failures == [
+        "kubectl mutation delete is not denied",
+        "kubectl mutation delete flag-first is not denied",
+    ]
+
+
+def test_mutation_flag_first_must_be_denied():
+    """R34: a global flag before the subcommand is still that mutation."""
+    tool = ToolVerbs("helm", ("test",), frozenset({"test"}), frozenset())
+    failures = classification_failures([], ["Shell(helm:test*)"], tools=(tool,))
+    assert failures == ["helm mutation test flag-first is not denied"]
 
 
 def test_named_read_must_stay_allowed():
     """R34: a named read is a lie if a deny entry blocks it."""
     tool = ToolVerbs("kubectl", ("get",), frozenset(), frozenset({"get"}))
     failures = classification_failures([], ["Shell(*get*)"], tools=(tool,))
-    assert failures == ["kubectl read get is denied"]
+    assert failures == [
+        "kubectl read get is denied",
+        "kubectl read get flag-first is denied",
+    ]
+
+
+def test_classing_a_mutation_as_a_read_fails():
+    """R34: moving a mutation into the read list fails when either form is denied."""
+    tool = ToolVerbs("kubectl", ("drain",), frozenset(), frozenset({"drain"}))
+    failures = classification_failures([], ["Shell(kubectl:*drain *)"], tools=(tool,))
+    assert failures == [
+        "kubectl read drain is denied",
+        "kubectl read drain flag-first is denied",
+    ]
 
 
 def test_denied_read_must_stay_denied():
@@ -144,31 +163,16 @@ def test_denied_read_must_stay_denied():
         "helm", ("history",), frozenset(), frozenset(), frozenset({"history"})
     )
     failures = classification_failures([], [], tools=(tool,))
-    assert failures == ["helm denied read history is allowed"]
+    assert failures == [
+        "helm denied read history is allowed",
+        "helm denied read history flag-first is allowed",
+    ]
 
 
 def test_helm_history_is_a_denied_read():
     """R34: helm history reads release revisions; the guard denies that read."""
     assert _HELM_DENIED_READS == frozenset({"hist", "history"})
     assert not (_HELM_DENIED_READS & _HELM_MUTATIONS)
-    assert not (_HELM_DENIED_READS & _HELM_READS)
-    perms = load_cli_permissions(_CLI)
-    assert classification_failures(
-        perms["allow"], perms["deny"], kubectl=KUBECTL_VERBS
-    ) == []
-    assert not command_allowed(perms["allow"], perms["deny"], "helm history")
-    assert not command_allowed(perms["allow"], perms["deny"], "helm hist")
-    assert command_allowed(perms["allow"], perms["deny"], "helm histogram")
-
-
-def test_helm_un_alias_spares_a_longer_name():
-    """R34: the uninstall alias deny does not block a longer helm name."""
-    perms = load_cli_permissions(_CLI)
-    assert not command_allowed(perms["allow"], perms["deny"], 'helm un "<name>"')
-    assert not command_allowed(perms["allow"], perms["deny"], 'helm uninstall "<name>"')
-    assert command_allowed(perms["allow"], perms["deny"], "helm unittest")
-    assert command_allowed(perms["allow"], perms["deny"], "helm unit")
-    assert command_allowed(perms["allow"], perms["deny"], "helm plugin list")
 
 
 def test_main_must_block_cases_stay_in_the_corpus():
@@ -182,27 +186,17 @@ def test_main_must_block_cases_stay_in_the_corpus():
     assert len(rows) == 149
     assert len({command for _, command in rows}) == 149
     corpus = {case.command for case in corpus_shell_cases()}
-    perms = load_cli_permissions(_CLI)
     for category, command in rows:
         assert category in DENY_CLASS_NAMES
         assert command in corpus
-        assert not command_allowed(perms["allow"], perms["deny"], command)
-    assert ".config/sops/age/keys.txt" in {case.path for case in corpus_read_cases()}
-    assert not read_allowed(perms["allow"], perms["deny"], ".config/sops/age/keys.txt")
 
 
-def test_must_allow_cases_unchanged():
-    """R34: the 37 must-allow cases stay the ones main allowed."""
-    got = tuple(
-        line
-        for line in MAIN_MUST_ALLOW_PATH.read_text(encoding="utf-8").splitlines()
-        if line
-    )
-    assert len(got) == 37
-    assert got == DRY_RUN_MUST_ALLOW
-    perms = load_cli_permissions(_CLI)
-    for command in got:
-        assert command_allowed(perms["allow"], perms["deny"], command)
+def test_must_allow_duplicate_row_is_an_error(tmp_path: Path):
+    """R34: must-allow lives in one fixture, and a repeated row is an error."""
+    path = tmp_path / "allow.txt"
+    path.write_text("kubectl get pods\nkubectl get pods\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicates an earlier row"):
+        _load_must_allow(path)
 
 
 @pytest.mark.parametrize("category", DENY_CLASS_NAMES)

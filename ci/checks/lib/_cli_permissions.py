@@ -428,45 +428,18 @@ _RETAINED_EXTRA: tuple[tuple[str, str], ...] = (
     ("sops decrypt or edit", 'git commit -m "tighten sops rule"'),
 )
 
-DRY_RUN_MUST_ALLOW: tuple[str, ...] = (
-    "kubectl get pods -A",
-    "kubectl describe pod demo -n default",
-    "kubectl logs deploy/demo -n default --tail=20",
-    "flux get kustomizations -A",
-    "flux get sources git -A",
-    "flux logs kustomization demo",
-    "flux tree kustomization demo",
-    "flux events --for Kustomization/demo",
-    "flux reconcile kustomization demo --with-source",
-    "kubectl get nodes --show-labels",
-    "kubectl get statefulsets -A",
-    "kubectl get replicasets -A",
-    "kubectl get pods --field-selector=status.phase=Running",
-    "kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'",
-    "docker images -d",
-    "python3 manage.py --dry-run",
-    "rg -n 'kubectl apply' docs",
-    "helm template demo ./chart",
-    "ls | xargs docker image ls",
-    "rg -n timeout docs",
-    "rg -n nohup docs",
-    "git commit -m 'add env check'",
-    "cd x && env A=1 docker image ls",
-    "cd x && timeout 5 du -sh storage",
-    "helm --debug template demo ./chart",
-    "helm lint ./chart",
-    "git push origin my-branch",
-    "git push -u origin my-feature",
-    "gh pr view 98",
-    "rsync -av ./a/ ./b/",
-    "kubectl get pods | grep secret",
-    "pytest -q",
-    "make ci-verify",
-    "command -v kubectl",
-    "helm template cm jetstack/cert-manager --set installCRDs=true",
-    "timeout 60 docker image ls",
-    "nohup python3 -m http.server --directory coverage 8000",
-)
+def _load_must_allow(path: Path) -> tuple[str, ...]:
+    """Must-allow commands. The fixture is the only copy; a repeated row is an error."""
+    rows: list[str] = []
+    seen: set[str] = set()
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line:
+            continue
+        if line in seen:
+            raise ValueError(f"must-allow fixture line {lineno} duplicates an earlier row")
+        seen.add(line)
+        rows.append(line)
+    return tuple(rows)
 
 
 @dataclass(frozen=True)
@@ -654,6 +627,7 @@ def _load_main_must_block(path: Path) -> tuple[tuple[str, str], ...]:
 _RETAINED: tuple[tuple[str, str], ...] = _RETAINED_EXTRA + _load_main_must_block(
     MAIN_MUST_BLOCK_PATH
 )
+DRY_RUN_MUST_ALLOW: tuple[str, ...] = _load_must_allow(MAIN_MUST_ALLOW_PATH)
 
 
 def deny_without_class(deny: list[str], category: str) -> list[str]:
@@ -723,11 +697,10 @@ _FLUX_READS = frozenset({
     "stats", "tag", "trace", "tree", "version",
 })
 
-_MUTATION_PROBE = {
+_BARE_PROBE = {
     ("kubectl", "rollout"): 'kubectl rollout restart "deploy/<name>"',
     ("kubectl", "proxy"): "kubectl proxy --port 8001",
-}
-_READ_PROBE = {
+    ("kubectl", "certificate"): 'kubectl certificate approve "<name>"',
     ("kubectl", "get"): "kubectl get pods",
     ("kubectl", "describe"): "kubectl describe pods",
     ("kubectl", "logs"): 'kubectl logs "deploy/<name>"',
@@ -756,12 +729,21 @@ def _default_tools(kubectl: tuple[str, ...]) -> tuple[ToolVerbs, ...]:
     )
 
 
-def _mutation_probe(tool: str, verb: str) -> str:
-    return _MUTATION_PROBE.get((tool, verb), f'{tool} {verb} "ns/<name>"')
+def _bare_probe(tool: str, verb: str) -> str:
+    return _BARE_PROBE.get((tool, verb), f'{tool} {verb} "<name>"')
 
 
-def _read_probe(tool: str, verb: str) -> str:
-    return _READ_PROBE.get((tool, verb), f"{tool} {verb}")
+def _flag_first(command: str) -> str:
+    """Same command with a global flag before the subcommand."""
+    tool, _, rest = command.partition(" ")
+    flag = "--kube-context" if tool == "helm" else "--context"
+    head = f'{tool} {flag} "<name>"'
+    return f"{head} {rest}" if rest else head
+
+
+def _probes(tool: str, verb: str) -> tuple[str, str]:
+    bare = _bare_probe(tool, verb)
+    return bare, _flag_first(bare)
 
 
 def classification_failures(
@@ -793,18 +775,24 @@ def classification_failures(
             if not classes:
                 failures.append(f"unclassified {tool.name} subcommand: {verb}")
                 continue
-            if classes == ["mutation"] and command_allowed(
-                allow, deny, _mutation_probe(tool.name, verb)
-            ):
-                failures.append(f"{tool.name} mutation {verb} is not denied")
-            if classes == ["read"] and not command_allowed(
-                allow, deny, _read_probe(tool.name, verb)
-            ):
-                failures.append(f"{tool.name} read {verb} is denied")
-            if classes == ["denied read"] and command_allowed(
-                allow, deny, f"{tool.name} {verb}"
-            ):
-                failures.append(f"{tool.name} denied read {verb} is allowed")
+            bare, flagged = _probes(tool.name, verb)
+            if classes == ["mutation"]:
+                if command_allowed(allow, deny, bare):
+                    failures.append(f"{tool.name} mutation {verb} is not denied")
+                if command_allowed(allow, deny, flagged):
+                    failures.append(f"{tool.name} mutation {verb} flag-first is not denied")
+            if classes == ["read"]:
+                if not command_allowed(allow, deny, bare):
+                    failures.append(f"{tool.name} read {verb} is denied")
+                if not command_allowed(allow, deny, flagged):
+                    failures.append(f"{tool.name} read {verb} flag-first is denied")
+            if classes == ["denied read"]:
+                if command_allowed(allow, deny, bare):
+                    failures.append(f"{tool.name} denied read {verb} is allowed")
+                if command_allowed(allow, deny, flagged):
+                    failures.append(
+                        f"{tool.name} denied read {verb} flag-first is allowed"
+                    )
     return failures
 
 
