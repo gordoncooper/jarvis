@@ -14,10 +14,9 @@ from ansible_role_proof import (
     ANSIBLE_DIR,
     FLUX_OPERATOR_ROLE_TASKS,
     FLUX_OPERATOR_ROLE_TEMPLATES,
-    REPO_ROOT,
     ansible_render_template,
+    example_flux_entry,
     load_cluster_vars,
-    non_example_env_names,
     playbook_recap_field,
 )
 from conftest import require_cli
@@ -581,7 +580,7 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path
     log = tmp_path / "k3s.log"
     stdin_path = tmp_path / "apply.stdin"
     flux_stdin_path = tmp_path / "flux-apply.stdin"
-    committed = REPO_ROOT / "envs" / non_example_env_names()[0] / "flux" / "flux-instance.yaml"
+    env_file = example_flux_entry(tmp_path).instance_file
     binary = tmp_path / "k3s"
     restic = tmp_path / "backup" / "restic"
     (restic / "ns-demo" / "pvc-drill").mkdir(parents=True)
@@ -639,7 +638,7 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path
         "-e",
         f"ansible_become_exe={_become_exe(tmp_path)}",
         "-e",
-        f"flux_instance_file={committed}",
+        f"flux_instance_file={env_file}",
     ]
     proc = _run_localhost_role(
         play,
@@ -655,13 +654,11 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path
     rendered = stdin_path.read_text(encoding="utf-8")
     assert "ns-demo/pvc-drill" in rendered
     assert "ns-decoy" not in rendered
-    if proc.returncode != 0:
-        assert "chown failed" in output
-    else:
-        invocations = log.read_text(encoding="utf-8").splitlines()
-        assert invocations.index("applied hold") < invocations.index("applied fluxinstance")
-        applied = flux_stdin_path.read_text(encoding="utf-8")
-        assert applied.strip() == committed.read_text(encoding="utf-8").strip()
+    assert proc.returncode == 0, output
+    invocations = log.read_text(encoding="utf-8").splitlines()
+    assert invocations.index("applied hold") < invocations.index("applied fluxinstance")
+    applied = flux_stdin_path.read_text(encoding="utf-8")
+    assert applied.strip() == env_file.read_text(encoding="utf-8").strip()
 
 
 def test_fluxinstance_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None:

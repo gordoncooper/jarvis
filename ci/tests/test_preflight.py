@@ -14,9 +14,8 @@ import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
-    REPO_ROOT,
+    example_flux_entry,
     load_cluster_vars,
-    non_example_env_names,
     playbook_recap_field,
 )
 from conftest import require_cli
@@ -50,10 +49,10 @@ def _inventory(path: Path, *, data_disk_hosts: set[str] | None = None) -> None:
 
 
 def _vars_file(path: Path, *, drop: str | None = None, jarvis_env: str | None = None) -> None:
-    """Example-env values. jarvis_env names an env with a committed FluxInstance."""
     cluster = load_cluster_vars()
     body = {key: cluster[key] for key in _REQUIRED}
-    body["jarvis_env"] = jarvis_env or non_example_env_names()[0]
+    if jarvis_env is not None:
+        body["jarvis_env"] = jarvis_env
     if drop is not None:
         del body[drop]
     path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
@@ -76,7 +75,9 @@ def _run_site(
     tags: str | None = None,
     path_prefix: Path | None = None,
     jarvis_env: str | None = None,
+    flux_instance: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    """flux_instance passes the example env's FluxInstance; False keeps the jarvis_env path."""
     require_cli("ansible-playbook")
     inventory = tmp_path / "hosts.yml"
     _inventory(inventory, data_disk_hosts=data_disk_hosts)
@@ -95,6 +96,8 @@ def _run_site(
         f"jarvis_cluster_vars={vars_path}",
         *(extra or []),
     ]
+    if flux_instance:
+        cmd.extend(["-e", f"flux_instance_file={example_flux_entry(tmp_path).instance_file}"])
     if check:
         cmd.append("--check")
     if tags is not None:
@@ -180,7 +183,7 @@ def test_missing_cluster_var_fails_before_any_change(tmp_path: Path, key: str) -
 
 def test_missing_env_flux_instance_fails_before_any_change(tmp_path: Path) -> None:
     """R1: site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
-    result = _run_site(tmp_path, jarvis_env="env-absent")
+    result = _run_site(tmp_path, jarvis_env="env-absent", flux_instance=False)
     _stopped_before_base_os(result, "envs/env-absent/flux/flux-instance.yaml is missing")
 
 
@@ -317,7 +320,7 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    flux_instance = REPO_ROOT / "envs" / non_example_env_names()[0] / "flux" / "flux-instance.yaml"
+    flux_instance = example_flux_entry(tmp_path).instance_file
     extra = [
         "-e",
         "ansible_connection=local",

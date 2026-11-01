@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import posixpath
 import re
 import shutil
 import subprocess
@@ -17,9 +18,11 @@ from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_DIR,
     REPO_ROOT,
     env_name,
+    example_flux_entry,
     load_cluster_vars,
     load_role_defaults,
     non_example_env_names,
+    standard_flux_kustomization_paths,
 )
 from render_cluster_vars_configmap import cluster_vars_configmap, render_document
 from schema.env import kubernetes_version_from_k3s
@@ -111,12 +114,7 @@ def _flux_kustomizations(env: str) -> list[dict]:
 
 def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
     """The four standard Kustomizations, in dependsOn order, with their paths."""
-    expected = {
-        "platform-controllers": "./platform",
-        "platform-configs": f"./envs/{env}/flux/platform-configs",
-        "services": "./services",
-        "apps": "./apps",
-    }
+    expected = standard_flux_kustomization_paths(env)
     chain = list(expected)
     names = [doc["metadata"]["name"] for doc in docs]
     errors = []
@@ -163,10 +161,31 @@ def _flux_instance_errors(doc: dict, env: str) -> list[str]:
     patches = doc.get("spec", {}).get("kustomize", {}).get("patches") or []
     if not any(
         _STRICT_SUBSTITUTION in str(patch.get("patch"))
-        and patch.get("target", {}).get("name") == "kustomize-controller"
+        and patch.get("target") == {"kind": "Deployment", "name": "kustomize-controller"}
         for patch in patches
     ):
-        errors.append("kustomize-controller does not run StrictPostBuildSubstitutions")
+        errors.append("Deployment kustomize-controller does not run StrictPostBuildSubstitutions")
+    return errors
+
+
+def _platform_configs_errors(doc: dict, env: str) -> list[str]:
+    """The env's platform-configs path is platform/configs plus that env's SOPS secrets."""
+    base = f"envs/{env}/flux/platform-configs"
+    resources = [posixpath.normpath(posixpath.join(base, item)) for item in doc.get("resources") or []]
+    errors = []
+    keys = sorted(set(doc) - {"apiVersion", "kind", "resources"})
+    if keys:
+        errors.append(f"keys other than resources: {keys}")
+    if resources.count("platform/configs") != 1:
+        errors.append("platform/configs is not listed exactly once")
+    others = [
+        item
+        for item in resources
+        if item != "platform/configs"
+        and not (posixpath.dirname(item) == f"envs/{env}/secrets" and item.endswith(".sops.yaml"))
+    ]
+    if others:
+        errors.append(f"not platform/configs or an env SOPS secret: {others}")
     return errors
 
 
@@ -205,16 +224,20 @@ def test_flux_instance_syncs_its_env_from_cluster_vars(env: str) -> None:
         (("spec", "sync", "path"), "envs/env-other/flux"),
         (("metadata", "name"), "other"),
         (("spec", "kustomize", "patches"), []),
+        (("spec", "kustomize", "patches", 0, "target", "kind"), "StatefulSet"),
     ],
 )
-def test_flux_instance_drift_from_cluster_vars_fails(field: tuple[str, ...], value: object) -> None:
-    env = non_example_env_names()[0]
-    doc = copy.deepcopy(_flux_instance(env))
+def test_flux_instance_drift_from_cluster_vars_fails(
+    tmp_path: Path, field: tuple[str | int, ...], value: object
+) -> None:
+    entry = example_flux_entry(tmp_path)
+    assert _flux_instance_errors(entry.instance, entry.env) == []
+    doc = copy.deepcopy(entry.instance)
     parent = doc
     for key in field[:-1]:
         parent = parent[key]
     parent[field[-1]] = value
-    assert _flux_instance_errors(doc, env)
+    assert _flux_instance_errors(doc, entry.env)
 
 
 @pytest.mark.parametrize("env", non_example_env_names())
@@ -248,11 +271,35 @@ def _skip_platform_configs(docs: list[dict]) -> None:
 @pytest.mark.parametrize(
     "mutate", [_drop_apps, _add_extra, _move_platform_configs, _skip_platform_configs]
 )
-def test_nonstandard_flux_kustomizations_fail(mutate) -> None:
-    env = non_example_env_names()[0]
-    docs = copy.deepcopy(_flux_kustomizations(env))
+def test_nonstandard_flux_kustomizations_fail(tmp_path: Path, mutate) -> None:
+    entry = example_flux_entry(tmp_path)
+    assert _flux_kustomization_errors(entry.kustomizations, entry.env) == []
+    docs = copy.deepcopy(entry.kustomizations)
     mutate(docs)
-    assert _flux_kustomization_errors(docs, env)
+    assert _flux_kustomization_errors(docs, entry.env)
+
+
+@pytest.mark.parametrize("env", non_example_env_names())
+def test_env_platform_configs_adds_only_its_secrets(env: str) -> None:
+    """R3: core components join platform/configs, not each env's list."""
+    path = REPO_ROOT / "envs" / env / "flux" / "platform-configs" / "kustomization.yaml"
+    assert _platform_configs_errors(yaml.safe_load(path.read_text(encoding="utf-8")), env) == []
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        {"resources": ["../../../../platform/configs", "../../../../platform/testapp"]},
+        {"resources": ["../../../../platform/configs", "../../../env-other/secrets/x.sops.yaml"]},
+        {"resources": ["../../secrets/x.sops.yaml"]},
+        {"resources": ["../../../../platform/configs"], "patches": []},
+    ],
+)
+def test_env_platform_configs_with_more_than_its_secrets_fails(seed: dict) -> None:
+    env = env_name()
+    clean = {"resources": ["../../../../platform/configs", "../../secrets/x.sops.yaml"]}
+    assert _platform_configs_errors(clean, env) == []
+    assert _platform_configs_errors(seed, env)
 
 
 @pytest.mark.parametrize("env", non_example_env_names())
