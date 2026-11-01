@@ -3,8 +3,9 @@
 
 Usage: tools/prep-node --env <env> --host <hostname> --login-user <user>
 
-Stops at the first failure. Does not commit, does not run site.yml, and does
-not touch disks or print an age private key.
+Stops at the first failure. Does not commit, does not run site.yml, does not
+write or rename netplan, does not write the node address into the repo, and
+does not touch disks or print an age private key.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 _TOOLS = ("ssh", "ssh-keygen", "git", "make")
 _PUB_NAMES = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
 _SUDOERS = "/etc/sudoers.d/jarvis-ansible"
-_NETPLAN = "/etc/netplan/99-jarvis-static.yaml"
 _STRICT = ("-o", "StrictHostKeyChecking=yes")
 
 
@@ -280,32 +280,6 @@ _PASSWORD = _opt(
 )
 
 
-def _relay_output(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run cmd, show its output, and keep a copy. Used for netplan try."""
-    proc = subprocess.Popen(
-        cmd,
-        stdin=None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=0,
-    )
-    chunks: list[bytes] = []
-    stream = proc.stdout
-    assert stream is not None
-    try:
-        while True:
-            block = stream.read(4096)
-            if not block:
-                break
-            chunks.append(block)
-            sys.stdout.buffer.write(block)
-            sys.stdout.buffer.flush()
-    finally:
-        code = proc.wait()
-    text = b"".join(chunks).decode("utf-8", errors="replace")
-    return subprocess.CompletedProcess(cmd, code, text, "")
-
-
 def ssh(
     dest: str,
     remote: str,
@@ -313,7 +287,6 @@ def ssh(
     control: Path | None = None,
     batch: bool = False,
     stdin: str | None = None,
-    tty: bool = False,
     identity: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = ["ssh", *_STRICT, *(_BATCH if batch else _PASSWORD)]
@@ -321,11 +294,7 @@ def ssh(
         cmd += _opt("ControlMaster=auto", "ControlPersist=300", f"ControlPath={control}")
     if identity is not None and identity.is_file():
         cmd += ["-o", "IdentitiesOnly=yes", "-i", str(identity)]
-    if tty:
-        cmd.append("-tt")
     cmd += [dest, remote]
-    if tty:
-        return _relay_output(cmd)
     return subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=False)
 
 
@@ -563,25 +532,6 @@ chmod 0440 "$file"
     print("Minimum packages and passwordless sudo are in place.")
 
 
-def render_netplan(iface: str, address: str, gateway: str, dns: list[str]) -> str:
-    servers = "\n".join(f"          - {item}" for item in dns)
-    return (
-        "network:\n"
-        "  version: 2\n"
-        "  ethernets:\n"
-        f"    {iface}:\n"
-        "      dhcp4: false\n"
-        "      addresses:\n"
-        f"        - {address}\n"
-        "      routes:\n"
-        "        - to: default\n"
-        f"          via: {gateway}\n"
-        "      nameservers:\n"
-        "        addresses:\n"
-        f"{servers}\n"
-    )
-
-
 def parse_network(text: str) -> dict[str, str]:
     found: dict[str, str] = {}
     for line in text.splitlines():
@@ -597,70 +547,30 @@ set -euo pipefail
 route=$(ip -4 route show default | awk 'NR==1 {print; exit}')
 iface=$(printf '%s\\n' "$route" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')
 addr=$(ip -4 -o addr show dev "$iface" | awk '{print $4; exit}')
-gw=$(printf '%s\\n' "$route" | awk '{for (i=1;i<=NF;i++) if ($i=="via") {print $(i+1); exit}}')
-dns=$(resolvectl dns "$iface" 2>/dev/null | awk -F': ' 'NF>1 {print $2; exit}' || true)
 dhcp=no
 case "$route" in
   *"proto dhcp"*) dhcp=yes ;;
 esac
-printf 'iface=%s\\naddress=%s\\ngateway=%s\\ndns=%s\\ndhcp=%s\\n' "$iface" "$addr" "$gw" "$dns" "$dhcp"
-"""
-
-_WRITE_NETPLAN = f"""\
-set -euo pipefail
-shopt -s nullglob
-file={shlex.quote(_NETPLAN)}
-mkdir -p /etc/netplan
-for other in /etc/netplan/*.yaml; do
-  [ "$other" = "$file" ] && continue
-  mv "$other" "$other.bak"
-done
-printf '%s\\n' "$1" > "$file"
-chmod 600 "$file"
-"""
-
-_RESTORE_NETPLAN = f"""\
-set -euo pipefail
-shopt -s nullglob
-rm -f {shlex.quote(_NETPLAN)}
-for bak in /etc/netplan/*.yaml.bak; do
-  mv "$bak" "${{bak%.bak}}"
-done
+printf 'iface=%s\\naddress=%s\\ndhcp=%s\\n' "$iface" "$addr" "$dhcp"
 """
 
 
-def netplan_try_accepted(result: subprocess.CompletedProcess[str]) -> bool:
-    output = f"{result.stdout or ''}{result.stderr or ''}"
-    return "Configuration accepted." in output
-
-
-def configure_network(session: Session, user: str, host: str, public: Path) -> None:
+def report_address(session: Session) -> None:
+    """Print the primary address. Warn when DHCP can change it. Write nothing."""
     info = parse_network(session.bash(_DETECT_NET, []).stdout)
-    if info.get("dhcp") != "yes":
-        print("Primary interface is not using DHCP.")
-        return
-    iface = info.get("iface", "")
     address = info.get("address", "")
-    gateway = info.get("gateway", "")
-    dns = info.get("dns", "")
-    print(f"DHCP on {iface}: {address}, gateway {gateway}, DNS {dns}")
-    if not (iface and address and gateway and dns):
-        raise PrepError("DHCP details are incomplete, so static config was not written")
-    if not confirm("Switch this interface to static with those values?"):
-        print("Left the interface on DHCP.")
-        return
-    session.sudo_bash(_WRITE_NETPLAN, [render_netplan(iface, address, gateway, dns.split())])
-    tried = batch_ssh(user, host, "sudo -n netplan try --timeout 120", public, tty=True)
-    if not netplan_try_accepted(tried):
-        session.sudo_bash(_RESTORE_NETPLAN, [])
-        raise PrepError("netplan try did not keep the static config")
-    live = "ip -4 -o addr show | grep -Fq -- " + shlex.quote(address)
-    if batch_ssh(user, host, live, public).returncode != 0:
-        session.sudo_bash(_RESTORE_NETPLAN, [])
-        raise PrepError(
-            "Static address was not live after netplan try. Restored the netplan files; run netplan apply to use them."
+    iface = info.get("iface", "")
+    if not address:
+        raise PrepError("the node did not report a primary address")
+    where = f" on {iface}" if iface else ""
+    if info.get("dhcp") == "yes":
+        print(f"Primary address {address}{where} came from DHCP.")
+        print(
+            "Warning: this address must stay stable (for example, a router DHCP reservation). "
+            "k3s breaks when the address changes."
         )
-    print("Static netplan kept; SSH still works.")
+        return
+    print(f"Primary address {address}{where} is static.")
 
 
 def _private_key(public: Path) -> Path | None:
@@ -676,14 +586,12 @@ def batch_ssh(
     remote: str,
     public: Path,
     *,
-    tty: bool = False,
     stdin: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return ssh(
         f"{user}@{host}",
         remote,
         batch=True,
-        tty=tty,
         stdin=stdin,
         identity=_private_key(public),
     )
@@ -1064,7 +972,7 @@ def run(argv: list[str] | None = None) -> None:
         ansible_user = choose_ansible_user(login)
         ensure_ansible_user(session, ansible_user, pubkey)
         install_minimum(session, ansible_user)
-        configure_network(session, ansible_user, inventory_host, public)
+        report_address(session)
     finally:
         session.close()
 

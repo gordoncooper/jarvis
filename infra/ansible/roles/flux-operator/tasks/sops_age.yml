@@ -43,6 +43,10 @@
   when: not (flux_sops_age_present | bool)
   no_log: true
 
+- name: Check age key file mode and owner
+  ansible.builtin.include_tasks: sops_age_key_mode.yml
+  when: sops_age_key_stat.stat.exists | default(false)
+
 - name: Use the age private key when the file exists
   when: sops_age_key_stat.stat.exists | default(false)
   no_log: true

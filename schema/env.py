@@ -73,10 +73,8 @@ _NODE_ROLES = frozenset(
     {"control_plane", "workers", "storage", "backup", "gpu", "edge"}
 )
 _HOST_KEYS = frozenset({"node_roles", "data_disk"})
-_DATA_DISK_KEYS = frozenset({"id", "wipe_confirmed"})
+_DATA_MOUNT = "/var/lib/jarvis"
 _SINGLETON_ROLES = ("control_plane", "backup")
-_DISK_ID = re.compile(r"^/dev/disk/by-id/[A-Za-z0-9][A-Za-z0-9._+-]*$")
-_DISK_PARTITION = re.compile(r"-part[0-9]+$")
 
 
 class ValidationError(Exception):
@@ -360,9 +358,8 @@ def _validate_cluster_vars(
                 "(v<major>.<minor>.<patch>+k3s<n>)"
             )
 
-    local_path = data.get("local_path_data")
-    if isinstance(local_path, str) and local_path and not local_path.startswith("/"):
-        errors.append(f"{rel_path}: local_path_data must be an absolute path")
+    errors.extend(_validate_local_path_data(rel_path, data.get("local_path_data")))
+    errors.extend(_validate_backup_path(rel_path, data.get("backup_path")))
 
     for key in (
         "backup_retention_daily",
@@ -688,34 +685,33 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
 
 
 def _validate_data_disk(disk: Any, rel_path: str, hostname: str) -> list[str]:
-    errors: list[str] = []
-    if not isinstance(disk, dict):
-        errors.append(f"{rel_path}: host {hostname}: data_disk must be a mapping")
-        return errors
+    if disk is True:
+        return []
+    return [f"{rel_path}: host {hostname}: data_disk must be true"]
 
-    allowed = ", ".join(sorted(_DATA_DISK_KEYS))
-    for key in sorted(set(disk) - _DATA_DISK_KEYS):
-        errors.append(
-            f"{rel_path}: host {hostname}: data_disk unknown key '{key}' (allowed: {allowed})"
-        )
-    for key in sorted(_DATA_DISK_KEYS - set(disk)):
-        errors.append(f"{rel_path}: host {hostname}: data_disk missing required key: {key}")
 
-    disk_id = disk.get("id")
-    if "id" in disk and (
-        not isinstance(disk_id, str)
-        or _DISK_ID.match(disk_id) is None
-        or _DISK_PARTITION.search(disk_id) is not None
-    ):
-        errors.append(
-            f"{rel_path}: host {hostname}: data_disk.id must be a whole-disk /dev/disk/by-id path"
-        )
+def _has_dot_segment(value: str) -> bool:
+    wrapped = f"/{value.strip('/')}/"
+    return "/../" in wrapped or "/./" in wrapped
 
-    if "wipe_confirmed" in disk and not isinstance(disk.get("wipe_confirmed"), bool):
-        errors.append(
-            f"{rel_path}: host {hostname}: data_disk.wipe_confirmed must be a boolean"
-        )
-    return errors
+
+def _validate_local_path_data(rel_path: str, value: Any) -> list[str]:
+    if not isinstance(value, str) or not value:
+        return []
+    if not value.startswith("/"):
+        return [f"{rel_path}: local_path_data must be an absolute path"]
+    path = value.rstrip("/") or "/"
+    if path == _DATA_MOUNT or not path.startswith(_DATA_MOUNT + "/") or _has_dot_segment(path):
+        return [f"{rel_path}: local_path_data must be a subdirectory of {_DATA_MOUNT}"]
+    return []
+
+
+def _validate_backup_path(rel_path: str, value: Any) -> list[str]:
+    if not isinstance(value, str) or not value:
+        return []
+    if _has_dot_segment(value):
+        return [f"{rel_path}: backup_path must not contain a '.' or '..' path segment"]
+    return []
 
 
 def _looks_like_ip(value: str) -> bool:

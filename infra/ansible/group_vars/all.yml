@@ -1,3 +1,6 @@
-# Product path, one definition for the k3s and flux-operator plays.
+# Product paths. One definition each.
+# k3s_binary_path: k3s and flux-operator. k3s_kubeconfig_path: k3s, kubeconfig, and flux-operator.
+# k3s_data_dir: k3s and node-disk.
 k3s_binary_path: /usr/local/bin/k3s
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+k3s_data_dir: /var/lib/rancher/k3s

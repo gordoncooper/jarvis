@@ -51,7 +51,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 | `pod_cidr` | yes | Pod network CIDR; an IP network, set once per env (D4). |
 | `service_cidr` | yes | Service network CIDR; an IP network, set once per env (D4). |
 | `app_dns_cluster_ip` | yes | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |
-| `local_path_data` | yes | k3s local-path provisioner data directory (D3). |
+| `local_path_data` | yes | k3s local-path provisioner data directory (D3). A subdirectory of `/var/lib/jarvis`, not that mount itself. |
 | `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; R25). |
 | `apps_git_repo_url` | yes | https Git remote for the apps repo. Same owner handle as `flux_git_repo_url`. That handle is the same across every non-example env (D45). |
 | `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
@@ -87,11 +87,11 @@ Each host is a mapping with `node_roles` and, when that host has a data disk, `d
 | Field | Required | Notes |
 | --- | --- | --- |
 | `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
-| `data_disk` | no | Mapping with `id` and `wipe_confirmed` only. `id` is a whole-disk `/dev/disk/by-id/<id>` path, not a kernel name (`/dev/nvmeXnY`, `/dev/sdX`) and not a `-partN` partition. `wipe_confirmed` is a boolean. `true` does not authorize a wipe. |
+| `data_disk` | no | Plain flag `true`, or omit the key. `true` means the admin has mounted a filesystem at `/var/lib/jarvis` (D3, D42). Any other value, including the old `id` / `wipe_confirmed` mapping, is rejected. |
 
 ### Node roles and labels
 
-`infra/inventory/roles.yml` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk` set are the `data_disk` group. That group is always present, including when no host sets `data_disk`. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
+`infra/inventory/roles.yml` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk: true` are the `data_disk` group. The constructed rule is `data_disk is defined`, which matches that flag and nothing else the schema allows. That group is always present, including when no host sets `data_disk`. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
 
 Kubernetes labels are `role.<dns_suffix>/<role>=true` for each role on the node. The `role.<dns_suffix>/` prefix is reserved for them. The task that sets and removes them is `p0a-12`. This schema does not apply labels.
 
@@ -136,7 +136,7 @@ Each env under `envs/<env>/` supplies its own values (§6, §7), for example: `d
 - A behavior test rejects a `backup_schedule` that is not a five-field cron.
 - A behavior test rejects an `app_dns_cluster_ip` that is not an IP address, is outside `service_cidr`, is not a host address, or is the first or tenth address of `service_cidr`.
 - A drift test fails when the known-key set gains a key the example env does not set.
-- Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, an unknown host key, and a data disk id that is not a whole-disk `/dev/disk/by-id` path.
+- Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, and an unknown host key.
 - A drift test fails when the known role set gains a role the example env does not declare.
 - `ansible-inventory --graph` on the example env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles.yml`.
 - `ci/checks/core-names` rejects identity values on the scanned paths and fails when `OWNER_NAME` is unset.

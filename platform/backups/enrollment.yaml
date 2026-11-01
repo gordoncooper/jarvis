@@ -1,10 +1,12 @@
 # Generates one restic Secret and ReplicationSource per PVC. Not a ReplicationSource object.
+# Prune stays off. Deleting this policy deletes the backup objects it generated.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: pvc-backup
   annotations:
     kustomize.toolkit.fluxcd.io/force: Enabled
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   webhookConfiguration:
     failurePolicy: Ignore

@@ -1,4 +1,11 @@
 ---
+# A drop-in change reloads systemd and does not restart k3s.
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  changed_when: true
+  tags: [k3s]
+
 - name: Restart k3s
   ansible.builtin.systemd:
     name: "{{ k3s_service_name }}"

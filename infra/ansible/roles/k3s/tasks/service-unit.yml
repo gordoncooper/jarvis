@@ -1,0 +1,41 @@
+---
+- name: Require the unit this host runs
+  ansible.builtin.assert:
+    that:
+      - k3s_mode in ['server', 'agent']
+      - k3s_service_name == ('k3s' if k3s_mode == 'server' else 'k3s-agent')
+      - local_path_data is defined
+      - backup_path is defined
+      - local_path_data | length > 0
+      - backup_path | length > 0
+    fail_msg: k3s data-mount drop-in requires k3s_mode, the matching service name, and the data paths.
+
+- name: Record the opposite k3s unit
+  ansible.builtin.set_fact:
+    k3s_opposite_service: "{{ 'k3s-agent' if k3s_mode == 'server' else 'k3s' }}"
+  changed_when: false
+
+- name: Ensure the k3s drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ k3s_unit_dir }}/{{ k3s_service_name }}.service.d"
+    state: directory
+    mode: "0755"
+
+- name: Install the data-mount drop-in
+  ansible.builtin.template:
+    src: jarvis-mount.conf.j2
+    dest: "{{ k3s_unit_dir }}/{{ k3s_service_name }}.service.d/jarvis-mount.conf"
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Stat the opposite k3s unit
+  ansible.builtin.stat:
+    path: "{{ k3s_unit_dir }}/{{ k3s_opposite_service }}.service"
+  register: k3s_opposite_unit
+
+- name: Disable and stop the opposite k3s unit
+  ansible.builtin.systemd:
+    name: "{{ k3s_opposite_service }}"
+    enabled: false
+    state: stopped
+  when: k3s_opposite_unit.stat.exists
