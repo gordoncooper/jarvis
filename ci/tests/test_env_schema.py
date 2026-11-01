@@ -313,6 +313,62 @@ def test_repo_urls_must_share_owner_handle(tmp_path: Path):
     assert "owner handle" in "\n".join(excinfo.value.messages)
 
 
+def test_apps_git_repo_url_must_be_https_when_set(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv["apps_git_repo_url"] = "http://github.com/example-owner/example-apps"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "apps_git_repo_url must be an https URL" in "\n".join(excinfo.value.messages)
+
+
+_OPTIONAL_CLUSTER_KEYS = (
+    "code_delivery",
+    "build_agent",
+    "apps_git_repo_url",
+    "llm_provider_host",
+)
+
+
+@pytest.mark.parametrize("key", _OPTIONAL_CLUSTER_KEYS)
+def test_optional_cluster_key_may_be_omitted(tmp_path: Path, key: str):
+    """D45: an unused key may be omitted."""
+    cv = _valid_cluster_vars()
+    assert key in cv
+    del cv[key]
+    _write_env(tmp_path, cluster_vars=cv)
+    resolved = validate_env_tree(tmp_path)
+    assert key not in resolved["env-test"]
+
+
+def test_optional_cluster_keys_may_all_be_omitted(tmp_path: Path):
+    """An env can deploy with no AI vendor, apps repo, or LLM host (D45)."""
+    cv = _valid_cluster_vars()
+    for key in _OPTIONAL_CLUSTER_KEYS:
+        del cv[key]
+    _write_env(tmp_path, cluster_vars=cv)
+    resolved = validate_env_tree(tmp_path)
+    for key in _OPTIONAL_CLUSTER_KEYS:
+        assert key not in resolved["env-test"]
+
+
+def test_owner_comes_from_flux_when_apps_url_is_omitted(tmp_path: Path):
+    """Two envs with different flux owners still fail when apps URL is unset."""
+    first = _valid_cluster_vars()
+    second = _valid_cluster_vars()
+    for cv, owner in ((first, "owner-a"), (second, "owner-b")):
+        cv.pop("apps_git_repo_url")
+        cv["flux_git_repo_url"] = f"https://github.com/{owner}/cluster"
+    _write_env(tmp_path, "env-a", cluster_vars=first)
+    _write_env(tmp_path, "env-b", cluster_vars=second)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "non-example envs" in msg
+    assert "owner-a" in msg
+    assert "owner-b" in msg
+
+
 def test_owner_handle_must_match_across_non_example_envs(tmp_path: Path):
     first = _valid_cluster_vars()
     first["flux_git_repo_url"] = "https://github.com/owner-a/cluster"
@@ -458,6 +514,17 @@ def test_local_path_data_must_be_a_subdirectory(tmp_path: Path, local_path: str)
         assert "subdirectory of /var/lib/jarvis" in message
     else:
         assert "absolute path" in message
+
+
+@pytest.mark.parametrize("backup_path", ["backup", "var/lib/jarvis/backup"])
+def test_backup_path_must_be_absolute(tmp_path: Path, backup_path: str) -> None:
+    """A relative backup_path would build a hostPath of the wrong shape."""
+    cluster = _valid_cluster_vars()
+    cluster["backup_path"] = backup_path
+    _write_env(tmp_path, cluster_vars=cluster)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "backup_path must be an absolute path" in "\n".join(excinfo.value.messages)
 
 
 @pytest.mark.parametrize(

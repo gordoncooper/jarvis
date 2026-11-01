@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Render flux-system/cluster-vars ConfigMap from envs/<env>/values/cluster-vars.yaml (R4).
+"""Render flux-system/cluster-vars from an allow-list of cluster keys (R4).
 
-Lists and maps are JSON-encoded strings so postBuild substitution can reference them
-without duplicating keys outside values/cluster-vars.yaml.
+Ansible keeps reading values/cluster-vars.yaml. Host-only keys are not published.
+Lists and maps are JSON-encoded strings so postBuild substitution can reference them.
 """
 
 from __future__ import annotations
@@ -20,6 +20,22 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from schema.env import resolve_cluster_vars  # noqa: E402
+
+# Keys the cluster reads. Substituted ${var}s on this tree, plus jarvis_env,
+# which verify, drill and restore read from the live ConfigMap.
+CLUSTER_VARS_PUBLISHED = frozenset(
+    {
+        "jarvis_env",
+        "dns_suffix",
+        "time_zone",
+        "app_dns_cluster_ip",
+        "backup_path",
+        "backup_schedule",
+        "backup_retention_daily",
+        "backup_retention_weekly",
+        "backup_retention_monthly",
+    }
+)
 
 
 def _flatten_value(value: Any) -> str:
@@ -43,7 +59,11 @@ def cluster_vars_configmap(
         "apiVersion": "v1",
         "kind": "ConfigMap",
         "metadata": {"name": name, "namespace": namespace},
-        "data": {key: _flatten_value(value) for key, value in resolved.items()},
+        "data": {
+            key: _flatten_value(value)
+            for key, value in resolved.items()
+            if key in CLUSTER_VARS_PUBLISHED
+        },
     }
 
 

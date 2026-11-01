@@ -24,7 +24,11 @@ from ansible_role_proof import (
     non_example_env_names,
     standard_flux_kustomization_paths,
 )
-from render_cluster_vars_configmap import cluster_vars_configmap, render_document
+from render_cluster_vars_configmap import (
+    CLUSTER_VARS_PUBLISHED,
+    cluster_vars_configmap,
+    render_document,
+)
 from schema.env import kubernetes_version_from_k3s
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
@@ -199,15 +203,26 @@ def test_cluster_vars_configmap_matches_render_script(env: str) -> None:
     assert generated_path.read_text(encoding="utf-8") == expected
 
 
-def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
-    env = env_name()
-    cluster_path = REPO_ROOT / "envs" / env / "values" / "cluster-vars.yaml"
-    raw = yaml.safe_load(cluster_path.read_text(encoding="utf-8"))
-    assert isinstance(raw, dict)
-    doc = cluster_vars_configmap(raw)
-    data = doc["data"]
+def test_cluster_vars_configmap_publishes_only_the_allow_list() -> None:
+    """R4: the live ConfigMap is the allow-list. Host-only keys stay in the values file."""
+    raw = load_cluster_vars()
+    data = cluster_vars_configmap(raw)["data"]
     assert isinstance(data, dict)
-    assert data["ntp_pools"] == json.dumps(raw["ntp_pools"], separators=(",", ":"))
+    assert set(data) == set(CLUSTER_VARS_PUBLISHED)
+    assert data["jarvis_env"] == raw["jarvis_env"]
+    assert "ssh_user" not in data
+    assert "ntp_pools" not in data
+
+
+def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
+    """A list value is JSON-encoded. ntp_pools is host-only, so the proof uses a published key."""
+    raw = load_cluster_vars()
+    pools = raw["ntp_pools"]
+    assert isinstance(pools, list) and pools
+    published = cluster_vars_configmap(raw)["data"]
+    assert "ntp_pools" not in published
+    data = cluster_vars_configmap({**raw, "dns_suffix": pools})["data"]
+    assert data["dns_suffix"] == json.dumps(pools, separators=(",", ":"))
 
 
 @pytest.mark.parametrize("env", non_example_env_names())

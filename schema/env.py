@@ -31,8 +31,6 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "jarvis_env",
         "dns_suffix",
         "time_zone",
-        "code_delivery",
-        "build_agent",
         "backup_path",
         "backup_retention_daily",
         "backup_retention_weekly",
@@ -45,17 +43,25 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "app_dns_cluster_ip",
         "local_path_data",
         "flux_git_repo_url",
-        "apps_git_repo_url",
         "flux_git_ref",
         "ntp_pools",
         "k3s_kubelet_kube_reserved",
         "k3s_kubelet_system_reserved",
         "k3s_kubelet_eviction_hard",
-        "llm_provider_host",
     }
 )
 
-_CLUSTER_VARS_OPTIONAL = frozenset({"ssh_user", "age_key_file"})
+# Optional until the step that consumes them (D45). A set value is still checked.
+_CLUSTER_VARS_OPTIONAL = frozenset(
+    {
+        "ssh_user",
+        "age_key_file",
+        "code_delivery",
+        "build_agent",
+        "apps_git_repo_url",
+        "llm_provider_host",
+    }
+)
 
 _CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 
@@ -324,13 +330,13 @@ def _validate_cluster_vars(
     errors.extend(flux_errors)
     errors.extend(apps_errors)
     owner: str | None = None
-    if flux_owner and apps_owner:
-        if flux_owner != apps_owner:
-            errors.append(
-                f"{rel_path}: flux_git_repo_url and apps_git_repo_url must use the same owner handle"
-            )
-        else:
-            owner = flux_owner
+    if flux_owner and apps_owner and flux_owner != apps_owner:
+        errors.append(
+            f"{rel_path}: flux_git_repo_url and apps_git_repo_url must use the same owner handle"
+        )
+    elif flux_owner:
+        # apps_git_repo_url is optional. The env owner still comes from flux.
+        owner = flux_owner
 
     errors.extend(
         _validate_bare_hostname(rel_path, "llm_provider_host", data.get("llm_provider_host"))
@@ -709,6 +715,8 @@ def _validate_local_path_data(rel_path: str, value: Any) -> list[str]:
 def _validate_backup_path(rel_path: str, value: Any) -> list[str]:
     if not isinstance(value, str) or not value:
         return []
+    if not value.startswith("/"):
+        return [f"{rel_path}: backup_path must be an absolute path"]
     if _has_dot_segment(value):
         return [f"{rel_path}: backup_path must not contain a '.' or '..' path segment"]
     return []

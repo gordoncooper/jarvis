@@ -1,6 +1,6 @@
 # CONTRACT: Code delivery provider
 
-One contract for six capabilities so core, the code-factory, and app hosting depend on this file—not on a vendor name (R34). Each env selects a provider in `envs/<env>/values/cluster-vars.yaml`; only built providers pass env-schema validation. Manifests do not branch on `code_delivery` until a second provider ships (§5).
+One contract for six capabilities so core, the code-factory, and app hosting depend on this file—not on a vendor name (R34). An env may select a provider in `envs/<env>/values/cluster-vars.yaml`; only built providers pass env-schema validation. Manifests do not branch on `code_delivery` until a second provider ships (§5).
 
 **Built provider:** `github` (per `<env>` in `cluster-vars.yaml`). **Planned second provider:** Forgejo (§9); no Forgejo implementation in this repo.
 
@@ -30,7 +30,7 @@ Callers may rely on these six capabilities from the active provider:
 
 ## Expects
 
-- `code_delivery: github` in `values/cluster-vars.yaml`, validated by the env schema (`schema/CONTRACT.md`).
+- When set, `code_delivery` is `github` in `values/cluster-vars.yaml`, validated by the env schema (`schema/CONTRACT.md`). Omitting it is valid.
 - Both repos exist on the provider before env values reference them (D1).
 - Flux reconciles cluster state from Git only; no hand-edited cluster copies of what Git should hold (R34).
 - Credentials live outside CI where R25/R42 require (lane job: Cursor key and read-only GitHub token; publish job: short-lived App token; no push creds on the builder).
@@ -49,7 +49,7 @@ Env selection uses **lowercase snake_case** in `envs/<env>/values/cluster-vars.y
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `code_delivery` | yes | `github` only. `forgejo` is the planned second provider (§9); any other value fails env-schema validation. |
+| `code_delivery` | no | When set, `github` only. `forgejo` is the planned second provider (§9); any other value fails env-schema validation. |
 
 No core manifest reads `code_delivery` until a second provider is built. Provider-specific URLs, org, and tokens are bootstrap or workflow secrets (§8), not duplicated in core.
 
