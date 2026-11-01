@@ -31,6 +31,7 @@ def seal(
     force: bool = False,
 ) -> Path:
     """Write name.sops.yaml under envs/<env>/secrets/. Fails if present unless force."""
+    out = _sops.secret_path(_repo_root(), env, name)
     doc = yaml.safe_load(plaintext)
     if not isinstance(doc, dict) or doc.get("kind") != "Secret":
         raise SystemExit("stdin must be a Kubernetes Secret manifest (kind: Secret)")
@@ -40,14 +41,14 @@ def seal(
     meta["name"] = name
     doc["metadata"] = meta
 
-    out = _repo_root() / "envs" / env / "secrets" / f"{name}.sops.yaml"
     if out.exists() and not force:
         raise SystemExit(f"{out} exists; pass --force to replace")
 
     sops = sops_bin or _sops.require_sops()
     _sops.encrypt_secret_to_file(
         repo_root=_repo_root(),
-        destination=out,
+        env=env,
+        name=name,
         document=doc,
         sops_bin=sops,
     )

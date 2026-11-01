@@ -1,9 +1,12 @@
 # ClusterIssuer reads Secret cert-manager-ca in the controller namespace.
 # platform-configs postBuild fills ${dns_suffix}.
+# Prune stays off. Deleting the issuer leaves issued certificates with no issuer.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: internal-ca
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   ca:
     secretName: cert-manager-ca
