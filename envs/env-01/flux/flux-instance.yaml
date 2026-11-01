@@ -1,4 +1,4 @@
-# Managed by Ansible (flux-operator role) on first boot; Flux reconciles this copy from Git (R1).
+# Ansible (flux-operator role) applies this file once on a new cluster; Flux reconciles it from Git after that (R1).
 apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance
 metadata:

@@ -15,6 +15,7 @@ from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_TASKS,
     FLUX_OPERATOR_ROLE_TEMPLATES,
     ansible_render_template,
+    example_flux_entry,
     load_cluster_vars,
     playbook_recap_field,
 )
@@ -541,6 +542,7 @@ def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Pat
     assert second.returncode == 0, second.stdout + second.stderr
     invocations = log.read_text(encoding="utf-8")
     assert invocations.count("get fluxinstance") == 2
+    assert "apply" not in invocations
     assert "backup-rebuild-hold" not in invocations
     assert "configmap" not in invocations.lower()
 
@@ -573,10 +575,12 @@ def _become_exe(tmp_path: Path) -> Path:
     return path
 
 
-def test_fresh_cluster_with_restic_repos_sets_the_hold(tmp_path: Path) -> None:
+def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     stdin_path = tmp_path / "apply.stdin"
+    flux_stdin_path = tmp_path / "flux-apply.stdin"
+    env_file = example_flux_entry(tmp_path).instance_file
     binary = tmp_path / "k3s"
     restic = tmp_path / "backup" / "restic"
     (restic / "ns-demo" / "pvc-drill").mkdir(parents=True)
@@ -596,12 +600,16 @@ def test_fresh_cluster_with_restic_repos_sets_the_hold(tmp_path: Path) -> None:
               exit 1
             fi
             if [[ "$joined" == *"kubectl apply -f -"* ]]; then
-              cat > {stdin_path}
-              echo "configmap/backup-rebuild-hold created"
-              exit 0
-            fi
-            if [[ "$joined" == *"kubectl apply -f "* ]]; then
-              echo "fluxinstance.fluxcd.controlplane.io/flux"
+              body="$(cat)"
+              if [[ "$body" == *"kind: FluxInstance"* ]]; then
+                printf '%s\\n' "$body" > {flux_stdin_path}
+                echo "applied fluxinstance" >> {log}
+                echo "fluxinstance.fluxcd.controlplane.io/flux created"
+              else
+                printf '%s\\n' "$body" > {stdin_path}
+                echo "applied hold" >> {log}
+                echo "configmap/backup-rebuild-hold created"
+              fi
               exit 0
             fi
             echo "unexpected k3s invocation: $*" >&2
@@ -629,6 +637,8 @@ def test_fresh_cluster_with_restic_repos_sets_the_hold(tmp_path: Path) -> None:
         f"backup_path={tmp_path / 'backup'}",
         "-e",
         f"ansible_become_exe={_become_exe(tmp_path)}",
+        "-e",
+        f"flux_instance_file={env_file}",
     ]
     proc = _run_localhost_role(
         play,
@@ -638,21 +648,17 @@ def test_fresh_cluster_with_restic_repos_sets_the_hold(tmp_path: Path) -> None:
         inventory=["localhost,", str(_backup_inventory(tmp_path))],
     )
     output = proc.stdout + proc.stderr
-    # changed_when used to fail the play here, before the FluxInstance render.
+    # changed_when used to fail the play here, before the FluxInstance apply.
     assert "'stdout' is undefined" not in output
     assert "Apply the rebuild hold" in output
     rendered = stdin_path.read_text(encoding="utf-8")
     assert "ns-demo/pvc-drill" in rendered
     assert "ns-decoy" not in rendered
-    if proc.returncode != 0:
-        assert "chown failed" in output
-    else:
-        invocations = log.read_text(encoding="utf-8").splitlines()
-        hold_apply = next(i for i, line in enumerate(invocations) if "apply -f -" in line)
-        flux_apply = next(
-            i for i, line in enumerate(invocations) if "apply -f " in line and "apply -f -" not in line
-        )
-        assert hold_apply < flux_apply
+    assert proc.returncode == 0, output
+    invocations = log.read_text(encoding="utf-8").splitlines()
+    assert invocations.index("applied hold") < invocations.index("applied fluxinstance")
+    applied = flux_stdin_path.read_text(encoding="utf-8")
+    assert applied.strip() == env_file.read_text(encoding="utf-8").strip()
 
 
 def test_fluxinstance_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None:
@@ -696,7 +702,9 @@ def test_fluxinstance_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None
     output = proc.stdout + proc.stderr
     assert "Check whether FluxInstance exists" in output
     assert "Stat restic data on the backup host" not in output
-    assert "backup-rebuild-hold" not in log.read_text(encoding="utf-8")
+    invocations = log.read_text(encoding="utf-8")
+    assert "backup-rebuild-hold" not in invocations
+    assert "apply" not in invocations
 
 
 def _lookup_binary(log: Path, *, kind: str) -> str:

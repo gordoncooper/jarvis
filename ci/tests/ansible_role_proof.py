@@ -8,6 +8,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 
@@ -71,6 +72,78 @@ def load_cluster_vars(
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
     return data
+
+
+def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
+    """The four Flux Kustomizations every env entry applies, in dependsOn order."""
+    return {
+        "platform-controllers": "./platform",
+        "platform-configs": f"./envs/{env}/flux/platform-configs",
+        "services": "./services",
+        "apps": "./apps",
+    }
+
+
+class ExampleFluxEntry(NamedTuple):
+    env: str
+    instance_file: Path
+    instance: dict
+    kustomizations: list[dict]
+
+
+def example_flux_entry(tmp_path: Path) -> ExampleFluxEntry:
+    """The example env's FluxInstance (written to tmp_path) and four Kustomizations.
+
+    The example env has no flux/ tree, so tests that need one build it here
+    from its cluster-vars and the flux-operator lookup name.
+    """
+    env = env_name()
+    cluster = load_cluster_vars()
+    role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
+    instance = {
+        "apiVersion": "fluxcd.controlplane.io/v1",
+        "kind": "FluxInstance",
+        "metadata": {
+            "name": role["flux_instance_name"],
+            "namespace": role["flux_system_namespace"],
+        },
+        "spec": {
+            "sync": {
+                "kind": "GitRepository",
+                "url": cluster["flux_git_repo_url"],
+                "ref": cluster["flux_git_ref"],
+                "path": f"envs/{env}/flux",
+            },
+            "kustomize": {
+                "patches": [
+                    {
+                        "patch": (
+                            "- op: add\n"
+                            "  path: /spec/template/spec/containers/0/args/-\n"
+                            "  value: --feature-gates=StrictPostBuildSubstitutions=true\n"
+                        ),
+                        "target": {"kind": "Deployment", "name": "kustomize-controller"},
+                    }
+                ]
+            },
+        },
+    }
+    instance_file = tmp_path / "flux-instance.yaml"
+    instance_file.write_text(yaml.safe_dump(instance, sort_keys=False), encoding="utf-8")
+    names = list(standard_flux_kustomization_paths(env).items())
+    kustomizations = [
+        {
+            "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+            "kind": "Kustomization",
+            "metadata": {"name": name, "namespace": role["flux_system_namespace"]},
+            "spec": {
+                "path": path,
+                "dependsOn": [{"name": names[index - 1][0]}] if index else [],
+            },
+        }
+        for index, (name, path) in enumerate(names)
+    ]
+    return ExampleFluxEntry(env, instance_file, instance, kustomizations)
 
 
 def ansible_render_template(
