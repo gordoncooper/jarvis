@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 from ansible_role_proof import REPO_ROOT, non_example_env_names
-from test_flux_entry import _kustomize_build
+from support import _kustomize_build
 
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 _Key = tuple[str, str, str]

@@ -2,26 +2,20 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import subprocess
 import zlib
 from collections.abc import Sequence
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT, load_tool
 
-_RESTORE = SourceFileLoader("restore_tool", str(REPO_ROOT / "tools" / "restore"))
-_RESTORE_SPEC = importlib.util.spec_from_loader(_RESTORE.name, _RESTORE)
-assert _RESTORE_SPEC is not None
-restore_tool = importlib.util.module_from_spec(_RESTORE_SPEC)
-_RESTORE.exec_module(restore_tool)
+restore_tool = load_tool("restore_tool", REPO_ROOT / "tools" / "restore")
 
 
 def _completed(
@@ -139,7 +133,8 @@ class _Cluster:
         if argv[:2] == ["get", "statefulset"]:
             return _completed(argv, json.dumps({"items": self.statefulsets}))
         if argv[:3] == ["get", "cronjob", "etcd-snapshots"]:
-            if not self.etcd_present:
+            namespace = argv[argv.index("-n") + 1] if "-n" in argv else ""
+            if namespace != "platform-backups" or not self.etcd_present:
                 return _completed(
                     argv,
                     "",
@@ -513,13 +508,7 @@ def _mutation_at(calls: list[list[str]]) -> int:
 def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
     """R33: the binder uses the live etcd-snapshots image, read once before any change."""
     image = "restic/restic@sha256:" + ("b" * 64)
-    repo = yaml.safe_load(
-        (REPO_ROOT / "platform/backups/etcd-snapshots.yaml").read_text(encoding="utf-8")
-    )
-    repo_image = repo["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0][
-        "image"
-    ]
-    assert image != repo_image
+    assert image != _FAKE_RESTIC_IMAGE
     cluster = _Cluster(
         [_pvc("demo", "one", volume=""), _pvc("demo", "two", volume="")],
         will_pause=True,
@@ -533,7 +522,7 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
     ]
     assert len(reads) == 1
     assert cluster.calls[reads[0]][cluster.calls[reads[0]].index("-n") + 1] == (
-        restore_tool._ETCD_NAMESPACE
+        "platform-backups"
     )
     assert reads[0] < _mutation_at(cluster.calls)
     assert [pod["spec"]["containers"][0]["image"] for pod in cluster.binders] == [
@@ -556,6 +545,8 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
         (True, "other/restic@sha256:" + ("b" * 64), "must be restic/restic@sha256:"),
         (True, "restic/restic:0.18@sha256:" + ("c" * 64), "must be restic/restic@sha256:"),
         (True, "restic/restic@sha256:" + ("A" * 64), "must be restic/restic@sha256:"),
+        (True, "restic/restic@sha256:" + ("d" * 64) + "\n", "must be restic/restic@sha256:"),
+        (True, "restic/restic@sha256:" + ("e" * 64) + "x", "must be restic/restic@sha256:"),
     ],
 )
 def test_bad_etcd_image_fails_before_any_change(

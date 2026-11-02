@@ -30,6 +30,7 @@ from render_cluster_vars_configmap import (
     render_document,
 )
 from schema.env import kubernetes_version_from_k3s
+from support import _kustomize_build
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _STRICT_SUBSTITUTION = "--feature-gates=StrictPostBuildSubstitutions=true"
@@ -55,26 +56,6 @@ def _require_tool(name: str) -> str:
     if not path:
         pytest.fail(f"{name} not found on PATH (run make deps)")
     return path
-
-
-def _kustomize_build(rel_path: str) -> str:
-    """Chart defaults the values don't set pass unchecked."""
-    kustomize = _require_tool("kustomize")
-    proc = subprocess.run(
-        [
-            kustomize,
-            "build",
-            "--load-restrictor",
-            "LoadRestrictionsNone",
-            str(REPO_ROOT / rel_path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=REPO_ROOT,
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
-    return proc.stdout
 
 
 def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:

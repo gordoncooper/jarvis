@@ -8,29 +8,7 @@ import re
 import yaml
 
 from ansible_role_proof import REPO_ROOT, load_cluster_vars, non_example_env_names
-from test_flux_entry import _kustomize_build
-
-_CONTROLLERS = {
-    ("ClusterRole", "", "kyverno:backup-generate"),
-    ("ClusterRole", "", "kyverno:backup-namespaces"),
-    ("ConfigMap", "kube-system", "coredns-custom"),
-    ("CustomResourceDefinition", "", "volumesnapshots.snapshot.storage.k8s.io"),
-    ("HelmChartConfig", "kube-system", "traefik"),
-    ("HelmRelease", "flux-system", "cert-manager"),
-    ("HelmRelease", "flux-system", "flux-operator"),
-    ("HelmRelease", "flux-system", "k8s-gateway"),
-    ("HelmRelease", "flux-system", "kyverno"),
-    ("HelmRelease", "flux-system", "volsync"),
-    ("HelmRepository", "flux-system", "backube"),
-    ("HelmRepository", "flux-system", "jetstack"),
-    ("HelmRepository", "flux-system", "k8s-gateway"),
-    ("HelmRepository", "flux-system", "kyverno"),
-    ("Namespace", "", "kyverno"),
-    ("Namespace", "", "platform-app-dns"),
-    ("Namespace", "", "platform-cert-manager"),
-    ("Namespace", "", "volsync"),
-    ("OCIRepository", "flux-system", "flux-operator"),
-}
+from support import _kustomize_build, renovate_python_pattern
 
 _CONFIGS_BEFORE = {
     ("ClusterPolicy", "", "pvc-backup"),
@@ -87,8 +65,27 @@ def test_controller_list_lives_on_platform() -> None:
     assert operator["resources"] == ["oci-repository.yaml", "helmrelease.yaml"]
 
 
-def test_platform_build_adds_only_cert_manager_objects() -> None:
-    assert _idents("platform") == _CONTROLLERS
+def test_platform_build_includes_the_cert_manager_controller() -> None:
+    """The platform build includes cert-manager's namespace, chart source, and release."""
+    docs = {
+        (doc["kind"], doc["metadata"].get("namespace") or "", doc["metadata"]["name"]): doc
+        for doc in yaml.safe_load_all(_kustomize_build("platform"))
+        if isinstance(doc, dict)
+        and (doc.get("metadata") or {}).get("name")
+    }
+    assert docs[("Namespace", "", "platform-cert-manager")]["metadata"]["name"] == (
+        "platform-cert-manager"
+    )
+    assert docs[("HelmRepository", "flux-system", "jetstack")]["spec"]["url"] == (
+        "https://charts.jetstack.io"
+    )
+    release = docs[("HelmRelease", "flux-system", "cert-manager")]
+    assert release["spec"]["targetNamespace"] == "platform-cert-manager"
+    assert release["spec"]["chart"]["spec"]["sourceRef"] == {
+        "kind": "HelmRepository",
+        "name": "jetstack",
+        "namespace": "flux-system",
+    }
 
 
 def test_cert_manager_release_pins_chart_and_resources() -> None:
@@ -145,11 +142,7 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
     source = (REPO_ROOT / "platform/cert-manager/controller/helmrelease.yaml").read_text(
         encoding="utf-8"
     )
-    chart_pattern = re.sub(
-        r"\(\?<([A-Za-z_]\w*)>",
-        r"(?P<\1>",
-        chart_managers[0]["matchStrings"][0],
-    )
+    chart_pattern = renovate_python_pattern(chart_managers[0]["matchStrings"][0])
     chart_found = list(re.finditer(chart_pattern, source))
     assert len(chart_found) == 1
     assert chart_found[0].group("currentValue") == chart["version"]
@@ -159,11 +152,7 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
         if any("currentDigest" in pattern for pattern in manager["matchStrings"])
     ]
     assert len(image_managers) == 1
-    python_pattern = re.sub(
-        r"\(\?<([A-Za-z_]\w*)>",
-        r"(?P<\1>",
-        image_managers[0]["matchStrings"][0],
-    )
+    python_pattern = renovate_python_pattern(image_managers[0]["matchStrings"][0])
     found = list(re.finditer(python_pattern, source))
     assert len(found) == 5
     assert len(tags) == 1

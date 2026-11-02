@@ -23,7 +23,8 @@ help:
 deps:
 	python3 tools/install-deps
 	@test -d .venv || python3 -m venv .venv
-	.venv/bin/pip install -r requirements-dev.txt
+	.venv/bin/pip install --no-deps -r requirements-dev.txt
+	.venv/bin/pip check
 
 ci-verify: deps
 	@bash ci/ci-local-verify

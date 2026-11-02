@@ -13,8 +13,7 @@ from typing import NamedTuple
 import yaml
 
 from schema.env import EXAMPLE_ENV, is_example_env
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
 K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"
 FLUX_OPERATOR_ROLE_DIR = ANSIBLE_DIR / "roles" / "flux-operator"

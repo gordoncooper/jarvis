@@ -5,11 +5,10 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT as _ROOT
 _TOOLS_LIB = _ROOT / "tools" / "lib"
 _CHECKS_LIB = _ROOT / "ci" / "checks" / "lib"
 for _entry in (_ROOT, _TOOLS_LIB, _CHECKS_LIB):

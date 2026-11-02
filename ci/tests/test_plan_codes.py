@@ -8,8 +8,7 @@ from pathlib import Path
 
 from _contract_md import missing_contract_roots
 from _plan_codes import scan_plan_codes
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT as _REPO_ROOT
 
 
 def test_seeded_plan_codes_fail(tmp_path: Path) -> None:
@@ -50,6 +49,52 @@ def test_plan_codes_outside_product_docs_pass(tmp_path: Path) -> None:
     (tmp_path / "docs" / "clean.md").write_text("No codes here.\n", encoding="utf-8")
 
     assert scan_plan_codes(tmp_path) == []
+
+
+def test_plan_code_gaps_fail(tmp_path: Path) -> None:
+    """A space in §, OQ-7, an upper-case phase suffix, R4a, and J<n> are plan codes."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "gaps.md").write_text(
+        "See § 5, OQ-7, P0a, P0A, P4b, P4B, R4a, and J16.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "RUNBOOK.md").write_text("J7\n", encoding="utf-8")
+    (tmp_path / "readme.md").write_text("OQ-1\n", encoding="utf-8")
+    (tmp_path / "README.txt").write_text("R4a\n", encoding="utf-8")
+    assert scan_plan_codes(tmp_path) == [
+        "README.txt:1: R4a",
+        "RUNBOOK.md:1: J7",
+        "readme.md:1: OQ-1",
+        "docs/gaps.md:1: § 5",
+        "docs/gaps.md:1: OQ-7",
+        "docs/gaps.md:1: P0a",
+        "docs/gaps.md:1: P0A",
+        "docs/gaps.md:1: P4b",
+        "docs/gaps.md:1: P4B",
+        "docs/gaps.md:1: R4a",
+        "docs/gaps.md:1: J16",
+    ]
+
+
+def test_plan_code_lookalikes_pass(tmp_path: Path) -> None:
+    """P100, P40, and P256 are not phases. F<n> and B<n> stay unmatched."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "gpus.md").write_text(
+        "GPU names P100, P40, and P256. Findings F22 and B5. Product B2.\n",
+        encoding="utf-8",
+    )
+    assert scan_plan_codes(tmp_path) == []
+
+
+def test_known_plan_code_collisions_still_fail(tmp_path: Path) -> None:
+    """P4, R2, and D3 still match. They are known collisions."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "collide.md").write_text("P4 R2 D3\n", encoding="utf-8")
+    assert scan_plan_codes(tmp_path) == [
+        "docs/collide.md:1: P4",
+        "docs/collide.md:1: R2",
+        "docs/collide.md:1: D3",
+    ]
 
 
 def test_ordinary_words_pass(tmp_path: Path) -> None:

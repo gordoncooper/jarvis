@@ -152,7 +152,7 @@ How to tell it worked: `HOLD lifted` when a hold was set, `SUMMARY` with restore
 make drill ENV=<env>
 ```
 
-Uses `~/.kube/jarvis-<env>.yaml` and checks both env markers. It refuses a rebuild hold, an existing `platform-drill` namespace, leftover drill pods in `platform-backups`, or an existing drill repository path. Leftovers point to `make drill-cleanup ENV=<env>`.
+Uses `~/.kube/jarvis-<env>.yaml` and checks both env markers. Before any change, including `make drill-cleanup`, it reads CronJob `platform-backups/etcd-snapshots` and stops when that CronJob is missing or its image is not digest-pinned `restic/restic`. `make drill` refuses a rebuild hold, an existing `platform-drill` namespace, leftover drill pods in `platform-backups`, or an existing drill repository path. Leftovers point to `make drill-cleanup ENV=<env>`.
 
 Repository preflight uses its own short-lived backup-node pod with the rest-server hostPath mounted read-only, and removes that pod before continuing. The pod image comes from the live `etcd-snapshots` CronJob.
 
@@ -171,15 +171,10 @@ How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume chec
 
 Owner-run. It is not a make target and it is not part of the drill. Do not print Secret values. Do not run it as a drill on the live env.
 
-Not runnable from a node yet. No node has `restic` installed, and `rest:http://restic.platform-backups.svc.cluster.local:8000/` does not resolve from a node. These steps cannot be run as written:
+k3s writes snapshot files on the server node to `<backup_path>/etcd-snapshots`. That directory is `etcd-snapshot-dir` in the k3s config. The reset uses one of those files. It does not use restic, and it does not need the cluster to be up. Run these steps as root on the server node.
 
-1. Set `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` from Secret `backups-restic`.
-2. Set `RESTIC_REPOSITORY` to that Secret's prefix plus `host-etcd-snapshots`.
-3. On the server node, run `restic snapshots`, then `restic restore <id> --target <dir> --include /snapshots/<file>`. The k3s file would land at `<dir>/snapshots/<file>`.
-
-Once that snapshot file is already on the server node, this does run:
-
-4. Stop k3s. Run `/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path=<dir>/snapshots/<file>` once. Start k3s.
+1. Run `ls -l <backup_path>/etcd-snapshots` and choose a file.
+2. Stop k3s (`systemctl stop k3s`). Run `/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path=<backup_path>/etcd-snapshots/<file>` once. Start k3s (`systemctl start k3s`).
 
 What it changes: the node's k3s datastore is replaced by that snapshot.
 
@@ -194,3 +189,4 @@ k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the or
 - There is no on-demand backup. The policy does not set `trigger.manual`. VolSync ignores the schedule while `trigger.manual` is set.
 - Restore uses no VolumeSnapshot, volume populator, or snapshot class.
 - etcd cluster-reset is not a make target and is not part of the drill.
+- An older snapshot that exists only in the restic copy has no owner-run path yet.

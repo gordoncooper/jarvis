@@ -1,14 +1,10 @@
 import json
 import re
-from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _js_to_python(pattern: str) -> str:
-    return re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", pattern)
+from support import REPO_ROOT as ROOT
+from support import renovate_python_pattern as _js_to_python
 
 
 def test_each_env_flux_instance_version_is_a_renovate_pin() -> None:

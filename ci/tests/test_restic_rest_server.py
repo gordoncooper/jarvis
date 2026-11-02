@@ -8,7 +8,8 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT as ROOT
+
 _FLAGS = ("--append-only", "--no-auth", "--private-repos")
 
 

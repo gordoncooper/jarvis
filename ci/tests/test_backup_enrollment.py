@@ -10,9 +10,8 @@ import pytest
 import yaml
 
 from ansible_role_proof import non_example_env_names
-from test_flux_entry import _kustomize_build
-
-ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT as ROOT
+from support import _kustomize_build, renovate_python_pattern
 
 
 def _docs(path: Path) -> list[dict]:
@@ -43,11 +42,7 @@ def test_kyverno_chart_pins_and_controllers() -> None:
         and any("registryUrl" in pattern for pattern in manager["matchStrings"])
     ]
     assert len(chart_managers) == 1
-    chart_pattern = re.sub(
-        r"\(\?<([A-Za-z_]\w*)>",
-        r"(?P<\1>",
-        chart_managers[0]["matchStrings"][0],
-    )
+    chart_pattern = renovate_python_pattern(chart_managers[0]["matchStrings"][0])
     chart_found = list(re.finditer(chart_pattern, source))
     assert len(chart_found) == 1
     assert chart_found[0].group("currentValue") == chart["version"]

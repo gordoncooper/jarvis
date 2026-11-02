@@ -2,25 +2,20 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT, load_tool
+
 SECRET_VALUE = "SHOULD_NOT_PRINT"
 NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
 
-_LOADER = SourceFileLoader("verify_tool", str(REPO_ROOT / "tools" / "verify" / "run"))
-_SPEC = importlib.util.spec_from_loader(_LOADER.name, _LOADER)
-assert _SPEC is not None
-verify_tool = importlib.util.module_from_spec(_SPEC)
-_LOADER.exec_module(verify_tool)
+verify_tool = load_tool("verify_tool", REPO_ROOT / "tools" / "verify" / "run")
 
 
 def _completed(

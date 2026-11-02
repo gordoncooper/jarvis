@@ -8,7 +8,7 @@ import re
 import yaml
 
 from ansible_role_proof import REPO_ROOT
-from test_flux_entry import _kustomize_build
+from support import _kustomize_build, renovate_python_pattern
 
 
 def test_app_dns_service_zone_forward_and_resources() -> None:
@@ -74,8 +74,7 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
     def _matches(manager: dict) -> list[re.Match[str]]:
         found = []
         for pattern in manager["matchStrings"]:
-            # Renovate uses RE2 named groups; Python's re uses ?P<name>.
-            python_pattern = re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", pattern)
+            python_pattern = renovate_python_pattern(pattern)
             match = re.search(python_pattern, source)
             if match is not None:
                 found.append(match)

@@ -31,6 +31,7 @@ from lib._env import (  # noqa: E402
     tool_env,
     validate_cluster,
 )
+from lib._etcd_image import ImageError, etcd_snapshot_image  # noqa: E402
 
 NAMESPACE = "platform-drill"
 PVC = "drill"
@@ -537,7 +538,13 @@ def _run(
     try:
         repository_values(REPO_ROOT, env)
         validate_cluster(kubectl, env)
+        try:
+            image = etcd_snapshot_image(kubectl)
+        except ImageError as exc:
+            raise DrillError(str(exc)) from exc
         etcd_template, cleanup_template = _templates(kubectl)
+        etcd_template["image"] = image
+        cleanup_template["image"] = image
         if cleanup_only:
             if not _cleanup(kubectl, cleanup_template):
                 return 1

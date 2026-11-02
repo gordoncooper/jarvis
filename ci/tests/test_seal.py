@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import os
 import shlex
 import shutil
 import subprocess
-import sys
 import textwrap
 import time
 from pathlib import Path
@@ -16,19 +13,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT, load_tool
+
 SEAL = REPO_ROOT / "tools" / "seal"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 
 
 def _load_seal():
-    loader = importlib.machinery.SourceFileLoader("seal_tool", str(SEAL))
-    spec = importlib.util.spec_from_loader("seal_tool", loader)
-    assert spec is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    loader.exec_module(mod)
-    return mod
+    return load_tool("seal_tool", SEAL)
 
 
 def _require_tool(name: str) -> str:

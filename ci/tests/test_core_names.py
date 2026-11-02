@@ -10,7 +10,7 @@ import yaml
 
 from _core_names import OwnerNameUnset, format_violations, scan_core_names
 from schema.env import EXAMPLE_ENV, repo_owner_handle
-from test_env_schema import _valid_cluster_vars, _write_env
+from support import _valid_cluster_vars, _write_env
 
 _FIXTURE_OWNER_NAME = "Zzownername"
 _HOME_PREFIX = "/" + "home" + "/"
