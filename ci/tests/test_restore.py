@@ -543,7 +543,7 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
         (True, "restic/restic:latest", "must be restic/restic@sha256:"),
         (True, "restic/restic@sha256:" + ("a" * 63), "must be restic/restic@sha256:"),
         (True, "other/restic@sha256:" + ("b" * 64), "must be restic/restic@sha256:"),
-        (True, "restic/restic:0.18@sha256:" + ("c" * 64), "must be restic/restic@sha256:"),
+        (True, "restic/restic:latest@sha256:" + ("c" * 64), "must be restic/restic@sha256:"),
         (True, "restic/restic@sha256:" + ("A" * 64), "must be restic/restic@sha256:"),
         (True, "restic/restic@sha256:" + ("d" * 64) + "\n", "must be restic/restic@sha256:"),
         (True, "restic/restic@sha256:" + ("e" * 64) + "x", "must be restic/restic@sha256:"),

@@ -16,6 +16,14 @@ for _entry in (_ROOT, _TOOLS_LIB, _CHECKS_LIB):
         sys.path.insert(0, str(_entry))
 
 
+@pytest.fixture(scope="session")
+def example_copy(tmp_path_factory: pytest.TempPathFactory):
+    """One bootstrapped copy of env-00 for the structural env rules."""
+    from support import bootstrap_example_copy
+
+    return bootstrap_example_copy(tmp_path_factory.mktemp("example-copy"))
+
+
 def ci_mode() -> bool:
     return os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 

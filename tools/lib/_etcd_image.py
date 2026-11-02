@@ -14,7 +14,11 @@ from . import _env
 
 ETCD_NAMESPACE = "platform-backups"
 ETCD_CRONJOB = "etcd-snapshots"
-_RESTIC_IMAGE = re.compile(r"restic/restic@sha256:[0-9a-f]{64}")
+# Digest-only, or a release tag: digits and dots, optional leading v.
+# latest, edge, and a partial tag such as 0.18 are not restic releases.
+_RESTIC_IMAGE = re.compile(
+    r"restic/restic(?::v?\d+\.\d+\.\d+)?@sha256:[0-9a-f]{64}"
+)
 
 Kubectl = Callable[..., CompletedProcess[str]]
 
@@ -28,7 +32,8 @@ class ImageError(Exception):
 def etcd_snapshot_image(kubectl: Kubectl) -> str:
     """Image of CronJob platform-backups/etcd-snapshots.
 
-    The image must be restic/restic@sha256: and 64 hex digits. A missing
+    The image must be restic/restic@sha256: and 64 hex digits, or the same
+    with a release tag (digits and dots, optional leading v). A missing
     CronJob, a missing image, or any other text fails.
     """
     what = f"CronJob {ETCD_NAMESPACE}/{ETCD_CRONJOB}"
@@ -50,6 +55,7 @@ def etcd_snapshot_image(kubectl: Kubectl) -> str:
         raise ImageError(f"{what} has no container image")
     if _RESTIC_IMAGE.fullmatch(image) is None:
         raise ImageError(
-            f"{what} image must be restic/restic@sha256: and 64 hex digits"
+            f"{what} image must be restic/restic@sha256: and 64 hex digits, "
+            "with an optional version tag"
         )
     return image

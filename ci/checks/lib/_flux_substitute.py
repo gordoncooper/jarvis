@@ -20,6 +20,7 @@ from typing import Iterable, Iterator
 import yaml
 
 from _manifests import ref_of
+from schema.env import EXAMPLE_ENV
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _SUBSTITUTE_KEY = "kustomize.toolkit.fluxcd.io/substitute"
@@ -71,6 +72,10 @@ def _kustomization_violations(
     path = spec.get("path")
     if not isinstance(path, str) or not path.strip():
         return violations + [FluxSubstituteViolation(env_rel, f"{ref}: spec.path is unset")]
+    # The example lists bootstrap secrets that are not in Git. A copy builds
+    # this path after bootstrap-secrets. The example tree does not.
+    if _example_platform_configs(env_rel, path):
+        return violations
     docs, error = _build(root, path.strip().removeprefix("./"))
     if error:
         return violations + [FluxSubstituteViolation(env_rel, f"{ref}: {error}")]
@@ -140,6 +145,12 @@ def _substitute_disabled(doc: dict) -> bool:
         isinstance(metadata.get(field), dict) and metadata[field].get(_SUBSTITUTE_KEY) == "disabled"
         for field in ("labels", "annotations")
     )
+
+
+def _example_platform_configs(env_rel: str, path: str) -> bool:
+    if not env_rel.startswith(f"envs/{EXAMPLE_ENV}/"):
+        return False
+    return path.strip().removeprefix("./") == f"envs/{EXAMPLE_ENV}/flux/platform-configs"
 
 
 def _namespace(doc: dict) -> str:

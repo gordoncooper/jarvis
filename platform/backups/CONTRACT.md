@@ -19,7 +19,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - Target path, retention counts, `backup_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
 - The backup-role node (`role.<dns_suffix>/backup=true`) for the rest-server hostPath.
 - The control-plane node (`role.<dns_suffix>/control_plane=true`), where k3s writes the snapshot files.
-- `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` and 64 hex digits).
+- `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
 
 ## Health
 
@@ -70,7 +70,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - `concurrencyPolicy` is `Forbid`.
 - Each run forgets with `backup_retention_daily`, `backup_retention_weekly`, and `backup_retention_monthly`, then prunes.
 - The snapshot host is the fixed name `etcd-snapshots`, so retention is one group across runs.
-- The image is official `restic/restic`, digest-pinned. Renovate updates the digest.
+- The image is official `restic/restic:<version>@sha256:`, digest-pinned. Renovate updates the version and the digest.
 - The container requests `100m` CPU and `128Mi` memory, limits memory to `256Mi`, and sets no CPU limit.
 - `backup: paused` is how a restore holds one PVC. The policy sets ReplicationSource `spec.paused` from that annotation or from ConfigMap `kube-system/backup-rebuild-hold` (`to_boolean`).
 - The hold's apiCall `default` is the string `false`, so a missing ConfigMap is not paused.

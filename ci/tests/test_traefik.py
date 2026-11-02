@@ -7,10 +7,10 @@ import re
 
 import yaml
 
-from ansible_role_proof import REPO_ROOT, load_cluster_vars, non_example_env_names
-from support import _kustomize_build
+from ansible_role_proof import REPO_ROOT, load_cluster_vars
+from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 
-# The example env keeps a placeholder k3s_version and is not a cluster pin.
+# The example env's pin is the contract pin. The check runs on real envs and a copy.
 _CHECKED_LINE = re.compile(
     r"^-\s+Checked: bundled Traefik chart (?P<chart>v\d+) on k3s "
     r"(?P<k3s>v\d+\.\d+\.\d+\+k3s\d+)\.$",
@@ -66,14 +66,14 @@ def _k3s_mismatches(contract: str, versions: dict[str, str]) -> list[str]:
     return sorted(env for env, version in versions.items() if version != pinned)
 
 
-def test_env_k3s_version_matches_traefik_contract() -> None:
+def test_env_k3s_version_matches_traefik_contract(example_copy: ExampleCopy) -> None:
+    """Each full env's k3s_version is the pin the Traefik contract checks."""
     contract = (REPO_ROOT / "platform/traefik/CONTRACT.md").read_text(encoding="utf-8")
-    envs = non_example_env_names()
-    assert envs
     versions = {
-        env: str(load_cluster_vars(env=env)["k3s_version"])
-        for env in envs
+        env: str(load_cluster_vars(root, env=env)["k3s_version"])
+        for root, env in real_and_copy_envs(example_copy)
     }
+    assert versions
     assert _k3s_mismatches(contract, versions) == []
 
 

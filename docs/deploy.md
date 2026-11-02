@@ -6,7 +6,7 @@ From a fresh copy of this repo to a running cluster, then `make verify` and `mak
 
 - amd64 Ubuntu Server nodes. Exactly one host has the `control_plane` role. A host with the `gpu` role must have an NVIDIA device. The opening play of `site.yml` checks this before it changes a node.
 - Internet access during the build, on the nodes and on the machine that runs the playbook.
-- Encrypting needs only the public age recipient in `.sops.yaml`. The private key is needed to decrypt. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. `site.yml` reads the private key to create `flux-system/sops-age` when that secret is absent. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. Keep the private key offline except for those reads.
+- Encrypting needs the public age recipient in `.sops.yaml`. The private key decrypts. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. `site.yml` reads the private key whenever that file exists, including when `flux-system/sops-age` is already present, and it refuses a file that is not mode 0600 or not owned by the user running the play. When the secret is absent, that read creates it. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. `tools/prep-node` can create a missing key or read one that is already there. Keep the private key offline except for those reads.
 - Inventory hostnames must resolve from the controller and from every node.
 - A Git repository Flux can fetch over https. `flux_git_repo_url` is that remote.
 - The GitHub Actions repository variable `OWNER_NAME`, set to the owner's personal name. `make ci-verify` needs the same value in the environment. An unset value fails with a message that names `OWNER_NAME`.
@@ -30,19 +30,16 @@ Installs the pinned `sops`, `age`, `age-keygen`, `kubectl`, `kustomize`, `kubeco
 
 ## New env
 
-Create the env empty. Do not copy an existing env folder or its secrets, and do not retarget one.
+Copy `envs/env-00` to `envs/<env>`. Copy that example only, never a real env and never its secrets.
 
-1. Add `envs/<env>/values/` (`cluster-vars.yaml`, `hermes.yaml`, `apps.yaml`) and `envs/<env>/inventory/hosts.yml` with that env's own values and hosts.
-2. Add an age creation rule in the repo root `.sops.yaml` for `envs/<env>/secrets/`.
-3. `make bootstrap-secrets ENV=<env>`
-4. Render the ConfigMap with `python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`.
-5. Add the rest of `envs/<env>/flux/`, with every git path under `envs/<env>/`:
-   - `flux-instance.yaml`: sync `url`, `ref` and `path` are this env's `flux_git_repo_url`, `flux_git_ref` and `envs/<env>/flux`. It is the env's only Flux version pin. `site.yml` applies it once on a new cluster, and stops before any change when it is missing.
-   - `kustomizations/`: the four Flux Kustomizations `platform-controllers` (`./platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./services`) and `apps` (`./apps`), chained in that order with `dependsOn`.
-   - `platform-configs/kustomization.yaml`: `platform/configs` plus this env's `secrets/` files.
-   - `kustomization.yaml`: the generated ConfigMap, the FluxInstance and the four Kustomizations.
+1. Replace the values in `envs/<env>/values/` and the hosts in `envs/<env>/inventory/hosts.yml`. Set `jarvis_env` to `<env>`. Every `envs/env-00/` path under `flux/` must name `<env>`.
+2. Run `tools/prep-node` for the first host ([Prepare a node](#prepare-a-node)). It can create the age private key, or read one that is already there, and it prints the public key. It rewrites an age recipient that already exists. It does not add a missing creation rule.
+3. Add one age creation rule in the repo root `.sops.yaml` for `envs/<env>/secrets/`, using that public key.
+4. `make bootstrap-secrets ENV=<env>`
+5. Render the ConfigMap with `python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`. prep-node also rewrites that file when it already exists.
+6. Commit `envs/<env>/` and `.sops.yaml`. Do not commit the age private key. Push to the branch `flux_git_ref` names, then run `site.yml` as below.
 
-Produces `envs/<env>/` with values, inventory, an age rule, bootstrap secrets, the rendered ConfigMap, and the Flux entry. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). Step 3 runs from the repo root. Known ordering issue: these steps run before `tools/prep-node`. If prep-node creates the age key, step 2 could not yet name that key in `.sops.yaml`, and step 3 could not encrypt with it. After node prep, repeat steps 2 and 3. A second `make bootstrap-secrets` changes nothing once the files exist.
+The copy already has `flux/`: `flux-instance.yaml` (sync `url`, `ref` and `path` are this env's `flux_git_repo_url`, `flux_git_ref` and `envs/<env>/flux`; it is the env's only Flux version pin), the four Kustomizations `platform-controllers` (`./platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./services`) and `apps` (`./apps`), chained with `dependsOn`, and `platform-configs/kustomization.yaml`. That list is `platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`. Step 4 creates those files, so the list needs no hand edit. `k3s_version`, `k3s_sha256`, and the Flux version pin are already set. `site.yml` applies the FluxInstance once on a new cluster, and stops before any change when it is missing. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). A second `make bootstrap-secrets` changes nothing once the files exist.
 
 ## Prepare a data disk
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -17,8 +18,10 @@ from ansible_role_proof import (
     example_flux_entry,
     load_cluster_vars,
     playbook_recap_field,
+    roles_inventory_path,
 )
 from conftest import require_cli
+from support import REPO_ROOT, bootstrap_example_copy
 
 _REQUIRED = (
     "k3s_version",
@@ -284,18 +287,9 @@ def test_systemctl_probe_error_is_not_treated_as_inactive(tmp_path: Path) -> Non
     _assert_unchanged(output)
 
 
-def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
-    """A host that passes the opening asserts changes nothing, including on --check."""
-    require_cli("ansible-playbook")
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=4)
-    inventory = tmp_path / "hosts.yml"
-    _inventory(inventory)
-    vars_path = tmp_path / "cluster-vars.yaml"
-    _vars_file(vars_path)
-    play = tmp_path / "play.yml"
+def _write_opening_play(path: Path, *, bin_dir: Path, vars_file: str) -> None:
     tasks = ANSIBLE_DIR / "tasks"
-    play.write_text(
+    path.write_text(
         textwrap.dedent(
             f"""\
             ---
@@ -305,7 +299,7 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
               become: false
               any_errors_fatal: true
               vars_files:
-                - {vars_path}
+                - {vars_file}
               environment:
                 PATH: "{bin_dir}:/usr/bin:/bin"
               tasks:
@@ -320,6 +314,19 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
+    """A host that passes the opening asserts changes nothing, including on --check."""
+    require_cli("ansible-playbook")
+    bin_dir = tmp_path / "bin"
+    _install_systemctl(bin_dir, active_rc=4)
+    inventory = tmp_path / "hosts.yml"
+    _inventory(inventory)
+    vars_path = tmp_path / "cluster-vars.yaml"
+    _vars_file(vars_path)
+    play = tmp_path / "play.yml"
+    _write_opening_play(play, bin_dir=bin_dir, vars_file=str(vars_path))
     flux_instance = example_flux_entry(tmp_path).instance_file
     extra = [
         "-e",
@@ -354,3 +361,53 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
     run(check=False)
     run(check=False)
     run(check=True)
+
+
+def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> None:
+    """group_vars resolves envs/<jarvis_env>/flux/flux-instance.yaml, and that assert passes."""
+    require_cli("ansible-playbook")
+    hosts = (
+        REPO_ROOT / "ci/tests/fixtures/env-shapes/single-node/hosts.yml"
+    ).read_text(encoding="utf-8")
+    copy = bootstrap_example_copy(tmp_path, hosts_text=hosts)
+    playbook_dir = copy.root / "infra" / "ansible"
+    (playbook_dir / "group_vars").mkdir(parents=True)
+    shutil.copy(ANSIBLE_DIR / "group_vars" / "all.yml", playbook_dir / "group_vars" / "all.yml")
+    playbook = playbook_dir / "open.yml"
+    bin_dir = tmp_path / "bin"
+    _install_systemctl(bin_dir, active_rc=4)
+    _write_opening_play(
+        playbook, bin_dir=bin_dir, vars_file='"{{ jarvis_cluster_vars }}"'
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    result = subprocess.run(
+        [
+            "ansible-playbook",
+            str(playbook),
+            "-i",
+            str(copy.env_dir / "inventory" / "hosts.yml"),
+            "-i",
+            str(roles_inventory_path()),
+            "-e",
+            "ansible_connection=local",
+            "-e",
+            "ansible_become=false",
+            "-e",
+            f"jarvis_cluster_vars={copy.env_dir / 'values' / 'cluster-vars.yaml'}",
+            *_k3s_paths(tmp_path),
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "Require the env FluxInstance in Git" in output
+    assert "flux-instance.yaml is missing" not in output
+    assert "PLAY [Base OS]" not in output
+    assert playbook_recap_field(output, "changed") == 0

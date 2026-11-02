@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
+from subprocess import CompletedProcess
 
+import pytest
 import yaml
 
 from support import REPO_ROOT as ROOT
@@ -43,7 +46,9 @@ def test_rest_server_contract_rules() -> None:
     pod = deploy["spec"]["template"]["spec"]
     assert pod["nodeSelector"]["role.${dns_suffix}/backup"] == "true"
     container = pod["containers"][0]
-    assert re.fullmatch(r"restic/rest-server@sha256:[a-f0-9]{64}", container["image"])
+    assert re.fullmatch(
+        r"restic/rest-server:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"]
+    )
     rendered = "\n".join(
         [
             *(container.get("command") or []),
@@ -78,7 +83,9 @@ def test_renovate_tracks_the_rest_server_digest() -> None:
         for line in (ROOT / "platform/backups/rest-server.yaml").read_text(encoding="utf-8").splitlines()
         if line.strip().startswith("image:")
     )
-    assert re.fullmatch(r"image: restic/rest-server@sha256:[a-f0-9]{64}", image_line)
+    assert re.fullmatch(
+        r"image: restic/rest-server:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", image_line
+    )
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [
         manager
@@ -89,7 +96,9 @@ def test_renovate_tracks_the_rest_server_digest() -> None:
     manager = managers[0]
     assert manager["datasourceTemplate"] == "docker"
     assert any(
-        "restic/rest-server" in pattern and "currentDigest" in pattern
+        "restic/rest-server" in pattern
+        and "currentDigest" in pattern
+        and "currentValue" in pattern
         for pattern in manager["matchStrings"]
     )
 
@@ -136,7 +145,7 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     pod = spec["jobTemplate"]["spec"]["template"]["spec"]
     assert pod["nodeSelector"]["role.${dns_suffix}/control_plane"] == "true"
     container = pod["containers"][0]
-    assert re.fullmatch(r"restic/restic@sha256:[a-f0-9]{64}", container["image"])
+    assert re.fullmatch(r"restic/restic:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"])
     volume = next(item for item in pod["volumes"] if item.get("hostPath", {}).get("path") == snapshot_path)
     mount = next(item for item in container["volumeMounts"] if item["name"] == volume["name"])
     assert mount["readOnly"] is True
@@ -168,6 +177,60 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     assert len(managers) == 1
     assert managers[0]["datasourceTemplate"] == "docker"
     assert any(
-        "restic/restic" in pattern and "currentDigest" in pattern
+        "restic/restic" in pattern and "currentDigest" in pattern and "currentValue" in pattern
         for pattern in managers[0]["matchStrings"]
     )
+
+
+def _etcd_kubectl(image: str):
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    from lib._etcd_image import etcd_snapshot_image
+
+    body = {
+        "spec": {
+            "jobTemplate": {
+                "spec": {
+                    "template": {"spec": {"containers": [{"image": image}]}},
+                }
+            }
+        }
+    }
+
+    def kubectl(args: list[str]) -> CompletedProcess[str]:
+        return CompletedProcess(args, 0, json.dumps(body), "")
+
+    return etcd_snapshot_image, kubectl
+
+
+def test_versioned_etcd_image_is_accepted() -> None:
+    """restore and drill accept a release tag or a digest-only restic image."""
+    digest = "sha256:" + ("ab" * 32)
+    for image in (
+        f"restic/restic:0.19.1@{digest}",
+        f"restic/restic:v0.19.1@{digest}",
+        f"restic/restic@{digest}",
+    ):
+        read, kubectl = _etcd_kubectl(image)
+        assert read(kubectl) == image
+    committed = next(
+        line.strip().removeprefix("image:").strip()
+        for line in (ROOT / "platform/backups/etcd-snapshots.yaml")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip().startswith("image:") and "restic/restic" in line
+    )
+    read, kubectl = _etcd_kubectl(committed)
+    assert read(kubectl) == committed
+
+
+@pytest.mark.parametrize("tag", ["latest", "edge", "Latest", "0.18"])
+def test_nonrelease_etcd_tag_is_rejected(tag: str) -> None:
+    """latest, edge, Latest, and a partial tag are not a restic release."""
+    image = f"restic/restic:{tag}@sha256:" + ("ab" * 32)
+    read, kubectl = _etcd_kubectl(image)
+    from lib._etcd_image import ImageError
+
+    with pytest.raises(ImageError, match="must be restic/restic@sha256:"):
+        read(kubectl)

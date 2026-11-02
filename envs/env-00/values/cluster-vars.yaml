@@ -1,4 +1,5 @@
-# Example env. Invented values. Nothing here is copied from a real env.
+# Example env. Identity values are invented. k3s_version and k3s_sha256 are the
+# pin platform/traefik/CONTRACT.md checks, so a copy can run.
 jarvis_env: env-00
 dns_suffix: env-00.example
 time_zone: Etc/UTC
@@ -13,8 +14,8 @@ backup_retention_weekly: 2
 backup_retention_monthly: 3
 backup_schedule: 0 0 * * *
 
-k3s_version: v0.0.0+k3s0
-k3s_sha256: abababababababababababababababababababababababababababababababab
+k3s_version: v1.36.5+k3s1
+k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
 pod_cidr: 10.80.0.0/16
 service_cidr: 10.81.0.0/16
 app_dns_cluster_ip: 10.81.0.53

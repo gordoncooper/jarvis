@@ -12,12 +12,13 @@ those kinds stay guarded.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 import yaml
 
 from ansible_role_proof import REPO_ROOT, non_example_env_names
-from support import _kustomize_build
+from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 _Key = tuple[str, str, str]
@@ -89,8 +90,8 @@ def _pending_owner() -> set[tuple[str, _Key]]:
 _PENDING_OWNER = _pending_owner()
 
 
-def _flux_build_path(env: str, name: str) -> str:
-    path = REPO_ROOT / "envs" / env / "flux" / "kustomizations" / f"{name}.yaml"
+def _flux_build_path(env: str, name: str, root: Path = REPO_ROOT) -> str:
+    path = root / "envs" / env / "flux" / "kustomizations" / f"{name}.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     spec_path = doc["spec"]["path"]
     assert isinstance(spec_path, str) and spec_path.startswith("./")
@@ -114,10 +115,10 @@ def _index(manifests: str) -> dict[_Key, dict]:
     return found
 
 
-def _applied(env: str) -> dict[_Key, dict]:
+def _applied(env: str, root: Path = REPO_ROOT) -> dict[_Key, dict]:
     applied: dict[_Key, dict] = {}
     for name in ("platform-controllers", "platform-configs"):
-        applied.update(_index(_kustomize_build(_flux_build_path(env, name))))
+        applied.update(_index(_kustomize_build(_flux_build_path(env, name, root), root=root)))
     return applied
 
 
@@ -158,11 +159,10 @@ def _pending_skip(env: str, applied: Mapping[_Key, dict]) -> set[_Key]:
     }
 
 
-def test_flux_paths_guard_protected_kinds() -> None:
-    envs = non_example_env_names()
-    assert envs
-    for env in envs:
-        applied = _applied(env)
+def test_flux_paths_guard_protected_kinds(example_copy: ExampleCopy) -> None:
+    """Protected kinds on platform-controllers and platform-configs keep prune disabled."""
+    for root, env in real_and_copy_envs(example_copy):
+        applied = _applied(env, root)
         unguarded, absent = _unguarded(
             applied,
             exceptions=_EXCEPTIONS,

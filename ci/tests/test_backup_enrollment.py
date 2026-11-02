@@ -6,10 +6,9 @@ import json
 import re
 from pathlib import Path
 
-import pytest
 import yaml
 
-from ansible_role_proof import non_example_env_names
+from support import ExampleCopy, real_and_copy_envs
 from support import REPO_ROOT as ROOT
 from support import _kustomize_build, renovate_python_pattern
 
@@ -182,11 +181,18 @@ def test_enrollment_policy_rules() -> None:
     assert annotation["volsync.backube/privileged-movers"] == "true"
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_enrollment_policy_is_on_the_platform_configs_build(env: str) -> None:
+def test_enrollment_policy_is_on_the_platform_configs_build(example_copy: ExampleCopy) -> None:
+    """ClusterPolicy pvc-backup is on the platform-configs build, and not a ReplicationSource."""
+    for root, env in real_and_copy_envs(example_copy):
+        _assert_enrollment_on_platform_configs(root, env)
+
+
+def _assert_enrollment_on_platform_configs(root, env: str) -> None:
     docs = [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux/platform-configs"))
+        for doc in yaml.safe_load_all(
+            _kustomize_build(f"envs/{env}/flux/platform-configs", root=root)
+        )
         if isinstance(doc, dict)
     ]
     policies = [doc for doc in docs if doc.get("kind") == "ClusterPolicy"]
