@@ -229,24 +229,107 @@ def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
     return errors
 
 
-_TAG_NAME = r"[A-Za-z][A-Za-z0-9_-]*"
-_TAGS_ARG = re.compile(rf"--tags[ \t]+({_TAG_NAME}(?:[ \t]*,[ \t]*{_TAG_NAME})*)")
+_TAG_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 _PLAY_TAG_LINE = re.compile(r"^  play #\d+ \([^)]*\):.*\tTAGS: \[(.*)\]\s*$")
 _TASK_TAG_LINE = re.compile(r"^      TASK TAGS: \[(.*)\]\s*$")
 _LIST_TAGS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
+_TAGS_MARK = "--tags"
 
 
 def _tag_list(body: str) -> set[str]:
     return {part.strip() for part in body.split(",") if part.strip()}
 
 
+def _skip_tag_gap(text: str, index: int) -> int:
+    """Spaces, newlines, and backslash continuations between tag tokens."""
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char in " \t\r\n":
+            index += 1
+            continue
+        if char != "\\":
+            break
+        nxt = index + 1
+        while nxt < length and text[nxt] in " \t":
+            nxt += 1
+        if nxt < length and text[nxt] == "\n":
+            index = nxt + 1
+            continue
+        if nxt < length and text[nxt] == "\r":
+            index = nxt + 2 if nxt + 1 < length and text[nxt + 1] == "\n" else nxt + 1
+            continue
+        break
+    return index
+
+
+def _parse_tags_argument(text: str, index: int) -> tuple[set[str], int] | None:
+    """Names after ``--tags``, or None when this occurrence is not a command."""
+    length = len(text)
+    if index < length and (text[index].isalnum() or text[index] in "-_"):
+        return None
+    index = _skip_tag_gap(text, index)
+    if index < length and text[index] == "=":
+        index = _skip_tag_gap(text, index + 1)
+    quote = ""
+    if index < length and text[index] in "\"'":
+        quote = text[index]
+        index = _skip_tag_gap(text, index + 1)
+    match = _TAG_NAME.match(text, index)
+    if match is None:
+        return None
+    names = [match.group(0)]
+    index = match.end()
+    while True:
+        if quote:
+            gap = _skip_tag_gap(text, index)
+            if gap < length and text[gap] == ",":
+                index = _skip_tag_gap(text, gap + 1)
+                match = _TAG_NAME.match(text, index)
+                if match is None:
+                    return None
+                names.append(match.group(0))
+                index = match.end()
+                continue
+            if gap < length and text[gap] == quote:
+                index = gap + 1
+                break
+            return None
+        gap = index
+        while gap < length and text[gap] in " \t":
+            gap += 1
+        if gap < length and text[gap] == ",":
+            index = _skip_tag_gap(text, gap + 1)
+            match = _TAG_NAME.match(text, index)
+            if match is None:
+                break
+            names.append(match.group(0))
+            index = match.end()
+            continue
+        break
+    return set(names), index
+
+
 def _operator_play_tags(readme: str | None = None) -> set[str]:
-    """Every ``--tags`` name the Ansible README documents, including comma-separated lists."""
+    """Every ``--tags`` name the Ansible README documents.
+
+    A comma list may wrap across lines or a backslash continuation. ``=`` and
+    quotes are part of the command. A backtick after ``--tags`` is not a command.
+    """
     if readme is None:
         readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
     names: set[str] = set()
-    for match in _TAGS_ARG.finditer(readme):
-        names.update(_tag_list(match.group(1)))
+    index = 0
+    while True:
+        found = readme.find(_TAGS_MARK, index)
+        if found < 0:
+            break
+        parsed = _parse_tags_argument(readme, found + len(_TAGS_MARK))
+        if parsed is None:
+            index = found + len(_TAGS_MARK)
+            continue
+        parsed_names, index = parsed
+        names.update(parsed_names)
     assert names, "README documents no --tags names"
     return names
 
@@ -409,16 +492,49 @@ def test_readme_tag_with_no_matching_playbook_tag_fails() -> None:
         _assert_play_order(_site_plays(), readme=readme)
 
 
-def test_play_tag_sentence_wording_does_not_change_documented_tags() -> None:
-    """Rewording or wrapping the play-tag sentence leaves the documented --tags set unchanged."""
-    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
-    original = _operator_play_tags(readme)
-    reworded = readme.replace(
-        "`k3s`, `kubeconfig`, and `flux-operator` are play tags.",
-        "`k3s`,\n`kubeconfig`, and `flux-operator` label those plays.",
-    )
-    assert "are play tags" not in reworded
-    assert _operator_play_tags(reworded) == original
+_SAME_LINE_TAGS = re.compile(
+    r"--tags[ \t]+([A-Za-z][A-Za-z0-9_-]*(?:[ \t]*,[ \t]*[A-Za-z][A-Za-z0-9_-]*)*)"
+)
+
+
+def _same_line_tags(readme: str) -> set[str]:
+    """The previous parser: a same-line ``--tags`` name, with no ``=`` or quotes."""
+    names: set[str] = set()
+    for match in _SAME_LINE_TAGS.finditer(readme):
+        names.update(_tag_list(match.group(1)))
+    return names
+
+
+@pytest.mark.parametrize(
+    ("readme", "single"),
+    [
+        (
+            "ansible-playbook site.yml --tags time,\njournald\n",
+            "ansible-playbook site.yml --tags time,journald\n",
+        ),
+        (
+            "ansible-playbook site.yml --tags time,\\\njournald\n",
+            "ansible-playbook site.yml --tags time,journald\n",
+        ),
+        (
+            "ansible-playbook site.yml --tags\ntime\n",
+            "ansible-playbook site.yml --tags time\n",
+        ),
+        (
+            "ansible-playbook site.yml --tags=time\n",
+            "ansible-playbook site.yml --tags time\n",
+        ),
+        (
+            'ansible-playbook site.yml --tags "time,journald"\n',
+            "ansible-playbook site.yml --tags time,journald\n",
+        ),
+    ],
+)
+def test_wrapped_tag_command_matches_the_single_line_form(readme: str, single: str) -> None:
+    """A wrapped, continued, assigned, or quoted --tags command yields the one-line names."""
+    expected = _operator_play_tags(single)
+    assert _operator_play_tags(readme) == expected
+    assert _same_line_tags(readme) != expected
 
 
 def test_readme_with_no_tags_commands_fails() -> None:
