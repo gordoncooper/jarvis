@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -225,8 +226,24 @@ def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
     return errors
 
 
+def _operator_play_tags() -> set[str]:
+    """Play tags the Ansible README also gives as operator ``--tags`` commands."""
+    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
+    commands = set(re.findall(r"--tags\s+([A-Za-z][A-Za-z0-9_-]*)", readme))
+    named: set[str] = set()
+    for line in readme.splitlines():
+        if "are play tags" not in line:
+            continue
+        head = line.split("are play tags", 1)[0]
+        named.update(re.findall(r"`([A-Za-z][A-Za-z0-9_-]*)`", head))
+    assert named, "README names no play tags"
+    missing = named - commands
+    assert not missing, f"README play tags have no --tags command: {sorted(missing)}"
+    return named
+
+
 def _assert_play_order(plays: list[dict[str, object]]) -> None:
-    """Play order and host targets are the safety fact, not the full play list."""
+    """Play order, host targets, and documented play tags are the safety fact."""
     fact_indexes = [index for index, play in enumerate(plays) if _is_fact_play(play)]
     assert fact_indexes == [0], plays
     fact = plays[0]
@@ -263,6 +280,15 @@ def _assert_play_order(plays: list[dict[str, object]]) -> None:
     assert plays[agent[0]].get("hosts") == "all:!control_plane"
     assert all(plays[index].get("hosts") == "control_plane" for index in kubeconfig)
     assert all(plays[index].get("hosts") == "control_plane" for index in flux)
+    for tag in sorted(_operator_play_tags()):
+        found = set(indexes(tag))
+        if tag == "k3s":
+            found.update(server)
+            found.update(agent)
+        assert found, tag
+        for index in sorted(found):
+            tags = plays[index].get("tags")
+            assert isinstance(tags, list) and tag in tags, (plays[index].get("name"), tag)
     assert all(index < min(k3s) for index in base_os)
     assert server[0] < agent[0]
     assert all(index > server[0] for index in kubeconfig)
@@ -301,6 +327,15 @@ def test_copy_before_tasks_fails() -> None:
     plays[0]["pre_tasks"] = [
         {"ansible.builtin.copy": {"dest": "/tmp/x", "content": "x"}}
     ]
+    with pytest.raises(AssertionError):
+        _assert_play_order(plays)
+
+
+def test_dropping_a_documented_tag_fails() -> None:
+    """A k3s play without the tag from the operator commands is refused."""
+    plays = _site_plays()
+    server = next(play for play in plays if "server" in _k3s_modes(play))
+    server["tags"] = [tag for tag in server.get("tags") or [] if tag != "k3s"]
     with pytest.raises(AssertionError):
         _assert_play_order(plays)
 
