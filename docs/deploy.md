@@ -108,3 +108,7 @@ Produces a scratch-volume restore and an etcd snapshot-copy check, then removes 
 ## Backups
 
 Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss. Restore and the etcd reset are in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md).
+
+## Dependency updates
+
+Renovate opens update PRs right away and never merges them; the owner chooses when to merge, and may wait a few days after a fresh release first.

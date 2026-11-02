@@ -4,18 +4,7 @@
   "automerge": false,
   "packageRules": [
     {
-      "description": "Minor, patch, and digest: 3-day hold; flip automerge to true here after P2 exit (R33).",
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      "minimumReleaseAge": "3 days",
-      "automerge": false
-    },
-    {
-      "description": "Majors are never auto-merged (R33).",
-      "matchUpdateTypes": ["major"],
-      "automerge": false
-    },
-    {
-      "description": "D5: k3s host binary is pinned in cluster-vars.yaml and changes only by PR. A bump has to re-check platform/traefik and update the bundled chart and k3s versions in platform/traefik/CONTRACT.md.",
+      "description": "k3s host binary is pinned in cluster-vars.yaml and changes only by PR. A bump has to re-check platform/traefik and update the bundled chart and k3s versions in platform/traefik/CONTRACT.md.",
       "matchDatasources": ["github-releases"],
       "matchPackageNames": ["k3s-io/k3s"],
       "enabled": false
@@ -69,7 +58,7 @@
       "enabled": false
     },
     {
-      "description": "Python dev dependencies in requirements-dev.txt update as one PR. Exact == pins stay exact. The hold and automerge rules above still apply.",
+      "description": "Python dev dependencies in requirements-dev.txt update as one PR. Exact == pins stay exact.",
       "groupName": "python-dev",
       "matchManagers": ["pip_requirements"],
       "matchFileNames": ["requirements-dev.txt"]

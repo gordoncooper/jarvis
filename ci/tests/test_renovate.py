@@ -38,11 +38,79 @@ def test_each_env_flux_instance_version_is_a_renovate_pin(example_copy: ExampleC
         assert found[0].group("currentValue") == version, rel
 
 
-def test_digest_updates_use_the_minor_patch_hold() -> None:
-    """Digest-only updates wait the same 3-day hold as minor and patch."""
-    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    rule = next(item for item in renovate["packageRules"] if "minimumReleaseAge" in item)
-    assert set(rule["matchUpdateTypes"]) >= {"minor", "patch", "digest"}
+# Release-age and pull-request delay settings. Absent keys keep Renovate's no-wait defaults.
+_RELEASE_AGE_OR_PR_DELAY = frozenset(
+    {
+        "automergeSchedule",
+        "dependencyDashboardApproval",
+        "masterIssueApproval",
+        "minimumReleaseAge",
+        "minimumReleaseAgeBehaviour",
+        "minimumReleaseAgeBuffer",
+        "prCreation",
+        "prNotPendingHours",
+        "schedule",
+        "stabilityDays",
+    }
+)
+
+
+def _renovate_config() -> dict:
+    return json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+
+
+def _delay_keys(node: object) -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in _RELEASE_AGE_OR_PR_DELAY:
+                found.append(key)
+            found.extend(_delay_keys(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_delay_keys(item))
+    return found
+
+
+def _automerge_values(node: object) -> list[object]:
+    found: list[object] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "automerge":
+                found.append(value)
+            else:
+                found.extend(_automerge_values(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_automerge_values(item))
+    return found
+
+
+def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
+    """Renovate opens every update with no release-age wait and never auto-merges."""
+    renovate = _renovate_config()
+    assert _delay_keys(renovate) == []
+    assert renovate["automerge"] is False
+    assert True not in _automerge_values(renovate)
+
+
+def test_seeded_release_age_hold_fails() -> None:
+    """A package rule that sets a release-age hold fails."""
+    renovate = _renovate_config()
+    renovate["packageRules"].append(
+        {
+            "matchUpdateTypes": ["minor", "patch", "digest"],
+            "minimumReleaseAge": "3 days",
+        }
+    )
+    assert _delay_keys(renovate) == ["minimumReleaseAge"]
+
+
+def test_seeded_package_rule_automerge_fails() -> None:
+    """A package rule that sets automerge true fails."""
+    renovate = _renovate_config()
+    renovate["packageRules"].append({"matchUpdateTypes": ["patch"], "automerge": True})
+    assert True in _automerge_values(renovate)
 
 
 def test_ansible_core_stays_on_the_2_20_line() -> None:
