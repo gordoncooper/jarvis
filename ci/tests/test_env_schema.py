@@ -523,6 +523,51 @@ def test_example_env_must_set_a_new_known_key(monkeypatch: pytest.MonkeyPatch):
     assert f"{EXAMPLE_ENV} must set every known key: drift_key" in msg
 
 
+_ABSENT = object()
+
+
+@pytest.mark.parametrize("key", sorted(env_schema._CLUSTER_VARS_REQUIRED))
+def test_required_key_set_to_null_counts_as_unset(tmp_path: Path, key: str) -> None:
+    """A required key set to null fails env-schema with the same message as an absent key."""
+    absent_root = tmp_path / "absent"
+    null_root = tmp_path / "null"
+    _write_env(absent_root)
+    _write_env(null_root)
+
+    def rewrite(root: Path, value: object) -> None:
+        path = root / "envs" / "env-test" / "values" / "cluster-vars.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(data, dict)
+        if value is _ABSENT:
+            data.pop(key)
+        else:
+            data[key] = value
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    rewrite(absent_root, _ABSENT)
+    rewrite(null_root, None)
+
+    def messages(root: Path) -> list[str]:
+        with pytest.raises(ValidationError) as excinfo:
+            validate_env_tree(root)
+        return excinfo.value.messages
+
+    null_messages = messages(null_root)
+    assert null_messages == messages(absent_root)
+    assert any(f"missing required key: {key}" in message for message in null_messages)
+
+
+def test_missing_hermes_yaml_fails(tmp_path: Path) -> None:
+    """A tmp env without values/hermes.yaml fails env-schema and names the file."""
+    env = _write_env(tmp_path)
+    (env / "values" / "hermes.yaml").unlink()
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "missing required file" in msg
+    assert "values/hermes.yaml" in msg
+
+
 def test_cli_requires_env() -> None:
     commands = (
         [sys.executable, "tools/bootstrap-secrets"],

@@ -32,6 +32,8 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 ### `values/cluster-vars.yaml`
 
+A required key that is present but null counts as unset and fails.
+
 | Field | Required | Notes |
 | --- | --- | --- |
 | `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). Never hardcoded in core (`ci/checks/core-names`). |

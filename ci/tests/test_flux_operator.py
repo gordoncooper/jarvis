@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import subprocess
@@ -16,12 +17,14 @@ from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_TASKS,
     FLUX_OPERATOR_ROLE_TEMPLATES,
     ansible_render_template,
+    env_name,
     example_flux_entry,
     load_cluster_vars,
     playbook_recap_field,
 )
 from conftest import require_cli
 from schema.env import DEFAULT_SSH_USER
+from support import REPO_ROOT
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
 
@@ -226,23 +229,160 @@ def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
     return errors
 
 
-def _operator_play_tags() -> set[str]:
-    """Play tags the Ansible README also gives as operator ``--tags`` commands."""
-    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
-    commands = set(re.findall(r"--tags\s+([A-Za-z][A-Za-z0-9_-]*)", readme))
-    named: set[str] = set()
-    for line in readme.splitlines():
-        if "are play tags" not in line:
+_TAG_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+_PLAY_TAG_LINE = re.compile(r"^  play #\d+ \([^)]*\):.*\tTAGS: \[(.*)\]\s*$")
+_TASK_TAG_LINE = re.compile(r"^      TASK TAGS: \[(.*)\]\s*$")
+_LIST_TAGS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
+_TAGS_MARK = "--tags"
+
+
+def _tag_list(body: str) -> set[str]:
+    return {part.strip() for part in body.split(",") if part.strip()}
+
+
+def _skip_tag_gap(text: str, index: int) -> int:
+    """Spaces, newlines, and backslash continuations between tag tokens."""
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char in " \t\r\n":
+            index += 1
             continue
-        head = line.split("are play tags", 1)[0]
-        named.update(re.findall(r"`([A-Za-z][A-Za-z0-9_-]*)`", head))
-    assert named, "README names no play tags"
-    missing = named - commands
-    assert not missing, f"README play tags have no --tags command: {sorted(missing)}"
-    return named
+        if char != "\\":
+            break
+        nxt = index + 1
+        while nxt < length and text[nxt] in " \t":
+            nxt += 1
+        if nxt < length and text[nxt] == "\n":
+            index = nxt + 1
+            continue
+        if nxt < length and text[nxt] == "\r":
+            index = nxt + 2 if nxt + 1 < length and text[nxt + 1] == "\n" else nxt + 1
+            continue
+        break
+    return index
 
 
-def _assert_play_order(plays: list[dict[str, object]]) -> None:
+def _parse_tags_argument(text: str, index: int) -> tuple[set[str], int] | None:
+    """Names after ``--tags``, or None when this occurrence is not a command."""
+    length = len(text)
+    if index < length and (text[index].isalnum() or text[index] in "-_"):
+        return None
+    index = _skip_tag_gap(text, index)
+    if index < length and text[index] == "=":
+        index = _skip_tag_gap(text, index + 1)
+    quote = ""
+    if index < length and text[index] in "\"'":
+        quote = text[index]
+        index = _skip_tag_gap(text, index + 1)
+    match = _TAG_NAME.match(text, index)
+    if match is None:
+        return None
+    names = [match.group(0)]
+    index = match.end()
+    while True:
+        if quote:
+            gap = _skip_tag_gap(text, index)
+            if gap < length and text[gap] == ",":
+                index = _skip_tag_gap(text, gap + 1)
+                match = _TAG_NAME.match(text, index)
+                if match is None:
+                    return None
+                names.append(match.group(0))
+                index = match.end()
+                continue
+            if gap < length and text[gap] == quote:
+                index = gap + 1
+                break
+            return None
+        gap = index
+        while gap < length and text[gap] in " \t":
+            gap += 1
+        if gap < length and text[gap] == ",":
+            index = _skip_tag_gap(text, gap + 1)
+            match = _TAG_NAME.match(text, index)
+            if match is None:
+                break
+            names.append(match.group(0))
+            index = match.end()
+            continue
+        break
+    return set(names), index
+
+
+def _operator_play_tags(readme: str | None = None) -> set[str]:
+    """Every ``--tags`` name the Ansible README documents.
+
+    A comma list may wrap across lines or a backslash continuation. ``=`` and
+    quotes are part of the command. A backtick after ``--tags`` is not a command.
+    """
+    if readme is None:
+        readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
+    names: set[str] = set()
+    index = 0
+    while True:
+        found = readme.find(_TAGS_MARK, index)
+        if found < 0:
+            break
+        parsed = _parse_tags_argument(readme, found + len(_TAGS_MARK))
+        if parsed is None:
+            index = found + len(_TAGS_MARK)
+            continue
+        parsed_names, index = parsed
+        names.update(parsed_names)
+    assert names, "README documents no --tags names"
+    return names
+
+
+def _tags_from_list_output(output: str) -> tuple[set[str], set[str]]:
+    """All tags, and the tags written on a task rather than inherited from the play."""
+    listed: set[str] = set()
+    task_tags: set[str] = set()
+    play_tags: set[str] = set()
+    for line in output.splitlines():
+        play = _PLAY_TAG_LINE.match(line)
+        if play:
+            play_tags = _tag_list(play.group(1))
+            listed.update(play_tags)
+            continue
+        task = _TASK_TAG_LINE.match(line)
+        if task:
+            tags = _tag_list(task.group(1))
+            listed.update(tags)
+            task_tags.update(tags - play_tags)
+    return listed, task_tags
+
+
+@functools.lru_cache(maxsize=1)
+def _listed_tag_sets() -> tuple[frozenset[str], frozenset[str]]:
+    """Tags from ``ansible-playbook site.yml --list-tags``, and those set on a task."""
+    require_cli("ansible-playbook")
+    run = subprocess.run(
+        [
+            "ansible-playbook",
+            "site.yml",
+            "-i",
+            str(_LIST_TAGS_INVENTORY),
+            "-e",
+            f"jarvis_cluster_vars=../../envs/{env_name()}/values/cluster-vars.yaml",
+            "--list-tags",
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr or run.stdout
+    listed, task_tags = _tags_from_list_output(run.stdout)
+    assert listed, run.stdout
+    return frozenset(listed), frozenset(task_tags)
+
+
+def _assert_play_order(
+    plays: list[dict[str, object]],
+    *,
+    readme: str | None = None,
+) -> None:
     """Play order, host targets, and documented play tags are the safety fact."""
     fact_indexes = [index for index, play in enumerate(plays) if _is_fact_play(play)]
     assert fact_indexes == [0], plays
@@ -280,7 +420,11 @@ def _assert_play_order(plays: list[dict[str, object]]) -> None:
     assert plays[agent[0]].get("hosts") == "all:!control_plane"
     assert all(plays[index].get("hosts") == "control_plane" for index in kubeconfig)
     assert all(plays[index].get("hosts") == "control_plane" for index in flux)
-    for tag in sorted(_operator_play_tags()):
+    documented = _operator_play_tags(readme)
+    listed, task_tags = _listed_tag_sets()
+    missing = sorted(documented - listed)
+    assert not missing, f"README --tags names are not playbook tags: {missing}"
+    for tag in sorted(documented - task_tags):
         found = set(indexes(tag))
         if tag == "k3s":
             found.update(server)
@@ -338,6 +482,74 @@ def test_dropping_a_documented_tag_fails() -> None:
     server["tags"] = [tag for tag in server.get("tags") or [] if tag != "k3s"]
     with pytest.raises(AssertionError):
         _assert_play_order(plays)
+
+
+def test_readme_tag_with_no_matching_playbook_tag_fails() -> None:
+    """A README --tags name that site.yml does not list fails."""
+    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
+    readme += "\nansible-playbook site.yml --tags not-a-real-tag\n"
+    with pytest.raises(AssertionError, match="not-a-real-tag"):
+        _assert_play_order(_site_plays(), readme=readme)
+
+
+@pytest.mark.parametrize(
+    ("readme", "single"),
+    [
+        (
+            "ansible-playbook site.yml --tags time,\njournald\n",
+            "ansible-playbook site.yml --tags time,journald\n",
+        ),
+        (
+            "ansible-playbook site.yml --tags time,\\\njournald\n",
+            "ansible-playbook site.yml --tags time,journald\n",
+        ),
+        (
+            "ansible-playbook site.yml --tags\ntime\n",
+            "ansible-playbook site.yml --tags time\n",
+        ),
+        (
+            "ansible-playbook site.yml --tags=time\n",
+            "ansible-playbook site.yml --tags time\n",
+        ),
+        (
+            'ansible-playbook site.yml --tags "time,journald"\n',
+            "ansible-playbook site.yml --tags time,journald\n",
+        ),
+    ],
+)
+def test_wrapped_tag_command_matches_the_single_line_form(readme: str, single: str) -> None:
+    """A wrapped, continued, assigned, or quoted --tags command yields the one-line names."""
+    assert _operator_play_tags(readme) == _operator_play_tags(single)
+
+
+def test_readme_with_no_tags_commands_fails() -> None:
+    """A README that documents no --tags names fails instead of checking nothing."""
+    with pytest.raises(AssertionError, match="no --tags"):
+        _operator_play_tags("Narrow runs are described here without commands.\n")
+
+
+def test_comma_separated_tags_commands_are_each_a_name() -> None:
+    """A documented --tags list yields every name, including a comma-separated list."""
+    readme = (
+        "ansible-playbook site.yml --tags time,journald\n"
+        "ansible-playbook site.yml --tags apt-policy, resolved\n"
+    )
+    assert _operator_play_tags(readme) == {"time", "journald", "apt-policy", "resolved"}
+
+
+def test_play_tag_inherited_by_tasks_is_not_a_task_tag() -> None:
+    """A tag that appears on tasks only because the play has it is not set on a task."""
+    output = (
+        "\n"
+        "  play #1 (all): Base OS\tTAGS: []\n"
+        "      TASK TAGS: [base-os, time]\n"
+        "\n"
+        "  play #2 (control_plane): Install k3s server\tTAGS: [k3s]\n"
+        "      TASK TAGS: [k3s]\n"
+    )
+    listed, task_tags = _tags_from_list_output(output)
+    assert listed == {"base-os", "time", "k3s"}
+    assert task_tags == {"base-os", "time"}
 
 
 def test_unrelated_play_at_the_end_passes() -> None:
