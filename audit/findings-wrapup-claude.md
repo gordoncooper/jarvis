@@ -868,7 +868,7 @@ Method: in the env-00-only scratch clone, each break was seeded into the code a 
 
 #### 4a. CONTRACT.md vs `docs/CONTRACT.template.md`
 
-All 11 contracts have the five required headings except two. `platform/flux-operator/CONTRACT.md` has no intro line (style only). `docs/code-delivery/CONTRACT.md` presents planned rows as Offers. No check enforces the headings (T11).
+All 10 contracts have the five required headings (Offers, Expects, Health, Config, Proven by). Two have problems beyond the headings: `platform/flux-operator/CONTRACT.md` has no intro line (style only), and `docs/code-delivery/CONTRACT.md` presents planned rows as Offers. No check enforces the headings (T11).
 
 | Contract | Operations needed? | Limits needed? | What it should say |
 | --- | --- | --- | --- |
@@ -936,7 +936,8 @@ Steps that are buried elsewhere:
     - The platform-manifest tests are mostly value snapshots (T07).
     - Seeded breaks: of 26 in tools, 14 were not caught; of 22 in checks and platform, 12 were not caught; of 15 in Ansible and Flux, 13 were not caught (T01–T09, T16–T18).
     - The missed breaks cluster in safety guards and templates that no test renders, not in the main paths.
-    - The env-00-only clone first gave 482/483, with the single failure caused by a parallel seed (T15). The clean rerun is recorded at the end of this section.
+    - The env-00-only clone first gave 482/483, with the single failure caused by a parallel seed (T15). A clean rerun after all seeds were reverted: see the next line.
+    - Clean rerun (`pytest -q -p no:cacheprovider ../wrapup-claude-env00/ci/tests`): result pending at this commit. If no later commit updates this line, the rerun did not finish within the audit window.
 
 ### Is the foundation ready for what comes next?
 
@@ -960,7 +961,7 @@ Steps that are buried elsewhere:
       - Their own Helm charts' default images escape digest-pin (documented).
 23. **What every one of them will need that's missing.**
     - Per-env enablement and a secrets path (F07, F08).
-    - A namespace baseline: Pod Security Admission labels, a default NetworkPolicy, and optionally ResourceQuota. A grep for `pod-security.kubernetes.io` and `NetworkPolicy` under `platform/` finds none.
+    - A namespace baseline: Pod Security Admission labels, a default NetworkPolicy, and optionally ResourceQuota. A grep for `pod-security.kubernetes.io`, `NetworkPolicy` and `ResourceQuota` across the repo finds none.
     - Health checks and alerting (observability and Gatus, "planned").
     - An auth story for web UIs reached over the tailnet: no SSO or forward-auth exists. Tailnet-only access is the stated boundary, but the assistant's chat UI will need user auth.
     - Off-host backup (F03).
@@ -1301,7 +1302,7 @@ Every file from `git ls-files` at the SHA: 248 files, 248 rows. The per-director
    - **How the evidence was gathered instead:** experiments ran through `pytest` (including a throwaway `audit-scratch/test_seed_env.py` that drives `schema.env.validate_env_tree` on a copied env). Check behaviour was proven through each check's library functions, not its wrapper's exit code.
    - **Unverified:** the `ca.crt` extensions were not parsed. F17 rests on the generator's arguments.
    - **Please check:** seeded breaks were reverted by reverse edits, not `git checkout`, so the scratch clone's cleanliness could not be confirmed with `git status`. A clean full run there (section 4, Q20) is the indirect proof. Please run `git -C ../wrapup-claude-env00 status` before removing it.
-2. **The brief says "PRs are the history"** and also asks for "no plan codes". The rulebook, PR template and `rulebooks/coding-agents.md` use plan codes by design, and I treated them as out of product scope. If adopters receive those files in their copy (they do today), consider moving the build workflow out of the product tree entirely (`.github/` for the template, a separate repo or branch for rulebooks).
+2. **The brief says "PRs are the history"** and also asks for "no plan codes". The rulebook (`rulebooks/coding-agents.md`) and the PR template use plan codes by design, and I treated them as out of product scope. If adopters receive those files in their copy (they do today), consider moving the build workflow out of the product tree entirely (`.github/` for the template, a separate repo or branch for rulebooks).
 3. **"Nothing in Jarvis may depend on today's build tools."** `build_agent: cursor` (schema), the code-delivery contract's Cursor keys, and `ci/checks/cli-deny` (a CI check on `.cursor/cli.json`) are product-side dependencies on today's tooling. I reported the first two as F27, and cli-deny as T08. Please confirm cli-deny should leave the product CI, or move to a "build workflow" job.
 4. **Disk-loss scope.** The backups contract deliberately limits itself to "mistakes and rollback, not disk loss", and I rated the missing off-host copy (F03) high anyway, because Q13 asks about disk death and the product targets single-node adopters. If off-host backup is an intended later phase, F03 belongs in the deferred list (Q24) instead, but it should be stated in `docs/deploy.md` as a prerequisite risk.
 5. **Assumed, not verified:**
