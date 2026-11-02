@@ -22,6 +22,9 @@ The test/check suite has broad, valuable coverage, but it is larger and more str
 | F04 | high | security / recovery | Every backup repository shares mutable global credentials; one mover compromise reaches all backup history | L |
 | F05 | high | future readiness | `apps_git_repo_url` is accepted but ignored; the apps path still reads this repository's placeholder | M |
 | F06 | high | future readiness | The GPU role proves PCI vendor presence, not usable Kubernetes GPU capacity | L |
+| F20 | high | security | Repository URL validation accepts plaintext credentials in userinfo, query, and fragment fields | S |
+| F21 | high | reliability / ordering | Flux can advance to configs and workloads before VolSync is Ready | S |
+| F22 | high | security / future readiness | Backup enrollment gives Kyverno cluster-wide Secret mutation and marks every stateful app namespace for privileged movers | L |
 | F07 | medium | operations | There is no adopter process for Jarvis releases or coordinated k3s/Flux/chart upgrades | M |
 | F08 | medium | test reliability | Full and env-00-only local verification are not portable and fail on a non-systemd controller | S |
 | F09 | medium | onboarding / documentation | The new-env path is manual, omits repeat prep for all hosts, and points to a README the template does not contain | M |
@@ -32,9 +35,12 @@ The test/check suite has broad, valuable coverage, but it is larger and more str
 | F14 | medium | too strict | The product is amd64-only even though home-lab adopters commonly mix architectures | L |
 | F15 | medium | operations / future readiness | Runtime diagnosis is manual; observability and endpoint checks are only placeholders/plans | L |
 | F16 | medium | secret safety | Age-key rotation and a concrete offline recovery-key procedure are missing | M |
+| F23 | medium | supply-chain brittleness | Flux bootstrap trusts any existing Helm binary without checking the pinned version or digest | S |
+| F24 | medium | operations brittleness | Operator kubectl calls have no request or process timeout | M |
+| F25 | medium | secret handling | Read-only verification retrieves full backup Secret payloads | S |
+| F19 | medium | onboarding | Controller prerequisites are incomplete and inconsistently preflighted | S |
 | F17 | low | test complexity | Several tests duplicate a rule check or test source shape/helper behavior | S |
-| F18 | low | documentation | Eight CONTRACTs need Operations and/or Limits content | S |
-| F19 | low | onboarding | `make deps` assumes populated apt indexes and an apt-based controller without documenting either | S |
+| F18 | low | documentation | Ten CONTRACTs need Operations and/or Limits content | S |
 
 ## Findings
 
@@ -84,10 +90,10 @@ The test/check suite has broad, valuable coverage, but it is larger and more str
 
 ### F05 — `apps_git_repo_url` is accepted but ignored
 
-- **What breaks and for whom:** A future app/code-factory operator can configure a valid external apps repository and enable app hosting, but Flux still reconciles `./apps` from the cluster repository and deploys only a placeholder ConfigMap.
-- **Location:** `schema/CONTRACT.md:13-17`, `schema/CONTRACT.md:58`, `envs/env-00/flux/kustomizations/apps.yaml:7-13`, `apps/placeholder.yaml:1-8`
+- **What breaks and for whom:** A future app/code-factory operator can configure a valid external apps repository and `app_hosting_enabled`, but neither value changes reconciliation. Flux always reads `./apps` from the cluster repository and deploys its placeholder even when hosting is false.
+- **Location:** `schema/CONTRACT.md:13-17`, `schema/CONTRACT.md:58`, `envs/env-00/values/apps.yaml:1-3`, `envs/env-00/flux/kustomizations/apps.yaml:7-13`, `apps/placeholder.yaml:1-8`
 - **Question:** 3, 6, 7, 21, 22, 23, 24
-- **Evidence:** `rg apps_git_repo_url` finds only env values, schema validation/tests, and identity scanning—no Flux source. The apps Kustomization has `sourceRef: GitRepository/flux-system` and `path: ./apps`.
+- **Evidence:** `rg apps_git_repo_url` finds only env values, schema validation/tests, and identity scanning—no Flux source. Search for `app_hosting_enabled` outside env/schema/tests returns no match. The apps Kustomization always has `sourceRef: GitRepository/flux-system` and `path: ./apps`.
 - **Severity:** high
 - **Size guess:** M
 - **Suggested fix:** Before the first app consumer, choose and document one source boundary: a second Flux source for the apps repository, or remove `apps_git_repo_url` and keep apps in this repository. A second source adds credentials, ordering, and cross-repo release coordination; a monorepo gives up that isolation.
@@ -126,12 +132,12 @@ The test/check suite has broad, valuable coverage, but it is larger and more str
 - **Suggested fix:** Make the handler proof hermetic (test a dedicated role handler with a controlled service backend/container), and provide one local target that runs both CI tree shapes. Keeping a live service-module proof requires documenting and provisioning a systemd controller.
 - **Confidence:** high
 
-### F09 — The new-env path has template and multi-host gaps
+### F09 — The new-env path has template, topology, and multi-host gaps
 
-- **What breaks and for whom:** An adopter must manually keep duplicated values and Flux paths aligned, is told to prep only “the first host,” and is sent to “that env's `secrets/README.md`,” which does not exist in the env-00 template they were told to copy.
-- **Location:** `docs/deploy.md:31-42`, `docs/deploy.md:77`, `envs/env-00/README.md:1-7`, `docs/README.md:30-34`
+- **What breaks and for whom:** An adopter must manually keep duplicated values and Flux paths aligned, infer a topology from an eight-host all-roles example, is told to prep only “the first host,” and is sent to “that env's `secrets/README.md`,” which does not exist in the env-00 template they were told to copy.
+- **Location:** `docs/deploy.md:31-42`, `docs/deploy.md:77`, `envs/env-00/README.md:1-7`, `envs/env-00/inventory/hosts.yml:1-23`, `docs/README.md:30-34`
 - **Question:** 1, 4, 9, 10, 11, 12, 15
-- **Evidence:** The paper walkthrough requires edits in seven copied files containing env/example values plus root `.sops.yaml`. `docs/deploy.md:36` says prep-node for “the first host”; `infra/ansible/README.md:5` clarifies one invocation prepares one node. `test ! -e envs/env-00/secrets/README.md` succeeds, while the docs index links only env-01's secrets README.
+- **Evidence:** The paper walkthrough requires at least eight env edit targets plus root `.sops.yaml` and typically 22–28 files to understand the path. The tested single-node and three-node GPU shapes exist only under `ci/tests/fixtures/env-shapes/`; deploy never links them. `docs/deploy.md:36` says prep-node for “the first host”; one invocation prepares one node. `test ! -e envs/env-00/secrets/README.md` succeeds, while the docs index links only env-01's secrets README.
 - **Severity:** medium
 - **Size guess:** M
 - **Suggested fix:** Add a validated `new-env` scaffold that accepts identity, topology, repository, age recipient, and current pins; render duplicated Flux paths/config; emit a generic secrets/operations README; and list prep-node once per host. The cost is maintaining a small generator.
@@ -231,6 +237,8 @@ The test/check suite has broad, valuable coverage, but it is larger and more str
 - **Location:** `docs/CONTRACT.template.md:23-29`; CONTRACTs listed below
 - **Question:** 1, 12, 14, 15, 16, 21, 24
 - **Evidence:** Only backups and cert-manager use the optional sections.
+  - `platform/backups/CONTRACT.md` needs its **Operations** expanded with safe restic credential rotation, age-key cross-links, and the restic-only etcd recovery gap; **Limits** should explicitly retain root/shared-credential trust.
+  - `platform/cert-manager/CONTRACT.md` needs **Limits** for internal/private CA only, the one wildcard leaf, and the temporary certificate gap during CA rotation.
   - `platform/flux-operator/CONTRACT.md` needs **Operations** for bootstrap/recovery and coordinated operator/distribution upgrades, now buried in `infra/ansible/README.md`; **Limits** should state the one-time bootstrap/circular-recovery boundary.
   - `platform/app-dns/CONTRACT.md` needs **Operations** for adding/removing edge nodes and resolved changes; **Limits** should state router forwarding is an adopter prerequisite and it publishes Ingress only.
   - `platform/configs/CONTRACT.md` needs **Operations** for its documented two-commit path move.
@@ -244,42 +252,108 @@ The test/check suite has broad, valuable coverage, but it is larger and more str
 - **Suggested fix:** Add only the listed operational pointers and explicit non-goals; do not duplicate full runbooks.
 - **Confidence:** high
 
-### F19 — `make deps` assumes apt state and controller shape
+### F19 — Controller prerequisites are incomplete and inconsistently preflighted
 
-- **What breaks and for whom:** On a minimal Ubuntu controller with empty package indexes, the documented first command fails. On non-apt Linux it prints an unusable apt command.
-- **Location:** `tools/install-deps:76-121`, `tools/install-deps:299-304`, `docs/deploy.md:22-29`
+- **What breaks and for whom:** On a minimal Ubuntu controller with empty package indexes, the documented first command fails; Ubuntu 22.04's Python 3.10 cannot install the pinned Ansible requiring Python 3.12; prep-node rejects a missing `make` binary it never invokes, but fails to preflight `age-keygen`, which it can invoke only after host mutations.
+- **Location:** `tools/install-deps:76-121`, `tools/install-deps:299-304`, `tools/prep-node:34-37`, `tools/prep-node:105-109`, `tools/prep-node:761-771`, `docs/deploy.md:22-29`
 - **Question:** 4, 9, 10, 12, 20
-- **Evidence:** First run of `make deps` failed: `Package 'python3-venv' has no installation candidate` and `Unable to locate package python3-bcrypt`. `sudo apt-get update && make deps` then succeeded. `_try_apt_install()` runs `apt-get install` without updating indexes; the script supports Linux only and its fallback always prints an apt command.
-- **Severity:** low
+- **Evidence:** First `make deps` failed with no apt candidates; `apt-get update` fixed it. Package metadata reports `ansible-core` `Requires-Python: >=3.12`, but docs state no controller Python minimum. `_TOOLS` includes `make`; no prep-node subprocess invokes it. `require_tools()` omits `age-keygen`, while `age_public_key()` invokes it later.
+- **Severity:** medium
 - **Size guess:** S
-- **Suggested fix:** Document Ubuntu/apt as a controller prerequisite and detect stale indexes with a clear remediation, or provide a non-mutating prerequisite check rather than doing sudo package installation. Automatic `apt-get update` is convenient but changes host package state and adds network latency.
+- **Suggested fix:** State and preflight a supported controller OS and Python version, give stale-index remediation, remove the unused `make` requirement, and preflight `age-keygen` before SSH. A managed runtime would support older/non-apt controllers but adds packaging.
+- **Confidence:** high
+
+### F20 — Repository URL validation accepts plaintext credentials
+
+- **What breaks and for whom:** An adopter can put a username/password, token query, or fragment in `flux_git_repo_url` or `apps_git_repo_url`; env-schema accepts it, so the secret can be committed to public Git despite the contract saying URLs contain no secret.
+- **Location:** `schema/env.py:501-520`, `schema/env.py:540-551`, `schema/CONTRACT.md:57-58`
+- **Question:** 6, 10, 17
+- **Evidence:** `_validate_https_url()` checks only `scheme == "https"` and non-empty `netloc`; `repo_owner_handle()` checks path depth. Direct calls to `_validate_repo_url()` with userinfo, a token query, and a fragment each returned `errors=[]` and owner `owner`.
+- **Severity:** high
+- **Size guess:** S
+- **Suggested fix:** Reject URL userinfo, query, fragment, and unexpected ports before accepting repo URLs; add seeded behavior tests. This intentionally gives up credential-bearing HTTPS remotes, which Flux should represent with a Secret instead.
+- **Confidence:** high
+
+### F21 — Flux can advance before VolSync is Ready
+
+- **What breaks and for whom:** On first reconcile, `platform-configs` and then services/apps can advance after cert-manager and Kyverno are Ready while VolSync is still installing its CRDs/controller. PVCs created in that interval can hit a generate failure or the fail-open interval in F12.
+- **Location:** `platform/kustomization.yaml:3-10`, `envs/env-00/flux/kustomizations/platform-controllers.yaml:12-23`, `envs/env-00/flux/kustomizations/platform-configs.yaml:13-15`, `ci/tests/ansible_role_proof.py:105-109`
+- **Question:** 1, 4, 13, 16, 18, 21
+- **Evidence:** The platform path includes `backups/controller`, but `platform-controllers.healthChecks` names only cert-manager and Kyverno. CI explicitly encodes “waits for these two HelmReleases and no other object.” The next stage depends only on that gate.
+- **Severity:** high
+- **Size guess:** S
+- **Suggested fix:** Add the VolSync HelmRelease to the controller health gate before allowing backup policy and workload stages. This lengthens initial reconciliation but turns a transient unprotected interval into an explicit install failure.
+- **Confidence:** high
+
+### F22 — Backup enrollment has a cluster-wide privileged trust boundary
+
+- **What breaks and for whom:** Compromise of Kyverno's aggregated admission/background roles permits get/list/watch/create/update/patch/delete on Secrets cluster-wide. Every namespace with an enrolled PVC is also annotated to allow privileged VolSync movers, awkwardly crossing future code-factory/app isolation.
+- **Location:** `platform/kyverno/rbac.yaml:4-23`, `platform/backups/enrollment.yaml:96-108`, `platform/kyverno/CONTRACT.md:24-26`
+- **Question:** 1, 3, 6, 17, 21, 22
+- **Evidence:** `kyverno:backup-generate` aggregates unrestricted Secret verbs into both controllers; the policy mutates each matching PVC's Namespace with `volsync.backube/privileged-movers: "true"`. No namespace allow-list separates trusted platform services from future tenant/code-factory workloads.
+- **Severity:** high
+- **Size guess:** L
+- **Suggested fix:** Treat this as an explicit security boundary: either document/monitor the unavoidable Kyverno RBAC and restrict which namespaces can enroll, or replace generic generation with a narrower enrollment controller/process. Narrowing costs one deliberate onboarding step per stateful namespace.
+- **Confidence:** high
+
+### F23 — Flux bootstrap trusts any existing Helm binary
+
+- **What breaks and for whom:** A stale, wrong-architecture, or tampered `/usr/local/bin/helm` causes bootstrap to execute outside the repository's pin and checksum trust model.
+- **Location:** `infra/ansible/roles/flux-operator/tasks/helm_cli.yml:17-25`, `infra/ansible/roles/flux-operator/defaults/main.yml:10-16`
+- **Question:** 1, 4, 14, 17
+- **Evidence:** The role performs only `stat` and enters the pinned download/checksum block when the path does not exist. It never checks the existing binary's version or digest.
+- **Severity:** medium
+- **Size guess:** S
+- **Suggested fix:** Verify the existing binary's expected version and integrity, replacing or refusing mismatches. This adds one command/hash operation on each bootstrap run.
+- **Confidence:** high
+
+### F24 — Operator kubectl calls are not time-bounded
+
+- **What breaks and for whom:** Verify, drill, restore, and cleanup can hang indefinitely on a stuck transport/API request even though their outer polling loops advertise finite budgets.
+- **Location:** `tools/lib/_env.py:35-52`, `tools/drill:45-47`, `tools/drill:117-131`, `tools/restore:36-39`, `tools/restore:198-205`
+- **Question:** 1, 4, 13, 16
+- **Evidence:** The shared `subprocess.run(["kubectl", ...])` has neither Python `timeout=` nor a kubectl `--request-timeout`. A polling predicate blocked inside that call never returns to check its deadline.
+- **Severity:** medium
+- **Size guess:** M
+- **Suggested fix:** Give every kubectl request a bounded request/process timeout below the enclosing operation budget and report timeout separately. Slow clusters may need a documented configurable limit.
+- **Confidence:** high
+
+### F25 — Read-only verification retrieves full backup Secret payloads
+
+- **What breaks and for whom:** `make verify` unnecessarily brings all restic credentials into the controller process's captured stdout just to check that keys exist, widening accidental exposure in memory, traces, or debugging.
+- **Location:** `tools/verify/run:154-173`
+- **Question:** 1, 16, 17
+- **Evidence:** `_check_secret()` runs `kubectl get secret backups-restic ... -o json`, parses the complete object, and checks only that `data` is a non-empty mapping.
+- **Severity:** medium
+- **Size guess:** S
+- **Suggested fix:** Query metadata/key names with a server-side JSONPath or narrowly scoped API response that never returns values. The tradeoff is less detail about malformed values, which verify does not inspect today.
 - **Confidence:** high
 
 ## Answers by question
 
-1. **Reliable, flexible, practical, lean?** The logical-loss backup, GitOps, SOPS, and host guards are solid. Reliability stops at disk loss (F01), future config is premature (F10), and shared backup trust is broad (F04).
+1. **Reliable, flexible, practical, lean?** The logical-loss backup, GitOps, SOPS, and host guards are solid. Reliability stops at disk loss (F01), controller ordering can expose backups (F21), future config is premature (F10), and backup trust is broad (F04, F22).
 2. **Glue a native approach could replace?** Most command use is justified around k3s/Flux. The main avoidable glue is manual env scaffolding (F09) and custom future placeholders/config; keep the AppArmor-aware Chrony validation.
 3. **Too complex?** Required Hermes/apps schemas and credentials have no consumer (F10). Cut source-shape/duplicate tests (F17); accept losing speculative validation until those components land.
-4. **Brittle?** Recovery depends on same-disk artifacts/token (F01), Kyverno is version-skewed (F11), local tests depend on systemd (F08), and exact singleton/architecture assumptions constrain topology (F13, F14).
+4. **Brittle?** Recovery depends on same-disk artifacts/token (F01), controller ordering and kubectl calls are timing-sensitive (F21, F24), Kyverno is version-skewed (F11), existing Helm is unverified (F23), and local tests depend on systemd (F08).
 5. **Too strict?** Exactly one control plane and amd64-only are product limits worth making profiles rather than universal rules (F13, F14). Provider/model validation before consumers is also premature (F10).
-6. **Real gaps?** Disaster recovery, safe secret rotation, GPU enablement, app source wiring, continuous health, and release intake are real gaps (F01, F03–F07, F15–F16).
+6. **Real gaps?** Disaster recovery, safe secret/URL handling, GPU enablement, app source wiring, controller readiness, continuous health, and release intake are real gaps (F01, F03–F07, F15–F16, F20–F22).
 7. **Cruft?** Placeholder ConfigMaps, five unused bootstrap secrets, future-only required values, and some duplicate/shape tests can go (F10, F17). Generated and vendored artifacts are not cruft.
 8. **Clean product?** Owner identity is correctly confined to allowed locations. Plan/history language remains in placeholder manifests and the planned-heavy code-delivery CONTRACT (F10, F18).
-9. **Fresh clone to verify/drill?** The documented sequence is broadly followable on supported hardware, but the template references a missing secrets README, requires seven env-file edits plus `.sops.yaml`, and under-specifies all-host prep (F09). Actual verify/drill require a live cluster and were not run by audit limit.
-10. **Clear pre-host validation?** No: prep-node's complete schema check happens after host mutation (F02). A generator/preflight should fail before SSH.
+9. **Fresh clone to verify/drill?** The sequence is broadly followable on supported hardware, but the template lacks generic secret/topology docs, requires at least eight env edits plus `.sops.yaml`, under-specifies all-host prep, and has hidden controller prerequisites (F09, F19). Actual live verify/drill were prohibited.
+10. **Clear pre-host validation?** No: prep-node's complete schema check happens after host mutation (F02), and repo URL validation accepts embedded secrets (F20). A generator/preflight should fail before SSH.
 11. **Single/multi-node and mixed GPUs?** One-node and three-node fixture shapes validate and render. Multi-node remains one-control-plane; “mixed GPU” is only NVIDIA PCI presence and labels, not usable/sized GPU resources (F06, F13).
-12. **Unwritten maintainer knowledge?** Multi-host prep, generic secret lifecycle, release intake, and controller/systemd assumptions are not in the adopter path (F07–F09, F16, F19).
-13. **Restore from real loss?** Logical PVC loss is well handled. Control-plane disk loss is explicitly out of scope, and the drill can pass without the server token or a cluster reset (F01); restic trust/rotation add risk (F03–F04).
+12. **Unwritten maintainer knowledge?** Multi-host prep/topologies, generic secret lifecycle, release intake, and controller Python/package/systemd assumptions are not in the adopter path (F07–F09, F16, F19).
+13. **Restore from real loss?** Logical PVC loss is well handled. Control-plane disk loss is out of scope and the drill passes without token/reset proof (F01); restic trust/rotation and startup ordering add risk (F03–F04, F21).
 14. **Upgrades?** Renovate covers many pins, but there is no adopter release/migration or coordinated upgrade runbook (F07). Kyverno/k3s skew shows why one is needed (F11).
 15. **Secret rotation/offline age backup?** CA rotation is good. Restic rotation is unsafe (F03); age rotation and a verified offline backup procedure are absent (F16).
-16. **Can operators diagnose failures?** Tools generally fail with useful local messages and CONTRACT Health sections are helpful. There is no continuous health/logging layer or consolidated troubleshooting entry point (F15, F18).
-17. **Leaks or excess trust?** Metadata-only checks found all SOPS payload fields encrypted and gitleaks passed. Backup credentials and mutable repositories have an unnecessarily wide blast radius (F04); Kyverno enrollment fails open (F12).
-18. **Reasonable test gaps?** Add a real disposable disaster proof, GPU allocatable/pod proof when GPU support lands, and a portable two-shape local CI target (F01, F06, F08). A live Kyverno/k3s compatibility proof would address F11.
+16. **Can operators diagnose failures?** Tools usually fail clearly, but kubectl can hang past advertised budgets (F24). There is no continuous health/logging layer or consolidated troubleshooting entry point (F15, F18).
+17. **Leaks or excess trust?** SOPS metadata and gitleaks are clean, but credential-bearing repo URLs pass validation (F20), backup/Kyverno trust is cluster-wide (F04, F22), existing Helm is trusted (F23), and verify retrieves secret values (F25).
+18. **Reasonable test gaps?** Add disaster proof, GPU allocatable/pod proof, portable two-shape local CI, and first-reconcile VolSync readiness proof (F01, F06, F08, F21). Live Kyverno/k3s compatibility would address F11.
 19. **Tests to cut?** Remove the duplicate gitleaks pytest, helper self-tests, and YAML/tag-parser shape assertions in F17. Keep restore/drill state-machine tests and fixture-based rule checks.
 20. **Behavior and fresh env-00 pass?** Many high-value tests execute fake binaries/state machines and rendered manifests, but several inspect source shape (F17). Fresh full and isolated env-00-only runs each produced `482 passed, 1 failed`; GitHub CI is green because runner shape differs (F08).
-21. **Clean place for new services/apps?** The Flux stages and platform contracts are a good skeleton, but there is no consumer-facing component template covering certs, DNS, backups, secrets, health, and the configured apps repository is ignored (F05, F18).
-22. **Blocks/awkward constraints?** Missing GPU runtime, one control plane, shared privileged backup machinery, ignored app source, and no code-factory trust boundary are constraints (F04–F06, F13). The current CLI guard is build tooling, not that boundary.
-23. **What every future area needs?** A health/observability contract, secret lifecycle, release/update contract, app/service onboarding contract, and—where relevant—GPU resource contract (F06–F07, F15–F18).
+21. **Clean place for new services/apps?** Flux stages are a good skeleton, but there is no component template, apps config is inert, VolSync readiness is not gated, and backup enrollment crosses namespace trust (F05, F18, F21–F22).
+22. **Blocks/awkward constraints?** Missing GPU runtime, one control plane, shared privileged backup machinery, ignored app source, and no code-factory trust boundary are constraints (F04–F06, F13, F22). The CLI guard is build tooling, not that boundary.
+23. **What every future area needs?** A health contract, narrow secret/namespace lifecycle, release contract, app/service onboarding, and where relevant GPU resources (F06–F07, F15–F18, F20–F22).
 24. **Deferred work not to lose?** Preserve as tracked work: Gatus per exposed endpoint; observability; Hermes profile schema; external apps/OCI wiring; `admin-gate`; registry/build workflow; second code-delivery provider; and model-name core checks. F10 recommends removing premature runtime/schema stubs, not losing these commitments.
 
 ## What's good and should stay
@@ -355,7 +429,7 @@ Tags mean the file was inspected directly or through its area/source. `excluded`
 | `ci/ci-local-verify` | finding |
 | `ci/rule-checks.txt` | no finding |
 | `ci/run-checks` | no finding |
-| `ci/tests/ansible_role_proof.py` | no finding |
+| `ci/tests/ansible_role_proof.py` | finding |
 | `ci/tests/conftest.py` | no finding |
 | `ci/tests/fixtures/ansible-list-tasks/hosts.yml` | no finding |
 | `ci/tests/fixtures/digest-pin/tag-without-digest.yaml` | no finding |
@@ -420,10 +494,10 @@ Tags mean the file was inspected directly or through its area/source. `excluded`
 | `envs/env-00/flux/kustomization.yaml` | no finding |
 | `envs/env-00/flux/kustomizations/apps.yaml` | finding |
 | `envs/env-00/flux/kustomizations/platform-configs.yaml` | no finding |
-| `envs/env-00/flux/kustomizations/platform-controllers.yaml` | no finding |
+| `envs/env-00/flux/kustomizations/platform-controllers.yaml` | finding |
 | `envs/env-00/flux/kustomizations/services.yaml` | no finding |
 | `envs/env-00/flux/platform-configs/kustomization.yaml` | finding |
-| `envs/env-00/inventory/hosts.yml` | no finding |
+| `envs/env-00/inventory/hosts.yml` | finding |
 | `envs/env-00/values/apps.yaml` | finding |
 | `envs/env-00/values/cluster-vars.yaml` | finding |
 | `envs/env-00/values/hermes.yaml` | finding |
@@ -434,7 +508,7 @@ Tags mean the file was inspected directly or through its area/source. `excluded`
 | `envs/env-01/flux/kustomization.yaml` | no finding |
 | `envs/env-01/flux/kustomizations/apps.yaml` | finding |
 | `envs/env-01/flux/kustomizations/platform-configs.yaml` | no finding |
-| `envs/env-01/flux/kustomizations/platform-controllers.yaml` | no finding |
+| `envs/env-01/flux/kustomizations/platform-controllers.yaml` | finding |
 | `envs/env-01/flux/kustomizations/services.yaml` | no finding |
 | `envs/env-01/flux/platform-configs/kustomization.yaml` | finding |
 | `envs/env-01/inventory/hosts.yml` | no finding |
@@ -461,9 +535,9 @@ Tags mean the file was inspected directly or through its area/source. `excluded`
 | `infra/ansible/roles/base-os/templates/chrony.conf.j2` | no finding |
 | `infra/ansible/roles/base-os/templates/journald-jarvis.conf.j2` | no finding |
 | `infra/ansible/roles/base-os/templates/resolved-stub.conf.j2` | no finding |
-| `infra/ansible/roles/flux-operator/defaults/main.yml` | no finding |
+| `infra/ansible/roles/flux-operator/defaults/main.yml` | finding |
 | `infra/ansible/roles/flux-operator/tasks/chart_pin.yml` | no finding |
-| `infra/ansible/roles/flux-operator/tasks/helm_cli.yml` | no finding |
+| `infra/ansible/roles/flux-operator/tasks/helm_cli.yml` | finding |
 | `infra/ansible/roles/flux-operator/tasks/instance.yml` | no finding |
 | `infra/ansible/roles/flux-operator/tasks/main.yml` | no finding |
 | `infra/ansible/roles/flux-operator/tasks/operator.yml` | no finding |
@@ -525,13 +599,13 @@ Tags mean the file was inspected directly or through its area/source. `excluded`
 | `platform/flux-operator/helmrelease.yaml` | no finding |
 | `platform/flux-operator/kustomization.yaml` | no finding |
 | `platform/flux-operator/oci-repository.yaml` | no finding |
-| `platform/kustomization.yaml` | no finding |
+| `platform/kustomization.yaml` | finding |
 | `platform/kyverno/CONTRACT.md` | finding |
 | `platform/kyverno/helmrelease.yaml` | no finding |
 | `platform/kyverno/helmrepository.yaml` | no finding |
 | `platform/kyverno/kustomization.yaml` | no finding |
 | `platform/kyverno/namespace.yaml` | no finding |
-| `platform/kyverno/rbac.yaml` | no finding |
+| `platform/kyverno/rbac.yaml` | finding |
 | `platform/testapp/CONTRACT.md` | finding |
 | `platform/testapp/kustomization.yaml` | no finding |
 | `platform/testapp/namespace.yaml` | no finding |
@@ -551,14 +625,14 @@ Tags mean the file was inspected directly or through its area/source. `excluded`
 | `tools/bootstrap-secrets` | finding |
 | `tools/drill` | finding |
 | `tools/install-deps` | finding |
-| `tools/lib/_env.py` | no finding |
+| `tools/lib/_env.py` | finding |
 | `tools/lib/_etcd_image.py` | no finding |
 | `tools/lib/_sops.py` | no finding |
 | `tools/lib/render_cluster_vars_configmap.py` | no finding |
 | `tools/prep-node` | finding |
 | `tools/restore` | no finding |
 | `tools/seal` | no finding |
-| `tools/verify/run` | no finding |
+| `tools/verify/run` | finding |
 | `tools/versions.env` | no finding |
 
 Coverage count: 248 tracked files, 248 tagged.
