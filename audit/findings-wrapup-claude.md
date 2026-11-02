@@ -673,7 +673,7 @@ Method: in the env-00-only scratch clone, each break was seeded into the code a 
 - **Confidence:** high.
 
 ### T15 — Test status in a fresh env-00-only copy (low)
-- **Evidence:** `bash ci/ci-local-verify` in this worktree exited 0 with 483 passed. In the env-00-only clone, the first run (`pytest -q ../wrapup-claude-env00/ci/tests`) gave `1 failed, 482 passed`. The one failure, `test_prep_node.py::test_existing_age_key_mismatch_warns_and_keeps_swap_default_no`, came from a break a parallel reviewer had seeded into `tools/prep-node` (prompt default flipped), not from the repo. The clean rerun result is recorded in section 4, Q20.
+- **Evidence:** `bash ci/ci-local-verify` in this worktree exited 0 with 483 passed. In the env-00-only clone, the first run (`pytest -q ../wrapup-claude-env00/ci/tests`) gave `1 failed, 482 passed`. The one failure, `test_prep_node.py::test_existing_age_key_mismatch_warns_and_keeps_swap_default_no`, came from a break a parallel reviewer had seeded into `tools/prep-node` (prompt default flipped), not from the repo. The clean rerun after all seeds were reverted gave `483 passed`, exit 0 (section 4, Q20).
 - **Also:** `ci/ci-local-verify` runs only the full tree. The env00-only CI leg has no local equivalent, and locally `require_cli` skips missing CLIs where CI fails (`ci/tests/conftest.py:31-39`).
 - **Question:** 20. **Severity:** low. **Size:** S.
 - **Suggested fix:** Add `ci-local-verify --env00-only`, using a temporary worktree.
@@ -937,7 +937,7 @@ Steps that are buried elsewhere:
     - Seeded breaks: of 26 in tools, 14 were not caught; of 22 in checks and platform, 12 were not caught; of 15 in Ansible and Flux, 13 were not caught (T01–T09, T16–T18).
     - The missed breaks cluster in safety guards and templates that no test renders, not in the main paths.
     - The env-00-only clone first gave 482/483, with the single failure caused by a parallel seed (T15). A clean rerun after all seeds were reverted: see the next line.
-    - Clean rerun (`pytest -q -p no:cacheprovider ../wrapup-claude-env00/ci/tests`): result pending at this commit. If no later commit updates this line, the rerun did not finish within the audit window.
+    - Clean rerun (`pytest -q -p no:cacheprovider ../wrapup-claude-env00/ci/tests`): **483 passed in 304.84s, exit 0.** Every test passes in a fresh copy that has only env-00. This also indirectly confirms that every seeded break was reverted.
 
 ### Is the foundation ready for what comes next?
 
