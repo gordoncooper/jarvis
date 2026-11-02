@@ -11,11 +11,29 @@ on:
 
 jobs:
   fast:
-    name: fast
+    name: fast (${{ matrix.copy }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        copy:
+          - full
+          - env00-only
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Keep only the env-00 sample (throwaway local commit, never pushed)
+        if: ${{ matrix.copy == 'env00-only' }}
+        run: |
+          set -euo pipefail
+          for dir in envs/*/; do
+            dir="${dir%/}"
+            if [[ "${dir}" != "envs/env-00" ]]; then
+              git rm -r -q "${dir}"
+            fi
+          done
+          git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci: keep only env-00"
 
       - name: Restore pinned CLIs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
