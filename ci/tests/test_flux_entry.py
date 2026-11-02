@@ -18,6 +18,7 @@ from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_DIR,
     REPO_ROOT,
     env_name,
+    PLATFORM_CONTROLLER_HEALTH_CHECKS,
     example_flux_entry,
     load_cluster_vars,
     load_role_defaults,
@@ -98,7 +99,11 @@ def _flux_kustomizations(env: str) -> list[dict]:
 
 
 def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
-    """The four standard Kustomizations, in dependsOn order, with their paths."""
+    """The four standard Kustomizations, in dependsOn order, with their paths.
+
+    platform-controllers carries the two webhook Deployment health checks and a
+    timeout. No other Kustomization carries health checks.
+    """
     expected = standard_flux_kustomization_paths(env)
     chain = list(expected)
     names = [doc["metadata"]["name"] for doc in docs]
@@ -106,6 +111,7 @@ def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
     if sorted(names) != sorted(chain):
         errors.append(f"Flux Kustomizations are {sorted(names)}, expected {sorted(chain)}")
     by_name = {doc["metadata"]["name"]: doc["spec"] for doc in docs}
+    expected_checks = [check.flux_object() for check in PLATFORM_CONTROLLER_HEALTH_CHECKS]
     for index, name in enumerate(chain):
         spec = by_name.get(name)
         if spec is None:
@@ -115,7 +121,47 @@ def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
         depends = [] if index == 0 else [{"name": chain[index - 1]}]
         if (spec.get("dependsOn") or []) != depends:
             errors.append(f"{name} dependsOn is {spec.get('dependsOn')!r}, expected {depends!r}")
+        health = spec.get("healthChecks") or []
+        if name == "platform-controllers":
+            if health != expected_checks:
+                errors.append(
+                    f"{name} healthChecks are {health!r}, expected {expected_checks!r}"
+                )
+            if not spec.get("timeout"):
+                errors.append(f"{name} timeout is unset")
+        elif health:
+            errors.append(f"{name} carries healthChecks")
     return errors
+
+
+def _webhook_namespace_errors(target_namespaces: dict[str, str]) -> list[str]:
+    """Each webhook health-check namespace is that HelmRelease's targetNamespace."""
+    errors = []
+    for check in PLATFORM_CONTROLLER_HEALTH_CHECKS:
+        actual = target_namespaces.get(check.release)
+        if actual != check.namespace:
+            errors.append(
+                f"{check.release} health check namespace is {check.namespace!r}, "
+                f"targetNamespace is {actual!r}"
+            )
+    return errors
+
+
+def _platform_helmrelease_target_namespaces() -> dict[str, str]:
+    found: dict[str, str] = {}
+    for path in sorted((REPO_ROOT / "platform").rglob("*.yaml")):
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+            if not isinstance(doc, dict) or doc.get("kind") != "HelmRelease":
+                continue
+            metadata = doc.get("metadata")
+            spec = doc.get("spec")
+            if not isinstance(metadata, dict) or not isinstance(spec, dict):
+                continue
+            name = metadata.get("name")
+            target = spec.get("targetNamespace")
+            if isinstance(name, str) and isinstance(target, str):
+                found[name] = target
+    return found
 
 
 def _flux_instance(env: str) -> dict:
@@ -238,7 +284,7 @@ def test_flux_instance_drift_from_cluster_vars_fails(
 
 @pytest.mark.parametrize("env", non_example_env_names())
 def test_flux_entry_has_the_four_standard_kustomizations(env: str) -> None:
-    """R1: four layers, one path each, chained with dependsOn."""
+    """R1: four layers, one path each, chained with dependsOn, webhook health checks on platform-controllers."""
     assert _flux_kustomization_errors(_flux_kustomizations(env), env) == []
 
 
@@ -273,6 +319,70 @@ def test_nonstandard_flux_kustomizations_fail(tmp_path: Path, mutate) -> None:
     docs = copy.deepcopy(entry.kustomizations)
     mutate(docs)
     assert _flux_kustomization_errors(docs, entry.env)
+
+
+def _controllers_spec(docs: list[dict]) -> dict:
+    return next(doc for doc in docs if doc["metadata"]["name"] == "platform-controllers")["spec"]
+
+
+def _drop_one_health_check(docs: list[dict]) -> None:
+    _controllers_spec(docs)["healthChecks"] = _controllers_spec(docs)["healthChecks"][:1]
+
+
+def _add_volsync_health_check(docs: list[dict]) -> None:
+    _controllers_spec(docs)["healthChecks"] = [
+        *_controllers_spec(docs)["healthChecks"],
+        {
+            "apiVersion": "helm.toolkit.fluxcd.io/v2",
+            "kind": "HelmRelease",
+            "name": "volsync",
+            "namespace": "flux-system",
+        },
+    ]
+
+
+def _drop_timeout(docs: list[dict]) -> None:
+    del _controllers_spec(docs)["timeout"]
+
+
+def _health_check_on_platform_configs(docs: list[dict]) -> None:
+    next(doc for doc in docs if doc["metadata"]["name"] == "platform-configs")["spec"][
+        "healthChecks"
+    ] = [PLATFORM_CONTROLLER_HEALTH_CHECKS[0].flux_object()]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        _drop_one_health_check,
+        _add_volsync_health_check,
+        _drop_timeout,
+        _health_check_on_platform_configs,
+    ],
+)
+def test_webhook_health_checks_are_exactly_the_two_deployments(tmp_path: Path, mutate) -> None:
+    """R1: platform-controllers waits for the two webhook Deployments, and only those."""
+    entry = example_flux_entry(tmp_path)
+    assert _flux_kustomization_errors(entry.kustomizations, entry.env) == []
+    docs = copy.deepcopy(entry.kustomizations)
+    mutate(docs)
+    assert _flux_kustomization_errors(docs, entry.env)
+
+
+def test_webhook_health_namespace_must_match_helmrelease_target() -> None:
+    """R1: a webhook health-check namespace is its HelmRelease targetNamespace."""
+    namespaces = {
+        check.release: check.namespace for check in PLATFORM_CONTROLLER_HEALTH_CHECKS
+    }
+    assert _webhook_namespace_errors(namespaces) == []
+    drifted = dict(namespaces)
+    drifted[PLATFORM_CONTROLLER_HEALTH_CHECKS[0].release] = "other"
+    assert _webhook_namespace_errors(drifted)
+
+
+def test_webhook_health_namespaces_match_platform_helmreleases() -> None:
+    """R1: webhook health-check namespaces match the platform HelmRelease targetNamespace."""
+    assert _webhook_namespace_errors(_platform_helmrelease_target_namespaces()) == []
 
 
 @pytest.mark.parametrize("env", non_example_env_names())

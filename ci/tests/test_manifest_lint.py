@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from _manifest_lint import scan_manifest_lint
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "manifest-lint" / "missing-memory-limit.yaml"
@@ -190,6 +192,60 @@ spec:
     violations = scan_manifest_lint(tmp_path)
     assert len(violations) == 1
     assert "logs to a file" in violations[0].message
+
+
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        (
+            "platform/release.yaml",
+            """
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: seeded
+  namespace: flux-system
+spec:
+  values:
+    replicaCount: 1
+""",
+        ),
+        (
+            "platform/empty.yaml",
+            """
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: seeded
+  namespace: flux-system
+spec:
+  values:
+    resources: {}
+""",
+        ),
+        (
+            "platform/chart.yaml",
+            """
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |
+    image:
+      tag: v1
+""",
+        ),
+    ],
+)
+def test_r5_chart_values_need_a_passing_resources_block(tmp_path: Path, rel: str, text: str) -> None:
+    """R5: HelmRelease values and HelmChartConfig valuesContent need a resources block."""
+    _write(tmp_path, rel, text)
+    violations = scan_manifest_lint(tmp_path)
+    assert len(violations) == 1
+    assert violations[0].path == rel
+    assert "no passing resources block" in violations[0].message
 
 
 def test_r5_non_mapping_document_fails(tmp_path: Path) -> None:

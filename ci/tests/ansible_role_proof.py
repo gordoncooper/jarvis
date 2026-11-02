@@ -83,6 +83,33 @@ def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
     }
 
 
+class PlatformControllerHealthCheck(NamedTuple):
+    """One Deployment platform-controllers waits for, and the HelmRelease that installs it."""
+
+    release: str
+    name: str
+    namespace: str
+
+    def flux_object(self) -> dict[str, str]:
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "name": self.name,
+            "namespace": self.namespace,
+        }
+
+
+# platform-configs waits for these two admission webhooks and no other object.
+PLATFORM_CONTROLLER_HEALTH_CHECKS = (
+    PlatformControllerHealthCheck(
+        "cert-manager", "cert-manager-webhook", "platform-cert-manager"
+    ),
+    PlatformControllerHealthCheck(
+        "kyverno", "kyverno-admission-controller", "kyverno"
+    ),
+)
+
+
 class ExampleFluxEntry(NamedTuple):
     env: str
     instance_file: Path
@@ -130,18 +157,25 @@ def example_flux_entry(tmp_path: Path) -> ExampleFluxEntry:
     instance_file = tmp_path / "flux-instance.yaml"
     instance_file.write_text(yaml.safe_dump(instance, sort_keys=False), encoding="utf-8")
     names = list(standard_flux_kustomization_paths(env).items())
-    kustomizations = [
-        {
-            "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-            "kind": "Kustomization",
-            "metadata": {"name": name, "namespace": role["flux_system_namespace"]},
-            "spec": {
-                "path": path,
-                "dependsOn": [{"name": names[index - 1][0]}] if index else [],
-            },
+    kustomizations = []
+    for index, (name, path) in enumerate(names):
+        spec: dict[str, object] = {
+            "path": path,
+            "dependsOn": [{"name": names[index - 1][0]}] if index else [],
         }
-        for index, (name, path) in enumerate(names)
-    ]
+        if name == "platform-controllers":
+            spec["timeout"] = "15m"
+            spec["healthChecks"] = [
+                check.flux_object() for check in PLATFORM_CONTROLLER_HEALTH_CHECKS
+            ]
+        kustomizations.append(
+            {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {"name": name, "namespace": role["flux_system_namespace"]},
+                "spec": spec,
+            }
+        )
     return ExampleFluxEntry(env, instance_file, instance, kustomizations)
 
 

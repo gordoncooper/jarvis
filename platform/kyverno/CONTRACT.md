@@ -15,7 +15,7 @@ Kyverno 1.19 admits and generates the backup policy (`ci/checks/pvc-backup`). Cl
 
 ## Health
 
-Deployment `kyverno-admission-controller` in `kyverno` is Ready. That is the gate for this install.
+Deployment `kyverno-admission-controller` in `kyverno` is Ready. That is the gate for this install. The admission container sets a memory request of `128Mi` and limit of `384Mi`, and a CPU request of `100m` with no CPU limit. The background controller sets a memory request of `64Mi` and limit of `128Mi`, and a CPU request of `100m` with no CPU limit.
 
 ## Config
 
