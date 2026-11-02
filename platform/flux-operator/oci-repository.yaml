@@ -12,4 +12,4 @@ spec:
   url: oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator
   ref:
     # renovate: datasource=docker depName=ghcr.io/controlplaneio-fluxcd/charts/flux-operator versioning=semver
-    tag: "0.60.0"
+    tag: "0.62.1"
