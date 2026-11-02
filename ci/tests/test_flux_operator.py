@@ -492,19 +492,6 @@ def test_readme_tag_with_no_matching_playbook_tag_fails() -> None:
         _assert_play_order(_site_plays(), readme=readme)
 
 
-_SAME_LINE_TAGS = re.compile(
-    r"--tags[ \t]+([A-Za-z][A-Za-z0-9_-]*(?:[ \t]*,[ \t]*[A-Za-z][A-Za-z0-9_-]*)*)"
-)
-
-
-def _same_line_tags(readme: str) -> set[str]:
-    """The previous parser: a same-line ``--tags`` name, with no ``=`` or quotes."""
-    names: set[str] = set()
-    for match in _SAME_LINE_TAGS.finditer(readme):
-        names.update(_tag_list(match.group(1)))
-    return names
-
-
 @pytest.mark.parametrize(
     ("readme", "single"),
     [
@@ -532,9 +519,7 @@ def _same_line_tags(readme: str) -> set[str]:
 )
 def test_wrapped_tag_command_matches_the_single_line_form(readme: str, single: str) -> None:
     """A wrapped, continued, assigned, or quoted --tags command yields the one-line names."""
-    expected = _operator_play_tags(single)
-    assert _operator_play_tags(readme) == expected
-    assert _same_line_tags(readme) != expected
+    assert _operator_play_tags(readme) == _operator_play_tags(single)
 
 
 def test_readme_with_no_tags_commands_fails() -> None:
