@@ -64,11 +64,11 @@
       "matchFileNames": ["requirements-dev.txt"]
     },
     {
-      "description": "ansible 14.x requires ansible-core 2.21.x. 2.21.6+ needs Python 3.13, and CI's runner has 3.12, so the cap stops at 2.21.5. Raise it once CI runs Python 3.13+, and raise it with an ansible major bump.",
+      "description": "ansible 14.x requires ansible-core 2.21.x. Raise this cap in the same PR as an ansible major bump. Patch updates inside 2.21 still flow.",
       "matchManagers": ["pip_requirements"],
       "matchFileNames": ["requirements-dev.txt"],
       "matchPackageNames": ["ansible-core"],
-      "allowedVersions": "<2.21.6"
+      "allowedVersions": "<2.22"
     }
   ],
   "customManagers": [
