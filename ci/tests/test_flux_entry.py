@@ -229,18 +229,6 @@ def test_cluster_vars_configmap_matches_render_script(example_copy: ExampleCopy)
         assert generated_path.read_text(encoding="utf-8") == render_document(cluster_path)
 
 
-def test_stale_env_00_cluster_vars_configmap_fails() -> None:
-    """A stale published value in env-00's committed ConfigMap is not the render."""
-    source = REPO_ROOT / "envs" / EXAMPLE_ENV / "values" / "cluster-vars.yaml"
-    rendered = render_document(source)
-    generated = (
-        REPO_ROOT / "envs" / EXAMPLE_ENV / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    ).read_text(encoding="utf-8")
-    assert generated == rendered
-    stale = rendered.replace("dns_suffix: env-00.example", "dns_suffix: stale.example", 1)
-    assert stale != rendered
-
-
 def test_cluster_vars_configmap_publishes_only_the_allow_list() -> None:
     """R4: the live ConfigMap is the allow-list. Host-only keys stay in the values file."""
     raw = load_cluster_vars()

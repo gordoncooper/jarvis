@@ -86,6 +86,9 @@ def test_managed_image_without_a_version_tag_fails() -> None:
         for pattern_src in patterns:
             assert "currentValue" in pattern_src, manager.get("description")
             pattern = _js_to_python(pattern_src)
+            for path in _manager_files(manager):
+                text = path.read_text(encoding="utf-8")
+                assert _unmatched_image_lines(text, pattern_src) == [], path
             found = [
                 match
                 for path in _manager_files(manager)
@@ -111,6 +114,30 @@ def test_managed_image_without_a_version_tag_fails() -> None:
     )
     assert rule["allowedVersions"] == _next_minor_cap(chart_version)
     assert rule["groupName"] == "volsync-image"
+    volsync = next(
+        manager
+        for manager in managers
+        if any("quay.io/backube/volsync" in pattern for pattern in manager["matchStrings"])
+    )
+    pattern_src = next(pattern for pattern in volsync["matchStrings"] if "currentDigest" in pattern)
+    source = (ROOT / "platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
+    assert _unmatched_image_lines(source, pattern_src) == []
+    versionless = source + "\nimage: quay.io/backube/volsync@sha256:" + ("ab" * 32) + "\n"
+    assert _unmatched_image_lines(versionless, pattern_src)
+
+
+def _unmatched_image_lines(text: str, pattern_src: str) -> list[str]:
+    """Image lines that name this manager's dep and are not inside a match."""
+    dep = re.search(r"\(\?<depName>([^)]+)\)", pattern_src)
+    assert dep is not None
+    pattern = _js_to_python(pattern_src)
+    spans = [(match.start(), match.end()) for match in re.finditer(pattern, text)]
+    missed: list[str] = []
+    for line in re.finditer(rf"image:[^\n]*{dep.group(1)}[^\n]*", text):
+        if any(start < line.end() and line.start() < end for start, end in spans):
+            continue
+        missed.append(line.group(0).strip())
+    return missed
 
 
 def _manager_files(manager: dict) -> list[Path]:

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from subprocess import CompletedProcess
 
+import pytest
 import yaml
 
 from support import REPO_ROOT as ROOT
@@ -181,14 +182,12 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     )
 
 
-def test_versioned_etcd_image_is_accepted() -> None:
-    """restore and drill accept restic/restic:<version>@sha256: as well as the digest-only form."""
+def _etcd_kubectl(image: str):
     tools = str(ROOT / "tools")
     if tools not in sys.path:
         sys.path.insert(0, tools)
     from lib._etcd_image import etcd_snapshot_image
 
-    image = "restic/restic:0.19.1@sha256:" + ("ab" * 32)
     body = {
         "spec": {
             "jobTemplate": {
@@ -202,19 +201,36 @@ def test_versioned_etcd_image_is_accepted() -> None:
     def kubectl(args: list[str]) -> CompletedProcess[str]:
         return CompletedProcess(args, 0, json.dumps(body), "")
 
-    assert etcd_snapshot_image(kubectl) == image
+    return etcd_snapshot_image, kubectl
+
+
+def test_versioned_etcd_image_is_accepted() -> None:
+    """restore and drill accept a release tag or a digest-only restic image."""
+    digest = "sha256:" + ("ab" * 32)
+    for image in (
+        f"restic/restic:0.19.1@{digest}",
+        f"restic/restic:v0.19.1@{digest}",
+        f"restic/restic@{digest}",
+    ):
+        read, kubectl = _etcd_kubectl(image)
+        assert read(kubectl) == image
     committed = next(
         line.strip().removeprefix("image:").strip()
         for line in (ROOT / "platform/backups/etcd-snapshots.yaml")
         .read_text(encoding="utf-8")
         .splitlines()
-        if "restic/restic:" in line
+        if line.strip().startswith("image:") and "restic/restic" in line
     )
+    read, kubectl = _etcd_kubectl(committed)
+    assert read(kubectl) == committed
 
-    def live(args: list[str]) -> CompletedProcess[str]:
-        body["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"] = (
-            committed
-        )
-        return CompletedProcess(args, 0, json.dumps(body), "")
 
-    assert etcd_snapshot_image(live) == committed
+@pytest.mark.parametrize("tag", ["latest", "edge", "Latest", "0.18"])
+def test_nonrelease_etcd_tag_is_rejected(tag: str) -> None:
+    """latest, edge, Latest, and a partial tag are not a restic release."""
+    image = f"restic/restic:{tag}@sha256:" + ("ab" * 32)
+    read, kubectl = _etcd_kubectl(image)
+    from lib._etcd_image import ImageError
+
+    with pytest.raises(ImageError, match="must be restic/restic@sha256:"):
+        read(kubectl)

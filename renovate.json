@@ -174,7 +174,7 @@
     },
     {
       "customType": "regex",
-      "description": "restic rest-server image digest.",
+      "description": "restic rest-server image version tag and digest.",
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^platform\\/backups\\/rest-server\\.yaml$/"],
       "matchStrings": [
