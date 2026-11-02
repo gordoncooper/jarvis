@@ -88,13 +88,26 @@ def _automerge_values(node: object) -> list[object]:
     return found
 
 
+def _nested_extends(node: object, top: bool = True) -> int:
+    count = 0
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "extends" and not top:
+                count += 1
+            count += _nested_extends(value, top=False)
+    elif isinstance(node, list):
+        for item in node:
+            count += _nested_extends(item, top=False)
+    return count
+
+
 def _assert_no_hold_or_automerge(config: dict) -> None:
     # A change to extends must re-check the resolved config for holds and automerge.
     assert config["extends"] == ["config:recommended"]
-    assert all("extends" not in rule for rule in config["packageRules"])
+    assert _nested_extends(config) == 0
     assert _delay_keys(config) == []
     assert config["automerge"] is False
-    assert all(True not in _automerge_values(rule) for rule in config["packageRules"])
+    assert True not in _automerge_values(config)
 
 
 def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
@@ -110,6 +123,10 @@ def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
         lambda config: config.update(automerge=True),
         lambda config: config["extends"].append("schedule:weekly"),
         lambda config: config["packageRules"].append({"extends": [":automergeMinor"]}),
+        lambda config: config.update(lockFileMaintenance={"automerge": True}),
+        lambda config: config.update(vulnerabilityAlerts={"automerge": True}),
+        lambda config: config.update(minor={"automerge": True}),
+        lambda config: config.update(lockFileMaintenance={"extends": [":automergeAll"]}),
     ],
     ids=[
         "minimumReleaseAge",
@@ -117,6 +134,10 @@ def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
         "top-level-automerge",
         "extends-preset",
         "rule-extends",
+        "lockfile-automerge",
+        "vulnerability-automerge",
+        "minor-automerge",
+        "nested-extends",
     ],
 )
 def test_seeded_hold_or_automerge_fails(mutate: Callable[[dict], None]) -> None:
