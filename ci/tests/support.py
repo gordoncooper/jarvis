@@ -272,14 +272,15 @@ def _bootstrap_copy(root: Path, name: str) -> None:
     if not sops:
         raise RuntimeError("sops not found on PATH (run make deps)")
     mod = load_tool("bootstrap_secrets_example_copy", REPO_ROOT / "tools" / "bootstrap-secrets")
-    previous = mod.REPO_ROOT
+    previous_root = mod.REPO_ROOT
+    previous_repo_root = mod._repo_root
     mod.REPO_ROOT = root
     mod._repo_root = lambda: root
     try:
         mod.bootstrap(name, sops_bin=sops)
     finally:
-        mod.REPO_ROOT = previous
-        mod._repo_root = lambda: previous
+        mod.REPO_ROOT = previous_root
+        mod._repo_root = previous_repo_root
 
 
 def _render_copy(env_dir: Path) -> None:

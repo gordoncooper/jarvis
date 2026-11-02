@@ -221,11 +221,24 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
 
 
 def test_cluster_vars_configmap_matches_render_script(example_copy: ExampleCopy) -> None:
-    """The committed ConfigMap is the render script's output for each full env."""
-    for root, env in real_and_copy_envs(example_copy):
+    """The committed ConfigMap is the render script's output, including env-00."""
+    targets = [(REPO_ROOT, EXAMPLE_ENV), *real_and_copy_envs(example_copy)]
+    for root, env in targets:
         cluster_path = root / "envs" / env / "values" / "cluster-vars.yaml"
         generated_path = root / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
         assert generated_path.read_text(encoding="utf-8") == render_document(cluster_path)
+
+
+def test_stale_env_00_cluster_vars_configmap_fails() -> None:
+    """A stale published value in env-00's committed ConfigMap is not the render."""
+    source = REPO_ROOT / "envs" / EXAMPLE_ENV / "values" / "cluster-vars.yaml"
+    rendered = render_document(source)
+    generated = (
+        REPO_ROOT / "envs" / EXAMPLE_ENV / "flux" / "generated" / "cluster-vars-configmap.yaml"
+    ).read_text(encoding="utf-8")
+    assert generated == rendered
+    stale = rendered.replace("dns_suffix: env-00.example", "dns_suffix: stale.example", 1)
+    assert stale != rendered
 
 
 def test_cluster_vars_configmap_publishes_only_the_allow_list() -> None:
@@ -368,7 +381,7 @@ def test_health_checks_are_exactly_the_two_helmreleases(tmp_path: Path, mutate) 
 
 
 def test_health_check_helmreleases_exist_under_platform() -> None:
-    """R1: each platform-controllers HelmRelease check exists under platform/, in flux-system."""
+    """Each platform-controllers HelmRelease check exists under platform/, in flux-system."""
     found = _platform_helmreleases()
     assert _helmrelease_gate_errors(found) == []
     missing = dict(found)
@@ -377,7 +390,7 @@ def test_health_check_helmreleases_exist_under_platform() -> None:
 
 
 def test_env_00_deployment_health_check_fails() -> None:
-    """R1: a Deployment check in place of a HelmRelease check fails on the example flux tree."""
+    """A Deployment check in place of a HelmRelease check fails on the example flux tree."""
     docs = _flux_kustomizations(EXAMPLE_ENV)
     assert _flux_kustomization_errors(docs, EXAMPLE_ENV) == []
     _controllers_spec(docs)["healthChecks"][0] = {

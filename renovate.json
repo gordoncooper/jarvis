@@ -178,7 +178,7 @@
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^platform\\/backups\\/rest-server\\.yaml$/"],
       "matchStrings": [
-        "image: (?<depName>restic/rest-server)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "image: (?<depName>restic/rest-server):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     },
     {

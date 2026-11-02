@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 
 import yaml
 
@@ -58,42 +59,70 @@ def test_ansible_core_stays_on_the_2_20_line() -> None:
     assert "2.20" in rule["description"]
 
 
+def _next_minor_cap(version: str) -> str:
+    major, minor, _patch = version.split(".")
+    return f"<{major}.{int(minor) + 1}"
+
+
+def _same_minor(left: str, right: str) -> bool:
+    return tuple(left.split(".")[:2]) == tuple(right.split(".")[:2])
+
+
 def test_managed_image_without_a_version_tag_fails() -> None:
-    """R33: an image line Renovate manages must name a version. A digest-only line does not match."""
+    """Every custom manager that captures a digest also captures a version. A digest-only line does not match."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    cases = (
-        ("platform/backups/controller/helmrelease.yaml", "quay.io/backube/volsync", "0.17"),
-        ("platform/backups/etcd-snapshots.yaml", "restic/restic", None),
-    )
-    chart = yaml.safe_load(
+    managers = [
+        manager
+        for manager in renovate["customManagers"]
+        if any("currentDigest" in pattern for pattern in manager.get("matchStrings", []))
+    ]
+    assert managers
+    chart_version = yaml.safe_load(
         (ROOT / "platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
-    )
-    chart_version = chart["spec"]["chart"]["spec"]["version"]
-    for rel, dep, minor in cases:
-        text = (ROOT / rel).read_text(encoding="utf-8")
-        managers = [
-            manager
-            for manager in renovate["customManagers"]
-            if any(dep in pattern for pattern in manager["matchStrings"])
-        ]
-        assert len(managers) == 1, rel
-        pattern = _js_to_python(managers[0]["matchStrings"][0])
-        found = list(re.finditer(pattern, text))
-        assert len(found) == 1, rel
-        assert found[0].group("currentValue")
-        assert found[0].group("currentDigest").startswith("sha256:")
-        bare = f"image: {dep}@{found[0].group('currentDigest')}\n"
-        assert re.search(pattern, bare) is None
-        if minor is not None:
-            assert found[0].group("currentValue").startswith(minor + ".")
-            assert chart_version.startswith(minor + ".")
+    )["spec"]["chart"]["spec"]["version"]
+    saw_volsync = False
+    for manager in managers:
+        patterns = [pattern for pattern in manager["matchStrings"] if "currentDigest" in pattern]
+        for pattern_src in patterns:
+            assert "currentValue" in pattern_src, manager.get("description")
+            pattern = _js_to_python(pattern_src)
+            found = [
+                match
+                for path in _manager_files(manager)
+                for match in re.finditer(pattern, path.read_text(encoding="utf-8"))
+            ]
+            assert found, manager.get("description")
+            for match in found:
+                version = match.group("currentValue")
+                digest = match.group("currentDigest")
+                assert version
+                assert digest.startswith("sha256:")
+                bare = match.group(0).replace(version, "", 1)
+                assert bare != match.group(0)
+                assert re.search(pattern, bare) is None
+                if "quay.io/backube/volsync" in match.group(0):
+                    saw_volsync = True
+                    assert _same_minor(version, chart_version)
+    assert saw_volsync
     rule = next(
         item
         for item in renovate["packageRules"]
         if item.get("matchDepNames") == ["quay.io/backube/volsync"]
     )
-    assert rule["allowedVersions"] == "<0.18"
+    assert rule["allowedVersions"] == _next_minor_cap(chart_version)
     assert rule["groupName"] == "volsync-image"
+
+
+def _manager_files(manager: dict) -> list[Path]:
+    files: list[Path] = []
+    patterns = manager.get("managerFilePatterns") or []
+    for path in ROOT.rglob("*"):
+        if not path.is_file() or any(part in {".git", ".venv"} for part in path.parts):
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        if any(re.search(pattern.strip("/"), rel) for pattern in patterns):
+            files.append(path)
+    return files
 
 
 def test_testapp_image_tag_and_digest_are_a_custom_manager() -> None:

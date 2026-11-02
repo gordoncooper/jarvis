@@ -45,7 +45,9 @@ def test_rest_server_contract_rules() -> None:
     pod = deploy["spec"]["template"]["spec"]
     assert pod["nodeSelector"]["role.${dns_suffix}/backup"] == "true"
     container = pod["containers"][0]
-    assert re.fullmatch(r"restic/rest-server@sha256:[a-f0-9]{64}", container["image"])
+    assert re.fullmatch(
+        r"restic/rest-server:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"]
+    )
     rendered = "\n".join(
         [
             *(container.get("command") or []),
@@ -80,7 +82,9 @@ def test_renovate_tracks_the_rest_server_digest() -> None:
         for line in (ROOT / "platform/backups/rest-server.yaml").read_text(encoding="utf-8").splitlines()
         if line.strip().startswith("image:")
     )
-    assert re.fullmatch(r"image: restic/rest-server@sha256:[a-f0-9]{64}", image_line)
+    assert re.fullmatch(
+        r"image: restic/rest-server:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", image_line
+    )
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [
         manager
@@ -91,7 +95,9 @@ def test_renovate_tracks_the_rest_server_digest() -> None:
     manager = managers[0]
     assert manager["datasourceTemplate"] == "docker"
     assert any(
-        "restic/rest-server" in pattern and "currentDigest" in pattern
+        "restic/rest-server" in pattern
+        and "currentDigest" in pattern
+        and "currentValue" in pattern
         for pattern in manager["matchStrings"]
     )
 
@@ -197,3 +203,18 @@ def test_versioned_etcd_image_is_accepted() -> None:
         return CompletedProcess(args, 0, json.dumps(body), "")
 
     assert etcd_snapshot_image(kubectl) == image
+    committed = next(
+        line.strip().removeprefix("image:").strip()
+        for line in (ROOT / "platform/backups/etcd-snapshots.yaml")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if "restic/restic:" in line
+    )
+
+    def live(args: list[str]) -> CompletedProcess[str]:
+        body["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            committed
+        )
+        return CompletedProcess(args, 0, json.dumps(body), "")
+
+    assert etcd_snapshot_image(live) == committed

@@ -287,18 +287,9 @@ def test_systemctl_probe_error_is_not_treated_as_inactive(tmp_path: Path) -> Non
     _assert_unchanged(output)
 
 
-def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
-    """A host that passes the opening asserts changes nothing, including on --check."""
-    require_cli("ansible-playbook")
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=4)
-    inventory = tmp_path / "hosts.yml"
-    _inventory(inventory)
-    vars_path = tmp_path / "cluster-vars.yaml"
-    _vars_file(vars_path)
-    play = tmp_path / "play.yml"
+def _write_opening_play(path: Path, *, bin_dir: Path, vars_file: str) -> None:
     tasks = ANSIBLE_DIR / "tasks"
-    play.write_text(
+    path.write_text(
         textwrap.dedent(
             f"""\
             ---
@@ -308,7 +299,7 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
               become: false
               any_errors_fatal: true
               vars_files:
-                - {vars_path}
+                - {vars_file}
               environment:
                 PATH: "{bin_dir}:/usr/bin:/bin"
               tasks:
@@ -323,6 +314,19 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
+    """A host that passes the opening asserts changes nothing, including on --check."""
+    require_cli("ansible-playbook")
+    bin_dir = tmp_path / "bin"
+    _install_systemctl(bin_dir, active_rc=4)
+    inventory = tmp_path / "hosts.yml"
+    _inventory(inventory)
+    vars_path = tmp_path / "cluster-vars.yaml"
+    _vars_file(vars_path)
+    play = tmp_path / "play.yml"
+    _write_opening_play(play, bin_dir=bin_dir, vars_file=str(vars_path))
     flux_instance = example_flux_entry(tmp_path).instance_file
     extra = [
         "-e",
@@ -360,7 +364,7 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
 
 
 def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> None:
-    """R1: group_vars resolves envs/<jarvis_env>/flux/flux-instance.yaml, and that assert passes."""
+    """group_vars resolves envs/<jarvis_env>/flux/flux-instance.yaml, and that assert passes."""
     require_cli("ansible-playbook")
     hosts = (
         REPO_ROOT / "ci/tests/fixtures/env-shapes/single-node/hosts.yml"
@@ -369,34 +373,11 @@ def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> N
     playbook_dir = copy.root / "infra" / "ansible"
     (playbook_dir / "group_vars").mkdir(parents=True)
     shutil.copy(ANSIBLE_DIR / "group_vars" / "all.yml", playbook_dir / "group_vars" / "all.yml")
-    tasks = ANSIBLE_DIR / "tasks"
     playbook = playbook_dir / "open.yml"
     bin_dir = tmp_path / "bin"
     _install_systemctl(bin_dir, active_rc=4)
-    playbook.write_text(
-        textwrap.dedent(
-            f"""\
-            ---
-            - name: Assert facts before any change
-              hosts: all
-              gather_facts: false
-              become: false
-              any_errors_fatal: true
-              vars_files:
-                - "{{{{ jarvis_cluster_vars }}}}"
-              environment:
-                PATH: "{bin_dir}:/usr/bin:/bin"
-              tasks:
-                - ansible.builtin.import_tasks: {tasks / "preflight.yml"}
-                - ansible.builtin.import_tasks: {tasks / "assert-gpu.yml"}
-                - ansible.builtin.import_role:
-                    name: k3s
-                    tasks_from: refuse.yml
-                - ansible.builtin.import_role:
-                    name: node-disk
-            """
-        ),
-        encoding="utf-8",
+    _write_opening_play(
+        playbook, bin_dir=bin_dir, vars_file='"{{ jarvis_cluster_vars }}"'
     )
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"

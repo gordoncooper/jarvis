@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from _flux_substitute import scan_flux_substitute
 from schema.env import EXAMPLE_ENV
+from support import REPO_ROOT, ExampleCopy, bootstrap_example_copy
 
 _ENV_FLUX = {
     "kustomization.yaml": "resources: [vars.yaml, layer.yaml]\n",
@@ -131,3 +133,39 @@ def test_example_env_platform_configs_is_not_built_when_secrets_are_absent(tmp_p
     violations = scan_flux_substitute(tmp_path)
     assert violations
     assert {item.path for item in violations} == {"envs/env-test/flux"}
+
+
+def test_bootstrapped_copy_scans_platform_configs(example_copy: ExampleCopy) -> None:
+    """A copy scans platform/configs. That repo contains only the copy."""
+    assert [path.name for path in (example_copy.root / "envs").iterdir()] == [example_copy.name]
+    assert scan_flux_substitute(example_copy.root) == []
+
+
+def test_undefined_var_in_platform_configs_fails_without_a_real_env(tmp_path: Path) -> None:
+    """An undefined ${var} in platform/configs fails on a repo that has only the copy."""
+    copy = bootstrap_example_copy(tmp_path)
+    assert [path.name for path in (copy.root / "envs").iterdir()] == [copy.name]
+    assert scan_flux_substitute(copy.root) == []
+    _seed_unknown_platform_config(copy.root)
+    violations = scan_flux_substitute(copy.root)
+    assert any("uses ${not_a_cluster_var}" in item.message for item in violations)
+
+
+def _seed_unknown_platform_config(root: Path) -> None:
+    platform = root / "platform"
+    if platform.is_symlink():
+        platform.unlink()
+        shutil.copytree(REPO_ROOT / "platform", platform, symlinks=True)
+    configs = platform / "configs"
+    (configs / "seed.yaml").write_text(
+        "apiVersion: v1\n"
+        "kind: ConfigMap\n"
+        "metadata:\n"
+        "  name: seeded-unknown\n"
+        "  namespace: demo\n"
+        "data:\n"
+        "  host: ${not_a_cluster_var}\n",
+        encoding="utf-8",
+    )
+    listing = configs / "kustomization.yaml"
+    listing.write_text(listing.read_text(encoding="utf-8") + "  - seed.yaml\n", encoding="utf-8")
