@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from conftest import require_cli
+from support import REPO_ROOT, load_tool
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "tools" / "prep-node"
 
 _HOSTS = """\
@@ -57,13 +54,7 @@ backup_path: /var/lib/jarvis/backup
 
 
 def _load():
-    loader = importlib.machinery.SourceFileLoader("prep_node", str(SCRIPT))
-    spec = importlib.util.spec_from_loader("prep_node", loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    loader.exec_module(module)
-    return module
+    return load_tool("prep_node", SCRIPT)
 
 
 def test_env_update_renames_host_and_keeps_comments(tmp_path: Path) -> None:

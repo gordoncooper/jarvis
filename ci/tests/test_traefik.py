@@ -8,7 +8,7 @@ import re
 import yaml
 
 from ansible_role_proof import REPO_ROOT, load_cluster_vars, non_example_env_names
-from test_flux_entry import _kustomize_build
+from support import _kustomize_build
 
 # The example env keeps a placeholder k3s_version and is not a cluster pin.
 _CHECKED_LINE = re.compile(

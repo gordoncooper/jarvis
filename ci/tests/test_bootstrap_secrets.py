@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shlex
 import shutil
@@ -14,21 +13,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT, load_tool
+
 BOOTSTRAP = REPO_ROOT / "tools" / "bootstrap-secrets"
 TOOLS_LIB = REPO_ROOT / "tools" / "lib"
 
 
 def _load_module():
-    import importlib.machinery
-
-    loader = importlib.machinery.SourceFileLoader("bootstrap_secrets", str(BOOTSTRAP))
-    spec = importlib.util.spec_from_loader("bootstrap_secrets", loader)
-    assert spec is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    loader.exec_module(mod)
-    return mod
+    return load_tool("bootstrap_secrets", BOOTSTRAP)
 
 
 def _load_sops():

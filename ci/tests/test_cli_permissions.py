@@ -26,7 +26,8 @@ from _cli_permissions import (
     split_commands,
 )
 
-_REPO = Path(__file__).resolve().parents[2]
+from support import REPO_ROOT as _REPO
+
 _CLI = _REPO / ".cursor" / "cli.json"
 _WRAPPERS = {
     "bare",

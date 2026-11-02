@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -40,6 +41,76 @@ def test_sops_age_secret_template_not_reconciled_from_git() -> None:
     assert "kustomize.toolkit.fluxcd.io/reconcile: disabled" in rendered
 
 
+_ROLE_KEYS = (
+    "ansible.builtin.include_role",
+    "include_role",
+    "ansible.builtin.import_role",
+    "import_role",
+)
+_TASK_KEYS = (
+    "ansible.builtin.import_tasks",
+    "import_tasks",
+    "ansible.builtin.include_tasks",
+    "include_tasks",
+)
+_READ_ONLY_MODULES = {
+    "ansible.builtin.assert",
+    "assert",
+    "ansible.builtin.debug",
+    "debug",
+    "ansible.builtin.fail",
+    "fail",
+    "ansible.builtin.setup",
+    "setup",
+    "ansible.builtin.set_fact",
+    "set_fact",
+    "ansible.builtin.stat",
+    "stat",
+    "ansible.builtin.slurp",
+    "slurp",
+    "ansible.builtin.find",
+    "find",
+    "ansible.builtin.command",
+    "command",
+    "ansible.builtin.shell",
+    "shell",
+    *_ROLE_KEYS,
+    *_TASK_KEYS,
+}
+_NON_MODULE_KEYS = {
+    "name",
+    "when",
+    "vars",
+    "tags",
+    "become",
+    "register",
+    "changed_when",
+    "failed_when",
+    "check_mode",
+    "args",
+    "loop",
+    "loop_control",
+    "notify",
+    "ignore_errors",
+    "any_errors_fatal",
+    "delegate_to",
+    "run_once",
+    "environment",
+    "no_log",
+    "timeout",
+    "block",
+    "rescue",
+    "always",
+    "listen",
+    "retries",
+    "delay",
+    "until",
+    "diff",
+    "module_defaults",
+    "ignore_unreachable",
+}
+
+
 def _role_names(play: dict[str, object]) -> list[str]:
     names: list[str] = []
     for role in play.get("roles") or []:
@@ -50,7 +121,7 @@ def _role_names(play: dict[str, object]) -> list[str]:
     for task in play.get("tasks") or []:
         if not isinstance(task, dict):
             continue
-        for key in ("ansible.builtin.include_role", "include_role", "ansible.builtin.import_role", "import_role"):
+        for key in _ROLE_KEYS:
             included = task.get(key)
             if isinstance(included, dict) and isinstance(included.get("name"), str):
                 names.append(included["name"])
@@ -59,38 +130,227 @@ def _role_names(play: dict[str, object]) -> list[str]:
     return names
 
 
-def test_site_yml_role_order_and_ssh_user() -> None:
+def _k3s_modes(play: dict[str, object]) -> list[str]:
+    modes: list[str] = []
+    for role in play.get("roles") or []:
+        if isinstance(role, dict) and role.get("role") == "k3s":
+            mode = (role.get("vars") or {}).get("k3s_mode")
+            if isinstance(mode, str):
+                modes.append(mode)
+    for task in play.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        for key in _ROLE_KEYS:
+            included = task.get(key)
+            if isinstance(included, dict) and included.get("name") == "k3s":
+                mode = (included.get("vars") or {}).get("k3s_mode")
+                if isinstance(mode, str):
+                    modes.append(mode)
+    return modes
+
+
+def _is_fact_play(play: dict[str, object]) -> bool:
+    tags = play.get("tags") or []
+    return (
+        play.get("hosts") == "all"
+        and isinstance(tags, list)
+        and "always" in tags
+        and play.get("any_errors_fatal") is True
+    )
+
+
+def _imported_task_file(task: dict[str, object], module: str) -> Path | None:
+    if module in _TASK_KEYS:
+        raw = task[module]
+        file = raw if isinstance(raw, str) else raw.get("file") if isinstance(raw, dict) else None
+        if not isinstance(file, str):
+            return None
+        return ANSIBLE_DIR / file
+    if module in _ROLE_KEYS:
+        raw = task[module]
+        if isinstance(raw, str):
+            name, tasks_from = raw, "main.yml"
+        elif isinstance(raw, dict) and isinstance(raw.get("name"), str):
+            name = raw["name"]
+            tasks_from = raw.get("tasks_from") or "main.yml"
+            if not isinstance(tasks_from, str):
+                return None
+        else:
+            return None
+        if not tasks_from.endswith(".yml"):
+            tasks_from = f"{tasks_from}.yml"
+        return ANSIBLE_DIR / "roles" / name / "tasks" / tasks_from
+    return None
+
+
+def _task_modules(task: dict[str, object]) -> list[tuple[str, dict[str, object]]]:
+    found: list[tuple[str, dict[str, object]]] = []
+    for key, value in task.items():
+        if key in {"block", "rescue", "always"} and isinstance(value, list):
+            for child in value:
+                if isinstance(child, dict):
+                    found.extend(_task_modules(child))
+            continue
+        if key in _NON_MODULE_KEYS:
+            continue
+        found.append((str(key), task))
+    return found
+
+
+def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
+    if not isinstance(tasks, list):
+        return ["fact-assert play tasks are not a list"]
+    errors: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            errors.append("fact-assert play has a task that is not a mapping")
+            continue
+        for module, owner in _task_modules(task):
+            if module not in _READ_ONLY_MODULES:
+                errors.append(f"fact-assert play runs {module}")
+                continue
+            if module in {"ansible.builtin.command", "command", "ansible.builtin.shell", "shell"}:
+                if owner.get("changed_when") is not False:
+                    errors.append(f"{module} in the fact-assert play can report a change")
+            imported = _imported_task_file(owner, module)
+            if imported is None:
+                continue
+            if imported in seen:
+                continue
+            seen.add(imported)
+            if not imported.is_file():
+                errors.append(f"fact-assert play imports missing {imported.name}")
+                continue
+            loaded = yaml.safe_load(imported.read_text(encoding="utf-8"))
+            errors.extend(_read_only_errors(loaded, seen))
+    return errors
+
+
+def _operator_play_tags() -> set[str]:
+    """Play tags the Ansible README also gives as operator ``--tags`` commands."""
+    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
+    commands = set(re.findall(r"--tags\s+([A-Za-z][A-Za-z0-9_-]*)", readme))
+    named: set[str] = set()
+    for line in readme.splitlines():
+        if "are play tags" not in line:
+            continue
+        head = line.split("are play tags", 1)[0]
+        named.update(re.findall(r"`([A-Za-z][A-Za-z0-9_-]*)`", head))
+    assert named, "README names no play tags"
+    missing = named - commands
+    assert not missing, f"README play tags have no --tags command: {sorted(missing)}"
+    return named
+
+
+def _assert_play_order(plays: list[dict[str, object]]) -> None:
+    """Play order, host targets, and documented play tags are the safety fact."""
+    fact_indexes = [index for index, play in enumerate(plays) if _is_fact_play(play)]
+    assert fact_indexes == [0], plays
+    fact = plays[0]
+    assert not fact.get("roles"), "fact-assert play applies a role"
+    seen: set[Path] = set()
+    errors = _read_only_errors(fact.get("tasks"), seen)
+    for section in ("pre_tasks", "post_tasks", "handlers"):
+        body = fact.get(section)
+        if body is None:
+            continue
+        errors.extend(_read_only_errors(body, seen))
+    assert errors == []
+
+    def indexes(role: str) -> list[int]:
+        return [
+            index
+            for index, play in enumerate(plays)
+            if index != 0 and role in _role_names(play)
+        ]
+
+    base_os = indexes("base-os")
+    k3s = indexes("k3s")
+    kubeconfig = indexes("kubeconfig")
+    flux = indexes("flux-operator")
+    server = [index for index, play in enumerate(plays) if "server" in _k3s_modes(play)]
+    agent = [index for index, play in enumerate(plays) if "agent" in _k3s_modes(play)]
+    assert base_os, "base-os play is missing"
+    assert k3s, "k3s play is missing"
+    assert len(server) == 1, server
+    assert len(agent) == 1, agent
+    assert kubeconfig, "kubeconfig play is missing"
+    assert flux, "flux-operator play is missing"
+    assert plays[server[0]].get("hosts") == "control_plane"
+    assert plays[agent[0]].get("hosts") == "all:!control_plane"
+    assert all(plays[index].get("hosts") == "control_plane" for index in kubeconfig)
+    assert all(plays[index].get("hosts") == "control_plane" for index in flux)
+    for tag in sorted(_operator_play_tags()):
+        found = set(indexes(tag))
+        if tag == "k3s":
+            found.update(server)
+            found.update(agent)
+        assert found, tag
+        for index in sorted(found):
+            tags = plays[index].get("tags")
+            assert isinstance(tags, list) and tag in tags, (plays[index].get("name"), tag)
+    assert all(index < min(k3s) for index in base_os)
+    assert server[0] < agent[0]
+    assert all(index > server[0] for index in kubeconfig)
+    assert all(index > server[0] for index in flux)
+
+    safety = [fact, *[plays[index] for index in sorted({*base_os, *k3s, *kubeconfig, *flux})]]
+    shared = fact.get("vars")
+    for play in safety:
+        assert play.get("become") is True
+        assert "ssh_user | default(" in str((play.get("vars") or {}).get("ansible_user"))
+        assert play.get("vars") == shared
+
+
+def _site_plays() -> list[dict[str, object]]:
     plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
     assert isinstance(plays, list)
-    assert [play.get("hosts") for play in plays] == [
-        "all",
-        "all",
-        "control_plane",
-        "all:!control_plane",
-        "control_plane",
-        "control_plane",
-        "control_plane",
+    return plays
+
+
+def test_site_play_order_is_the_safety_fact() -> None:
+    """Fact-assert play first and read-only; base-os before k3s; server before agent; kubeconfig and flux-operator after the server, on control_plane; the agent on every host except control_plane."""
+    _assert_play_order(_site_plays())
+
+
+def test_play_before_the_fact_assert_play_fails() -> None:
+    """A play inserted before the fact-assert play is not the required order."""
+    plays = _site_plays()
+    plays.insert(0, {"name": "early", "hosts": "all", "tasks": [{"ansible.builtin.debug": {"msg": "x"}}]})
+    with pytest.raises(AssertionError):
+        _assert_play_order(plays)
+
+
+def test_copy_before_tasks_fails() -> None:
+    """A copy task in the fact-assert play's pre_tasks is a change."""
+    plays = _site_plays()
+    plays[0]["pre_tasks"] = [
+        {"ansible.builtin.copy": {"dest": "/tmp/x", "content": "x"}}
     ]
-    for play in plays:
-        assert play.get("become") is True
-        assert "ssh_user | default(" in str(play.get("vars", {}).get("ansible_user"))
-    assert plays[0].get("tags") == ["always"]
-    assert _role_names(plays[0]) == ["k3s", "node-disk"]
-    assert _role_names(plays[1]) == ["base-os"]
-    assert _role_names(plays[2]) == ["k3s"]
-    assert plays[2]["roles"][0]["vars"]["k3s_mode"] == "server"
-    assert _role_names(plays[3]) == ["k3s"]
-    assert plays[3]["roles"][0]["vars"]["k3s_mode"] == "agent"
-    assert _role_names(plays[4]) == ["k3s"]
-    assert _role_names(plays[5]) == ["kubeconfig"]
-    assert _role_names(plays[6]) == ["flux-operator"]
-    assert plays[2].get("tags") == ["k3s"]
-    assert plays[3].get("tags") == ["k3s"]
-    assert plays[4].get("tags") == ["k3s"]
-    assert plays[5].get("tags") == ["kubeconfig"]
-    assert plays[6].get("tags") == ["flux-operator"]
-    connection = plays[0].get("vars")
-    assert all(play.get("vars") == connection for play in plays)
+    with pytest.raises(AssertionError):
+        _assert_play_order(plays)
+
+
+def test_dropping_a_documented_tag_fails() -> None:
+    """A k3s play without the tag from the operator commands is refused."""
+    plays = _site_plays()
+    server = next(play for play in plays if "server" in _k3s_modes(play))
+    server["tags"] = [tag for tag in server.get("tags") or [] if tag != "k3s"]
+    with pytest.raises(AssertionError):
+        _assert_play_order(plays)
+
+
+def test_unrelated_play_at_the_end_passes() -> None:
+    """A play that is not part of the safety order does not fail it."""
+    plays = _site_plays()
+    plays.append(
+        {
+            "name": "notes",
+            "hosts": "localhost",
+            "tasks": [{"ansible.builtin.debug": {"msg": "x"}}],
+        }
+    )
+    _assert_play_order(plays)
 
 
 def test_site_yml_ssh_user_default_matches_schema() -> None:
