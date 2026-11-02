@@ -28,6 +28,7 @@ from ansible_role_proof import (
     roles_inventory_path,
 )
 from conftest import require_cli
+from support import ExampleCopy
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
 
@@ -154,19 +155,20 @@ def test_agent_fails_when_control_plane_name_does_not_resolve(tmp_path: Path) ->
     assert "cp.invalid does not resolve on wk-1" in output
 
 
-def _agent_play_section(env: str) -> str:
+def _agent_play_section(env: str, root: Path | None = None) -> str:
     require_cli("ansible-playbook")
+    repo = REPO_ROOT if root is None else root
     proc = subprocess.run(
         [
             "ansible-playbook",
             "site.yml",
             "--list-hosts",
             "-i",
-            str(REPO_ROOT / "envs" / env / "inventory" / "hosts.yml"),
+            str(repo / "envs" / env / "inventory" / "hosts.yml"),
             "-i",
             str(roles_inventory_path()),
             "-e",
-            f"jarvis_cluster_vars=../../envs/{env}/values/cluster-vars.yaml",
+            f"jarvis_cluster_vars={repo / 'envs' / env / 'values' / 'cluster-vars.yaml'}",
         ],
         cwd=ANSIBLE_DIR,
         capture_output=True,
@@ -180,9 +182,10 @@ def _agent_play_section(env: str) -> str:
     return section
 
 
-def _hosts_outside_control_plane(env: str) -> set[str]:
+def _hosts_outside_control_plane(env: str, root: Path | None = None) -> set[str]:
+    repo = REPO_ROOT if root is None else root
     doc = yaml.safe_load(
-        (REPO_ROOT / "envs" / env / "inventory" / "hosts.yml").read_text(encoding="utf-8")
+        (repo / "envs" / env / "inventory" / "hosts.yml").read_text(encoding="utf-8")
     )
     hosts = doc["all"]["hosts"]
     return {
@@ -215,11 +218,14 @@ def _listed_play_hosts(section: str) -> set[str]:
     return set(listed)
 
 
-def test_agent_play_host_pattern() -> None:
-    envs = [env_name(), *non_example_env_names()]
-    assert non_example_env_names()
-    for env in envs:
-        assert _listed_play_hosts(_agent_play_section(env)) == _hosts_outside_control_plane(env)
+def test_agent_play_host_pattern(example_copy: ExampleCopy) -> None:
+    """The agent play is every host except the control plane."""
+    targets = [(REPO_ROOT, env) for env in (env_name(), *non_example_env_names())]
+    targets.append((example_copy.root, example_copy.name))
+    for root, env in targets:
+        assert _listed_play_hosts(_agent_play_section(env, root)) == _hosts_outside_control_plane(
+            env, root
+        )
 
 
 def test_k3s_download_checksum_is_k3s_sha256() -> None:

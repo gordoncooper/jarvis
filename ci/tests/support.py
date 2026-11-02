@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
@@ -43,8 +44,9 @@ def renovate_python_pattern(pattern: str) -> str:
     return _RENOVATE_NAMED_GROUP.sub(r"(?P<\1>", pattern)
 
 
-def _kustomize_build(rel_path: str) -> str:
+def _kustomize_build(rel_path: str, *, root: Path | None = None) -> str:
     """Chart defaults the values don't set pass unchecked."""
+    repo = REPO_ROOT if root is None else root
     kustomize = shutil.which("kustomize")
     if not kustomize:
         pytest.fail("kustomize not found on PATH (run make deps)")
@@ -54,12 +56,12 @@ def _kustomize_build(rel_path: str) -> str:
             "build",
             "--load-restrictor",
             "LoadRestrictionsNone",
-            str(REPO_ROOT / rel_path),
+            str(repo / rel_path),
         ],
         capture_output=True,
         text=True,
         check=False,
-        cwd=REPO_ROOT,
+        cwd=repo,
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return proc.stdout
@@ -165,3 +167,127 @@ def _write_env(
     if not is_example_env(env_name):
         _ensure_sops_creation_rule(root, env_name)
     return env
+
+
+@dataclass(frozen=True)
+class ExampleCopy:
+    """A throwaway env built from env-00. The age private key stays in tmp."""
+
+    root: Path
+    name: str
+
+    @property
+    def env_dir(self) -> Path:
+        return self.root / "envs" / self.name
+
+
+def real_and_copy_envs(copy: ExampleCopy) -> list[tuple[Path, str]]:
+    """Non-example envs in this tree, then the bootstrapped copy."""
+    from ansible_role_proof import non_example_env_names
+
+    return [(REPO_ROOT, name) for name in non_example_env_names(REPO_ROOT)] + [
+        (copy.root, copy.name)
+    ]
+
+
+def bootstrap_example_copy(
+    tmp_path: Path,
+    *,
+    name: str = "env-copy",
+    hosts_text: str | None = None,
+) -> ExampleCopy:
+    """Copy env-00 into a tmp repo, rename it, bootstrap secrets, and render.
+
+    Steps, and nothing is written into the real tree:
+    1. Link platform, services, and apps so kustomize can build the Flux paths.
+    2. Copy envs/env-00 to envs/<name>.
+    3. Set jarvis_env to <name> and rewrite every envs/env-00/ path.
+    4. Replace inventory/hosts.yml when hosts_text is set.
+    5. Write a .sops.yaml age rule from a throwaway age-keygen key.
+    6. Run bootstrap-secrets' bootstrap() against the tmp repo.
+    7. Render the cluster-vars ConfigMap over the copied file.
+    """
+    from schema.env import EXAMPLE_ENV
+
+    root = (tmp_path / "repo").resolve()
+    repo = REPO_ROOT.resolve()
+    if root == repo or repo in root.parents:
+        raise RuntimeError("refusing to write the example copy inside the repo")
+    root.mkdir()
+    for dirname in ("platform", "services", "apps"):
+        (root / dirname).symlink_to(repo / dirname)
+    dest = root / "envs" / name
+    shutil.copytree(repo / "envs" / EXAMPLE_ENV, dest)
+    _rename_copied_env(dest, EXAMPLE_ENV, name)
+    if hosts_text is not None:
+        (dest / "inventory" / "hosts.yml").write_text(hosts_text, encoding="utf-8")
+    _write_copy_sops_rule(root, name, _throwaway_age_public(tmp_path))
+    _bootstrap_copy(root, name)
+    _render_copy(dest)
+    return ExampleCopy(root, name)
+
+
+def _rename_copied_env(env_dir: Path, old: str, new: str) -> None:
+    for path in sorted(item for item in env_dir.rglob("*") if item.is_file()):
+        text = path.read_text(encoding="utf-8")
+        updated = text.replace(f"envs/{old}/", f"envs/{new}/").replace(
+            f"jarvis_env: {old}", f"jarvis_env: {new}"
+        )
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
+
+
+def _throwaway_age_public(tmp_path: Path) -> str:
+    """Public half of a new age key. The private key is not returned or printed."""
+    age_keygen = shutil.which("age-keygen")
+    if not age_keygen:
+        raise RuntimeError("age-keygen not found on PATH (run make deps)")
+    proc = subprocess.run(
+        [age_keygen, "-o", str(tmp_path / "age-key.txt")],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # Public key is on stderr. The private key stays in the file and is not read.
+    match = re.search(r"age1[0-9a-z]+", proc.stderr)
+    if match is None:
+        raise RuntimeError("age-keygen did not produce a public key")
+    return match.group(0)
+
+
+def _write_copy_sops_rule(root: Path, name: str, public: str) -> None:
+    text = textwrap.dedent(
+        f"""
+        creation_rules:
+          - path_regex: envs/{name}/secrets/.*\\.sops\\.yaml$
+            encrypted_regex: ^(data|stringData)$
+            age: {public}
+        """
+    ).strip()
+    (root / ".sops.yaml").write_text(text + "\n", encoding="utf-8")
+
+
+def _bootstrap_copy(root: Path, name: str) -> None:
+    sops = shutil.which("sops")
+    if not sops:
+        raise RuntimeError("sops not found on PATH (run make deps)")
+    mod = load_tool("bootstrap_secrets_example_copy", REPO_ROOT / "tools" / "bootstrap-secrets")
+    previous = mod.REPO_ROOT
+    mod.REPO_ROOT = root
+    mod._repo_root = lambda: root
+    try:
+        mod.bootstrap(name, sops_bin=sops)
+    finally:
+        mod.REPO_ROOT = previous
+        mod._repo_root = lambda: previous
+
+
+def _render_copy(env_dir: Path) -> None:
+    lib = str(REPO_ROOT / "tools" / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    from render_cluster_vars_configmap import render_document
+
+    source = env_dir / "values" / "cluster-vars.yaml"
+    output = env_dir / "flux" / "generated" / "cluster-vars-configmap.yaml"
+    output.write_text(render_document(source), encoding="utf-8")

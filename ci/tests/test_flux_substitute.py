@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from _flux_substitute import scan_flux_substitute
+from schema.env import EXAMPLE_ENV
 
 _ENV_FLUX = {
     "kustomization.yaml": "resources: [vars.yaml, layer.yaml]\n",
@@ -93,3 +94,40 @@ def test_r4_missing_substitute_from_source_fails(tmp_path: Path) -> None:
         for item in violations
     )
     assert any("uses ${dns_suffix}" in item.message for item in violations)
+
+
+def test_example_env_platform_configs_is_not_built_when_secrets_are_absent(tmp_path: Path) -> None:
+    """The example flux tree lists bootstrap secrets that do not exist yet.
+
+    A non-example env with the same missing file still fails the build.
+    """
+    def tree(env: str) -> dict[str, str]:
+        return {
+            f"envs/{env}/flux/kustomization.yaml": "resources: [vars.yaml, configs.yaml]\n",
+            f"envs/{env}/flux/vars.yaml": (
+                "apiVersion: v1\nkind: ConfigMap\nmetadata:\n"
+                "  name: cluster-vars\n  namespace: flux-system\ndata:\n"
+                "  dns_suffix: test.example\n"
+            ),
+            f"envs/{env}/flux/configs.yaml": (
+                "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n"
+                "metadata:\n  name: platform-configs\n  namespace: flux-system\nspec:\n"
+                f"  path: ./envs/{env}/flux/platform-configs\n"
+                "  postBuild:\n    substituteFrom:\n"
+                "      - kind: ConfigMap\n        name: cluster-vars\n"
+            ),
+            f"envs/{env}/flux/platform-configs/kustomization.yaml": (
+                "resources: [../../secrets/missing.sops.yaml]\n"
+            ),
+        }
+
+    files: dict[str, str] = {}
+    files.update(tree(EXAMPLE_ENV))
+    files.update(tree("env-test"))
+    for rel, text in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    violations = scan_flux_substitute(tmp_path)
+    assert violations
+    assert {item.path for item in violations} == {"envs/env-test/flux"}

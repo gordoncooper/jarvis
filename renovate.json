@@ -4,8 +4,8 @@
   "automerge": false,
   "packageRules": [
     {
-      "description": "Minor/patch: 3-day hold; flip automerge to true here after P2 exit (R33).",
-      "matchUpdateTypes": ["minor", "patch"],
+      "description": "Minor, patch, and digest: 3-day hold; flip automerge to true here after P2 exit (R33).",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "minimumReleaseAge": "3 days",
       "automerge": false
     },
@@ -27,10 +27,11 @@
       "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"]
     },
     {
-      "description": "One PR updates every VolSync image digest pin.",
+      "description": "Mover image stays on the VolSync chart minor. The backups contract depends on that minor's behaviour. Raise the cap in the same PR that bumps the chart to the next minor. One PR still updates every mover pin.",
       "groupName": "volsync-image",
       "matchManagers": ["custom.regex"],
-      "matchDepNames": ["quay.io/backube/volsync"]
+      "matchDepNames": ["quay.io/backube/volsync"],
+      "allowedVersions": "<0.18"
     },
     {
       "description": "One PR updates every Kyverno image digest pin.",
@@ -72,6 +73,13 @@
       "groupName": "python-dev",
       "matchManagers": ["pip_requirements"],
       "matchFileNames": ["requirements-dev.txt"]
+    },
+    {
+      "description": "ansible 13.x requires ansible-core 2.20.x. Raise this cap in the same PR as an ansible major bump. Patch updates inside 2.20 still flow.",
+      "matchManagers": ["pip_requirements"],
+      "matchFileNames": ["requirements-dev.txt"],
+      "matchPackageNames": ["ansible-core"],
+      "allowedVersions": "<2.21"
     }
   ],
   "customManagers": [
@@ -157,11 +165,11 @@
     },
     {
       "customType": "regex",
-      "description": "VolSync container image digest.",
+      "description": "VolSync container image version and digest.",
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
-        "image: (?<depName>quay.io/backube/volsync)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "image: (?<depName>quay.io/backube/volsync):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     },
     {
@@ -175,11 +183,11 @@
     },
     {
       "customType": "regex",
-      "description": "restic image digest.",
+      "description": "restic image version and digest.",
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^platform\\/backups\\/etcd-snapshots\\.yaml$/"],
       "matchStrings": [
-        "image: (?<depName>restic/restic)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "image: (?<depName>restic/restic):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     },
     {

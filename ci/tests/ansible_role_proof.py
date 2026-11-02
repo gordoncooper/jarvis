@@ -84,29 +84,28 @@ def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
 
 
 class PlatformControllerHealthCheck(NamedTuple):
-    """One Deployment platform-controllers waits for, and the HelmRelease that installs it."""
+    """One HelmRelease platform-controllers waits for.
 
-    release: str
+    kstatus holds the HelmRelease at InProgress until this generation is Ready,
+    which includes that release's Deployments.
+    """
+
     name: str
     namespace: str
 
     def flux_object(self) -> dict[str, str]:
         return {
-            "apiVersion": "apps/v1",
-            "kind": "Deployment",
+            "apiVersion": "helm.toolkit.fluxcd.io/v2",
+            "kind": "HelmRelease",
             "name": self.name,
             "namespace": self.namespace,
         }
 
 
-# platform-configs waits for these two admission webhooks and no other object.
+# platform-controllers waits for these two HelmReleases and no other object.
 PLATFORM_CONTROLLER_HEALTH_CHECKS = (
-    PlatformControllerHealthCheck(
-        "cert-manager", "cert-manager-webhook", "platform-cert-manager"
-    ),
-    PlatformControllerHealthCheck(
-        "kyverno", "kyverno-admission-controller", "kyverno"
-    ),
+    PlatformControllerHealthCheck("cert-manager", "flux-system"),
+    PlatformControllerHealthCheck("kyverno", "flux-system"),
 )
 
 
@@ -118,10 +117,10 @@ class ExampleFluxEntry(NamedTuple):
 
 
 def example_flux_entry(tmp_path: Path) -> ExampleFluxEntry:
-    """The example env's FluxInstance (written to tmp_path) and four Kustomizations.
+    """An in-memory FluxInstance and four Kustomizations for drift tests.
 
-    The example env has no flux/ tree, so tests that need one build it here
-    from its cluster-vars and the flux-operator lookup name.
+    Built from the example env's cluster-vars and the health-check contract.
+    The committed env-00 flux tree is what a copy starts from.
     """
     env = env_name()
     cluster = load_cluster_vars()

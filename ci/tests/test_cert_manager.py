@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import yaml
 
-from ansible_role_proof import REPO_ROOT, load_cluster_vars, non_example_env_names
-from support import _kustomize_build, renovate_python_pattern
+from ansible_role_proof import REPO_ROOT, load_cluster_vars
+from support import ExampleCopy, _kustomize_build, real_and_copy_envs, renovate_python_pattern
 
 _CONFIGS_BEFORE = {
     ("ClusterPolicy", "", "pvc-backup"),
@@ -34,9 +35,9 @@ _TESTAPP = {
 }
 
 
-def _idents(path: str) -> set[tuple[str, str, str]]:
+def _idents(path: str, *, root: Path | None = None) -> set[tuple[str, str, str]]:
     found: set[tuple[str, str, str]] = set()
-    for doc in yaml.safe_load_all(_kustomize_build(path)):
+    for doc in yaml.safe_load_all(_kustomize_build(path, root=root)):
         if not isinstance(doc, dict) or "kind" not in doc:
             continue
         metadata = doc.get("metadata")
@@ -166,22 +167,29 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
     }
 
 
-def test_platform_configs_hold_the_issuer_wildcard_and_store() -> None:
-    envs = non_example_env_names()
-    assert len(envs) == 1
-    env = envs[0]
-    assert _idents(f"envs/{env}/flux/platform-configs") == _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP
+def test_platform_configs_hold_the_issuer_wildcard_and_store(example_copy: ExampleCopy) -> None:
+    """platform-configs builds the internal issuer, wildcard certificate, and default TLS store."""
     text = (REPO_ROOT / "platform/cert-manager/config/internal-ca.yaml").read_text(
         encoding="utf-8"
     )
     assert '"*.${dns_suffix}"' in text
-    suffix = str(load_cluster_vars(env=env)["dns_suffix"])
+    for root, env in real_and_copy_envs(example_copy):
+        _assert_issuer_wildcard_and_store(root, env)
+
+
+def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
+    assert _idents(f"envs/{env}/flux/platform-configs", root=root) == (
+        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP
+    )
+    suffix = str(load_cluster_vars(root, env=env)["dns_suffix"])
     for path in (REPO_ROOT / "platform/cert-manager").rglob("*"):
         if path.is_file():
             assert suffix not in path.read_text(encoding="utf-8")
     docs = {
         (doc["kind"], doc["metadata"]["name"]): doc
-        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux/platform-configs"))
+        for doc in yaml.safe_load_all(
+            _kustomize_build(f"envs/{env}/flux/platform-configs", root=root)
+        )
         if isinstance(doc, dict) and doc.get("kind") in {"ClusterIssuer", "Certificate", "TLSStore"}
     }
     assert docs[("ClusterIssuer", "internal-ca")]["spec"]["ca"]["secretName"] == "cert-manager-ca"

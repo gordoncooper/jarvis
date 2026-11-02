@@ -22,7 +22,6 @@ from ansible_role_proof import (
     example_flux_entry,
     load_cluster_vars,
     load_role_defaults,
-    non_example_env_names,
     standard_flux_kustomization_paths,
 )
 from render_cluster_vars_configmap import (
@@ -30,8 +29,8 @@ from render_cluster_vars_configmap import (
     cluster_vars_configmap,
     render_document,
 )
-from schema.env import kubernetes_version_from_k3s
-from support import _kustomize_build
+from schema.env import EXAMPLE_ENV, kubernetes_version_from_k3s
+from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _STRICT_SUBSTITUTION = "--feature-gates=StrictPostBuildSubstitutions=true"
@@ -87,11 +86,11 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
     assert int(skipped.group(1)) == 0, output
 
 
-def _flux_kustomizations(env: str) -> list[dict]:
+def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
     """The Flux Kustomizations the env entry applies, from its kustomize build."""
     return [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux"))
+        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux", root=root))
         if isinstance(doc, dict)
         and doc.get("kind") == "Kustomization"
         and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION_API)
@@ -101,7 +100,7 @@ def _flux_kustomizations(env: str) -> list[dict]:
 def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
     """The four standard Kustomizations, in dependsOn order, with their paths.
 
-    platform-controllers carries the two webhook Deployment health checks and a
+    platform-controllers carries the two HelmRelease health checks and a
     timeout. No other Kustomization carries health checks.
     """
     expected = standard_flux_kustomization_paths(env)
@@ -134,47 +133,48 @@ def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
     return errors
 
 
-def _webhook_namespace_errors(target_namespaces: dict[str, str]) -> list[str]:
-    """Each webhook health-check namespace is that HelmRelease's targetNamespace."""
-    errors = []
-    for check in PLATFORM_CONTROLLER_HEALTH_CHECKS:
-        actual = target_namespaces.get(check.release)
-        if actual != check.namespace:
-            errors.append(
-                f"{check.release} health check namespace is {check.namespace!r}, "
-                f"targetNamespace is {actual!r}"
-            )
-    return errors
-
-
-def _platform_helmrelease_target_namespaces() -> dict[str, str]:
+def _platform_helmreleases() -> dict[str, str]:
+    """HelmRelease name to metadata namespace, for objects under platform/."""
     found: dict[str, str] = {}
     for path in sorted((REPO_ROOT / "platform").rglob("*.yaml")):
         for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
             if not isinstance(doc, dict) or doc.get("kind") != "HelmRelease":
                 continue
             metadata = doc.get("metadata")
-            spec = doc.get("spec")
-            if not isinstance(metadata, dict) or not isinstance(spec, dict):
+            if not isinstance(metadata, dict):
                 continue
             name = metadata.get("name")
-            target = spec.get("targetNamespace")
-            if isinstance(name, str) and isinstance(target, str):
-                found[name] = target
+            namespace = metadata.get("namespace")
+            if isinstance(name, str) and isinstance(namespace, str):
+                found[name] = namespace
     return found
 
 
-def _flux_instance(env: str) -> dict:
-    path = REPO_ROOT / "envs" / env / "flux" / "flux-instance.yaml"
+def _helmrelease_gate_errors(found: dict[str, str]) -> list[str]:
+    """Each health-check HelmRelease exists under platform/, in flux-system."""
+    errors = []
+    for check in PLATFORM_CONTROLLER_HEALTH_CHECKS:
+        actual = found.get(check.name)
+        if actual != check.namespace:
+            errors.append(
+                f"{check.name} health check namespace is {check.namespace!r}, "
+                f"platform HelmRelease namespace is {actual!r}"
+            )
+    return errors
+
+
+def _flux_instance(env: str, root: Path | None = None) -> dict:
+    repo = REPO_ROOT if root is None else root
+    path = repo / "envs" / env / "flux" / "flux-instance.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(doc, dict)
     return doc
 
 
-def _flux_instance_errors(doc: dict, env: str) -> list[str]:
+def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list[str]:
     """Ansible applies this file once and looks it up by name; Flux then syncs it."""
     role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
-    cluster = load_cluster_vars(env=env)
+    cluster = load_cluster_vars(REPO_ROOT if root is None else root, env=env)
     errors = []
     metadata = doc.get("metadata") or {}
     lookup = (role["flux_system_namespace"], role["flux_instance_name"])
@@ -220,14 +220,12 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     return errors
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_cluster_vars_configmap_matches_render_script(env: str) -> None:
-    cluster_path = REPO_ROOT / "envs" / env / "values" / "cluster-vars.yaml"
-    generated_path = (
-        REPO_ROOT / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    )
-    expected = render_document(cluster_path)
-    assert generated_path.read_text(encoding="utf-8") == expected
+def test_cluster_vars_configmap_matches_render_script(example_copy: ExampleCopy) -> None:
+    """The committed ConfigMap is the render script's output for each full env."""
+    for root, env in real_and_copy_envs(example_copy):
+        cluster_path = root / "envs" / env / "values" / "cluster-vars.yaml"
+        generated_path = root / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
+        assert generated_path.read_text(encoding="utf-8") == render_document(cluster_path)
 
 
 def test_cluster_vars_configmap_publishes_only_the_allow_list() -> None:
@@ -252,10 +250,10 @@ def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
     assert data["dns_suffix"] == json.dumps(pools, separators=(",", ":"))
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_flux_instance_syncs_its_env_from_cluster_vars(env: str) -> None:
+def test_flux_instance_syncs_its_env_from_cluster_vars(example_copy: ExampleCopy) -> None:
     """R1, D45: the committed FluxInstance is the one Ansible applies."""
-    assert _flux_instance_errors(_flux_instance(env), env) == []
+    for root, env in real_and_copy_envs(example_copy):
+        assert _flux_instance_errors(_flux_instance(env, root), env, root) == []
 
 
 @pytest.mark.parametrize(
@@ -282,10 +280,10 @@ def test_flux_instance_drift_from_cluster_vars_fails(
     assert _flux_instance_errors(doc, entry.env)
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_flux_entry_has_the_four_standard_kustomizations(env: str) -> None:
-    """R1: four layers, one path each, chained with dependsOn, webhook health checks on platform-controllers."""
-    assert _flux_kustomization_errors(_flux_kustomizations(env), env) == []
+def test_flux_entry_has_the_four_standard_kustomizations(example_copy: ExampleCopy) -> None:
+    """R1: four layers, one path each, chained with dependsOn, HelmRelease health checks on platform-controllers."""
+    for root, env in real_and_copy_envs(example_copy):
+        assert _flux_kustomization_errors(_flux_kustomizations(env, root=root), env) == []
 
 
 def _drop_apps(docs: list[dict]) -> None:
@@ -360,8 +358,8 @@ def _health_check_on_platform_configs(docs: list[dict]) -> None:
         _health_check_on_platform_configs,
     ],
 )
-def test_webhook_health_checks_are_exactly_the_two_deployments(tmp_path: Path, mutate) -> None:
-    """R1: platform-controllers waits for the two webhook Deployments, and only those."""
+def test_health_checks_are_exactly_the_two_helmreleases(tmp_path: Path, mutate) -> None:
+    """R1: platform-controllers waits for the two HelmReleases, and only those."""
     entry = example_flux_entry(tmp_path)
     assert _flux_kustomization_errors(entry.kustomizations, entry.env) == []
     docs = copy.deepcopy(entry.kustomizations)
@@ -369,27 +367,33 @@ def test_webhook_health_checks_are_exactly_the_two_deployments(tmp_path: Path, m
     assert _flux_kustomization_errors(docs, entry.env)
 
 
-def test_webhook_health_namespace_must_match_helmrelease_target() -> None:
-    """R1: a webhook health-check namespace is its HelmRelease targetNamespace."""
-    namespaces = {
-        check.release: check.namespace for check in PLATFORM_CONTROLLER_HEALTH_CHECKS
+def test_health_check_helmreleases_exist_under_platform() -> None:
+    """R1: each platform-controllers HelmRelease check exists under platform/, in flux-system."""
+    found = _platform_helmreleases()
+    assert _helmrelease_gate_errors(found) == []
+    missing = dict(found)
+    missing.pop(PLATFORM_CONTROLLER_HEALTH_CHECKS[0].name, None)
+    assert _helmrelease_gate_errors(missing)
+
+
+def test_env_00_deployment_health_check_fails() -> None:
+    """R1: a Deployment check in place of a HelmRelease check fails on the example flux tree."""
+    docs = _flux_kustomizations(EXAMPLE_ENV)
+    assert _flux_kustomization_errors(docs, EXAMPLE_ENV) == []
+    _controllers_spec(docs)["healthChecks"][0] = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "name": "cert-manager-webhook",
+        "namespace": "platform-cert-manager",
     }
-    assert _webhook_namespace_errors(namespaces) == []
-    drifted = dict(namespaces)
-    drifted[PLATFORM_CONTROLLER_HEALTH_CHECKS[0].release] = "other"
-    assert _webhook_namespace_errors(drifted)
+    assert _flux_kustomization_errors(docs, EXAMPLE_ENV)
 
 
-def test_webhook_health_namespaces_match_platform_helmreleases() -> None:
-    """R1: webhook health-check namespaces match the platform HelmRelease targetNamespace."""
-    assert _webhook_namespace_errors(_platform_helmrelease_target_namespaces()) == []
-
-
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_env_platform_configs_adds_only_its_secrets(env: str) -> None:
+def test_env_platform_configs_adds_only_its_secrets(example_copy: ExampleCopy) -> None:
     """R3: core components join platform/configs, not each env's list."""
-    path = REPO_ROOT / "envs" / env / "flux" / "platform-configs" / "kustomization.yaml"
-    assert _platform_configs_errors(yaml.safe_load(path.read_text(encoding="utf-8")), env) == []
+    for root, env in real_and_copy_envs(example_copy):
+        path = root / "envs" / env / "flux" / "platform-configs" / "kustomization.yaml"
+        assert _platform_configs_errors(yaml.safe_load(path.read_text(encoding="utf-8")), env) == []
 
 
 @pytest.mark.parametrize(
@@ -408,9 +412,16 @@ def test_env_platform_configs_with_more_than_its_secrets_fails(seed: dict) -> No
     assert _platform_configs_errors(seed, env)
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_platform_configs_decryption_uses_sops_age(env: str) -> None:
-    doc = next(d for d in _flux_kustomizations(env) if d["metadata"]["name"] == "platform-configs")
+def test_platform_configs_decryption_uses_sops_age(example_copy: ExampleCopy) -> None:
+    """platform-configs decrypts with the sops-age secret."""
+    for root, env in real_and_copy_envs(example_copy):
+        _assert_platform_configs_decrypts(env, root)
+
+
+def _assert_platform_configs_decrypts(env: str, root: Path | None = None) -> None:
+    doc = next(
+        d for d in _flux_kustomizations(env, root=root) if d["metadata"]["name"] == "platform-configs"
+    )
     decryption = doc["spec"]["decryption"]
     assert decryption["provider"] == "sops"
     assert decryption["secretRef"]["name"] == "sops-age"
@@ -439,8 +450,10 @@ def _assert_sops_leaf(path: Path, section: str, node: object) -> None:
     raise AssertionError(f"{path}: {section} is not an ENC value")
 
 
-def test_sops_secret_leaves_stay_encrypted() -> None:
+def test_sops_secret_leaves_stay_encrypted(example_copy: ExampleCopy) -> None:
+    """SOPS secret leaves stay encrypted in every real env and in a bootstrapped copy."""
     paths = sorted(REPO_ROOT.glob("envs/*/secrets/*.sops.yaml"))
+    paths.extend(sorted((example_copy.env_dir / "secrets").glob("*.sops.yaml")))
     assert paths
     for path in paths:
         docs = [
@@ -575,22 +588,28 @@ def test_kubernetes_version_matches_k3s_pin() -> None:
     assert kubernetes_version_from_k3s("v9.8.7") is None
 
 
-@pytest.mark.parametrize("env", non_example_env_names())
-def test_flux_layer_kustomize_build_and_schema_validate(env: str) -> None:
-    flux_dir = REPO_ROOT / "envs" / env / "flux"
+def validate_env_flux(root: Path, env: str) -> None:
+    """Kustomize-build the env flux entry and each Flux path, then kubeconform."""
+    flux_dir = root / "envs" / env / "flux"
     targets = flux_kustomization_targets(flux_dir)
     assert targets
-    pin = load_cluster_vars(env=env)["k3s_version"]
+    pin = load_cluster_vars(root, env=env)["k3s_version"]
     assert isinstance(pin, str)
     version = kubernetes_version_from_k3s(pin)
     assert version is not None
     seen: dict[tuple[str, str, str], str] = {}
     for target in targets:
-        output = _kustomize_build(target.path)
+        output = _kustomize_build(target.path, root=root)
         _record_object_identities(output, target.name, seen)
         if target.strip_sops_secrets:
             _validate_platform_configs_without_sops_secrets(output, version)
         else:
             _kubeconform_validate(output, version)
     # The env flux directory holds these Kustomizations. It is not one of their paths.
-    _kubeconform_validate(_kustomize_build(f"envs/{env}/flux"), version)
+    _kubeconform_validate(_kustomize_build(f"envs/{env}/flux", root=root), version)
+
+
+def test_flux_layer_kustomize_build_and_schema_validate(example_copy: ExampleCopy) -> None:
+    """Each full env's Flux paths build and pass kubeconform, including a copy of env-00."""
+    for root, env in real_and_copy_envs(example_copy):
+        validate_env_flux(root, env)

@@ -9,16 +9,18 @@ spec:
   timeout: 15m
   path: ./platform
   prune: true
-  # Only these two admission webhooks gate platform-configs, because ClusterIssuer and ClusterPolicy call them.
+  # HelmRelease stays InProgress until this generation is Ready, so the gate
+  # does not pass on the previous Deployments. Ready includes the admission
+  # webhooks ClusterIssuer and ClusterPolicy call.
   healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: cert-manager-webhook
-      namespace: platform-cert-manager
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: kyverno-admission-controller
-      namespace: kyverno
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: cert-manager
+      namespace: flux-system
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: kyverno
+      namespace: flux-system
   sourceRef:
     kind: GitRepository
     name: flux-system

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import yaml
 
@@ -136,7 +138,7 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     pod = spec["jobTemplate"]["spec"]["template"]["spec"]
     assert pod["nodeSelector"]["role.${dns_suffix}/control_plane"] == "true"
     container = pod["containers"][0]
-    assert re.fullmatch(r"restic/restic@sha256:[a-f0-9]{64}", container["image"])
+    assert re.fullmatch(r"restic/restic:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"])
     volume = next(item for item in pod["volumes"] if item.get("hostPath", {}).get("path") == snapshot_path)
     mount = next(item for item in container["volumeMounts"] if item["name"] == volume["name"])
     assert mount["readOnly"] is True
@@ -168,6 +170,30 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     assert len(managers) == 1
     assert managers[0]["datasourceTemplate"] == "docker"
     assert any(
-        "restic/restic" in pattern and "currentDigest" in pattern
+        "restic/restic" in pattern and "currentDigest" in pattern and "currentValue" in pattern
         for pattern in managers[0]["matchStrings"]
     )
+
+
+def test_versioned_etcd_image_is_accepted() -> None:
+    """restore and drill accept restic/restic:<version>@sha256: as well as the digest-only form."""
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    from lib._etcd_image import etcd_snapshot_image
+
+    image = "restic/restic:0.19.1@sha256:" + ("ab" * 32)
+    body = {
+        "spec": {
+            "jobTemplate": {
+                "spec": {
+                    "template": {"spec": {"containers": [{"image": image}]}},
+                }
+            }
+        }
+    }
+
+    def kubectl(args: list[str]) -> CompletedProcess[str]:
+        return CompletedProcess(args, 0, json.dumps(body), "")
+
+    assert etcd_snapshot_image(kubectl) == image

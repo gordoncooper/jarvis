@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -17,8 +18,10 @@ from ansible_role_proof import (
     example_flux_entry,
     load_cluster_vars,
     playbook_recap_field,
+    roles_inventory_path,
 )
 from conftest import require_cli
+from support import REPO_ROOT, bootstrap_example_copy
 
 _REQUIRED = (
     "k3s_version",
@@ -354,3 +357,76 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
     run(check=False)
     run(check=False)
     run(check=True)
+
+
+def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> None:
+    """R1: group_vars resolves envs/<jarvis_env>/flux/flux-instance.yaml, and that assert passes."""
+    require_cli("ansible-playbook")
+    hosts = (
+        REPO_ROOT / "ci/tests/fixtures/env-shapes/single-node/hosts.yml"
+    ).read_text(encoding="utf-8")
+    copy = bootstrap_example_copy(tmp_path, hosts_text=hosts)
+    playbook_dir = copy.root / "infra" / "ansible"
+    (playbook_dir / "group_vars").mkdir(parents=True)
+    shutil.copy(ANSIBLE_DIR / "group_vars" / "all.yml", playbook_dir / "group_vars" / "all.yml")
+    tasks = ANSIBLE_DIR / "tasks"
+    playbook = playbook_dir / "open.yml"
+    bin_dir = tmp_path / "bin"
+    _install_systemctl(bin_dir, active_rc=4)
+    playbook.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - name: Assert facts before any change
+              hosts: all
+              gather_facts: false
+              become: false
+              any_errors_fatal: true
+              vars_files:
+                - "{{{{ jarvis_cluster_vars }}}}"
+              environment:
+                PATH: "{bin_dir}:/usr/bin:/bin"
+              tasks:
+                - ansible.builtin.import_tasks: {tasks / "preflight.yml"}
+                - ansible.builtin.import_tasks: {tasks / "assert-gpu.yml"}
+                - ansible.builtin.import_role:
+                    name: k3s
+                    tasks_from: refuse.yml
+                - ansible.builtin.import_role:
+                    name: node-disk
+            """
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    result = subprocess.run(
+        [
+            "ansible-playbook",
+            str(playbook),
+            "-i",
+            str(copy.env_dir / "inventory" / "hosts.yml"),
+            "-i",
+            str(roles_inventory_path()),
+            "-e",
+            "ansible_connection=local",
+            "-e",
+            "ansible_become=false",
+            "-e",
+            f"jarvis_cluster_vars={copy.env_dir / 'values' / 'cluster-vars.yaml'}",
+            *_k3s_paths(tmp_path),
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "Require the env FluxInstance in Git" in output
+    assert "flux-instance.yaml is missing" not in output
+    assert "PLAY [Base OS]" not in output
+    assert playbook_recap_field(output, "changed") == 0
