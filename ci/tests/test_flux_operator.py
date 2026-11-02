@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import subprocess
@@ -16,12 +17,14 @@ from ansible_role_proof import (
     FLUX_OPERATOR_ROLE_TASKS,
     FLUX_OPERATOR_ROLE_TEMPLATES,
     ansible_render_template,
+    env_name,
     example_flux_entry,
     load_cluster_vars,
     playbook_recap_field,
 )
 from conftest import require_cli
 from schema.env import DEFAULT_SSH_USER
+from support import REPO_ROOT
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
 
@@ -226,23 +229,77 @@ def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
     return errors
 
 
-def _operator_play_tags() -> set[str]:
-    """Play tags the Ansible README also gives as operator ``--tags`` commands."""
-    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
-    commands = set(re.findall(r"--tags\s+([A-Za-z][A-Za-z0-9_-]*)", readme))
-    named: set[str] = set()
-    for line in readme.splitlines():
-        if "are play tags" not in line:
+_TAG_NAME = r"[A-Za-z][A-Za-z0-9_-]*"
+_TAGS_ARG = re.compile(rf"--tags[ \t]+({_TAG_NAME}(?:[ \t]*,[ \t]*{_TAG_NAME})*)")
+_PLAY_TAG_LINE = re.compile(r"^  play #\d+ \([^)]*\):.*\tTAGS: \[(.*)\]\s*$")
+_TASK_TAG_LINE = re.compile(r"^      TASK TAGS: \[(.*)\]\s*$")
+_LIST_TAGS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
+
+
+def _tag_list(body: str) -> set[str]:
+    return {part.strip() for part in body.split(",") if part.strip()}
+
+
+def _operator_play_tags(readme: str | None = None) -> set[str]:
+    """Every ``--tags`` name the Ansible README documents, including comma-separated lists."""
+    if readme is None:
+        readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
+    names: set[str] = set()
+    for match in _TAGS_ARG.finditer(readme):
+        names.update(_tag_list(match.group(1)))
+    assert names, "README documents no --tags names"
+    return names
+
+
+def _tags_from_list_output(output: str) -> tuple[set[str], set[str]]:
+    """All tags, and the tags written on a task rather than inherited from the play."""
+    listed: set[str] = set()
+    task_tags: set[str] = set()
+    play_tags: set[str] = set()
+    for line in output.splitlines():
+        play = _PLAY_TAG_LINE.match(line)
+        if play:
+            play_tags = _tag_list(play.group(1))
+            listed.update(play_tags)
             continue
-        head = line.split("are play tags", 1)[0]
-        named.update(re.findall(r"`([A-Za-z][A-Za-z0-9_-]*)`", head))
-    assert named, "README names no play tags"
-    missing = named - commands
-    assert not missing, f"README play tags have no --tags command: {sorted(missing)}"
-    return named
+        task = _TASK_TAG_LINE.match(line)
+        if task:
+            tags = _tag_list(task.group(1))
+            listed.update(tags)
+            task_tags.update(tags - play_tags)
+    return listed, task_tags
 
 
-def _assert_play_order(plays: list[dict[str, object]]) -> None:
+@functools.lru_cache(maxsize=1)
+def _listed_tag_sets() -> tuple[frozenset[str], frozenset[str]]:
+    """Tags from ``ansible-playbook site.yml --list-tags``, and those set on a task."""
+    require_cli("ansible-playbook")
+    run = subprocess.run(
+        [
+            "ansible-playbook",
+            "site.yml",
+            "-i",
+            str(_LIST_TAGS_INVENTORY),
+            "-e",
+            f"jarvis_cluster_vars=../../envs/{env_name()}/values/cluster-vars.yaml",
+            "--list-tags",
+        ],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr or run.stdout
+    listed, task_tags = _tags_from_list_output(run.stdout)
+    assert listed, run.stdout
+    return frozenset(listed), frozenset(task_tags)
+
+
+def _assert_play_order(
+    plays: list[dict[str, object]],
+    *,
+    readme: str | None = None,
+) -> None:
     """Play order, host targets, and documented play tags are the safety fact."""
     fact_indexes = [index for index, play in enumerate(plays) if _is_fact_play(play)]
     assert fact_indexes == [0], plays
@@ -280,7 +337,11 @@ def _assert_play_order(plays: list[dict[str, object]]) -> None:
     assert plays[agent[0]].get("hosts") == "all:!control_plane"
     assert all(plays[index].get("hosts") == "control_plane" for index in kubeconfig)
     assert all(plays[index].get("hosts") == "control_plane" for index in flux)
-    for tag in sorted(_operator_play_tags()):
+    documented = _operator_play_tags(readme)
+    listed, task_tags = _listed_tag_sets()
+    missing = sorted(documented - listed)
+    assert not missing, f"README --tags names are not playbook tags: {missing}"
+    for tag in sorted(documented - task_tags):
         found = set(indexes(tag))
         if tag == "k3s":
             found.update(server)
@@ -338,6 +399,56 @@ def test_dropping_a_documented_tag_fails() -> None:
     server["tags"] = [tag for tag in server.get("tags") or [] if tag != "k3s"]
     with pytest.raises(AssertionError):
         _assert_play_order(plays)
+
+
+def test_readme_tag_with_no_matching_playbook_tag_fails() -> None:
+    """A README --tags name that site.yml does not list fails."""
+    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
+    readme += "\nansible-playbook site.yml --tags not-a-real-tag\n"
+    with pytest.raises(AssertionError, match="not-a-real-tag"):
+        _assert_play_order(_site_plays(), readme=readme)
+
+
+def test_play_tag_sentence_wording_does_not_change_documented_tags() -> None:
+    """Rewording or wrapping the play-tag sentence leaves the documented --tags set unchanged."""
+    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
+    original = _operator_play_tags(readme)
+    reworded = readme.replace(
+        "`k3s`, `kubeconfig`, and `flux-operator` are play tags.",
+        "`k3s`,\n`kubeconfig`, and `flux-operator` label those plays.",
+    )
+    assert "are play tags" not in reworded
+    assert _operator_play_tags(reworded) == original
+
+
+def test_readme_with_no_tags_commands_fails() -> None:
+    """A README that documents no --tags names fails instead of checking nothing."""
+    with pytest.raises(AssertionError, match="no --tags"):
+        _operator_play_tags("Narrow runs are described here without commands.\n")
+
+
+def test_comma_separated_tags_commands_are_each_a_name() -> None:
+    """A documented --tags list yields every name, including a comma-separated list."""
+    readme = (
+        "ansible-playbook site.yml --tags time,journald\n"
+        "ansible-playbook site.yml --tags apt-policy, resolved\n"
+    )
+    assert _operator_play_tags(readme) == {"time", "journald", "apt-policy", "resolved"}
+
+
+def test_play_tag_inherited_by_tasks_is_not_a_task_tag() -> None:
+    """A tag that appears on tasks only because the play has it is not set on a task."""
+    output = (
+        "\n"
+        "  play #1 (all): Base OS\tTAGS: []\n"
+        "      TASK TAGS: [base-os, time]\n"
+        "\n"
+        "  play #2 (control_plane): Install k3s server\tTAGS: [k3s]\n"
+        "      TASK TAGS: [k3s]\n"
+    )
+    listed, task_tags = _tags_from_list_output(output)
+    assert listed == {"base-os", "time", "k3s"}
+    assert task_tags == {"base-os", "time"}
 
 
 def test_unrelated_play_at_the_end_passes() -> None:

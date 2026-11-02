@@ -263,6 +263,11 @@ def _is_int_not_bool(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _keys_set(data: dict[str, Any]) -> set[str]:
+    """Keys with a value. A present null is unset."""
+    return {key for key, value in data.items() if value is not None}
+
+
 def _validate_cluster_vars(
     data: dict[str, Any], rel_path: str, env_name: str
 ) -> tuple[list[str], str | None]:
@@ -274,7 +279,7 @@ def _validate_cluster_vars(
         elif key not in _CLUSTER_VARS_KNOWN:
             errors.append(f"{rel_path}: unknown key '{key}' (allowed: {allowed})")
 
-    missing = sorted(_CLUSTER_VARS_REQUIRED - set(data))
+    missing = sorted(_CLUSTER_VARS_REQUIRED - _keys_set(data))
     for key in missing:
         errors.append(f"{rel_path}: missing required key: {key}")
 
@@ -380,10 +385,11 @@ def _validate_cluster_vars(
         elif val <= 0:
             errors.append(f"{rel_path}: {key} must be > 0")
 
-    if "backup_schedule" in data:
-        schedule = data["backup_schedule"]
-        if not isinstance(schedule, str) or len(schedule.split()) != 5:
-            errors.append(f"{rel_path}: backup_schedule must be a five-field cron")
+    schedule = data.get("backup_schedule")
+    if schedule is not None and (
+        not isinstance(schedule, str) or len(schedule.split()) != 5
+    ):
+        errors.append(f"{rel_path}: backup_schedule must be a five-field cron")
 
     errors.extend(_validate_ntp_pools(rel_path, data.get("ntp_pools")))
 
