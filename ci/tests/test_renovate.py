@@ -1,7 +1,9 @@
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 import yaml
 
 from support import REPO_ROOT as ROOT
@@ -86,31 +88,43 @@ def _automerge_values(node: object) -> list[object]:
     return found
 
 
+def _assert_no_hold_or_automerge(config: dict) -> None:
+    # A change to extends must re-check the resolved config for holds and automerge.
+    assert config["extends"] == ["config:recommended"]
+    assert all("extends" not in rule for rule in config["packageRules"])
+    assert _delay_keys(config) == []
+    assert config["automerge"] is False
+    assert all(True not in _automerge_values(rule) for rule in config["packageRules"])
+
+
 def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
     """Renovate opens every update with no release-age wait and never auto-merges."""
-    renovate = _renovate_config()
-    assert _delay_keys(renovate) == []
-    assert renovate["automerge"] is False
-    assert True not in _automerge_values(renovate)
+    _assert_no_hold_or_automerge(_renovate_config())
 
 
-def test_seeded_release_age_hold_fails() -> None:
-    """A package rule that sets a release-age hold fails."""
-    renovate = _renovate_config()
-    renovate["packageRules"].append(
-        {
-            "matchUpdateTypes": ["minor", "patch", "digest"],
-            "minimumReleaseAge": "3 days",
-        }
-    )
-    assert _delay_keys(renovate) == ["minimumReleaseAge"]
-
-
-def test_seeded_package_rule_automerge_fails() -> None:
-    """A package rule that sets automerge true fails."""
-    renovate = _renovate_config()
-    renovate["packageRules"].append({"matchUpdateTypes": ["patch"], "automerge": True})
-    assert True in _automerge_values(renovate)
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda config: config["packageRules"].append({"minimumReleaseAge": "3 days"}),
+        lambda config: config["packageRules"].append({"automerge": True}),
+        lambda config: config.update(automerge=True),
+        lambda config: config["extends"].append("schedule:weekly"),
+        lambda config: config["packageRules"].append({"extends": [":automergeMinor"]}),
+    ],
+    ids=[
+        "minimumReleaseAge",
+        "rule-automerge",
+        "top-level-automerge",
+        "extends-preset",
+        "rule-extends",
+    ],
+)
+def test_seeded_hold_or_automerge_fails(mutate: Callable[[dict], None]) -> None:
+    """A hold, automerge, or extra preset fails the same check as the live config."""
+    config = _renovate_config()
+    mutate(config)
+    with pytest.raises(AssertionError):
+        _assert_no_hold_or_automerge(config)
 
 
 def test_ansible_core_stays_on_the_2_20_line() -> None:
