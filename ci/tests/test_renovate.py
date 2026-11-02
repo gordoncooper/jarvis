@@ -148,8 +148,8 @@ def test_seeded_hold_or_automerge_fails(mutate: Callable[[dict], None]) -> None:
         _assert_no_hold_or_automerge(config)
 
 
-def test_ansible_core_stays_on_the_2_20_line() -> None:
-    """ansible 13.x requires ansible-core 2.20.x. The cap is raised with an ansible major bump."""
+def test_ansible_core_stays_on_the_2_21_line() -> None:
+    """ansible 14.x requires ansible-core 2.21.x. The cap is raised with an ansible major bump."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     rule = next(
         item
@@ -158,8 +158,8 @@ def test_ansible_core_stays_on_the_2_20_line() -> None:
     )
     assert rule["matchManagers"] == ["pip_requirements"]
     assert rule["matchFileNames"] == ["requirements-dev.txt"]
-    assert rule["allowedVersions"] == "<2.21"
-    assert "2.20" in rule["description"]
+    assert rule["allowedVersions"] == "<2.22"
+    assert "2.21" in rule["description"]
 
 
 def _next_minor_cap(version: str) -> str:

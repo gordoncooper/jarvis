@@ -45,7 +45,7 @@
       ]
     },
     {
-      "description": "Flux distribution version is one pin per env, in that env's FluxInstance. Auto-merge stays off.",
+      "description": "Flux distribution version is one pin per env, in that env's FluxInstance. Auto-merge stays off. A bump merges only after the Flux Operator version that supports it is live, because the operator ships the manifests for each Flux version.",
       "groupName": "flux-distribution",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["fluxcd/flux2"],
@@ -64,11 +64,11 @@
       "matchFileNames": ["requirements-dev.txt"]
     },
     {
-      "description": "ansible 13.x requires ansible-core 2.20.x. Raise this cap in the same PR as an ansible major bump. Patch updates inside 2.20 still flow.",
+      "description": "ansible 14.x requires ansible-core 2.21.x. Raise this cap in the same PR as an ansible major bump. Patch updates inside 2.21 still flow.",
       "matchManagers": ["pip_requirements"],
       "matchFileNames": ["requirements-dev.txt"],
       "matchPackageNames": ["ansible-core"],
-      "allowedVersions": "<2.21"
+      "allowedVersions": "<2.22"
     }
   ],
   "customManagers": [
