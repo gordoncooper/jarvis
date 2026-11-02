@@ -33,7 +33,11 @@ jobs:
               git rm -r -q "${dir}"
             fi
           done
-          git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci: keep only env-00"
+          if ! git diff --cached --quiet; then
+            git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci: keep only env-00"
+          fi
+          echo "envs/ now holds:"
+          git ls-files envs | cut -d/ -f2 | sort -u
 
       - name: Restore pinned CLIs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
