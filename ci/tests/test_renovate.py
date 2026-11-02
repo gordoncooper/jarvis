@@ -1,7 +1,9 @@
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 import yaml
 
 from support import REPO_ROOT as ROOT
@@ -38,11 +40,112 @@ def test_each_env_flux_instance_version_is_a_renovate_pin(example_copy: ExampleC
         assert found[0].group("currentValue") == version, rel
 
 
-def test_digest_updates_use_the_minor_patch_hold() -> None:
-    """Digest-only updates wait the same 3-day hold as minor and patch."""
-    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    rule = next(item for item in renovate["packageRules"] if "minimumReleaseAge" in item)
-    assert set(rule["matchUpdateTypes"]) >= {"minor", "patch", "digest"}
+# Release-age and pull-request delay settings. Absent keys keep Renovate's no-wait defaults.
+_RELEASE_AGE_OR_PR_DELAY = frozenset(
+    {
+        "automergeSchedule",
+        "dependencyDashboardApproval",
+        "masterIssueApproval",
+        "minimumReleaseAge",
+        "minimumReleaseAgeBehaviour",
+        "minimumReleaseAgeBuffer",
+        "prCreation",
+        "prNotPendingHours",
+        "schedule",
+        "stabilityDays",
+    }
+)
+
+
+def _renovate_config() -> dict:
+    return json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+
+
+def _delay_keys(node: object) -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in _RELEASE_AGE_OR_PR_DELAY:
+                found.append(key)
+            found.extend(_delay_keys(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_delay_keys(item))
+    return found
+
+
+def _automerge_values(node: object) -> list[object]:
+    found: list[object] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "automerge":
+                found.append(value)
+            else:
+                found.extend(_automerge_values(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_automerge_values(item))
+    return found
+
+
+def _nested_extends(node: object, top: bool = True) -> int:
+    count = 0
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "extends" and not top:
+                count += 1
+            count += _nested_extends(value, top=False)
+    elif isinstance(node, list):
+        for item in node:
+            count += _nested_extends(item, top=False)
+    return count
+
+
+def _assert_no_hold_or_automerge(config: dict) -> None:
+    # A change to extends must re-check the resolved config for holds and automerge.
+    assert config["extends"] == ["config:recommended"]
+    assert _nested_extends(config) == 0
+    assert _delay_keys(config) == []
+    assert config["automerge"] is False
+    assert True not in _automerge_values(config)
+
+
+def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
+    """Renovate opens every update with no release-age wait and never auto-merges."""
+    _assert_no_hold_or_automerge(_renovate_config())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda config: config["packageRules"].append({"minimumReleaseAge": "3 days"}),
+        lambda config: config["packageRules"].append({"automerge": True}),
+        lambda config: config.update(automerge=True),
+        lambda config: config["extends"].append("schedule:weekly"),
+        lambda config: config["packageRules"].append({"extends": [":automergeMinor"]}),
+        lambda config: config.update(lockFileMaintenance={"automerge": True}),
+        lambda config: config.update(vulnerabilityAlerts={"automerge": True}),
+        lambda config: config.update(minor={"automerge": True}),
+        lambda config: config.update(lockFileMaintenance={"extends": [":automergeAll"]}),
+    ],
+    ids=[
+        "minimumReleaseAge",
+        "rule-automerge",
+        "top-level-automerge",
+        "extends-preset",
+        "rule-extends",
+        "lockfile-automerge",
+        "vulnerability-automerge",
+        "minor-automerge",
+        "nested-extends",
+    ],
+)
+def test_seeded_hold_or_automerge_fails(mutate: Callable[[dict], None]) -> None:
+    """A hold, automerge, or extra preset fails the same check as the live config."""
+    config = _renovate_config()
+    mutate(config)
+    with pytest.raises(AssertionError):
+        _assert_no_hold_or_automerge(config)
 
 
 def test_ansible_core_stays_on_the_2_20_line() -> None:
