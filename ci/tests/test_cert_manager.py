@@ -108,8 +108,8 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
         values["resources"],
         values["webhook"]["resources"],
         values["cainjector"]["resources"],
-        values["startupapicheck"]["resources"],
     ]
+    assert "resources" not in values["startupapicheck"]
     for block in blocks:
         assert block["requests"]["cpu"]
         assert block["requests"]["memory"]

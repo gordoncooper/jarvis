@@ -1,8 +1,12 @@
 """R5: memory and CPU requests, a memory limit, no CPU limit on long-running containers, probes, stdout.
 
 Plain pod specs are checked as written. HelmRelease values and HelmChartConfig
-valuesContent are checked where they set resources, probes, or args. Charts
-are not rendered: rendering would pull remote charts into CI.
+valuesContent are checked where they set resources, probes, or args. Every
+HelmRelease and HelmChartConfig must contain at least one resources block, at
+any depth, that passes those checks. An empty resources mapping does not count.
+Charts are not rendered, so the rule can't tell whether every long-running
+component of a multi-component chart is covered. Rendering would pull remote
+charts into CI.
 
 Probes are required on long-running pods (Deployment, StatefulSet, DaemonSet,
 ReplicaSet, Pod), including their app containers. Job and CronJob containers
@@ -24,6 +28,7 @@ _LOG_FILE = re.compile(
 )
 
 _SERVICE_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Pod"}
+_HELM_KINDS = {"HelmRelease", "HelmChartConfig"}
 _PROBE_KEYS = ("livenessProbe", "readinessProbe")
 _ARG_KEYS = ("command", "args", "extraArgs")
 
@@ -48,8 +53,14 @@ def scan_manifest_lint(repo_root: Path | str) -> list[ManifestLintViolation]:
         if values_error:
             violations.append(ManifestLintViolation(rel, f"{ref_of(doc)}: {values_error}"))
             continue
+        if kind_of(doc) not in _HELM_KINDS:
+            continue
         if values is not None:
             _walk_values(values, rel, ref_of(doc), "", violations)
+        if not _contains_passing_resources(values):
+            violations.append(
+                ManifestLintViolation(rel, f"{ref_of(doc)}: no passing resources block")
+            )
     return sorted(violations, key=lambda item: (item.path, item.message))
 
 
@@ -113,6 +124,24 @@ def _walk_values(
     elif isinstance(node, list):
         for index, item in enumerate(node):
             _walk_values(item, rel, ref, f"{path}[{index}]", violations)
+
+
+def _contains_passing_resources(node: object) -> bool:
+    """True when some resources block at any depth passes the R5 resource checks."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if (
+                key == "resources"
+                and isinstance(value, dict)
+                and _is_resource_block(value)
+                and not _resource_problems(value)
+            ):
+                return True
+            if _contains_passing_resources(value):
+                return True
+    elif isinstance(node, list):
+        return any(_contains_passing_resources(item) for item in node)
+    return False
 
 
 def _is_resource_block(block: dict) -> bool:

@@ -69,4 +69,3 @@ spec:
         # renovate: datasource=docker depName=quay.io/jetstack/cert-manager-startupapicheck
         tag: "v1.21.3"
         digest: "sha256:1c519d4afca1413d1e4ccd78bdc756184418ab55a34569a3b3de39d32f9974e1"
-      resources: *platformResources

@@ -9,7 +9,16 @@ spec:
   timeout: 15m
   path: ./platform
   prune: true
-  # A HelmRelease healthCheck would stall platform-configs on a public chart pull.
+  # Only these two admission webhooks gate platform-configs, because ClusterIssuer and ClusterPolicy call them.
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: cert-manager-webhook
+      namespace: platform-cert-manager
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: kyverno-admission-controller
+      namespace: kyverno
   sourceRef:
     kind: GitRepository
     name: flux-system
