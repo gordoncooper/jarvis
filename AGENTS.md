@@ -1,3 +1,7 @@
 # Agents
 
-Coding agents build JARVIS from the merged plan in project-plans. Read **`rulebooks/coding-agents.md`** for workflow, reporting, and merge readiness. The framework and plan live in project-plans only; do not copy them here.
+Infra, platform, and services for JARVIS AlphaCut (GitOps on k3s).
+
+Read `rulebooks/coding-agents.md` for workflow, reporting, and merge readiness.
+
+Repo-level tool permissions live in `.cursor/cli.json` and `.claude/settings.json`, which carry the same deny rules.
