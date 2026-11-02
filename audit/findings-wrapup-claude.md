@@ -26,8 +26,8 @@ The foundation also has no landing place yet for what comes next:
 **Themes that recur in three or more areas.**
 1. **Speculation shipped as product.** `hermes.yaml` (a required file), `apps.yaml`, `build_agent: cursor`, `code_delivery`, `llm_provider_host`, `apps_git_repo_url`, the cross-env owner rule, five bootstrap secrets with no consumer, placeholder ConfigMaps, and contract roots for directories that don't exist. All are validated and tested, but nothing consumes them ([F27], [F30]).
 2. **Two sources of truth checked by tests instead of one generated value.** Examples: the FluxInstance sync url/ref against cluster-vars ([F11]), the generated ConfigMap against cluster-vars, and the k3s snapshot schedule against the etcd-copy schedule ([F31]). The k3s version is also checked against text in the Traefik contract. When CI is the only place the copies are compared, an adopter who skips CI gets a broken cluster.
-3. **Hand-rolled glue where a native tool exists.** prep-node is about 1,000 lines over SSH ([F23]). A node-side Helm CLI bootstraps the Flux Operator ([F24]). Renovate uses 14 custom regex managers ([F22]). verify has its own cron engine ([F37]). The data_disk constructed group is defined but unused ([F30]).
-4. **Too strict for adopters.** Only `node_roles` and `data_disk` are allowed as host keys, so no `ansible_host` or GPU attributes ([F13], [F05]). Chrony is NTS-only ([F20]). Flux needs a public repo ([F09]). Only two LoadBalancer services are allowed ([F19]). One owner handle across all envs ([F27]).
+3. **Hand-rolled glue where a native tool exists.** prep-node is about 1,000 lines over SSH ([F23]). A node-side Helm CLI bootstraps the Flux Operator ([F24]). Renovate uses 13 custom regex managers ([F22]). verify has its own cron engine ([F37]). The data_disk constructed group is defined but unused ([F30]).
+4. **Too strict for adopters.** Only `node_roles` and `data_disk` are allowed as host keys, so no `ansible_host` or GPU attributes ([F13]; scratch case `ansible_host_key: REJECTED`). Chrony is NTS-only ([F20]). Flux needs a public repo ([F09]). Only two LoadBalancer services are allowed ([F19]). One owner handle across all envs ([F27]).
 5. **Build-process residue in product code.** Plan and decision codes appear in about 40 non-Markdown files, because the plan-codes check only scans Markdown ([F28]). Operator knowledge sits in env-01's README ([F29]).
 
 ---
@@ -59,10 +59,10 @@ The foundation also has no landing place yet for what comes next:
 | F19 | M | Only Traefik and App DNS may be LoadBalancers and DNS covers Ingress only, so non-HTTP apps can't be exposed | 5, 22 | M |
 | F20 | M | Chrony is NTS-only; a LAN or router NTP server silently never syncs | 5, 4 | S |
 | F21 | M | No documented way to take new Jarvis releases; 9 per-env Flux files copy core wiring; prune-disabled orphans | 14 | M |
-| F22 | M | Renovate: 14 regex managers duplicate native managers; `tools/versions.env` pins never update | 2, 14 | S |
+| F22 | M | Renovate: 13 regex managers duplicate native managers; `tools/versions.env` pins never update | 2, 14 | S |
 | F23 | M | prep-node is about 1,000 lines of SSH glue that an Ansible bootstrap play or autoinstall would replace | 2, 3 | M |
 | F24 | M | Flux Operator bootstrap downloads a Helm CLI onto the node; k3s's HelmChart auto-deploy does this natively | 2, 4 | S |
-| F25 | M | No `make` target for `site.yml`; a three-flag relative-path command is copied 10 times | 9, 2 | S |
+| F25 | M | No `make` target for `site.yml`; a three-flag relative-path command is copied 12 times | 9, 2 | S |
 | F26 | M | `make verify` doesn't check node Ready or failing pods; recovery steps are scattered across 5 files | 16, 18 | S |
 | F27 | M | Speculative product config: required `hermes.yaml`, `build_agent: cursor`, unused keys, 5 unconsumed secrets | 7, 8, 22 | M |
 | F28 | L | Plan and decision codes in about 40 code files; the plan-codes check only scans Markdown | 8 | S |
@@ -310,7 +310,7 @@ Test- and check-specific findings from the seeded-break pass are ranked in secti
 - **What breaks and for whom:** An adopter's copy mixes core and env in one tree. Pulling upstream means merging into `.sops.yaml` (one shared file), README and docs, and nine per-env Flux files. Six of those are byte-identical boilerplate from env-00, so any upstream change to the Flux layering, such as a new stage or a new health check, must be hand-applied to every env. Prune is disabled on almost every platform object, so a component removed upstream stays running in the adopter's cluster. A k3s bump restarts every node at once (handler, no `serial`, no drain). There are no release tags or upgrade notes.
 - **Location:** `envs/env-00/flux/kustomizations/*.yaml`; `envs/env-00/flux/kustomization.yaml`; `infra/ansible/roles/k3s/tasks/main.yml:53-61`, `handlers/main.yml:9-14`; `renovate.json:7-10`.
 - **Question:** 14.
-- **Evidence:** `git diff --no-index --stat envs/env-00/flux/ envs/env-01/flux/` changes only 3 of 9 files (flux-instance, generated ConfigMap, one path). `prune: disabled` appears on 20 platform objects. k3s Renovate is `"enabled": false`.
+- **Evidence:** `git diff --no-index --stat envs/env-00/flux/ envs/env-01/flux/` changes only 3 of 9 files (flux-instance, generated ConfigMap, one path). `prune: disabled` appears 23 times in 22 files under `platform/`. k3s Renovate is `"enabled": false`.
 - **Severity:** medium.
 - **Size:** M.
 - **Suggested fix:** Move the four stage Kustomizations into a core `flux/stages/` base that each env includes, with one patch for the env path. Write an "Upgrade" doc covering the git upstream merge, release tags, a k3s bump with `serial: 1` plus drain on agents, the Flux Operator-then-distribution order (today only in `renovate.json:48`), and how to remove a component removed upstream.
@@ -318,7 +318,7 @@ Test- and check-specific findings from the seeded-break pass are ranked in secti
 
 ### F22 — Renovate: hand-written regex managers and missing pins (medium)
 
-- **What breaks and for whom:** Maintainers and adopters are affected. 14 custom regex managers repeat what Renovate's native `flux` manager does for HelmRelease and HelmRepository/OCIRepository chart versions. Meanwhile `tools/versions.env` (sops, age, kubectl, kustomize, kubeconform, gitleaks) has no manager, so those pins never get update PRs. The k3s and Helm CLI rules are disabled.
+- **What breaks and for whom:** Maintainers and adopters are affected. 13 custom regex managers (`renovate.json:74-191`) repeat what Renovate's native `flux` manager does for HelmRelease and HelmRepository/OCIRepository chart versions. Meanwhile `tools/versions.env` (sops, age, kubectl, kustomize, kubeconform, gitleaks) has no manager, so those pins never get update PRs. The k3s and Helm CLI rules are disabled.
 - **Location:** `renovate.json:74-191`; `tools/versions.env`.
 - **Question:** 2, 14.
 - **Evidence:** No `managerFilePatterns` entry matches `tools/versions.env`. Each component has its own near-duplicate regex (for example lines 98-102 and 139-144).
@@ -351,7 +351,7 @@ Test- and check-specific findings from the seeded-break pass are ranked in secti
 
 ### F25 — No `make` target for `site.yml` (medium)
 
-- **What breaks and for whom:** A new adopter must `cd infra/ansible` and type a command with three relative paths (`-i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml`). It is copied 10 times across `docs/deploy.md`, `infra/ansible/README.md` and `preflight.yml`. Forgetting the second `-i` is the error preflight explains.
+- **What breaks and for whom:** A new adopter must `cd infra/ansible` and type a command with three relative paths (`-i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml`). It is copied 12 times: once in `docs/deploy.md`, 10 times in `infra/ansible/README.md` (once at line 32 plus once per row in the 9-row tag table), and once in `preflight.yml`. Forgetting the second `-i` is the error preflight explains.
 - **Location:** `Makefile`; `docs/deploy.md:84-87`; `infra/ansible/README.md:32-52`; `infra/ansible/tasks/preflight.yml:7-14`.
 - **Question:** 9, 2.
 - **Evidence:** Makefile `.PHONY` has no site or bootstrap target.
@@ -392,7 +392,7 @@ Test- and check-specific findings from the seeded-break pass are ranked in secti
 - **What breaks and for whom:** The product reads as a build log to adopters. The plan-codes check scans only Markdown, READMEs and `docs/`, so codes in YAML, Jinja, Python and shell comments pass. The generated ConfigMap even carries one into every env (`R4`).
 - **Location:** e.g. `schema/env.py:54` (D45), `infra/ansible/site.yml:4` (D34), `infra/inventory/roles.yml/constructed.yml:3` (D42), `infra/ansible/roles/node-disk/vars/main.yml:1` (D3, D42), `infra/ansible/roles/k3s/defaults/main.yml:7` (D6), `infra/ansible/roles/k3s/templates/config.yaml.j2:1` ("framework §8 step 4"), `base-os/templates/chrony.conf.j2:1` (§4), `journald-jarvis.conf.j2:1` (§7), `platform/*/helmrelease.yaml` (D30 ×4), `platform/flux-operator/oci-repository.yaml:1` (D11), `services/placeholder.yaml:1` (D9), `apps/placeholder.yaml:1` (D9, P4a), `tools/bootstrap-secrets:2` (R7, R25), `tools/seal:2`, `tools/lib/render_cluster_vars_configmap.py:2,77` (R4), `envs/env-00/flux/generated/cluster-vars-configmap.yaml:2`, every `ci/checks/*` header, `ci/checks/lib/_contract_md.py:8` (p2-01, p2-04). Also `README.md:3` "JARVIS AlphaCut" (a codename).
 - **Question:** 8.
-- **Evidence:** A Grep with `_plan_codes.py`'s own regex over non-Markdown files (excluding env-01, rulebooks, tests and .github) returns 52 hits in 40 files. `_plan_codes.py:7` "Not scanned: … and code."
+- **Evidence:** A Grep with `_plan_codes.py`'s own regex over non-Markdown files (excluding env-01, rulebooks, tests and .github) returns 49 hits in 41 files. `_plan_codes.py:7` "Not scanned: … and code."
 - **Severity:** low.
 - **Size:** S.
 - **Suggested fix:** Strip them, and extend the check's scope to comments in `*.py`, `*.yml`, `*.yaml`, `*.j2` and `ci/checks/*` (excluding `rulebooks/` and `.github/`).
@@ -761,7 +761,7 @@ Method: in the env-00-only scratch clone, each break was seeded into the code a 
 2. **Glue a native approach would replace?**
    - prep-node → an Ansible bootstrap play or autoinstall (F23).
    - Helm CLI bootstrap → k3s `HelmChart` auto-deploy (F24).
-   - 14 Renovate regexes → the native `flux` manager plus one generic comment manager (F22).
+   - 13 Renovate regexes → the native `flux` manager plus one generic comment manager (F22).
    - The verify cron engine → croniter or VolSync `nextSyncTime` (F37).
    - Raw-file manifest walker → `kustomize build` output (T05).
    - The constructed `data_disk` group → the host var already used (F30).
@@ -1030,7 +1030,7 @@ Result: verify and drill go green after the first copy cycle. **13 files opened,
 | `ci/checks/lib/_contract_md.py` `EXPLICIT_COMPONENT_ROOTS` entries for `docs/build-agent`, `services/hermes/*`, `services/observability` | None exist (F30) |
 | `flux-operator` role `helm_cli.yml`, `helm-upgrade.cmd.j2`, Helm defaults (arm64 lines at minimum) | amd64-only preflight; k3s HelmChart alternative (F24) |
 | `tools/restore` `_reason`, `_not_found` | Duplicates `tools/lib/_env.reason`/`not_found` (F30) |
-| 14 per-component Renovate regex managers | Native `flux` manager plus one generic manager (F22) |
+| 13 per-component Renovate regex managers | Native `flux` manager plus one generic manager (F22) |
 | `tools/verify/run` `_number`, `_cron_field`, `_cron` (if croniter or `nextSyncTime` is adopted) | F37 |
 | YAML snapshot tests listed in T07; dead assertions in T10 | T07, T10 |
 | Plan codes in code comments | F28 |
@@ -1040,7 +1040,7 @@ Result: verify and drill go green after the first copy cycle. **13 files opened,
 Every file from `git ls-files` at the SHA: 248 files, 248 rows. The per-directory counts were cross-checked with `git ls-files ci platform` (129) and `git ls-files envs infra tools` (93), plus 26 others. How each was read:
 - `finding`: read line by line, and at least one finding cites it.
 - `no finding`: read line by line, nothing to report.
-- `excluded`: reason given. Only the vendored CRD, the generated ConfigMaps and the SOPS ciphertexts are excluded.
+- `excluded`: reason given. Only vendored files (the CRD and four test JSON schemas), the generated ConfigMaps and the SOPS ciphertexts are excluded.
 - Test files and ci/checks were read line by line as part of the seeded-break pass.
 
 | File | Tag | Ids / note |
