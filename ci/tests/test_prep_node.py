@@ -134,9 +134,46 @@ def test_same_ssh_user_passes_on_a_second_node(tmp_path: Path) -> None:
     module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ubuntu")
     cluster = dest / "values" / "cluster-vars.yaml"
     before = cluster.read_text(encoding="utf-8")
-    module.require_recorded_ssh_user(tmp_path, "env-new", "ubuntu")
     module.apply_env_edits(tmp_path, "env-new", "wk-1", "wk-1", "ubuntu")
     assert cluster.read_text(encoding="utf-8") == before
+
+
+def test_apply_env_edits_refuses_a_different_recorded_ssh_user(tmp_path: Path) -> None:
+    """Write-time backstop: a recorded ssh_user cannot be overwritten."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ops")
+    before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
+    with pytest.raises(module.PrepError, match="per-host users come later"):
+        module.apply_env_edits(tmp_path, "env-new", "wk-1", "wk-1", "other")
+    assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
+
+
+def test_quoted_ssh_user_is_the_scalar(tmp_path: Path) -> None:
+    """A quoted ssh_user value is the user, not the quotes."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    cluster.write_text(
+        cluster.read_text(encoding="utf-8").replace("ssh_user: example", 'ssh_user: "ops"'),
+        encoding="utf-8",
+    )
+    assert module.recorded_ssh_user(tmp_path, "env-new") == "ops"
+    assert not module.ssh_user_is_placeholder(tmp_path, "env-new")
+
+
+def test_empty_ssh_user_is_the_schema_default(tmp_path: Path) -> None:
+    """An empty ssh_user key is the schema default, not the next line's key."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    cluster.write_text(
+        cluster.read_text(encoding="utf-8").replace("ssh_user: example", "ssh_user:"),
+        encoding="utf-8",
+    )
+    assert module.recorded_ssh_user(tmp_path, "env-new") is None
+    assert module.effective_ssh_user(tmp_path, "env-new") == module.DEFAULT_SSH_USER
+    assert not module.ssh_user_is_placeholder(tmp_path, "env-new")
 
 
 def _ssh_snapshot() -> tuple[tuple[str, ...], bytes | None, int | None]:
@@ -165,6 +202,7 @@ def test_unresolvable_host_exits_before_any_change() -> None:
     result = subprocess.run(
         [str(SCRIPT), "--env", "env-00", "--host", host, "--login-user", "tester"],
         cwd=REPO_ROOT,
+        input="\n",
         capture_output=True,
         text=True,
         timeout=30,
@@ -194,6 +232,7 @@ def test_resolved_host_missing_from_inventory_exits_before_ssh() -> None:
     result = subprocess.run(
         [str(SCRIPT), "--env", "env-00", "--host", "localhost", "--login-user", "tester"],
         cwd=REPO_ROOT,
+        input="\n",
         capture_output=True,
         text=True,
         timeout=30,
@@ -543,6 +582,7 @@ def _block_host_calls(module: object, monkeypatch: pytest.MonkeyPatch) -> list[s
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(module, "assert_host_resolves", record("assert_host_resolves"))
+    monkeypatch.setattr(module, "ensure_public_key", record("ensure_public_key"))
     monkeypatch.setattr(module, "ensure_host_key", record("ensure_host_key"))
     monkeypatch.setattr(module, "scan_host_keys", record("scan_host_keys"))
     monkeypatch.setattr(module, "open_session", record("open_session"))
@@ -550,6 +590,54 @@ def _block_host_calls(module: object, monkeypatch: pytest.MonkeyPatch) -> list[s
     monkeypatch.setattr(module, "batch_ssh", record("batch_ssh"))
     monkeypatch.setattr(module.subprocess, "run", guarded_run)
     return host_calls
+
+
+def _stub_host_steps(
+    module: object, monkeypatch: pytest.MonkeyPatch, *, hostname: str = "cp-1"
+) -> list[str]:
+    """Replace every host-touching run() step. Returns the names that were called."""
+    called: list[str] = []
+
+    class _Session:
+        def close(self) -> None:
+            called.append("close")
+
+    def track(name: str, ret: object = None):
+        def _fn(*_args: object, **_kwargs: object) -> object:
+            called.append(name)
+            return ret
+
+        return _fn
+
+    real_schema = module.run_env_schema
+
+    def schema(repo: Path, *, pre_host: bool = False) -> None:
+        called.append("run_env_schema")
+        if pre_host:
+            real_schema(repo, pre_host=True)
+
+    monkeypatch.setattr(module, "run_env_schema", schema)
+    monkeypatch.setattr(module, "assert_host_resolves", track("assert_host_resolves"))
+    monkeypatch.setattr(module, "ensure_public_key", track("ensure_public_key", Path("/tmp/id.pub")))
+    monkeypatch.setattr(module, "public_key_text", track("public_key_text", "ssh-ed25519 AAAA"))
+    monkeypatch.setattr(module, "ensure_host_key", track("ensure_host_key"))
+    monkeypatch.setattr(module, "open_session", track("open_session", _Session()))
+    monkeypatch.setattr(module, "install_login_key", track("install_login_key"))
+    monkeypatch.setattr(module, "ensure_sudo", track("ensure_sudo"))
+    monkeypatch.setattr(module, "configure_hostname", track("configure_hostname", hostname))
+    monkeypatch.setattr(module, "ensure_ansible_user", track("ensure_ansible_user"))
+    monkeypatch.setattr(module, "install_minimum", track("install_minimum"))
+    monkeypatch.setattr(module, "report_address", track("report_address"))
+    monkeypatch.setattr(module, "proof", track("proof"))
+    monkeypatch.setattr(module, "offer_ssh_passwords_off", track("offer_ssh_passwords_off"))
+    monkeypatch.setattr(module, "check_clock", track("check_clock"))
+    monkeypatch.setattr(module, "sync_age_key", track("sync_age_key"))
+    monkeypatch.setattr(module, "show_git_diff", track("show_git_diff"))
+    return called
+
+
+def _accept_default_ansible_user(module: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: True)
 
 
 def test_schema_error_makes_zero_host_calls(
@@ -573,22 +661,123 @@ def test_schema_error_makes_zero_host_calls(
     assert host_calls == []
 
 
-def test_second_node_ssh_user_mismatch_is_refused_before_host(
+def test_run_first_node_records_login_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A different ssh_user on a second node fails before any host step."""
+    """First node: example placeholder plus login ubuntu records ubuntu."""
     module = _load()
     dest = _copy_example_env(tmp_path)
-    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ubuntu")
-    assert "ssh_user: ubuntu" in dest.joinpath("values/cluster-vars.yaml").read_text(
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    _accept_default_ansible_user(module, monkeypatch)
+    called = _stub_host_steps(module, monkeypatch, hostname="cp-1")
+
+    module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ubuntu"])
+
+    assert module.recorded_ssh_user(tmp_path, "env-new") == "ubuntu"
+    assert "ssh_user: example" not in dest.joinpath("values/cluster-vars.yaml").read_text(
         encoding="utf-8"
+    )
+    assert "assert_host_resolves" in called
+
+
+def test_run_second_node_keeps_recorded_user_when_login_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second node: recorded ops, login ubuntu, keeps ops."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ops")
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    _accept_default_ansible_user(module, monkeypatch)
+    called = _stub_host_steps(module, monkeypatch, hostname="wk-1")
+
+    module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ubuntu"])
+
+    assert module.recorded_ssh_user(tmp_path, "env-new") == "ops"
+    assert "ssh_user: ops" in dest.joinpath("values/cluster-vars.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "assert_host_resolves" in called
+
+
+def test_run_second_node_refuses_a_different_ansible_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second node that asks for a different Ansible user makes zero host calls."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ops")
+    before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
+    host_calls = _block_host_calls(module, monkeypatch)
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: "other")
+
+    with pytest.raises(module.PrepError, match="per-host users come later"):
+        module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ubuntu"])
+    assert host_calls == []
+    assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
+
+
+def test_run_same_ansible_user_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recorded ops plus login ops keeps ops."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ops")
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    _accept_default_ansible_user(module, monkeypatch)
+    called = _stub_host_steps(module, monkeypatch, hostname="wk-1")
+
+    module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ops"])
+
+    assert module.recorded_ssh_user(tmp_path, "env-new") == "ops"
+    assert "assert_host_resolves" in called
+
+
+def test_run_missing_ssh_user_keeps_the_schema_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing ssh_user is already ubuntu; login may differ and that default is kept."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    cluster.write_text(
+        cluster.read_text(encoding="utf-8").replace("ssh_user: example\n", ""),
+        encoding="utf-8",
+    )
+    assert module.recorded_ssh_user(tmp_path, "env-new") is None
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    _accept_default_ansible_user(module, monkeypatch)
+    _stub_host_steps(module, monkeypatch, hostname="cp-1")
+
+    module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ops"])
+
+    assert module.effective_ssh_user(tmp_path, "env-new") == module.DEFAULT_SSH_USER
+    assert module.recorded_ssh_user(tmp_path, "env-new") == module.DEFAULT_SSH_USER
+
+
+def test_run_missing_ssh_user_refuses_a_different_ansible_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asking for a user other than the schema default is refused with zero host calls."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    cluster.write_text(
+        cluster.read_text(encoding="utf-8").replace("ssh_user: example\n", ""),
+        encoding="utf-8",
     )
     host_calls = _block_host_calls(module, monkeypatch)
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: "ops")
 
     with pytest.raises(module.PrepError, match="per-host users come later"):
-        module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ops"])
+        module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ops"])
     assert host_calls == []
+    assert module.recorded_ssh_user(tmp_path, "env-new") is None
 
 
 def test_first_node_placeholder_ssh_user_reaches_host_check(
@@ -604,6 +793,7 @@ def test_first_node_placeholder_ssh_user_reaches_host_check(
         raise module.PrepError("stopped after pre-host")
 
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    _accept_default_ansible_user(module, monkeypatch)
     monkeypatch.setattr(module, "assert_host_resolves", stop)
 
     with pytest.raises(module.PrepError, match="stopped after pre-host"):
@@ -639,6 +829,7 @@ def test_run_calls_full_schema_after_host_steps(
     dest = tmp_path / "envs" / "env-00"
     shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    _accept_default_ansible_user(module, monkeypatch)
     schema_modes: list[bool] = []
 
     def track_schema(repo: Path, *, pre_host: bool = False) -> None:
@@ -661,7 +852,6 @@ def test_run_calls_full_schema_after_host_steps(
     monkeypatch.setattr(module, "install_login_key", lambda *_a, **_k: None)
     monkeypatch.setattr(module, "ensure_sudo", lambda *_a, **_k: None)
     monkeypatch.setattr(module, "configure_hostname", lambda *_a, **_k: "cp-1")
-    monkeypatch.setattr(module, "choose_ansible_user", lambda login: login)
     monkeypatch.setattr(module, "ensure_ansible_user", lambda *_a, **_k: None)
     monkeypatch.setattr(module, "install_minimum", lambda *_a, **_k: None)
     monkeypatch.setattr(module, "report_address", lambda *_a, **_k: None)

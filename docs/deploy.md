@@ -65,7 +65,7 @@ Node setup after that is `tools/prep-node` and `site.yml` (`infra/ansible/README
 tools/prep-node --env <env> --host <hostname> --login-user <user>
 ```
 
-Run it from a checkout on the machine that drives the build. Omitted flags are prompted. Produces a node that accepts key login and passwordless sudo, with the host name and `ssh_user` recorded in the env. What the script changes, and what it refuses to change, is in [infra/ansible/README.md](../infra/ansible/README.md).
+Run it from a checkout on the machine that drives the build. Omitted flags are prompted. The Ansible user is settled before the host is touched; a recorded `ssh_user` is kept even when login differs. Produces a node that accepts key login and passwordless sudo, with the host name and `ssh_user` recorded in the env. What the script changes, and what it refuses to change, is in [infra/ansible/README.md](../infra/ansible/README.md).
 
 ## Bootstrap secrets, commit, and push
 
