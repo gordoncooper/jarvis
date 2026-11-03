@@ -67,7 +67,10 @@ class _Cluster:
         env: str = "env-00",
         etcd_image: str | None = _FAKE_RESTIC_IMAGE,
         etcd_present: bool = True,
+        destination_done: bool = True,
     ) -> None:
+        self.destination_done = destination_done
+        self.nodes = {"node-a", "node-b"}
         self.items = items
         self.will_pause = will_pause
         self.logs = logs
@@ -132,6 +135,15 @@ class _Cluster:
             return _completed(argv, json.dumps({"items": self.deployments}))
         if argv[:2] == ["get", "statefulset"]:
             return _completed(argv, json.dumps({"items": self.statefulsets}))
+        if argv[:2] == ["get", "node"]:
+            if argv[2] in self.nodes:
+                return _completed(argv, f"node/{argv[2]}\n")
+            return _completed(
+                argv,
+                "",
+                returncode=1,
+                stderr=f'Error from server (NotFound): nodes "{argv[2]}" not found',
+            )
         if argv[:3] == ["get", "cronjob", "etcd-snapshots"]:
             namespace = argv[argv.index("-n") + 1] if "-n" in argv else ""
             if namespace != "platform-backups" or not self.etcd_present:
@@ -230,18 +242,12 @@ class _Cluster:
             self.applied.append(doc)
             return _completed(argv, "applied\n")
         if argv[:2] == ["get", "replicationdestination"]:
-            manual = self.applied[-1]["spec"]["trigger"]["manual"]
-            return _completed(
-                argv,
-                json.dumps(
-                    {
-                        "status": {
-                            "lastManualSync": manual,
-                            "latestMoverStatus": {"result": "Successful", "logs": self.logs},
-                        }
-                    }
-                ),
-            )
+            status: dict = {
+                "latestMoverStatus": {"result": "Successful", "logs": self.logs}
+            }
+            if self.destination_done:
+                status["lastManualSync"] = self.applied[-1]["spec"]["trigger"]["manual"]
+            return _completed(argv, json.dumps({"status": status}))
         if argv[:2] == ["delete", "replicationdestination"]:
             return _completed(argv, "deleted\n")
         if argv[:2] == ["delete", "pod"]:
@@ -399,6 +405,31 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     assert restored == {"demo/drill", "other/keep"}
 
 
+@pytest.mark.parametrize(
+    "target",
+    [["restore", "ENV=env-00", "APP=demo"], ["restore-all", "ENV=env-00"]],
+)
+def test_make_forwards_node_only_when_set(target: list[str]) -> None:
+    """NODE=<node> reaches tools/restore as --node; without NODE there is no --node."""
+    env = {key: value for key, value in os.environ.items() if key != "NODE"}
+
+    def recipe(*extra: str) -> str:
+        proc = subprocess.run(
+            ["make", "-n", *target, *extra],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
+        # make -n prints the recipe, with its continuation lines, instead of running it.
+        assert "tools/restore" in proc.stdout
+        return proc.stdout
+
+    assert '--node "node-a"' in recipe("NODE=node-a")
+    assert "--node" not in recipe()
+
+
 def _run(cluster: _Cluster, **kwargs: object) -> int:
     args = {
         "env": "env-00",
@@ -481,8 +512,11 @@ def test_live_volume_uses_as_of(capsys) -> None:
 
 def test_unbound_pvc_is_paused_then_bound(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "pending", volume="")], will_pause=True)
-    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
     assert "pending" in cluster.bound
+    assert cluster.binders[0]["spec"]["affinity"] == (
+        restore_tool._node_placement("node-a")["affinity"]
+    )
 
     def at(pred) -> int:
         for index, call in enumerate(cluster.calls):
@@ -514,7 +548,7 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
         will_pause=True,
         etcd_image=image,
     )
-    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
     reads = [
         index
         for index, call in enumerate(cluster.calls)
@@ -529,10 +563,139 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
         image,
         image,
     ]
-    assert all("nodeSelector" not in pod["spec"] for pod in cluster.binders)
     out = capsys.readouterr().out
     assert "PASS restore demo/one" in out
     assert "PASS restore demo/two" in out
+
+
+_PLACED = {
+    "nodeSelector": {"disk": "fast"},
+    "affinity": {
+        "nodeAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": {
+                "nodeSelectorTerms": [
+                    {"matchExpressions": [{"key": "zone", "operator": "In", "values": ["a"]}]}
+                ]
+            }
+        }
+    },
+    "tolerations": [{"key": "dedicated", "operator": "Exists", "effect": "NoSchedule"}],
+}
+
+
+def _mounting(kind: str, placement: dict) -> dict:
+    claim = {"name": "data", "persistentVolumeClaim": {"claimName": "pending"}}
+    template = {"template": {"spec": {**placement, "volumes": [claim]}}}
+    if kind == "cronjob":
+        return {"metadata": {"name": kind}, "spec": {"jobTemplate": {"spec": template}}}
+    return {"metadata": {"name": kind}, "spec": {"replicas": 1, **template}}
+
+
+@pytest.mark.parametrize("kind", ["deployment", "statefulset", "cronjob"])
+def test_binder_copies_the_mounting_workload_placement(kind: str) -> None:
+    """local-path binds on the binder's node, so the binder runs where the workload will."""
+    cluster = _Cluster([], will_pause=True, **{f"{kind}s": [_mounting(kind, _PLACED)]})
+    placement = restore_tool.binder_placement(cluster.kubectl, "demo", "pending", None)
+    spec = restore_tool._binder_body("demo", "pending", _FAKE_RESTIC_IMAGE, placement)["spec"]
+    assert {key: spec[key] for key in _PLACED} == _PLACED
+    assert spec["volumes"][0]["persistentVolumeClaim"]["claimName"] == "pending"
+
+
+def test_workload_pinned_by_node_name_pins_the_binder_by_affinity() -> None:
+    """nodeName skips the scheduler and would never bind the claim, so it becomes node affinity."""
+    pinned = _mounting("deployment", {"nodeName": "node-b"})
+    cluster = _Cluster([], will_pause=True, deployments=[pinned])
+    placement = restore_tool.binder_placement(cluster.kubectl, "demo", "pending", None)
+    spec = restore_tool._binder_body("demo", "pending", _FAKE_RESTIC_IMAGE, placement)["spec"]
+    assert "nodeName" not in spec
+    assert placement == restore_tool._node_placement("node-b")
+
+
+def test_restore_binds_with_the_placement_checked_before_any_change(capsys) -> None:
+    cluster = _Cluster(
+        [_pvc("demo", "pending", volume="")],
+        will_pause=True,
+        deployments=[_mounting("deployment", _PLACED)],
+    )
+    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    reads = [index for index, call in enumerate(cluster.calls) if call[:2] == ["get", "deployment"]]
+    assert reads[0] < _mutation_at(cluster.calls)
+    assert {key: cluster.binders[0]["spec"][key] for key in _PLACED} == _PLACED
+    assert "PASS restore demo/pending" in capsys.readouterr().out
+
+
+def test_pvc_unbound_after_selection_fails_without_a_binder(capsys) -> None:
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True)
+
+    def kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+        if list(args)[:3] == ["get", "pvc", "drill"]:
+            return _completed(list(args), json.dumps(_pvc("demo", "drill", volume="")))
+        return cluster.kubectl(args, input)
+
+    code = restore_tool.run(
+        kubectl,
+        env="env-00",
+        app="demo",
+        all_pvcs=False,
+        monotonic=lambda: 0.0,
+        sleep=_boom,
+        now=lambda: 1000.0,
+    )
+    assert code != 0
+    assert "demo/drill: was bound when selected and is unbound now" in capsys.readouterr().out
+    assert cluster.binders == []
+
+
+def test_node_override_wins_over_the_workload_placement() -> None:
+    cluster = _Cluster([], will_pause=True, deployments=[_mounting("deployment", _PLACED)])
+    placement = restore_tool.binder_placement(cluster.kubectl, "demo", "pending", "node-b")
+    spec = restore_tool._binder_body("demo", "pending", _FAKE_RESTIC_IMAGE, placement)["spec"]
+    assert "nodeSelector" not in spec
+    required = spec["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+    assert required["nodeSelectorTerms"] == [
+        {"matchFields": [{"key": "metadata.name", "operator": "In", "values": ["node-b"]}]}
+    ]
+    assert spec["tolerations"] == [{"operator": "Exists"}]
+
+
+@pytest.mark.parametrize(
+    ("workloads", "node", "message"),
+    [
+        ({}, None, "no Deployment, StatefulSet or CronJob mounts it; pass NODE=<node>"),
+        (
+            {
+                "deployments": [_mounting("deployment", _PLACED)],
+                "cronjobs": [_mounting("cronjob", {})],
+            },
+            None,
+            "the workloads that mount it ask for different placement",
+        ),
+        ({}, "node-z", 'node node-z: Error from server (NotFound): nodes "node-z" not found'),
+        ({}, "Node_A", "invalid node name: Node_A"),
+    ],
+)
+def test_unplaceable_binder_refuses_before_any_change(
+    workloads: dict, node: str | None, message: str, capsys
+) -> None:
+    """A PVC whose node cannot be decided stops the run before the first change."""
+    cluster = _Cluster(
+        [_pvc("demo", "bound"), _pvc("demo", "pending", volume="")],
+        will_pause=True,
+        **workloads,
+    )
+    assert _run(cluster, app="demo", all_pvcs=False, node=node) != 0
+    assert message in capsys.readouterr().out
+    _assert_no_mutation(cluster)
+
+
+def test_destination_that_never_finishes_fails_and_keeps_the_pause(capsys) -> None:
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, destination_done=False)
+    assert _run(cluster, app="demo", all_pvcs=False, restore_budget_s=0) != 0
+    out = capsys.readouterr().out
+    assert "demo/drill: ReplicationDestination did not finish" in out
+    assert "PASS restore" not in out
+    assert "backup-" not in [arg for call in cluster.calls for arg in call]
+    assert "kubectl annotate pvc drill -n demo backup-" in out
 
 
 @pytest.mark.parametrize(
@@ -648,8 +811,9 @@ def test_restore_all_retires_a_named_repo_with_no_pvc(capsys) -> None:
     )
     assert _run(cluster, app=None, all_pvcs=True, retire=["ns-ghost/pvc-gone"]) == 0
     assert cluster.hold_deleted is True
-    assert "HOLD retired ns-ghost/pvc-gone" in capsys.readouterr().out
-    assert "HOLD kept" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "HOLD retired ns-ghost/pvc-gone" in out
+    assert "HOLD kept" not in out
 
 
 def test_mover_job_already_gone_uses_destination_status(capsys) -> None:

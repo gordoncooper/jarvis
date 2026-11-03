@@ -1,0 +1,100 @@
+# restic 0.19.1. Version and digest pin; Renovate updates both (renovate.json).
+# Weekly read of every repository on the backup disk. It never writes to a repository.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restic-check
+  namespace: platform-backups
+  labels:
+    app.kubernetes.io/name: restic-check
+spec:
+  # backup_check_schedule (default Wednesday 06:30): hours away from the nightly
+  # backup_schedule runs and from the etcd copy (00:05 and 12:05), which also prunes.
+  # --no-lock takes no repository lock, so a run that does overlap blocks nothing;
+  # it can only fail and be retried.
+  schedule: "${backup_check_schedule}"
+  timeZone: ${time_zone}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # make verify allows this plus a margin after the scheduled time (tools/verify/backups.py).
+      activeDeadlineSeconds: 21600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: restic-check
+        spec:
+          # Flux postBuild on platform-configs fills these from cluster-vars.
+          nodeSelector:
+            "role.${dns_suffix}/backup": "true"
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+            - name: restic
+              # renovate: datasource=docker depName=restic/restic
+              image: restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+              imagePullPolicy: IfNotPresent
+              # restic check holds a repository's whole index in memory.
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+              # Repository files are owned by root (rest-server runs as root); owner reads need no capability.
+              securityContext:
+                runAsUser: 0
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                # Credential source: one password for every repository.
+                - name: RESTIC_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: backups-restic
+                      key: RESTIC_PASSWORD
+                # Repository list: paths under the rest-server data directory; globs expand there.
+                - name: REPOSITORIES
+                  value: "host-etcd-snapshots ns-*/pvc-*"
+                # Each run reads slice n of this many; every pack is read once per that many weeks.
+                - name: READ_DATA_SLICES
+                  value: "12"
+                - name: RESTIC_CACHE_DIR
+                  value: /cache
+              # restic output can name files inside a repository, so only PASS or FAIL per repository is printed.
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  slice=$(( $(date +%s) / 604800 % READ_DATA_SLICES + 1 ))
+                  failed=0
+                  cd /repositories
+                  for repo in $REPOSITORIES; do
+                    # A glob that matched nothing; a plain name that is missing still fails below.
+                    case "$repo" in *'*'*) continue ;; esac
+                    if restic --repo "/repositories/$repo" --no-lock check \
+                      --read-data-subset="$slice/$READ_DATA_SLICES" >/dev/null 2>&1; then
+                      echo "PASS $repo"
+                    else
+                      echo "FAIL $repo: restic check exited $?"
+                      failed=1
+                    fi
+                  done
+                  exit "$failed"
+              volumeMounts:
+                - name: repositories
+                  mountPath: /repositories
+                  readOnly: true
+                - name: cache
+                  mountPath: /cache
+          volumes:
+            - name: repositories
+              hostPath:
+                path: "${backup_path}/restic"
+                type: Directory
+            - name: cache
+              emptyDir:
+                sizeLimit: 2Gi

@@ -14,6 +14,7 @@ from support import ExampleCopy, _kustomize_build, real_and_copy_envs, renovate_
 _CONFIGS_BEFORE = {
     ("ClusterPolicy", "", "pvc-backup"),
     ("CronJob", "platform-backups", "etcd-snapshots"),
+    ("CronJob", "platform-backups", "restic-check"),
     ("Deployment", "platform-backups", "restic"),
     ("Namespace", "", "platform-backups"),
     ("Secret", "platform-backups", "backups-restic"),

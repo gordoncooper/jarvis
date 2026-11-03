@@ -10,8 +10,9 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
   - `inventory/hosts.yml` — one block per host: `node_roles` and an optional `data_disk`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
 - Rejection of an unknown `code_delivery` or `build_agent` when that key is set (only built providers are accepted; other named providers are stubs, not valid values). Omitting either key is valid.
-- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `apps_git_repo_url`, and `llm_provider_host`.
+- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `apps_git_repo_url`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
+- Default `backup_check_schedule: 30 6 * * 3` when omitted. The example env still sets `backup_check_schedule`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
 - Rejection of a `time_zone` that is not an IANA zone, and of a `k3s_version` that is not a k3s version string (`v<major>.<minor>.<patch>+k3s<n>`).
 - `apps_git_repo_url`, when set, is https and validated like `flux_git_repo_url`. The two URLs use one owner handle. When `apps_git_repo_url` is unset, that handle comes from `flux_git_repo_url`.
@@ -47,6 +48,7 @@ A required key that is present but null counts as unset and fails.
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots. |
 | `backup_retention_monthly` | yes | Restic keep count for monthly snapshots. |
 | `backup_schedule` | yes | Five-field cron for each PVC's VolSync ReplicationSource (`trigger.schedule`). The controller evaluates it in `time_zone`. |
+| `backup_check_schedule` | no | Five-field cron for CronJob `platform-backups/restic-check`, evaluated in `time_zone`. Default `30 6 * * 3`. Keep every start at least 3 hours from each `backup_schedule` start and from the etcd copy (`5 */12 * * *`). |
 | `jarvis_env` | yes | Env name for `/etc/jarvis/env` marker and guards; must match `envs/<env>/`. |
 | `k3s_version` | yes | k3s version string `v<major>.<minor>.<patch>+k3s<n>`. The host binary changes only by a pull request. |
 | `k3s_sha256` | yes | SHA-256 of the pinned `k3s` amd64 release binary (verified on install). |
@@ -153,7 +155,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A behavior test rejects a relative `backup_path`.
 - The cluster-vars ConfigMap render publishes only the allow-list in the postBuild section. Host-only keys stay out. A stale render fails the flux entry test.
 - A behavior test rejects an unknown `time_zone` and a `k3s_version` that is not `v<major>.<minor>.<patch>+k3s<n>`.
-- A behavior test rejects a `backup_schedule` that is not a five-field cron.
+- A behavior test rejects a `backup_schedule` or `backup_check_schedule` that is not a five-field cron, and one resolves an omitted `backup_check_schedule` to `30 6 * * 3`.
 - A behavior test rejects an `app_dns_cluster_ip` that is not an IP address, is outside `service_cidr`, is not a host address, or is the first or tenth address of `service_cidr`.
 - A drift test fails when the known-key set gains a key the example env does not set.
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, and an unknown host key.

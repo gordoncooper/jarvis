@@ -11,6 +11,7 @@ backup_retention_daily: 7
 backup_retention_weekly: 4
 backup_retention_monthly: 3
 backup_schedule: 0 1 * * *
+backup_check_schedule: 30 6 * * 3
 
 # Host binary; changes only by PR (R33, D5). CIDRs are k3s defaults for this pin (D4).
 k3s_version: v1.36.5+k3s1

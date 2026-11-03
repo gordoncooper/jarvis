@@ -4,4 +4,5 @@ resources:
   - namespace.yaml
   - rest-server.yaml
   - etcd-snapshots.yaml
+  - restic-check.yaml
   - enrollment.yaml

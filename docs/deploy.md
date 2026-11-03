@@ -96,7 +96,7 @@ Produces a k3s cluster, node role labels, kubeconfig `~/.kube/jarvis-<env>.yaml`
 make verify ENV=<env>
 ```
 
-Uses `~/.kube/jarvis-<env>.yaml`. Each standing check prints `PASS`, `WARN`, or `FAIL`. `WARN` is a pending first run (exit 0). Any `FAIL` exits 1.
+Uses `~/.kube/jarvis-<env>.yaml`. Each standing check prints `PASS`, `WARN`, or `FAIL`. `WARN` is a scheduled job with no success yet whose first run is still pending or running inside its first interval (exit 0). Once that run finishes without success, or the first interval passes, it is `FAIL`. Any `FAIL` exits 1.
 
 ## Drill
 

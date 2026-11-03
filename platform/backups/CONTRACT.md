@@ -16,7 +16,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 
 - Flux SOPS decryption via `flux-system/sops-age`. The file in Git has no plaintext secret.
 - `envs/<env>/secrets/backups-restic.sops.yaml`. Flux decrypts it.
-- Target path, retention counts, `backup_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
+- Target path, retention counts, `backup_schedule`, `backup_check_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
 - The backup-role node (`role.<dns_suffix>/backup=true`) for the rest-server hostPath.
 - The control-plane node (`role.<dns_suffix>/control_plane=true`), where k3s writes the snapshot files.
 - `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
@@ -33,6 +33,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - During `make restore`, that PVC's ReplicationSource stays paused until the destination finishes. It stays paused longer while the rebuild hold exists.
 - `make drill` deletes a scratch volume, restores it, and compares checksums.
 - A Job from CronJob `etcd-snapshots` completes, and `restic snapshots` on `host-etcd-snapshots` lists a snapshot that holds the newest k3s snapshot file.
+- A Job from CronJob `restic-check` (on `backup_check_schedule` in `time_zone`, default Wednesday 06:30, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `make verify` fails when its last success is older than one schedule interval plus 12 hours. With no success yet, `make verify` warns while the first run is pending or running inside the first interval plus 12 hours, and fails once a run finished without success or that time has passed. The `etcd-snapshots` check uses the same first-run rule without the 12 hours.
 
 ## Config
 
@@ -119,7 +120,7 @@ What it changes, for each selected PVC:
 - Suspends the Flux Kustomization labeled on the PVC or its Deployment, StatefulSet, or CronJob.
 - Suspends CronJobs that mount the PVC, and scales mounting Deployments and StatefulSets to 0.
 - Annotates `backup: paused` and waits until ReplicationSource `spec.paused` is true, the source Job's parallelism is 0, and no pod that mounts the PVC is running, pending, or terminating. This last guard also refuses active Jobs, DaemonSets, and other unowned writers. `status.active` does not count a terminating pod, and that pod can still hold the volume.
-- An unbound PVC is annotated `backup: paused` first, then bound by a short-lived pod that uses the CronJob image and has no nodeSelector. That pod is deleted and must be gone before the copy.
+- An unbound PVC is annotated `backup: paused` first, then bound by a short-lived pod that uses the CronJob image and the `nodeSelector`, `affinity`, and `tolerations` of the Deployment, StatefulSet, or CronJob that mounts it (a template `nodeName` becomes node affinity for that node), because local-path puts the volume on that pod's node. Optional `NODE=<node>` pins it to that node instead and tolerates the node's taints. With no mounting workload and no `NODE`, or mounting workloads that ask for different placement, restore stops before any change. That pod is deleted and must be gone before the copy.
 - Waits for Secret `restic-<pvc>`, applies a ReplicationDestination, and waits for `status.lastManualSync`. VolSync then deletes the mover Job.
 - The result is `status.latestMoverStatus.logs`. `No eligible snapshots found` means it restored nothing and exited 0. This mode fails on that line. A log with neither that line nor a `restoring` line fails, including the empty log VolSync stores when it cannot read the mover pod.
 - On success it deletes the destination, restores replica counts and CronJob suspension, and resumes the Flux Kustomization. It removes `backup: paused`, including one set on purpose, unless the rebuild hold still exists.
@@ -160,13 +161,13 @@ Repository preflight uses its own short-lived backup-node pod with the rest-serv
 What it changes:
 
 - Writes a scratch payload and waits for a fresh ReplicationSource sync.
-- Deletes and recreates the paused PVC, runs `make restore ENV=<env> APP=platform-drill`, and compares checksums it computed itself.
+- Deletes and recreates the paused PVC, runs `make restore ENV=<env> APP=platform-drill NODE=<node>` with the node the writer pod ran on, and compares checksums it computed itself.
 - Separately, a freshly created (never reused) scratch pod in `platform-backups`, where `backups-restic` exists, restores the newest snapshot file from `host-etcd-snapshots` and compares it with the file on the read-only backup path.
 - The tool never reads or copies Secret data client-side, never runs a cluster reset, and never prints Secret values.
 - On success, failure, SIGINT, SIGTERM, or SIGHUP, it removes the scratch namespace with a bounded wait, then runs a short-lived pod on the backup-role node that mounts the rest-server data path and removes `ns-platform-drill/pvc-drill`.
 - If either cleanup cannot finish, it prints `make drill-cleanup ENV=<env>` for an env-bound retry. Adopters do not clean a drill repository on a node by hand.
 
-How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume checksums match. After the two etcd checksums match, the tool prints one `ETCD snapshot ... checksum` line.
+How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume checksums match. After the two etcd checksums match, the tool prints one `ETCD snapshot ... checksum` line. When the newest k3s snapshot file is not in the latest restic snapshot yet, the drill fails with `newest etcd snapshot <file> is not yet in the restic copy`; run it again after the next `etcd-snapshots` run.
 
 ### etcd cluster reset
 
