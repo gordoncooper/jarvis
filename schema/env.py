@@ -63,6 +63,7 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "build_agent",
         "apps_git_repo_url",
         "llm_provider_host",
+        "chrony_nts",
     }
 )
 
@@ -452,6 +453,7 @@ def _validate_cluster_vars(
         errors.append(f"{rel_path}: backup_schedule must be a five-field cron")
 
     errors.extend(_validate_ntp_pools(rel_path, data.get("ntp_pools")))
+    errors.extend(_validate_chrony_nts(rel_path, data.get("chrony_nts")))
 
     for key in (
         "k3s_kubelet_kube_reserved",
@@ -645,6 +647,12 @@ def _validate_ntp_pools(rel_path: str, value: Any) -> list[str]:
         if not _HOSTNAME.match(pool.strip()):
             errors.append(f"{rel_path}: ntp_pools[{idx}] must be a hostname or pool name")
     return errors
+
+
+def _validate_chrony_nts(rel_path: str, value: Any) -> list[str]:
+    if value is None or isinstance(value, bool):
+        return []
+    return [f"{rel_path}: chrony_nts must be true or false"]
 
 
 def repo_owner_handle(url: str) -> str | None:

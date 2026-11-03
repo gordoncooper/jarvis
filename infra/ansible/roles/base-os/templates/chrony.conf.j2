@@ -1,12 +1,15 @@
-# Managed by Ansible (base-os): chrony with NTS (framework §4).
+# Managed by Ansible (base-os): chrony{% if chrony_nts %} with NTS (framework §4){% endif %}.
+{% if chrony_nts %}
 # Outbound 123/udp and 4460/tcp must remain available for NTS; no node firewall changes here.
+{% endif %}
 
 keyfile /etc/chrony/chrony.keys
 driftfile /var/lib/chrony/chrony.drift
 ntsdumpdir /var/lib/chrony
 
 {% for pool in ntp_pools %}
-pool {{ pool }} iburst maxsources 4 nts
+pool {{ pool }} iburst maxsources 4{% if chrony_nts %} nts{% endif %}
+
 {% endfor %}
 
 leapsectz right/UTC

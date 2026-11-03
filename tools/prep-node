@@ -821,35 +821,52 @@ def sops_recipient(text: str, env: str) -> str | None:
     return None
 
 
-def set_sops_recipient(text: str, env: str, public: str) -> str:
-    needle = f"envs/{env}/secrets/"
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    arm = False
-    replaced = False
-    for line in lines:
-        body = line[:-1] if line.endswith("\n") else line
-        if "path_regex:" in body:
-            arm = needle in body
-        match = re.match(r"^(\s*age:\s*)(\S+)(.*)$", body) if arm and not replaced else None
-        if match is None:
-            out.append(line)
-            continue
-        newline = "\n" if line.endswith("\n") else ""
-        out.append(f"{match.group(1)}{public}{match.group(3)}{newline}")
-        replaced = True
-        arm = False
-    if not replaced:
-        raise PrepError(f"no age recipient for envs/{env}/secrets/")
-    return "".join(out)
+def _creation_rule_block(env: str, public: str) -> str:
+    if not re.fullmatch(r"[a-z0-9-]+", env) or not re.fullmatch(r"age1[0-9a-z]+", public):
+        raise PrepError("could not write an age recipient")
+    return (
+        f"  - path_regex: envs/{env}/secrets/.*\\.sops\\.yaml$\n"
+        f"    encrypted_regex: ^(data|stringData)$\n"
+        f"    age: {public}\n"
+    )
 
 
-def delete_env_secrets(repo: Path, env: str) -> None:
-    secrets = repo / "envs" / env / "secrets"
-    if not secrets.is_dir():
+def _age_recipient_mismatch(repo: Path, env: str, public: str) -> bool:
+    sops_path = repo / ".sops.yaml"
+    if not sops_path.is_file():
+        return False
+    current = sops_recipient(sops_path.read_text(encoding="utf-8"), env)
+    return current is not None and current != public
+
+
+def _ensure_sops_recipient(repo: Path, env: str, public: str) -> None:
+    """Add the env's creation rule when it is missing. A second call writes nothing."""
+    path = repo / ".sops.yaml"
+    block = _creation_rule_block(env, public)
+    if not path.is_file():
+        path.write_text("creation_rules:\n" + block, encoding="utf-8")
+        print(f"Added an age recipient for envs/{env}/secrets/.")
         return
-    for path in secrets.glob("*.sops.yaml"):
-        path.unlink()
+    text = path.read_text(encoding="utf-8")
+    current = sops_recipient(text, env)
+    if current == public:
+        print("Age recipient already matches.")
+        return
+    if current is not None:
+        raise PrepError(
+            f"Age recipient for envs/{env}/secrets/ does not match this key. "
+            ".sops.yaml was not changed and no secrets were deleted. "
+            "Follow age-key recovery in envs/env-00/secrets/README.md."
+        )
+    if "creation_rules:" not in text:
+        if text.strip():
+            raise PrepError(".sops.yaml has no creation_rules list; recipient was not added.")
+        path.write_text("creation_rules:\n" + block, encoding="utf-8")
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        path.write_text(text + block, encoding="utf-8")
+    print(f"Added an age recipient for envs/{env}/secrets/.")
 
 
 def _render_cluster_vars_configmap(repo: Path, env: str) -> None:
@@ -871,8 +888,7 @@ def sync_age_key(repo: Path, env: str) -> None:
     text = cluster.read_text(encoding="utf-8")
     path = age_key_path(_yaml_scalar(text, "age_key_file"))
     public: str | None
-    key_existed = path.exists()
-    if key_existed:
+    if path.exists():
         public = age_public_key(path)
         print(f"Age public key: {public}")
     elif confirm("Age key file is missing. Create it?"):
@@ -882,36 +898,19 @@ def sync_age_key(repo: Path, env: str) -> None:
     else:
         public = None
         print("Age key was not created.")
+    if public is not None and _age_recipient_mismatch(repo, env, public):
+        raise PrepError(
+            f"Age recipient for envs/{env}/secrets/ does not match this key. "
+            ".sops.yaml was not changed and no secrets were deleted. "
+            "Follow age-key recovery in envs/env-00/secrets/README.md."
+        )
     updated = set_yaml_scalar(text, "age_key_file", age_key_config_value(path))
     if updated != text:
         cluster.write_text(updated, encoding="utf-8")
     _render_cluster_vars_configmap(repo, env)
     if public is None:
         return
-    sops_path = repo / ".sops.yaml"
-    if not sops_path.is_file():
-        print("No .sops.yaml; recipient was not changed.")
-        return
-    sops_text = sops_path.read_text(encoding="utf-8")
-    current = sops_recipient(sops_text, env)
-    if current == public:
-        print("Age recipient already matches.")
-        return
-    if current is None:
-        print(f"No age recipient for envs/{env}/secrets/; .sops.yaml was not changed.")
-        return
-    if key_existed:
-        print(
-            f"Warning: {path} public key does not match the .sops.yaml recipient"
-            f" for envs/{env}/secrets/ ({current})."
-        )
-        print("This key may belong to another env. Set SOPS_AGE_KEY_FILE to a per-env key file.")
-    print(f"Age recipient in .sops.yaml: {current}")
-    if not confirm("Set the recipient to this public key and delete this env's encrypted secrets?"):
-        return
-    sops_path.write_text(set_sops_recipient(sops_text, env, public), encoding="utf-8")
-    delete_env_secrets(repo, env)
-    print("Updated the age recipient and removed that env's encrypted secrets.")
+    _ensure_sops_recipient(repo, env, public)
 
 
 def run_env_schema(repo: Path, *, pre_host: bool = False) -> None:

@@ -239,6 +239,16 @@ def test_llm_provider_host_must_be_bare_hostname(tmp_path: Path):
     assert "llm_provider_host" in "\n".join(excinfo.value.messages)
 
 
+@pytest.mark.parametrize("value", ["off", 0, ["true"]])
+def test_chrony_nts_must_be_a_boolean(tmp_path: Path, value: object):
+    cv = _valid_cluster_vars()
+    cv["chrony_nts"] = value
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "chrony_nts must be true or false" in "\n".join(excinfo.value.messages)
+
+
 def test_repo_urls_must_share_owner_handle(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["apps_git_repo_url"] = "https://github.com/other-owner/example-apps"

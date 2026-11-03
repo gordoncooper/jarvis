@@ -282,7 +282,8 @@ def test_inventory_name_keeps_the_connected_domain() -> None:
     assert module.inventory_name("node.example", "other") == "other.example"
 
 
-def test_age_key_create_and_recipient_swap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_age_key_create_does_not_overwrite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Creating an age key refuses to replace an existing file. SOPS_AGE_KEY_FILE overrides the path."""
     require_cli("age-keygen")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
@@ -300,35 +301,6 @@ def test_age_key_create_and_recipient_swap(tmp_path: Path, monkeypatch: pytest.M
     override = tmp_path / "other-key.txt"
     monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(override))
     assert module.age_key_path("~/.config/sops/age/keys.txt") == override
-
-    repo = tmp_path / "repo"
-    env = repo / "envs" / "env-test"
-    (env / "secrets").mkdir(parents=True)
-    kept_dir = repo / "envs" / "other" / "secrets"
-    kept_dir.mkdir(parents=True)
-    secret = env / "secrets" / "app.sops.yaml"
-    secret.write_text("sops: {}\n", encoding="utf-8")
-    kept = kept_dir / "app.sops.yaml"
-    kept.write_text("sops: {}\n", encoding="utf-8")
-    sops = repo / ".sops.yaml"
-    sops.write_text(
-        "# keep\n"
-        "creation_rules:\n"
-        "  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$\n"
-        "    age: age1old\n"
-        "  - path_regex: envs/other/secrets/.*\\.sops\\.yaml$\n"
-        "    age: age1keep\n",
-        encoding="utf-8",
-    )
-    updated = module.set_sops_recipient(sops.read_text(encoding="utf-8"), "env-test", public)
-    assert f"age: {public}" in updated
-    assert "age: age1keep" in updated
-    assert "# keep" in updated
-    assert "age: age1old" not in updated
-    sops.write_text(updated, encoding="utf-8")
-    module.delete_env_secrets(repo, "env-test")
-    assert not secret.exists()
-    assert kept.read_text(encoding="utf-8") == "sops: {}\n"
 
 
 def test_show_git_diff_does_not_page(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -359,15 +331,16 @@ def test_create_age_key_prints_when_it_tightens_an_existing_directory(
     assert f"Set {parent} to 0700." in capsys.readouterr().out
 
 
-def test_existing_age_key_mismatch_warns_and_keeps_swap_default_no(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_age_mismatch_changes_neither_recipient_nor_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A mismatched age key deletes nothing and does not edit .sops.yaml."""
     require_cli("age-keygen")
     module = _load()
     parent = tmp_path / "age"
     parent.mkdir(mode=0o700)
     key = parent / "keys.txt"
-    public = module.create_age_key(key)
+    module.create_age_key(key)
     monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key))
     repo = tmp_path / "repo"
     env = repo / "envs" / "env-test"
@@ -376,37 +349,25 @@ def test_existing_age_key_mismatch_warns_and_keeps_swap_default_no(
     secret = env / "secrets" / "app.sops.yaml"
     secret.write_text("sops: {}\n", encoding="utf-8")
     cluster = env / "values" / "cluster-vars.yaml"
-    cluster.write_text("ssh_user: ops\nage_key_file: ~/.config/sops/age/keys.txt\n", encoding="utf-8")
+    cluster_text = "ssh_user: ops\nage_key_file: ~/.config/sops/age/keys.txt\n"
+    cluster.write_text(cluster_text, encoding="utf-8")
     generated = env / "flux" / "generated" / "cluster-vars-configmap.yaml"
     generated.parent.mkdir(parents=True)
     generated.write_text("stale\n", encoding="utf-8")
     sops = repo / ".sops.yaml"
-    sops.write_text(
+    sops_text = (
         "creation_rules:\n"
         "  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$\n"
-        "    age: age1old\n",
-        encoding="utf-8",
+        "    age: age1old\n"
     )
-    prompts: list[tuple[str, bool]] = []
-
-    def fake_confirm(question: str, default_yes: bool = False) -> bool:
-        prompts.append((question, default_yes))
-        return False
-
-    monkeypatch.setattr(module, "confirm", fake_confirm)
-    module.sync_age_key(repo, "env-test")
-    out = capsys.readouterr().out
-    assert "another env" in out
-    assert "SOPS_AGE_KEY_FILE" in out
-    assert prompts == [
-        ("Set the recipient to this public key and delete this env's encrypted secrets?", False)
-    ]
-    assert "age: age1old" in sops.read_text(encoding="utf-8")
+    sops.write_text(sops_text, encoding="utf-8")
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: pytest.fail("confirm called"))
+    with pytest.raises(module.PrepError, match="envs/env-00/secrets/README.md"):
+        module.sync_age_key(repo, "env-test")
+    assert sops.read_text(encoding="utf-8") == sops_text
     assert secret.read_text(encoding="utf-8") == "sops: {}\n"
-    assert public.startswith("age1")
-    from render_cluster_vars_configmap import render_document
-
-    assert generated.read_text(encoding="utf-8") == render_document(cluster)
+    assert cluster.read_text(encoding="utf-8") == cluster_text
+    assert generated.read_text(encoding="utf-8") == "stale\n"
 
 
 def test_matching_age_key_does_not_warn_about_another_env(
@@ -435,6 +396,68 @@ def test_matching_age_key_does_not_warn_about_another_env(
     out = capsys.readouterr().out
     assert "another env" not in out
     assert "Age recipient already matches." in out
+
+
+def _age_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    require_cli("age-keygen")
+    module = _load()
+    parent = tmp_path / "age"
+    parent.mkdir(mode=0o700)
+    key = parent / "keys.txt"
+    public = module.create_age_key(key)
+    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key))
+    repo = tmp_path / "repo"
+    env = repo / "envs" / "env-test"
+    (env / "values").mkdir(parents=True)
+    (env / "secrets").mkdir()
+    secret = env / "secrets" / "app.sops.yaml"
+    secret.write_text("sops: {}\n", encoding="utf-8")
+    (env / "values" / "cluster-vars.yaml").write_text(
+        "age_key_file: ~/.config/sops/age/keys.txt\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: pytest.fail("confirm called"))
+    return module, repo, public, secret
+
+
+def test_missing_sops_rule_is_added_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing creation rule is written once and a second run changes nothing."""
+    module, repo, public, secret = _age_fixture(tmp_path, monkeypatch)
+    sops = repo / ".sops.yaml"
+    sops.write_text(
+        "creation_rules:\n"
+        "  - path_regex: envs/other/secrets/.*\\.sops\\.yaml$\n"
+        "    encrypted_regex: ^(data|stringData)$\n"
+        "    age: age1keep\n",
+        encoding="utf-8",
+    )
+    module.sync_age_key(repo, "env-test")
+    text = sops.read_text(encoding="utf-8")
+    assert "age: age1keep" in text
+    assert f"age: {public}" in text
+    assert secret.read_text(encoding="utf-8") == "sops: {}\n"
+    snapshot = {path: path.read_bytes() for path in (sops, repo / "envs" / "env-test" / "values" / "cluster-vars.yaml")}
+    module.sync_age_key(repo, "env-test")
+    for path, blob in snapshot.items():
+        assert path.read_bytes() == blob
+
+
+def test_missing_sops_file_is_created_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no .sops.yaml, one creation rule is written and a second run changes nothing."""
+    module, repo, public, secret = _age_fixture(tmp_path, monkeypatch)
+    sops = repo / ".sops.yaml"
+    assert not sops.exists()
+    module.sync_age_key(repo, "env-test")
+    text = sops.read_text(encoding="utf-8")
+    assert text == (
+        "creation_rules:\n"
+        "  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$\n"
+        "    encrypted_regex: ^(data|stringData)$\n"
+        f"    age: {public}\n"
+    )
+    assert secret.read_text(encoding="utf-8") == "sops: {}\n"
+    snapshot = sops.read_bytes()
+    module.sync_age_key(repo, "env-test")
+    assert sops.read_bytes() == snapshot
 
 
 def test_env_schema_accepts_the_real_env_tree() -> None:

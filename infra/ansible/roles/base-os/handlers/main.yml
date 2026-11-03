@@ -1,6 +1,6 @@
 ---
 - name: Restart systemd-journald
-  ansible.builtin.service:
+  ansible.builtin.systemd:
     name: systemd-journald
     state: restarted
   tags:
@@ -8,7 +8,7 @@
     - journald
 
 - name: Restart systemd-resolved
-  ansible.builtin.service:
+  ansible.builtin.systemd:
     name: systemd-resolved
     state: restarted
   tags:
@@ -16,7 +16,7 @@
     - resolved
 
 - name: Restart chrony
-  ansible.builtin.service:
+  ansible.builtin.systemd:
     name: chrony
     state: restarted
   tags:

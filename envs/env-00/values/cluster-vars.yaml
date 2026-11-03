@@ -27,6 +27,7 @@ k3s_kubelet_eviction_hard: memory.available<100Mi
 
 ntp_pools:
   - time.example
+chrony_nts: true
 
 flux_git_repo_url: https://github.com/example-owner/example-cluster
 apps_git_repo_url: https://github.com/example-owner/example-apps
