@@ -34,13 +34,17 @@ CRD_CATALOG_REF = "3eb90d47aba8d61919d4419dd38301536e32a94b"
 # File names match kubeconform's default kubernetes-json-schema layout.
 K8S_FILES = (
     "clusterrole-rbac-v1.json",
+    "clusterrolebinding-rbac-v1.json",
     "configmap-v1.json",
     "cronjob-batch-v1.json",
     "deployment-apps-v1.json",
     "ingress-networking-v1.json",
     "namespace-v1.json",
+    "role-rbac-v1.json",
+    "rolebinding-rbac-v1.json",
     "secret-v1.json",
     "service-v1.json",
+    "serviceaccount-v1.json",
 )
 
 # {{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
