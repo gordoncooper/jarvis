@@ -53,7 +53,9 @@ def has_backup_none(metadata: dict[str, Any] | None) -> bool:
     return isinstance(value, str) and value.strip().lower() == BACKUP_NONE_VALUE
 
 
-def scan_pvc_backup(repo_root: Path | str) -> list[PvcBackupViolation]:
+def scan_pvc_backup(
+    repo_root: Path | str, *, require_roots: bool = False
+) -> list[PvcBackupViolation]:
     """Policy present, opt-out allow-list, and no hand-written backup objects."""
     root = Path(repo_root).resolve()
     violations: list[PvcBackupViolation] = []
@@ -68,7 +70,7 @@ def scan_pvc_backup(repo_root: Path | str) -> list[PvcBackupViolation]:
             )
         )
 
-    for rel_path, doc, error in load_documents(root):
+    for rel_path, doc, error in load_documents(root, require_roots=require_roots):
         if doc is None:
             violations.append(
                 PvcBackupViolation(rel_path, "-", "-", "document", error or "unreadable YAML")
@@ -116,7 +118,7 @@ def _enrollment_policy_listed(repo_root: Path) -> bool:
 
 
 def _is_enrollment_policy(doc: object) -> bool:
-    """The named ClusterPolicy with a rule that generates a ReplicationSource."""
+    """The named ClusterPolicy with a rule that matches PVCs and generates a ReplicationSource."""
     if not isinstance(doc, dict) or doc.get("kind") != "ClusterPolicy" or _name(doc) != _POLICY_NAME:
         return False
     spec = doc.get("spec")
@@ -125,8 +127,24 @@ def _is_enrollment_policy(doc: object) -> bool:
         isinstance(rule, dict)
         and isinstance(rule.get("generate"), dict)
         and rule["generate"].get("kind") == "ReplicationSource"
+        and _matches_pvc(rule.get("match"))
         for rule in rules
     )
+
+
+def _matches_pvc(match: object) -> bool:
+    """True when a `kinds` list anywhere under the rule's match names PersistentVolumeClaim."""
+    if isinstance(match, dict):
+        kinds = match.get("kinds")
+        if isinstance(kinds, list) and any(
+            isinstance(kind, str) and kind.rsplit("/", 1)[-1] == "PersistentVolumeClaim"
+            for kind in kinds
+        ):
+            return True
+        return any(_matches_pvc(value) for value in match.values())
+    if isinstance(match, list):
+        return any(_matches_pvc(item) for item in match)
+    return False
 
 
 def _document_violations(doc: dict[str, Any], rel_path: str) -> list[PvcBackupViolation]:

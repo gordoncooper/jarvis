@@ -34,7 +34,12 @@ _REQUIRED = (
 )
 
 
-def _inventory(path: Path, *, data_disk_hosts: set[str] | None = None) -> None:
+def _inventory(
+    path: Path,
+    *,
+    data_disk_hosts: set[str] | None = None,
+    control_plane: tuple[str, ...] = ("cp-1",),
+) -> None:
     marked = data_disk_hosts or set()
     hosts: dict[str, dict[str, object]] = {
         "cp-1": {"ansible_connection": "local"},
@@ -45,15 +50,22 @@ def _inventory(path: Path, *, data_disk_hosts: set[str] | None = None) -> None:
     doc = {
         "all": {
             "hosts": hosts,
-            "children": {"control_plane": {"hosts": {"cp-1": None}}},
+            "children": {"control_plane": {"hosts": {name: None for name in control_plane}}},
         }
     }
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
-def _vars_file(path: Path, *, drop: str | None = None, jarvis_env: str | None = None) -> None:
+def _vars_file(
+    path: Path,
+    *,
+    drop: str | None = None,
+    jarvis_env: str | None = None,
+    override: dict[str, object] | None = None,
+) -> None:
     cluster = load_cluster_vars()
     body = {key: cluster[key] for key in _REQUIRED}
+    body.update(override or {})
     if jarvis_env is not None:
         body["jarvis_env"] = jarvis_env
     if drop is not None:
@@ -79,13 +91,15 @@ def _run_site(
     path_prefix: Path | None = None,
     jarvis_env: str | None = None,
     flux_instance: bool = True,
+    control_plane: tuple[str, ...] = ("cp-1",),
+    override: dict[str, object] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """flux_instance passes the example env's FluxInstance; False keeps the jarvis_env path."""
     require_cli("ansible-playbook")
     inventory = tmp_path / "hosts.yml"
-    _inventory(inventory, data_disk_hosts=data_disk_hosts)
+    _inventory(inventory, data_disk_hosts=data_disk_hosts, control_plane=control_plane)
     vars_path = tmp_path / "cluster-vars.yaml"
-    _vars_file(vars_path, drop=drop, jarvis_env=jarvis_env)
+    _vars_file(vars_path, drop=drop, jarvis_env=jarvis_env, override=override)
     cmd = [
         "ansible-playbook",
         "site.yml",
@@ -178,6 +192,30 @@ def test_non_x86_host_fails_before_any_change(tmp_path: Path) -> None:
 def test_missing_cluster_var_fails_before_any_change(tmp_path: Path, key: str) -> None:
     """Each required cluster-vars key fails the opening play and changes nothing."""
     result = _run_site(tmp_path, drop=key)
+    _stopped_before_base_os(
+        result,
+        "site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env",
+    )
+
+
+@pytest.mark.parametrize("control_plane", [(), ("cp-1", "wk-1")], ids=["none", "two"])
+def test_not_exactly_one_control_plane_fails_before_any_change(
+    tmp_path: Path, control_plane: tuple[str, ...]
+) -> None:
+    result = _run_site(tmp_path, control_plane=control_plane)
+    _stopped_before_base_os(result, "expected exactly one")
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"k3s_sha256": "a" * 63}, {"k3s_sha256": "a" * 65}, {"k3s_version": ""}],
+    ids=["sha-too-short", "sha-too-long", "empty-version"],
+)
+def test_malformed_k3s_pin_fails_before_any_change(
+    tmp_path: Path, override: dict[str, object]
+) -> None:
+    """A checksum that is not 64 characters, or an empty version, stops the opening play."""
+    result = _run_site(tmp_path, override=override)
     _stopped_before_base_os(
         result,
         "site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env",

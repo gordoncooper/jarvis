@@ -39,9 +39,11 @@ class ManifestLintViolation:
     message: str
 
 
-def scan_manifest_lint(repo_root: Path | str) -> list[ManifestLintViolation]:
+def scan_manifest_lint(
+    repo_root: Path | str, *, require_roots: bool = False
+) -> list[ManifestLintViolation]:
     violations: list[ManifestLintViolation] = []
-    for rel, doc, error in load_documents(repo_root):
+    for rel, doc, error in load_documents(repo_root, require_roots=require_roots):
         if error or doc is None:
             violations.append(ManifestLintViolation(rel, error or "unreadable YAML"))
             continue

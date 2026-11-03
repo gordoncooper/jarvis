@@ -58,13 +58,21 @@ if ((${#extra[@]} > 0)); then
   echo "unexpected checks in ci/checks/: ${extra[*]}" >&2
   exit 1
 fi
+failed=()
 for name in "${expected_checks[@]}"; do
   check="ci/checks/${name}"
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     echo "::group::$name"
   fi
-  "$check"
+  if ! "$check"; then
+    echo "check failed: $name" >&2
+    failed+=("$name")
+  fi
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     echo "::endgroup::"
   fi
 done
+if ((${#failed[@]} > 0)); then
+  echo "failing checks (${#failed[@]}): ${failed[*]}" >&2
+  exit 1
+fi

@@ -22,6 +22,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # ci/checks/secret-scan reads the whole history, so it needs every commit.
+          fetch-depth: 0
 
       - name: Keep only the env-00 sample (throwaway local commit, never pushed)
         if: ${{ matrix.copy == 'env00-only' }}

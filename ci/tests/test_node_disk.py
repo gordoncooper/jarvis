@@ -276,6 +276,30 @@ def test_node_disk_refuses_a_configured_path_outside_the_mount(tmp_path: Path) -
     assert playbook_recap_field(output, "changed") == 0
 
 
+@pytest.mark.parametrize(
+    ("key", "segment", "name"),
+    [
+        ("local_path_data", "a/../local-path", "parent segment"),
+        ("local_path_data", "./local-path", "current-dir segment"),
+        ("backup_path", "a/../backup", "parent segment"),
+        ("backup_path", "./backup", "current-dir segment"),
+    ],
+)
+def test_node_disk_refuses_dot_segments_that_start_inside_the_mount(
+    tmp_path: Path, key: str, segment: str, name: str
+) -> None:
+    """A path that begins under the mount but walks out with . or .. is refused."""
+    mount = tmp_path / "data"
+    mount.mkdir()
+    extra = _paths(mount, tmp_path / "k3s-data")
+    extra[key] = f"{mount}/{segment}"
+    result = _run(tmp_path, mount=mount, mounts=_own_mount(mount), extra=extra)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, f"{name}: {output}"
+    assert "outside" in output
+    assert playbook_recap_field(output, "changed") == 0
+
+
 def test_node_disk_refuses_a_nested_mount(tmp_path: Path) -> None:
     mount = tmp_path / "data"
     local = mount / "local-path"

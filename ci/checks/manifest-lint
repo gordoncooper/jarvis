@@ -12,7 +12,7 @@ from pathlib import Path
 
 from _manifest_lint import format_violations, scan_manifest_lint
 
-violations = scan_manifest_lint(Path("."))
+violations = scan_manifest_lint(Path("."), require_roots=True)
 if violations:
     for line in format_violations(violations):
         print(line, flush=True)

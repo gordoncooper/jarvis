@@ -154,6 +154,62 @@ def test_seal_writes_a_valid_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert loaded["stringData"]["token"].startswith("ENC[")
 
 
+def test_seal_refuses_to_overwrite_a_sealed_secret_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mod = _load_seal()
+    public, _keyfile = _age_keypair(tmp_path)
+    _sops_rules(tmp_path, public)
+    _bind_repo(monkeypatch, mod, tmp_path)
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    sops_bin = _require_tool("sops")
+    out = mod.seal("env-test", "sample-secret", _secret("sample-secret"), sops_bin=sops_bin)
+    sealed = out.read_text(encoding="utf-8")
+
+    other = _secret("sample-secret").replace("PLAINTEXT-MARKER", "SECOND-VALUE")
+    with pytest.raises(SystemExit, match="--force"):
+        mod.seal("env-test", "sample-secret", other, sops_bin=sops_bin)
+    assert out.read_text(encoding="utf-8") == sealed
+
+    mod.seal("env-test", "sample-secret", other, sops_bin=sops_bin, force=True)
+    assert out.read_text(encoding="utf-8") != sealed
+
+
+@pytest.mark.parametrize(
+    "plaintext",
+    [
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: sample-secret\ndata:\n  a: b\n",
+        "- kind: Secret\n",
+        "just text\n",
+    ],
+    ids=["other-kind", "list", "scalar"],
+)
+def test_seal_refuses_input_that_is_not_a_secret_before_sops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plaintext: str
+) -> None:
+    mod = _load_seal()
+    _bind_repo(monkeypatch, mod, tmp_path)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    wrapper, marker = _marker_sops(tmp_path)
+    with pytest.raises(SystemExit, match="kind: Secret"):
+        mod.seal("env-test", "sample-secret", plaintext, sops_bin=str(wrapper))
+    assert not marker.exists()
+    assert not (tmp_path / "envs" / "env-test" / "secrets").exists()
+
+
+def test_seal_refuses_a_manifest_name_that_differs_from_name_before_sops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mod = _load_seal()
+    _bind_repo(monkeypatch, mod, tmp_path)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    wrapper, marker = _marker_sops(tmp_path)
+    with pytest.raises(SystemExit, match="metadata.name"):
+        mod.seal("env-test", "sample-secret", _secret("another-name"), sops_bin=str(wrapper))
+    assert not marker.exists()
+
+
 def test_sops_set_adds_prune_annotation_without_changing_data(tmp_path: Path) -> None:
     """Owner command for the CA annotation. Throwaway key and file only."""
     public, keyfile = _age_keypair(tmp_path)

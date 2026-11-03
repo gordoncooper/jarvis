@@ -1,3 +1,4 @@
+import copy
 import json
 import re
 from collections.abc import Callable
@@ -101,11 +102,28 @@ def _nested_extends(node: object, top: bool = True) -> int:
     return count
 
 
+# The host binaries whose bumps wait for approval in the dependency dashboard.
+_APPROVAL_PINS = frozenset({"k3s-io/k3s", "helm/helm"})
+
+
+def _rule_pins(rule: dict) -> set[str]:
+    return set(rule.get("matchPackageNames") or []) | set(rule.get("matchDepNames") or [])
+
+
+def _without_approved_pins(config: dict) -> dict:
+    """The config with dependencyDashboardApproval removed from the two host-binary rules."""
+    stripped = copy.deepcopy(config)
+    for rule in stripped["packageRules"]:
+        if _rule_pins(rule) <= _APPROVAL_PINS and _rule_pins(rule):
+            rule.pop("dependencyDashboardApproval", None)
+    return stripped
+
+
 def _assert_no_hold_or_automerge(config: dict) -> None:
     # A change to extends must re-check the resolved config for holds and automerge.
     assert config["extends"] == ["config:recommended"]
     assert _nested_extends(config) == 0
-    assert _delay_keys(config) == []
+    assert _delay_keys(_without_approved_pins(config)) == []
     assert config["automerge"] is False
     assert True not in _automerge_values(config)
 
@@ -119,6 +137,7 @@ def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
     "mutate",
     [
         lambda config: config["packageRules"].append({"minimumReleaseAge": "3 days"}),
+        lambda config: config["packageRules"].append({"dependencyDashboardApproval": True}),
         lambda config: config["packageRules"].append({"automerge": True}),
         lambda config: config.update(automerge=True),
         lambda config: config["extends"].append("schedule:weekly"),
@@ -130,6 +149,7 @@ def test_updates_open_with_no_release_hold_and_no_automerge() -> None:
     ],
     ids=[
         "minimumReleaseAge",
+        "approval-on-another-rule",
         "rule-automerge",
         "top-level-automerge",
         "extends-preset",
@@ -146,6 +166,52 @@ def test_seeded_hold_or_automerge_fails(mutate: Callable[[dict], None]) -> None:
     mutate(config)
     with pytest.raises(AssertionError):
         _assert_no_hold_or_automerge(config)
+
+
+def test_k3s_and_helm_bumps_wait_for_dashboard_approval() -> None:
+    """The host binaries are not disabled: a bump is offered, and a PR opens only once approved."""
+    rules = _renovate_config()["packageRules"]
+    for pin in sorted(_APPROVAL_PINS):
+        rule = next(item for item in rules if pin in _rule_pins(item))
+        assert rule["dependencyDashboardApproval"] is True, pin
+        assert "enabled" not in rule, pin
+
+
+def _manager_matches(rel: str, text: str) -> list[re.Match[str]]:
+    """Matches of every custom manager whose file pattern selects rel."""
+    return [
+        match
+        for manager in _renovate_config()["customManagers"]
+        if any(re.search(pattern.strip("/"), rel) for pattern in manager["managerFilePatterns"])
+        for pattern in manager["matchStrings"]
+        for match in re.finditer(_js_to_python(pattern), text)
+    ]
+
+
+def test_every_tool_version_in_versions_env_is_a_renovate_pin() -> None:
+    """A *_version line without a renovate comment, or a comment Renovate can't read, fails."""
+    text = (ROOT / "tools/versions.env").read_text(encoding="utf-8")
+    declared = dict(re.findall(r"^(\w+_version)=(\S+)$", text, flags=re.MULTILINE))
+    assert declared
+    found = {
+        match.group(0).splitlines()[-1].split("=", 1)[0]: match.group("currentValue")
+        for match in _manager_matches("tools/versions.env", text)
+    }
+    assert found == declared
+    unreadable = text.replace("depName=", "dep=")
+    assert not _manager_matches("tools/versions.env", unreadable)
+
+
+def test_each_env_k3s_version_is_a_renovate_pin() -> None:
+    paths = sorted(ROOT.glob("envs/*/values/cluster-vars.yaml"))
+    assert paths
+    for path in paths:
+        rel = path.relative_to(ROOT).as_posix()
+        text = path.read_text(encoding="utf-8")
+        found = _manager_matches(rel, text)
+        assert [match.group("currentValue") for match in found] == [
+            yaml.safe_load(text)["k3s_version"]
+        ], rel
 
 
 def test_ansible_core_stays_on_the_2_21_line() -> None:

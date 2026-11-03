@@ -32,19 +32,14 @@ _PRODUCT_RULE_EXEMPT = frozenset(
     }
 )
 
-_SCAN_ROOTS = (
-    "infra/",
-    "platform/",
-    "schema/",
-    "services/",
-    "tools/",
-    "ci/",
-    "docs/",
-    "rulebooks/",
-    ".github/",
-)
+# Tracked files the scan skips: the CODEOWNERS file names the owner, and the
+# mailmap maps the owner's commit identity.
+_NOT_SCANNED = frozenset({".github/CODEOWNERS", ".mailmap"})
 
-_README_NAMES = frozenset({"README", "README.md"})
+# The one field of .sops.yaml that may name an env folder: `path_regex: <value>`
+# alone on its line, with no comment after it.
+_SOPS_FILE = ".sops.yaml"
+_SOPS_PATH_REGEX_LINE = re.compile(r"^\s*(?:-\s+)?path_regex:\s*[^#\s]\S*\s*$")
 
 # Token characters. Dot and slash are boundaries, so a DNS suffix still
 # matches inside a longer hostname, and a handle still matches inside a URL.
@@ -150,7 +145,7 @@ def collect_forbidden_names(repo_root: Path | str) -> ForbiddenNames:
 
 
 def scan_core_names(repo_root: Path | str) -> list[CoreNameViolation]:
-    """Scan the D44 path set. Fails before scanning when OWNER_NAME is unset."""
+    """Scan every tracked file but the two in _NOT_SCANNED. Fails first when OWNER_NAME is unset."""
     owner_name = _require_owner_name()
     root = Path(repo_root).resolve()
     forbidden = collect_forbidden_names(root)
@@ -187,12 +182,7 @@ def format_violations(violations: Iterable[CoreNameViolation]) -> list[str]:
 
 
 def _is_scanned(rel_path: str) -> bool:
-    if rel_path == ".github/CODEOWNERS":
-        return False
-    name = rel_path.rsplit("/", 1)[-1]
-    if name in _README_NAMES:
-        return True
-    return rel_path.startswith(_SCAN_ROOTS)
+    return rel_path not in _NOT_SCANNED
 
 
 def _git_tracked_files(repo_root: Path) -> list[str]:
@@ -226,7 +216,9 @@ def _token_re(value: str) -> re.Pattern[str]:
     )
 
 
-def _env_name_allowed(rel_path: str) -> bool:
+def _env_name_allowed(rel_path: str, line: str) -> bool:
+    if rel_path == _SOPS_FILE:
+        return _SOPS_PATH_REGEX_LINE.match(line) is not None
     return rel_path.startswith("envs/") or rel_path.startswith("docs/")
 
 
@@ -302,7 +294,7 @@ def _line_violations(
     owner_name: str,
 ) -> list[CoreNameViolation]:
     found: list[CoreNameViolation] = []
-    if not _env_name_allowed(rel_path):
+    if not _env_name_allowed(rel_path, line):
         _match_token(
             rel_path,
             line_no,

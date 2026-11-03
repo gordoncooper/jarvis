@@ -327,8 +327,12 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
     assert no_edge["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
 
 
-def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
+def _run_guard(tmp_path: Path, *, marker_text: str | None) -> subprocess.CompletedProcess[str]:
+    """refuse.yml on a host where systemctl says k3s is active, with an optional env marker."""
     require_cli("ansible-playbook")
+    marker = tmp_path / "marker"
+    if marker_text is not None:
+        marker.write_text(marker_text, encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     systemctl = fake_bin / "systemctl"
@@ -355,7 +359,7 @@ def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
-    result = subprocess.run(
+    return subprocess.run(
         [
             "ansible-playbook",
             str(play),
@@ -372,7 +376,7 @@ def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
             "-e",
             f"k3s_data_dir={tmp_path / 'missing-data'}",
             "-e",
-            f"jarvis_marker_path={tmp_path / 'missing-marker'}",
+            f"jarvis_marker_path={marker}",
         ],
         cwd=ANSIBLE_DIR,
         capture_output=True,
@@ -380,10 +384,76 @@ def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
         check=False,
         env=env,
     )
+
+
+def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
+    result = _run_guard(tmp_path, marker_text=None)
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "k3s is already present" in output
-    assert not (tmp_path / "missing-marker").exists()
+    assert not (tmp_path / "marker").exists()
+
+
+def test_k3s_guard_refuses_a_marker_for_another_env(tmp_path: Path) -> None:
+    """The marker has to name this env, not just exist."""
+    result = _run_guard(tmp_path, marker_text="another-env\n")
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "k3s is already present" in output
+
+
+def test_k3s_guard_accepts_active_k3s_with_this_envs_marker(tmp_path: Path) -> None:
+    result = _run_guard(tmp_path, marker_text="fixture\n")
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "k3s is already present" not in output
+    assert (tmp_path / "marker").read_text(encoding="utf-8") == "fixture\n"
+
+
+@pytest.mark.parametrize("mode", ["server", "agent"])
+def test_unit_starts_the_pinned_binary_in_the_node_mode(mode: str) -> None:
+    rendered = ansible_render_template(
+        "k3s.service.j2",
+        {"k3s_binary_path": "/opt/fixture/k3s", "k3s_mode": mode},
+        templates_dir=K3S_ROLE_TEMPLATES,
+    )
+    assert f"ExecStart=/opt/fixture/k3s {mode}" in rendered.splitlines()
+
+
+def test_agent_joins_the_first_control_plane_over_6443(tmp_path: Path) -> None:
+    """The join URL is built by token.yml. Render that expression, not a copy of it."""
+    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "token.yml").read_text(encoding="utf-8"))
+    expression = next(
+        task["ansible.builtin.set_fact"]["k3s_server_url"]
+        for task in tasks
+        if "k3s_server_url" in (task.get("ansible.builtin.set_fact") or {})
+    )
+    (tmp_path / "url.j2").write_text(expression, encoding="utf-8")
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text(
+        "all:\n  children:\n    control_plane:\n      hosts:\n        cp-1:\n        cp-2:\n"
+        "    local:\n      hosts:\n        localhost:\n          ansible_connection: local\n",
+        encoding="utf-8",
+    )
+    rendered = ansible_render_template("url.j2", {}, templates_dir=tmp_path, inventory=inventory)
+    assert rendered.strip() == "https://cp-1:6443"
+
+
+def test_files_that_can_hold_the_join_token_are_root_only() -> None:
+    """The server and agent config files are written 0600 as root, and the agent's is not logged."""
+    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    configs = {
+        task["ansible.builtin.template"]["src"]: task
+        for task in tasks
+        if isinstance(task, dict)
+        and "ansible.builtin.template" in task
+        and task["ansible.builtin.template"]["src"] in {"config.yaml.j2", "agent-config.yaml.j2"}
+    }
+    assert set(configs) == {"config.yaml.j2", "agent-config.yaml.j2"}
+    for src, task in configs.items():
+        template = task["ansible.builtin.template"]
+        assert (template["mode"], template["owner"], template["group"]) == ("0600", "root", "root"), src
+    assert configs["agent-config.yaml.j2"]["no_log"] is True
 
 
 _PRIVATE_DATA_DIRS = (
