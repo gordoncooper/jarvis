@@ -36,6 +36,18 @@ jobs:
               git rm -r -q "${dir}"
             fi
           done
+          remaining_non_example=0
+          for dir in envs/*/; do
+            name="${dir%/}"
+            name="${name#envs/}"
+            if [[ "${name}" != "env-00" ]]; then
+              remaining_non_example=1
+              break
+            fi
+          done
+          if [[ "${remaining_non_example}" -eq 0 && -f .sops.yaml ]]; then
+            git rm -q .sops.yaml
+          fi
           if ! git diff --cached --quiet; then
             git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci: keep only env-00"
           fi
