@@ -15,7 +15,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 - Default `backup_check_schedule: 30 6 * * 3` when omitted. The example env still sets `backup_check_schedule`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
 - Rejection of a `time_zone` that is not an IANA zone, and of a `k3s_version` that is not a k3s version string (`v<major>.<minor>.<patch>+k3s<n>`).
-- `apps_git_repo_url`, when set, is https and validated like `flux_git_repo_url`. The two URLs use one owner handle. When `apps_git_repo_url` is unset, that handle comes from `flux_git_repo_url`. The handle is the same across every non-example env.
+- `apps_git_repo_url`, when set, is https and validated like `flux_git_repo_url`. The two URLs use one owner handle. When `apps_git_repo_url` is unset, that handle comes from `flux_git_repo_url`.
 - `llm_provider_host`, when set, is a bare hostname with no scheme or path. Omitting it is valid.
 
 ## Expects
@@ -37,7 +37,7 @@ A required key that is present but null counts as unset and fails.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). Never hardcoded in core (`ci/checks/core-names`). |
+| `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). A lowercase DNS name. Never hardcoded in core (`ci/checks/core-names`). |
 | `time_zone` | yes | IANA time zone name for the node, VolSync schedules, and Hermes cron (e.g. `<time_zone>`). Unknown names fail validation. |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`). |
 | `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
@@ -56,8 +56,8 @@ A required key that is present but null counts as unset and fails.
 | `service_cidr` | yes | Service network CIDR; an IP network, set once per env. |
 | `app_dns_cluster_ip` | yes | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |
 | `local_path_data` | yes | k3s local-path provisioner data directory. A subdirectory of `/var/lib/jarvis`, not that mount itself. |
-| `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; no secret in the URL). |
-| `apps_git_repo_url` | no | When set, an https Git remote for the apps repo, with the same owner handle as `flux_git_repo_url`. When unset, the env owner is the `flux_git_repo_url` handle. That handle is the same across every non-example env. |
+| `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; no userinfo, query, or fragment). |
+| `apps_git_repo_url` | no | When set, an https Git remote for the apps repo, with the same owner handle as `flux_git_repo_url`. When unset, the env owner is the `flux_git_repo_url` handle. |
 | `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
 | `llm_provider_host` | no | When set, an AI provider API hostname, with no scheme, path, or port. |
 | `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
@@ -104,7 +104,7 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
+`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
 ### Explicit env
 
@@ -116,7 +116,11 @@ The FluxInstance sets kustomize-controller `StrictPostBuildSubstitutions=true`. 
 
 The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluster-vars.yaml` for host settings, including every key that is not published. `jarvis_env` is published because verify, drill and restore read it from the live ConfigMap.
 
-The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_configmap.py`. Every other known key in `schema/env.py` is host-only (Ansible only).
+The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_configmap.py`. Every other known key in `schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.
+
+The FluxInstance `spec.sync` url, ref, and path match `flux_git_repo_url`, `flux_git_ref`, and `envs/<env>/flux`.
+
+`validate_env_tree(..., pre_host=True)` skips the missing `.sops.yaml` recipient requirement and the generated ConfigMap match. Other `.sops.yaml` checks still run. `tools/prep-node` uses that mode before it contacts a host, then runs the full check at the end.
 
 ### Identity values and product rules
 
@@ -130,7 +134,7 @@ Repo URLs outside `envs/<env>/` fail because they contain the owner handle. Bare
 
 Product rules in the same check: the word `bastion`, and any hardcoded `/home/` path. This file and `ci/checks/lib/_core_names.py` name those tokens. That pair is the one exemption, and it covers only the product rules.
 
-`.sops.yaml` has one age creation rule per non-example env, keyed on `envs/<env>/secrets/`. The example env has no root rule.
+`.sops.yaml` has one age creation rule per non-example env, keyed on `envs/<env>/secrets/`. The example env has no root rule. A creation rule that names an env folder that does not exist fails.
 
 ### Reference shape (documentation)
 
@@ -142,7 +146,12 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A seeded change that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
 - `ci/tests/test_env_schema.py`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
 - A behavior test accepts an env that omits any one of `code_delivery`, `build_agent`, `apps_git_repo_url`, and `llm_provider_host`, and an env that omits all four. A value that is set still has to be allowed.
-- A behavior test rejects two non-example envs whose `flux_git_repo_url` owners differ when `apps_git_repo_url` is unset.
+- A behavior test accepts two non-example envs whose `flux_git_repo_url` owners differ.
+- A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
+- A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
+- A behavior test rejects a repo URL that includes userinfo, a query, or a fragment.
+- A behavior test rejects a FluxInstance whose sync url or ref does not match cluster-vars.
+- A behavior test rejects a generated ConfigMap that does not match the cluster-vars render, and accepts that tree in pre-host mode.
 - A behavior test rejects a relative `backup_path`.
 - The cluster-vars ConfigMap render publishes only the allow-list in the postBuild section. Host-only keys stay out. A stale render fails the flux entry test.
 - A behavior test rejects an unknown `time_zone` and a `k3s_version` that is not `v<major>.<minor>.<patch>+k3s<n>`.

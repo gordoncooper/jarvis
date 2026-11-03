@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -26,9 +27,52 @@ from support import REPO_ROOT, _valid_cluster_vars, _write_env
 def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
     _write_env(tmp_path)
     (tmp_path / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
+    validate_env_tree(tmp_path, pre_host=True)
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "envs/env-test/secrets/" in "\n".join(excinfo.value.messages)
+
+
+def test_pre_host_rejects_two_sops_rules_for_one_env(tmp_path: Path):
+    """A duplicate creation rule fails before a host is touched."""
+    _write_env(tmp_path)
+    path = tmp_path / ".sops.yaml"
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    loaded["creation_rules"].append(dict(loaded["creation_rules"][0]))
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path, pre_host=True)
+    assert "found 2" in "\n".join(excinfo.value.messages)
+
+
+def test_pre_host_rejects_invalid_sops_yaml(tmp_path: Path):
+    """Invalid .sops.yaml is reported in pre-host, not swallowed."""
+    _write_env(tmp_path)
+    (tmp_path / ".sops.yaml").write_text("{\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path, pre_host=True)
+    assert "invalid YAML" in "\n".join(excinfo.value.messages)
+
+
+def test_sops_creation_rule_for_missing_env_fails(tmp_path: Path):
+    """A .sops.yaml rule must name an env folder that exists."""
+    _write_env(tmp_path)
+    path = tmp_path / ".sops.yaml"
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    loaded["creation_rules"].append(
+        {
+            "path_regex": "envs/env-ghost/secrets/.*\\.sops\\.yaml$",
+            "age": "age1fixture",
+        }
+    )
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "env-ghost" in msg
+    assert "does not exist" in msg
 
 
 def test_sops_creation_rule_rejects_example_env(tmp_path: Path):
@@ -45,7 +89,7 @@ def test_sops_creation_rule_rejects_example_env(tmp_path: Path):
     )
     path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
+        validate_env_tree(tmp_path, pre_host=True)
     assert f"{EXAMPLE_ENV} must not have a creation rule" in "\n".join(
         excinfo.value.messages
     )
@@ -135,10 +179,20 @@ def test_cluster_cidrs_must_be_cidrs(tmp_path: Path):
 
 def test_flux_paths_must_use_own_env_name(tmp_path: Path):
     env = _write_env(tmp_path, "env-test")
+    cv = yaml.safe_load((env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
     flux = env / "flux"
     flux.mkdir()
     (flux / "flux-instance.yaml").write_text(
-        'path: "envs/env-other/flux"\n',
+        textwrap.dedent(
+            f"""
+            spec:
+              sync:
+                url: "{cv["flux_git_repo_url"]}"
+                ref: "{cv["flux_git_ref"]}"
+                path: "envs/env-other/flux"
+            """
+        ).strip()
+        + "\n",
         encoding="utf-8",
     )
     with pytest.raises(ValidationError) as excinfo:
@@ -246,6 +300,116 @@ def test_apps_git_repo_url_must_be_https_when_set(tmp_path: Path):
     assert "apps_git_repo_url must be an https URL" in "\n".join(excinfo.value.messages)
 
 
+@pytest.mark.parametrize("key", ("flux_git_repo_url", "apps_git_repo_url"))
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://user@github.com/example-owner/example-cluster", "userinfo"),
+        ("https://github.com/example-owner/example-cluster?foo=1", "query"),
+        ("https://github.com/example-owner/example-cluster?", "query"),
+        ("https://github.com/example-owner/example-cluster#frag", "fragment"),
+        ("https://github.com/example-owner/example-cluster#", "fragment"),
+    ],
+)
+def test_repo_urls_reject_userinfo_query_and_fragment(
+    tmp_path: Path, key: str, url: str, message: str
+) -> None:
+    """Repo URL keys are https owner/repo only: no userinfo, query, or fragment."""
+    cv = _valid_cluster_vars()
+    cv[key] = url
+    if key == "apps_git_repo_url":
+        cv["flux_git_repo_url"] = "https://github.com/example-owner/example-cluster"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert message in "\n".join(excinfo.value.messages)
+
+
+def test_dns_suffix_must_be_a_lowercase_dns_name(tmp_path: Path) -> None:
+    """dns_suffix is a lowercase DNS name; Home_Lab is not."""
+    cv = _valid_cluster_vars()
+    cv["dns_suffix"] = "Home_Lab"
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "dns_suffix must be a lowercase DNS name" in "\n".join(excinfo.value.messages)
+
+
+def test_flux_instance_example_sync_fails_when_cluster_vars_differ(tmp_path: Path) -> None:
+    """FluxInstance url and ref must match cluster-vars, not leftover example values."""
+    cv = _valid_cluster_vars()
+    cv["flux_git_repo_url"] = "https://github.com/other-owner/other-cluster"
+    cv["apps_git_repo_url"] = "https://github.com/other-owner/other-apps"
+    cv["flux_git_ref"] = "refs/heads/main"
+    env = _write_env(tmp_path, cluster_vars=cv)
+    flux = env / "flux"
+    flux.mkdir()
+    (flux / "flux-instance.yaml").write_text(
+        textwrap.dedent(
+            """
+            spec:
+              sync:
+                url: "https://github.com/example-owner/example-cluster"
+                ref: "refs/heads/example"
+                path: "envs/env-test/flux"
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "flux-instance.yaml" in msg
+    assert "flux_git_repo_url" in msg
+    assert "flux_git_ref" in msg
+
+
+def test_flux_instance_path_must_match_this_env(tmp_path: Path) -> None:
+    """FluxInstance spec.sync.path must be envs/<env>/flux."""
+    env = _write_env(tmp_path)
+    cv = yaml.safe_load((env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
+    flux = env / "flux"
+    flux.mkdir()
+    (flux / "flux-instance.yaml").write_text(
+        textwrap.dedent(
+            f"""
+            spec:
+              sync:
+                url: "{cv["flux_git_repo_url"]}"
+                ref: "{cv["flux_git_ref"]}"
+                path: "envs/env-other/flux"
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "flux-instance.yaml" in msg
+    assert "spec.sync.path" in msg
+    assert "envs/env-test/flux" in msg
+
+
+def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -> None:
+    """A copied env-00 with edited values and a stale ConfigMap passes pre-host only."""
+    dest = tmp_path / "envs" / "env-00"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    original = cluster.read_text(encoding="utf-8")
+    edited = original.replace("dns_suffix: env-00.example", "dns_suffix: lab.example", 1)
+    assert edited != original
+    cluster.write_text(edited, encoding="utf-8")
+    validate_env_tree(tmp_path, pre_host=True)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "cluster-vars-configmap.yaml" in msg
+    assert "re-render" in msg
+    assert "tools/lib/render_cluster_vars_configmap.py" in msg
+
+
 _OPTIONAL_CLUSTER_KEYS = (
     "code_delivery",
     "build_agent",
@@ -276,24 +440,8 @@ def test_optional_cluster_keys_may_all_be_omitted(tmp_path: Path):
         assert key not in resolved["env-test"]
 
 
-def test_owner_comes_from_flux_when_apps_url_is_omitted(tmp_path: Path):
-    """Two envs with different flux owners still fail when apps URL is unset."""
-    first = _valid_cluster_vars()
-    second = _valid_cluster_vars()
-    for cv, owner in ((first, "owner-a"), (second, "owner-b")):
-        cv.pop("apps_git_repo_url")
-        cv["flux_git_repo_url"] = f"https://github.com/{owner}/cluster"
-    _write_env(tmp_path, "env-a", cluster_vars=first)
-    _write_env(tmp_path, "env-b", cluster_vars=second)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "non-example envs" in msg
-    assert "owner-a" in msg
-    assert "owner-b" in msg
-
-
-def test_owner_handle_must_match_across_non_example_envs(tmp_path: Path):
+def test_non_example_envs_may_use_different_owners(tmp_path: Path):
+    """Each env may use its own flux owner handle."""
     first = _valid_cluster_vars()
     first["flux_git_repo_url"] = "https://github.com/owner-a/cluster"
     first["apps_git_repo_url"] = "https://github.com/owner-a/apps"
@@ -302,12 +450,23 @@ def test_owner_handle_must_match_across_non_example_envs(tmp_path: Path):
     second["apps_git_repo_url"] = "https://github.com/owner-b/apps"
     _write_env(tmp_path, "env-a", cluster_vars=first)
     _write_env(tmp_path, "env-b", cluster_vars=second)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "non-example envs" in msg
-    assert "owner-a" in msg
-    assert "owner-b" in msg
+    resolved = validate_env_tree(tmp_path)
+    assert "env-a" in resolved
+    assert "env-b" in resolved
+
+
+def test_different_owners_still_pass_when_apps_url_is_omitted(tmp_path: Path):
+    """The within-env owner rule does not apply across envs when apps URL is unset."""
+    first = _valid_cluster_vars()
+    second = _valid_cluster_vars()
+    for cv, owner in ((first, "owner-a"), (second, "owner-b")):
+        cv.pop("apps_git_repo_url")
+        cv["flux_git_repo_url"] = f"https://github.com/{owner}/cluster"
+    _write_env(tmp_path, "env-a", cluster_vars=first)
+    _write_env(tmp_path, "env-b", cluster_vars=second)
+    resolved = validate_env_tree(tmp_path)
+    assert "env-a" in resolved
+    assert "env-b" in resolved
 
 
 def _hosts(body: str) -> str:

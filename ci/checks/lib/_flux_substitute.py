@@ -11,16 +11,11 @@ literal and objects labelled or annotated substitute: disabled are skipped.
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-import yaml
-
-from _manifests import ref_of
-from schema.env import EXAMPLE_ENV
+from _manifests import example_platform_configs, kustomize_build, namespace_of, ref_of
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _SUBSTITUTE_KEY = "kustomize.toolkit.fluxcd.io/substitute"
@@ -39,7 +34,7 @@ def scan_flux_substitute(repo_root: Path | str) -> list[FluxSubstituteViolation]
     violations: list[FluxSubstituteViolation] = []
     for flux_dir in sorted(path for path in root.glob("envs/*/flux") if path.is_dir()):
         env_rel = flux_dir.relative_to(root).as_posix()
-        env_docs, error = _build(root, env_rel)
+        env_docs, error = kustomize_build(root, env_rel)
         if error:
             violations.append(FluxSubstituteViolation(env_rel, error))
             continue
@@ -67,16 +62,14 @@ def _kustomization_violations(
     ):
         return []
     ref = ref_of(doc)
-    keys, problems = _published_keys(post_build, _namespace(doc), env_docs)
+    keys, problems = _published_keys(post_build, namespace_of(doc), env_docs)
     violations = [FluxSubstituteViolation(env_rel, f"{ref}: {problem}") for problem in problems]
     path = spec.get("path")
     if not isinstance(path, str) or not path.strip():
         return violations + [FluxSubstituteViolation(env_rel, f"{ref}: spec.path is unset")]
-    # The example lists bootstrap secrets that are not in Git. A copy builds
-    # this path after bootstrap-secrets. The example tree does not.
-    if _example_platform_configs(env_rel, path):
+    if example_platform_configs(env_rel, path):
         return violations
-    docs, error = _build(root, path.strip().removeprefix("./"))
+    docs, error = kustomize_build(root, path.strip().removeprefix("./"))
     if error:
         return violations + [FluxSubstituteViolation(env_rel, f"{ref}: {error}")]
     for item in docs:
@@ -111,7 +104,7 @@ def _published_keys(
                 for item in env_docs
                 if item.get("kind") == kind
                 and (item.get("metadata") or {}).get("name") == name
-                and _namespace(item) == namespace
+                and namespace_of(item) == namespace
             ),
             None,
         )
@@ -145,31 +138,3 @@ def _substitute_disabled(doc: dict) -> bool:
         isinstance(metadata.get(field), dict) and metadata[field].get(_SUBSTITUTE_KEY) == "disabled"
         for field in ("labels", "annotations")
     )
-
-
-def _example_platform_configs(env_rel: str, path: str) -> bool:
-    if not env_rel.startswith(f"envs/{EXAMPLE_ENV}/"):
-        return False
-    return path.strip().removeprefix("./") == f"envs/{EXAMPLE_ENV}/flux/platform-configs"
-
-
-def _namespace(doc: dict) -> str:
-    metadata = doc.get("metadata")
-    namespace = metadata.get("namespace") if isinstance(metadata, dict) else None
-    return namespace if isinstance(namespace, str) and namespace else "default"
-
-
-def _build(root: Path, rel: str) -> tuple[list[dict], str | None]:
-    kustomize = shutil.which("kustomize")
-    if kustomize is None:
-        return [], "kustomize not found on PATH (run make deps)"
-    proc = subprocess.run(
-        [kustomize, "build", "--load-restrictor", "LoadRestrictionsNone", str(root / rel)],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=root,
-    )
-    if proc.returncode != 0:
-        return [], f"kustomize build {rel} failed: {(proc.stderr or proc.stdout).strip()}"
-    return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)], None

@@ -24,6 +24,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 ## Health
 
 - The namespace exists.
+- HelmRelease `flux-system/volsync` is Ready. `platform-controllers` health-checks it, so `platform-configs` applies the backup objects only after the VolSync controller is up.
 - Secret `backups-restic` is present. Its value is not logged.
 - Service `restic` has a ready endpoint.
 - Kyverno admission is Ready.
