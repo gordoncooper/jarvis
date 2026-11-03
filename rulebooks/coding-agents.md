@@ -10,11 +10,11 @@ Rules here are prose only for what `ci/checks/`, `.cursor/cli.json`, and `.claud
 - **Images the repo adds are digest-pinned:** `ci/checks/digest-pin`.
 - **Env schema (values under `envs/<env>/`):** `ci/checks/env-schema`.
 - **Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
-- **Plan codes stay out of product docs, CONTRACTs, and READMEs:** `ci/checks/plan-codes`.
+- **Plan codes stay out of Markdown docs, READMEs and `docs/` (not `AGENTS.md` or `.github/`):** `ci/checks/plan-codes`.
 - **No plaintext secrets in Git:** `ci/checks/secret-scan`.
 - **Product trees do not use `ci/`:** `ci/checks/product-ci`. `tools/verify` may read `ci/rule-checks.txt`.
 - **The backup ClusterPolicy enrolls every PVC, or the PVC is `backup: none`:** `ci/checks/pvc-backup`.
-- **Deferred on purpose; don't add early:** model names in core come back to `core-names` in a later phase.
+- **Deferred on purpose:** don't add a model-name rule to `core-names` until a brief asks for it.
 
 ## Stay lean
 
@@ -40,8 +40,8 @@ The reviewer checks these on deep reviews; no check can. In the PR, say how the 
 
 - Start from a fresh checkout of current `main`; never build on another agent's branch. Use the branch prefix the task or forge requires, otherwise `agent/<topic>`. One PR per task, or per batch of related plan steps that touch the same area; keep unrelated or risky changes in separate PRs. No stacked PRs, except throwaway PRs a brief asks for. Open the PR ready for review unless the brief says draft.
 - Once review is requested, scope is frozen. New ideas go to a follow-up PR.
-- Until branch protection with the admin gate is on, an agent may merge its own PR when required checks pass. Once it is on, a PR that touches a protected path, removes a Namespace, PVC or StorageClass, or comes from the code-factory app needs the repo owner's admin-approved label first. Merge only after the reviewer has ticked every Ready to merge box that applies at the current head (a box marked "(n/a)" counts as met). If a task brief says to leave the PR unmerged, do that; a brief's "don't merge" always wins.
-- Never touch real hosts: no SSH, no secret decryption, no reading the age private key (deny list blocks many of these; still treat this as a hard stop).
+- Until branch protection requires the admin-gate check, an agent may merge its own PR when required checks pass. After that, a PR that touches a protected path, removes a Namespace, PVC or StorageClass, or comes from the code-factory GitHub App needs an `admin-approved` label the repo owner added after the latest push, and the owner merges it. Never add that label yourself, even when you run under the owner's account. Merge only after the reviewer has ticked every Ready to merge box that applies at the current head (a box marked "(n/a)" counts as met). A brief's "don't merge" always wins.
+- Never touch real hosts: no SSH, no secret decryption, no reading the age private key (the deny lists block many of these; still treat this as a hard stop).
 - A value that differs per deployment, including disks, sizes and node roles, is an env setting under `envs/<env>/`, not an Ansible role default and not a literal in core. A schema default the contract documents, such as `ssh_user`, stays in the schema. The repo must run from any controller node under any user.
 - LAN IPs and numeric user IDs never appear in plaintext, envs/ included. Keep them out, or encrypt them under `envs/<env>/secrets/`.
 - If the brief or this file looks wrong for the task, say so with your reasoning before working around it. Don't silently follow it or silently depart from it.
