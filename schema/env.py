@@ -14,6 +14,8 @@ import yaml
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
+# Weekly repository check, hours away from midnight-to-01:00 backups and the 00:05/12:05 etcd copy.
+DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
 
 
 def is_example_env(name: str) -> bool:
@@ -61,6 +63,7 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "apps_git_repo_url",
         "llm_provider_host",
         "chrony_nts",
+        "backup_check_schedule",
     }
 )
 
@@ -108,6 +111,8 @@ def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
         resolved["ssh_user"] = DEFAULT_SSH_USER
     if "age_key_file" not in resolved:
         resolved["age_key_file"] = DEFAULT_AGE_KEY_FILE
+    if "backup_check_schedule" not in resolved:
+        resolved["backup_check_schedule"] = DEFAULT_BACKUP_CHECK_SCHEDULE
     return resolved
 
 
@@ -386,11 +391,12 @@ def _validate_cluster_vars(
         elif val <= 0:
             errors.append(f"{rel_path}: {key} must be > 0")
 
-    schedule = data.get("backup_schedule")
-    if schedule is not None and (
-        not isinstance(schedule, str) or len(schedule.split()) != 5
-    ):
-        errors.append(f"{rel_path}: backup_schedule must be a five-field cron")
+    for key in ("backup_schedule", "backup_check_schedule"):
+        schedule = data.get(key)
+        if schedule is not None and (
+            not isinstance(schedule, str) or len(schedule.split()) != 5
+        ):
+            errors.append(f"{rel_path}: {key} must be a five-field cron")
 
     errors.extend(_validate_ntp_pools(rel_path, data.get("ntp_pools")))
     errors.extend(_validate_chrony_nts(rel_path, data.get("chrony_nts")))

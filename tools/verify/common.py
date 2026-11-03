@@ -149,3 +149,19 @@ def pending_first_run(
     interval = previous[0] - previous[1]
     age = now.astimezone(timezone.utc) - created.astimezone(timezone.utc)
     return age < interval
+
+
+def no_success_yet(
+    cronjob: dict, schedule: str, zone_name: str, now: datetime, what: str
+) -> None:
+    """A CronJob with no successful run: WARN inside its first interval while its first run
+    is not scheduled yet or still running; FAIL once a run finished without success, or after
+    the first interval."""
+    status = cronjob.get("status") or {}
+    created = (cronjob.get("metadata") or {}).get("creationTimestamp")
+    if isinstance(created, str) and pending_first_run(created, schedule, zone_name, now):
+        if status.get("active"):
+            raise CheckWarning(f"{what} first run in progress")
+        if not isinstance(status.get("lastScheduleTime"), str):
+            raise CheckWarning(f"{what} pending first run")
+    raise CheckError(f"{what} has no successful scheduled run")

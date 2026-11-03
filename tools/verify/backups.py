@@ -8,11 +8,10 @@ from lib._env import json_object, not_found, reason
 
 from verify.common import (
     CheckError,
-    CheckWarning,
     Context,
     Kubectl,
     items,
-    pending_first_run,
+    no_success_yet,
     recent,
     scheduled_instants,
 )
@@ -88,15 +87,7 @@ def check_backups(
     if not isinstance(schedule, str) or not isinstance(cron_zone, str):
         raise CheckError("etcd snapshot copy has no successful scheduled run")
     if not isinstance(last, str):
-        scheduled = status.get("lastScheduleTime")
-        created = (cronjob.get("metadata") or {}).get("creationTimestamp")
-        if (
-            not isinstance(scheduled, str)
-            and isinstance(created, str)
-            and pending_first_run(created, schedule, cron_zone, now)
-        ):
-            raise CheckWarning("etcd snapshot copy pending first run")
-        raise CheckError("etcd snapshot copy has no successful scheduled run")
+        no_success_yet(cronjob, schedule, cron_zone, now, "etcd snapshot copy")
     if not recent(last, schedule, cron_zone, now):
         raise CheckError("etcd snapshot copy is stale")
 
@@ -125,14 +116,7 @@ def check_repository_integrity(kubectl: Kubectl, *, now: datetime) -> None:
     if not isinstance(schedule, str) or not isinstance(zone, str):
         raise CheckError("repository check has no schedule or time zone")
     if not isinstance(last, str):
-        created = (cronjob.get("metadata") or {}).get("creationTimestamp")
-        if (
-            not isinstance(status.get("lastScheduleTime"), str)
-            and isinstance(created, str)
-            and pending_first_run(created, schedule, zone, now)
-        ):
-            raise CheckWarning("repository check pending first run")
-        raise CheckError("repository check has no successful run")
+        no_success_yet(cronjob, schedule, zone, now, "repository check")
     try:
         completed = datetime.fromisoformat(last.replace("Z", "+00:00"))
     except ValueError as exc:

@@ -65,6 +65,8 @@ class Cluster:
         self.check_sync: str | None = "2026-10-28T06:40:00Z"
         self.check_created = "2026-01-01T00:00:00Z"
         self.check_scheduled: str | None = None
+        self.etcd_active = False
+        self.check_active = False
         self.hold = False
         self.bad_sources_json = False
         self.node_ready = True
@@ -159,6 +161,8 @@ class Cluster:
                 status["lastSuccessfulTime"] = self.etcd_sync
             if self.etcd_scheduled is not None:
                 status["lastScheduleTime"] = self.etcd_scheduled
+            if self.etcd_active:
+                status["active"] = [{"kind": "Job", "name": "etcd-snapshots-1"}]
             return _completed(
                 argv,
                 {
@@ -176,6 +180,8 @@ class Cluster:
                 check_status["lastSuccessfulTime"] = self.check_sync
             if self.check_scheduled is not None:
                 check_status["lastScheduleTime"] = self.check_scheduled
+            if self.check_active:
+                check_status["active"] = [{"kind": "Job", "name": "restic-check-1"}]
             return _completed(
                 argv,
                 {
@@ -546,89 +552,79 @@ def test_explicit_enabled_list_keeps_default_components(
     assert any("etcd-snapshots" in text for text in joined)
 
 
-def test_young_cronjob_without_run_warns_and_exits_0(
+# NOW is Saturday 12:00Z. One interval is 12h for the etcd copy and 7d for the weekly check.
+_FIRST_RUN_CHECKS = {
+    "etcd": ("backup freshness", "etcd snapshot copy"),
+    "check": ("repository integrity check", "repository check"),
+}
+_YOUNG = "2026-10-31T11:00:00Z"
+_PAST_INTERVAL = "2026-10-20T00:00:00Z"
+
+
+@pytest.mark.parametrize("check", sorted(_FIRST_RUN_CHECKS))
+@pytest.mark.parametrize(
+    ("created", "scheduled", "active", "line"),
+    [
+        (_YOUNG, None, False, "WARN {label}: {what} pending first run"),
+        (_YOUNG, "2026-10-31T11:05:00Z", True, "WARN {label}: {what} first run in progress"),
+        (
+            _YOUNG,
+            "2026-10-31T11:05:00Z",
+            False,
+            "FAIL {label}: {what} has no successful scheduled run",
+        ),
+        (
+            _PAST_INTERVAL,
+            "2026-10-31T11:05:00Z",
+            True,
+            "FAIL {label}: {what} has no successful scheduled run",
+        ),
+        (_PAST_INTERVAL, None, False, "FAIL {label}: {what} has no successful scheduled run"),
+    ],
+)
+def test_first_run_warns_only_while_pending_or_running_in_its_first_interval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    check: str,
+    created: str,
+    scheduled: str | None,
+    active: bool,
+    line: str,
 ) -> None:
+    """Both CronJob checks share one rule: a run that finished without success, or a job
+    past its first interval, fails; a pending or running first run only warns."""
+    label, what = _FIRST_RUN_CHECKS[check]
     cluster = Cluster()
-    cluster.etcd_sync = None
-    cluster.etcd_created = "2026-10-31T11:00:00Z"
-    assert _run(tmp_path, cluster, monkeypatch) == 0
+    setattr(cluster, f"{check}_sync", None)
+    setattr(cluster, f"{check}_created", created)
+    setattr(cluster, f"{check}_scheduled", scheduled)
+    setattr(cluster, f"{check}_active", active)
+    expected = line.format(label=label, what=what)
+    assert _run(tmp_path, cluster, monkeypatch) == (0 if expected.startswith("WARN") else 1)
     output = capsys.readouterr().out
-    assert "WARN backup freshness: etcd snapshot copy pending first run" in output
-    assert "FAIL backup freshness" not in output
-
-
-def test_scheduled_cronjob_without_success_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cluster = Cluster()
-    cluster.etcd_sync = None
-    cluster.etcd_created = "2026-10-31T11:00:00Z"
-    cluster.etcd_scheduled = "2026-10-31T11:05:00Z"
-    assert _run(tmp_path, cluster, monkeypatch) != 0
-    output = capsys.readouterr().out
-    assert "etcd snapshot copy has no successful scheduled run" in output
-    assert "WARN backup freshness" not in output
-
-
-def test_old_cronjob_without_success_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cluster = Cluster()
-    cluster.etcd_sync = None
-    cluster.etcd_created = "2026-10-30T00:00:00Z"
-    assert _run(tmp_path, cluster, monkeypatch) != 0
-    assert "etcd snapshot copy has no successful scheduled run" in capsys.readouterr().out
-
-
-# NOW is Saturday 12:00Z; the weekly check is Wednesday 06:30, so interval plus grace is 7d12h.
-_YOUNG = "2026-10-30T00:00:00Z"
-_OLD = "2026-01-01T00:00:00Z"
-_NO_RUN = "FAIL repository integrity check: repository check has no successful run"
+    assert expected in output
+    assert f"FAIL {label}" not in output or expected.startswith("FAIL")
 
 
 @pytest.mark.parametrize(
-    ("last", "created", "scheduled", "code", "line"),
+    ("last", "code", "line"),
     [
-        ("2026-10-24T01:00:00Z", _OLD, None, 0, "PASS repository integrity check"),
-        (
-            "2026-10-23T23:00:00Z",
-            _OLD,
-            None,
-            1,
-            "FAIL repository integrity check: repository check is stale",
-        ),
-        (
-            None,
-            _YOUNG,
-            None,
-            0,
-            "WARN repository integrity check: repository check pending first run",
-        ),
-        (None, _YOUNG, "2026-10-31T06:30:00Z", 1, _NO_RUN),
-        (None, "2026-10-20T00:00:00Z", None, 1, _NO_RUN),
+        ("2026-10-24T01:00:00Z", 0, "PASS repository integrity check"),
+        ("2026-10-23T23:00:00Z", 1, "FAIL repository integrity check: repository check is stale"),
     ],
 )
 def test_repository_check_freshness_allows_one_interval_plus_grace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    last: str | None,
-    created: str,
-    scheduled: str | None,
+    last: str,
     code: int,
     line: str,
 ) -> None:
+    """The weekly check is Wednesday 06:30, so one interval plus grace is 7d12h before NOW."""
     cluster = Cluster()
     cluster.check_sync = last
-    cluster.check_created = created
-    cluster.check_scheduled = scheduled
     assert _run(tmp_path, cluster, monkeypatch) == code
     assert line in capsys.readouterr().out
 

@@ -31,6 +31,7 @@ CLUSTER_VARS_PUBLISHED = frozenset(
         "app_dns_cluster_ip",
         "backup_path",
         "backup_schedule",
+        "backup_check_schedule",
         "backup_retention_daily",
         "backup_retention_weekly",
         "backup_retention_monthly",

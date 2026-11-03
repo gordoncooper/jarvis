@@ -329,18 +329,23 @@ def test_restic_check_script_checks_every_repository_and_prints_only_results(
 def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
     example_copy: ExampleCopy,
 ) -> None:
-    """Each check run starts at least 3 hours from every nightly backup and etcd copy start."""
+    """In every env, its backup_check_schedule starts at least 3 hours from every nightly
+    backup and etcd copy start."""
     tools = str(ROOT / "tools")
     if tools not in sys.path:
         sys.path.insert(0, tools)
+    from schema.env import resolve_cluster_vars
     from verify.common import scheduled_instants
 
     etcd_schedule = _docs(ROOT / "platform/backups/etcd-snapshots.yaml")[0]["spec"]["schedule"]
     for root, env in real_and_copy_envs(example_copy):
-        values = yaml.safe_load(
-            (root / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
+        assert _restic_check(root, env)["spec"]["schedule"] == "${backup_check_schedule}"
+        values = resolve_cluster_vars(
+            yaml.safe_load(
+                (root / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
+            )
         )
-        check = _restic_check(root, env)["spec"]["schedule"]
+        check = values["backup_check_schedule"]
         run = scheduled_instants(check, "Etc/UTC", datetime(2026, 11, 2, tzinfo=timezone.utc), 1)[0]
         for other in (values["backup_schedule"], etcd_schedule):
             for instant in scheduled_instants(other, "Etc/UTC", run + timedelta(days=2), 8):

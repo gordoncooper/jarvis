@@ -16,7 +16,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 
 - Flux SOPS decryption via `flux-system/sops-age`. The file in Git has no plaintext secret.
 - `envs/<env>/secrets/backups-restic.sops.yaml`. Flux decrypts it.
-- Target path, retention counts, `backup_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
+- Target path, retention counts, `backup_schedule`, `backup_check_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
 - The backup-role node (`role.<dns_suffix>/backup=true`) for the rest-server hostPath.
 - The control-plane node (`role.<dns_suffix>/control_plane=true`), where k3s writes the snapshot files.
 - `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
@@ -32,7 +32,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - During `make restore`, that PVC's ReplicationSource stays paused until the destination finishes. It stays paused longer while the rebuild hold exists.
 - `make drill` deletes a scratch volume, restores it, and compares checksums.
 - A Job from CronJob `etcd-snapshots` completes, and `restic snapshots` on `host-etcd-snapshots` lists a snapshot that holds the newest k3s snapshot file.
-- A Job from CronJob `restic-check` (weekly, Wednesday 06:30 in `time_zone`, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `make verify` fails when its last success is older than one week plus 12 hours, or when it has none after its first week, and warns before its first scheduled run.
+- A Job from CronJob `restic-check` (on `backup_check_schedule` in `time_zone`, default Wednesday 06:30, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `make verify` fails when its last success is older than one schedule interval plus 12 hours. With no success yet, `make verify` warns while the first run is pending or running inside the first interval, and fails once a run finished without success or that interval has passed. The `etcd-snapshots` check uses the same first-run rule.
 
 ## Config
 

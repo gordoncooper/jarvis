@@ -14,6 +14,7 @@ import yaml
 import schema.env as env_schema
 from schema.env import (
     DEFAULT_AGE_KEY_FILE,
+    DEFAULT_BACKUP_CHECK_SCHEDULE,
     DEFAULT_SSH_USER,
     EXAMPLE_ENV,
     ValidationError,
@@ -147,13 +148,22 @@ def test_flux_paths_must_use_own_env_name(tmp_path: Path):
     assert "env-test" in msg
 
 
-def test_backup_schedule_must_be_five_fields(tmp_path: Path):
+@pytest.mark.parametrize("key", ["backup_schedule", "backup_check_schedule"])
+def test_backup_schedules_must_be_five_fields(tmp_path: Path, key: str):
     cv = _valid_cluster_vars()
-    cv["backup_schedule"] = "nightly"
+    cv[key] = "nightly"
     _write_env(tmp_path, cluster_vars=cv)
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    assert "backup_schedule must be a five-field cron" in "\n".join(excinfo.value.messages)
+    assert f"{key} must be a five-field cron" in "\n".join(excinfo.value.messages)
+
+
+def test_backup_check_schedule_defaults_when_omitted(tmp_path: Path):
+    cv = _valid_cluster_vars()
+    cv.pop("backup_check_schedule", None)
+    _write_env(tmp_path, cluster_vars=cv)
+    resolved = validate_env_tree(tmp_path)
+    assert resolved["env-test"]["backup_check_schedule"] == DEFAULT_BACKUP_CHECK_SCHEDULE
 
 
 def test_time_zone_and_k3s_version_must_match_their_shapes(tmp_path: Path):
