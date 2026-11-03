@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: product docs and CONTRACTs contain no plan codes.
+# CI rule check: Markdown docs, READMEs and docs/ contain no plan codes, including rulebooks/; not AGENTS.md or .github/.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

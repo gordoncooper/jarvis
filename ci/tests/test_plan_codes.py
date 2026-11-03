@@ -37,18 +37,31 @@ def test_seeded_plan_codes_fail(tmp_path: Path) -> None:
 
 
 def test_plan_codes_outside_product_docs_pass(tmp_path: Path) -> None:
-    (tmp_path / "rulebooks").mkdir()
-    (tmp_path / "rulebooks" / "coding-agents.md").write_text(
-        "R31 p0b-10 P2 §6\n",
-        encoding="utf-8",
-    )
     (tmp_path / "AGENTS.md").write_text("R31 p0b-10 P2\n", encoding="utf-8")
+    github = tmp_path / ".github"
+    github.mkdir()
+    (github / "pull_request_template.md").write_text("R35\n", encoding="utf-8")
     (tmp_path / "tools").mkdir()
     (tmp_path / "tools" / "restore").write_text("R31 = 'kept'\n", encoding="utf-8")
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "clean.md").write_text("No codes here.\n", encoding="utf-8")
 
     assert scan_plan_codes(tmp_path) == []
+
+
+def test_plan_codes_in_rulebooks_fail(tmp_path: Path) -> None:
+    (tmp_path / "rulebooks").mkdir()
+    (tmp_path / "rulebooks" / "coding-agents.md").write_text(
+        "R31 p0b-10 P2 §6\n",
+        encoding="utf-8",
+    )
+
+    assert scan_plan_codes(tmp_path) == [
+        "rulebooks/coding-agents.md:1: R31",
+        "rulebooks/coding-agents.md:1: p0b-10",
+        "rulebooks/coding-agents.md:1: P2",
+        "rulebooks/coding-agents.md:1: §6",
+    ]
 
 
 def test_plan_code_gaps_fail(tmp_path: Path) -> None:

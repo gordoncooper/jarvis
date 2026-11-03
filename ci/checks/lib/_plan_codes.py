@@ -1,10 +1,10 @@
-"""Product docs and CONTRACTs contain no plan codes.
+"""Markdown docs, READMEs and docs/ contain no plan codes, including rulebooks/; not AGENTS.md or .github/.
 
 Scanned paths: every Markdown file, every README* (any case, any extension),
 and everything under docs/ (including docs/CONTRACT.template.md). That picks
 up CONTRACT.md, RUNBOOK.md, readme.md, and README.txt, including under envs/.
 
-Not scanned: rulebooks/, AGENTS.md, .github/, and code. No path exemptions.
+Not scanned: AGENTS.md, .github/, and code. No path exemptions.
 The pattern is case-sensitive. A phase id is P0-P4 with an optional a/b
 suffix of either case (P0a, P0A). A bare lowercase p2, or a lowercase r or d
 plus digits, is not a plan code. Version strings and ordinary words are not.
@@ -37,7 +37,7 @@ _PLAN_CODE = re.compile(
 )
 
 _SKIP_DIRS = frozenset({".git", ".venv", "__pycache__", "node_modules"})
-_EXCLUDED_PREFIXES = ("rulebooks/", ".github/")
+_EXCLUDED_PREFIXES = (".github/",)
 
 
 def _scanned(rel: str) -> bool:
