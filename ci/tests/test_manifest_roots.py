@@ -62,6 +62,10 @@ def test_the_check_script_requires_every_manifest_root(tmp_path: Path, name: str
     """The shipped check passes require_roots, so a tree missing apps/, services/ or envs/ fails."""
     _tree_with_platform_only(tmp_path)
     shutil.copytree(REPO_ROOT / "ci" / "checks", tmp_path / "ci" / "checks")
+    # The check libraries import schema.env, which the scripts find under the repo root.
+    shutil.copytree(
+        REPO_ROOT / "schema", tmp_path / "schema", ignore=shutil.ignore_patterns("__pycache__")
+    )
     proc = subprocess.run(
         ["bash", str(tmp_path / "ci" / "checks" / name)],
         capture_output=True,
