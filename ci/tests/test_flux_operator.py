@@ -972,6 +972,44 @@ def test_existing_secret_with_the_env_identity_passes_untouched(tmp_path: Path, 
     assert not created.exists()
 
 
+def test_two_matching_identities_are_one_line_each(tmp_path: Path) -> None:
+    """Two identities for the env's recipients land on two lines, and the set check uses both."""
+    require_cli("ansible-playbook")
+    other = _age_identity(tmp_path, "other")
+    first = _age_identity(tmp_path, "first")
+    second = _age_identity(tmp_path, "second")
+    keyfile = _key_file(tmp_path, other, first, second)
+    sops_config = _sops_config(tmp_path, _SOPS_ENV, first[1], second[1])
+
+    created_dir = tmp_path / "create"
+    created_dir.mkdir()
+    binary, _log, created = _sops_k3s(created_dir, existing=None)
+    proc = _run_sops_age(created_dir, binary, keyfile, sops_config)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    secret = yaml.safe_load(created.read_text(encoding="utf-8"))
+    assert secret["stringData"]["age.agekey"].splitlines() == [first[0], second[0]]
+
+    # The whole key file, comments and a third identity included, holds both.
+    full_dir = tmp_path / "full"
+    full_dir.mkdir()
+    binary, _log, created = _sops_k3s(full_dir, existing=keyfile.read_text(encoding="utf-8"))
+    proc = _run_sops_age(full_dir, binary, keyfile, sops_config)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not created.exists()
+
+    # A secret with only one of the two does not hold the env's identities.
+    partial_dir = tmp_path / "partial"
+    partial_dir.mkdir()
+    binary, _log, created = _sops_k3s(partial_dir, existing=first[0])
+    proc = _run_sops_age(partial_dir, binary, keyfile, sops_config)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert _failed_task(output) == (
+        "Refuse to overwrite an existing sops-age secret with different content"
+    ), output
+    assert not created.exists()
+
+
 def test_existing_secret_with_another_identity_refuses(tmp_path: Path) -> None:
     """A secret without the env's identity may be the only copy of another key, so the run refuses."""
     require_cli("ansible-playbook")
@@ -1462,7 +1500,11 @@ def _lookup_binary(log: Path, *, kind: str) -> str:
           {message}
           exit 1
         fi
-        if [[ "$joined" == *" wait "* || "$joined" == *"kubectl create"* ]]; then
+        if [[ "$joined" == *" wait "* ]]; then
+          exit 0
+        fi
+        if [[ "$joined" == *"kubectl create"* ]]; then
+          cat > /dev/null
           exit 0
         fi
         echo "unexpected k3s invocation: $*" >&2
@@ -1508,8 +1550,6 @@ def test_operator_lookup_classifies_not_found(tmp_path: Path, kind: str) -> None
             "flux_operator_chart_version=0.0.0-test",
             "-e",
             f"k3s_kubeconfig_path={tmp_path / 'kubeconfig'}",
-            "-e",
-            '{"ansible_facts":{"architecture":"x86_64"}}',
         ],
         env=_ansible_env(),
     )

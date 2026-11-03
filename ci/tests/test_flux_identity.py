@@ -221,6 +221,48 @@ def test_cluster_wide_binding_for_a_tenant_fails(tmp_path: Path) -> None:
     assert any("binds flux-system/flux-tenant cluster-wide" in item for item in messages)
 
 
+def _role_binding(namespace: str, role_kind: str, role: str) -> dict:
+    return {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {"name": "seeded", "namespace": namespace},
+        "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": role_kind, "name": role},
+        "subjects": [dict(_PLATFORM_SUBJECT, name="flux-tenant")],
+    }
+
+
+def _env_root(binding: dict) -> dict:
+    return {"root_docs": [_flux_instance(multitenant=True), binding]}
+
+
+@pytest.mark.parametrize(
+    ("binding", "expected"),
+    [
+        (
+            _role_binding("flux-system", "ClusterRole", "cluster-admin"),
+            "in its own namespace, where the Flux objects live",
+        ),
+        (_role_binding("flux-system", "Role", "narrow"), "in its own namespace"),
+        (_role_binding("default", "ClusterRole", "cluster-admin"), "to cluster-admin"),
+        (_role_binding("default", "ClusterRole", "admin"), "to admin"),
+        (_role_binding("default", "ClusterRole", "edit"), "to edit"),
+    ],
+    ids=["flux-system-cluster-admin", "flux-system-narrow-role", "default-cluster-admin", "admin", "edit"],
+)
+def test_broad_or_flux_system_binding_for_a_tenant_fails(
+    tmp_path: Path, binding: dict, expected: str
+) -> None:
+    """A tenant gets no rights in flux-system, and no cluster-admin, admin or edit anywhere."""
+    messages = _messages(_repo(tmp_path, **_env_root(binding)))
+    assert any("binds flux-system/flux-tenant" in item and expected in item for item in messages)
+
+
+def test_narrow_binding_for_a_tenant_elsewhere_passes(tmp_path: Path) -> None:
+    """A tenant may hold a narrow Role in the namespace it deploys to."""
+    binding = _role_binding("default", "Role", "placeholder-writer")
+    assert _messages(_repo(tmp_path, **_env_root(binding))) == []
+
+
 def _example_tree(tmp_path: Path) -> Path:
     """The example env's flux tree and a writable platform copy; services and apps are linked."""
     root = tmp_path / "repo"

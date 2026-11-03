@@ -19,7 +19,7 @@ Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-ti
 
 Chart tag in `oci-repository.yaml` (`spec.ref.tag`) is the one pin. The flux-operator Ansible role reads it. Renovate manages that tag (`renovate.json`). Helm values use upstream defaults unless overridden here.
 
-The bootstrap Helm CLI is pinned by version and archive sha256 in the role defaults. A binary at `helm_binary_path` that reports another version is replaced. Every run waits for the FluxInstance CRD and the operator rollout before it applies the FluxInstance.
+The bootstrap Helm CLI is pinned by version and archive sha256 in the role defaults. The bootstrap install runs only when the operator Deployment is absent, and just before it a binary at `helm_binary_path` that is missing or reports another version is replaced. Once the operator exists, Helm is neither used nor checked. Every run waits for the FluxInstance CRD and the operator rollout before it applies the FluxInstance.
 
 ## Proven by
 

@@ -11,8 +11,9 @@ Kustomization in it, then checks:
   env's flux tree declares that ServiceAccount in the object's namespace. The
   root sync applies that tree with the controller's own identity.
 - Only PLATFORM_KUSTOMIZATIONS, and the objects on their paths, run as
-  PLATFORM_SERVICE_ACCOUNT. No ClusterRoleBinding in the env's flux tree binds
-  any other account a Flux object runs as.
+  PLATFORM_SERVICE_ACCOUNT. No other account a Flux object runs as is bound by
+  a ClusterRoleBinding, by a RoleBinding in the namespace the Flux objects
+  live in, or to cluster-admin, admin or edit.
 - No Kustomization's path declares the account it runs as, or a binding for it.
 - sourceRef, chart sourceRef, chartRef, dependsOn and healthChecks stay in the
   object's namespace. Flux allows a cross-namespace health check; this check
@@ -43,6 +44,8 @@ _FLUX_APIS = {
     "HelmRelease": "helm.toolkit.fluxcd.io/",
 }
 _BINDING_KINDS = {"RoleBinding", "ClusterRoleBinding"}
+# Built-in roles too broad for a tenant in any namespace.
+_BROAD_ROLES = {"cluster-admin", "admin", "edit"}
 
 
 @dataclass(frozen=True)
@@ -88,11 +91,19 @@ def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[st
         and account != PLATFORM_SERVICE_ACCOUNT
     }
     for doc in env_docs:
-        if doc.get("kind") != "ClusterRoleBinding":
+        if doc.get("kind") not in _BINDING_KINDS:
             continue
+        role = (doc.get("roleRef") or {}).get("name")
         for namespace, account in sorted(tenants):
-            if _binds(doc, namespace, account):
-                yield f"{ref_of(doc)}: binds {namespace}/{account} cluster-wide"
+            if not _binds(doc, namespace, account):
+                continue
+            who = f"{ref_of(doc)}: binds {namespace}/{account}"
+            if doc.get("kind") == "ClusterRoleBinding":
+                yield f"{who} cluster-wide"
+            elif namespace_of(doc) == namespace:
+                yield f"{who} in its own namespace, where the Flux objects live"
+            if role in _BROAD_ROLES:
+                yield f"{who} to {role}"
     for doc in flux_docs:
         platform = _is_platform_kustomization(doc)
         yield from _object_problems(doc, accounts, may_run_as_platform=platform)

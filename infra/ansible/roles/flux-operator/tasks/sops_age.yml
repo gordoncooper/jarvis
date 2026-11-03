@@ -111,10 +111,8 @@
 
     - name: Keep only the identities for the env's age recipients
       ansible.builtin.set_fact:
-        flux_sops_age_key_content: >-
-          {{ flux_sops_age_publics.results | default([])
-             | selectattr('stdout', 'in', flux_sops_recipients)
-             | map(attribute='item') | join('\n') }}
+        # Double-quoted, so YAML turns the \n into a real newline.
+        flux_sops_age_key_content: "{{ flux_sops_age_publics.results | default([]) | selectattr('stdout', 'in', flux_sops_recipients) | map(attribute='item') | join('\n') }}"
       no_log: true
 
     - name: Record whether the key file holds an identity for the env
