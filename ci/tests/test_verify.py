@@ -93,34 +93,36 @@ class Cluster:
                 return _completed(argv, "RESTIC_PASSWORD\n")
             return _completed(argv, {"data": {"RESTIC_PASSWORD": SECRET_VALUE}})
         if argv[:2] == ["get", "nodes"]:
-            if self.nodes_rc:
-                return _completed(argv, "", returncode=self.nodes_rc, stderr="forbidden")
             labels = {
                 f"role.test.example/{role}": "true" for role in self.node_roles
             }
             if self.enablelb:
                 labels[verify_tool.ENABLELB] = "true"
-            return _completed(
-                argv,
-                {
-                    "items": [
-                        {
-                            "metadata": {"name": "n1", "labels": labels},
-                            "status": {
-                                "conditions": [
-                                    {
-                                        "type": "Ready",
-                                        "status": "True" if self.node_ready else "False",
-                                    }
-                                ]
-                            },
-                        }
-                    ]
-                },
-            )
+            body = {
+                "items": [
+                    {
+                        "metadata": {"name": "n1", "labels": labels},
+                        "status": {
+                            "conditions": [
+                                {
+                                    "type": "Ready",
+                                    "status": "True" if self.node_ready else "False",
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+            if self.nodes_rc:
+                return _completed(
+                    argv, body, returncode=self.nodes_rc, stderr="forbidden"
+                )
+            return _completed(argv, body)
         if argv[:2] == ["get", "pods"]:
             if self.pods_rc:
-                return _completed(argv, "", returncode=self.pods_rc, stderr="forbidden")
+                return _completed(
+                    argv, {"items": []}, returncode=self.pods_rc, stderr="forbidden"
+                )
             return _completed(argv, {"items": self.pods})
         if argv[:2] == ["get", "pvc"]:
             return _completed(
