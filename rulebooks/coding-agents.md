@@ -39,6 +39,7 @@ The reviewer checks these on deep reviews; no check can. In the PR, say how the 
 ## Workflow
 
 - Start from a fresh checkout of current `main`; never build on another agent's branch. Use the branch prefix the task or forge requires, otherwise `agent/<topic>`. One PR per task, or per batch of related plan steps that touch the same area; keep unrelated or risky changes in separate PRs. No stacked PRs, except throwaway PRs a brief asks for. Open the PR ready for review unless the brief says draft.
+- Subagents may search, read and review; only the main agent edits, commits and pushes.
 - Once review is requested, scope is frozen. New ideas go to a follow-up PR.
 - The repo owner merges every PR. An agent merges only when its brief explicitly says to, and then only after required checks pass and the reviewer has ticked every Ready to merge box that applies at the current head (a box marked "(n/a)" counts as met). Once branch protection requires the admin-gate check, a PR that touches a protected path, removes a Namespace, PVC or StorageClass, or comes from the code-factory GitHub App also needs an `admin-approved` label the repo owner added after the latest push, and the owner merges it whatever the brief says. Never add that label yourself, even when you run under the owner's account.
 - Never touch real hosts: no SSH, no secret decryption, no reading the age private key (the deny lists block many of these; still treat this as a hard stop).
