@@ -45,6 +45,8 @@ HOLD_NAME = "backup-rebuild-hold"
 POLL_SECONDS = 2.0
 WAIT_SECONDS = 20 * 60
 DELETE_TIMEOUT_SECONDS = 60
+# The etcd pod prints this and the snapshot name when the restic copy does not hold it yet.
+NOT_COPIED = "ETCD-NOT-COPIED"
 Kubectl = Callable[..., CompletedProcess[str]]
 Restore = Callable[[Sequence[str]], CompletedProcess[str]]
 
@@ -118,11 +120,11 @@ def _wait(
     predicate: Callable[[], bool],
     what: str,
     *,
-    timeout: float = WAIT_SECONDS,
+    timeout: float | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    deadline = monotonic() + timeout
+    deadline = monotonic() + (WAIT_SECONDS if timeout is None else timeout)
     while True:
         if predicate():
             return
@@ -168,6 +170,18 @@ def _pod_succeeded(kubectl: Kubectl, name: str, namespace: str) -> bool:
                 f" {message or wait_reason}"
             )
     return phase == "Succeeded"
+
+
+def _pod_node(kubectl: Kubectl, name: str, namespace: str) -> str:
+    pod = _body(
+        kubectl,
+        ["get", "pod", name, "-n", namespace, "-o", "json"],
+        f"read pod {namespace}/{name}",
+    )
+    node = (pod.get("spec") or {}).get("nodeName")
+    if not isinstance(node, str) or not node:
+        raise DrillError(f"pod {namespace}/{name} has no node")
+    return node
 
 
 def _logs(kubectl: Kubectl, name: str, namespace: str) -> str:
@@ -277,8 +291,10 @@ def _templates(kubectl: Kubectl) -> tuple[dict, dict]:
 
 
 def _etcd_pod(template: dict) -> dict:
+    # The name restored is one the latest restic snapshot lists, not whatever the directory holds now.
     command = r"""
 set -eu
+set -o pipefail
 latest=
 for file in /snapshots/*; do
   [ -f "$file" ] || continue
@@ -286,7 +302,13 @@ for file in /snapshots/*; do
 done
 [ -n "$latest" ]
 name=${latest##*/}
+copied=$(restic ls latest /snapshots)
+if ! printf '%s\n' "$copied" | grep -Fx "/snapshots/$name" >/dev/null; then
+  printf '%s %s\n' "$1" "$name"
+  exit 3
+fi
 restic restore latest --target /restore --include "/snapshots/$name" >/dev/null
+[ -f "/restore/snapshots/$name" ]
 original=$(sha256sum "$latest" | cut -d' ' -f1)
 restored=$(sha256sum "/restore/snapshots/$name" | cut -d' ' -f1)
 printf 'ETCD %s %s %s\n' "$original" "$restored" "$name"
@@ -304,7 +326,7 @@ printf 'ETCD %s %s %s\n' "$original" "$restored" "$name"
                     "image": template["image"],
                     "securityContext": {"runAsUser": 0},
                     "env": template["env"],
-                    "command": ["/bin/sh", "-c", command],
+                    "command": ["/bin/sh", "-c", command, "etcd-check", NOT_COPIED],
                     "volumeMounts": [
                         {"name": "snapshots", "mountPath": "/snapshots", "readOnly": True},
                         {"name": "restore", "mountPath": "/restore"},
@@ -511,6 +533,20 @@ def _restore_command(args: Sequence[str]) -> CompletedProcess[str]:
     )
 
 
+def _raise_if_not_copied(kubectl: Kubectl) -> None:
+    """A failed etcd pod that found the newest snapshot missing from the restic copy says so."""
+    proc = kubectl(["logs", ETCD_POD, "-n", BACKUP_NAMESPACE])
+    if proc.returncode:
+        return
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == NOT_COPIED:
+            raise DrillError(
+                f"newest etcd snapshot {parts[1]} is not yet in the restic copy;"
+                " run the drill again after the next etcd-snapshots run"
+            )
+
+
 def _checksum_line(text: str, prefix: str) -> str:
     for line in text.splitlines():
         parts = line.split()
@@ -576,6 +612,8 @@ def _run(
             "create writer pod",
         )
         _wait(lambda: _pod_succeeded(kubectl, WRITER, NAMESPACE), "writer pod")
+        # The restored volume is bound on the node the original lived on.
+        node = _pod_node(kubectl, WRITER, NAMESPACE)
         original = _checksum_line(_logs(kubectl, WRITER, NAMESPACE), "VOLUME")
         if original != expected:
             raise DrillError("writer checksum mismatch")
@@ -609,7 +647,9 @@ def _run(
         _line(f"DELETE PVC {NAMESPACE}/{PVC}")
         _apply(kubectl, _pvc(), "recreate paused drill PVC")
 
-        restored = restore(["make", "restore", f"ENV={env}", f"APP={NAMESPACE}"])
+        restored = restore(
+            ["make", "restore", f"ENV={env}", f"APP={NAMESPACE}", f"NODE={node}"]
+        )
         if restored.stdout:
             _line(restored.stdout.rstrip())
         if restored.stderr:
@@ -633,10 +673,14 @@ def _run(
         _line(f"RESTORED volume checksum {after}")
 
         _create(kubectl, _etcd_pod(etcd_template), "create etcd restore pod")
-        _wait(
-            lambda: _pod_succeeded(kubectl, ETCD_POD, BACKUP_NAMESPACE),
-            "etcd restore pod",
-        )
+        try:
+            _wait(
+                lambda: _pod_succeeded(kubectl, ETCD_POD, BACKUP_NAMESPACE),
+                "etcd restore pod",
+            )
+        except DrillError:
+            _raise_if_not_copied(kubectl)
+            raise
         etcd = _logs(kubectl, ETCD_POD, BACKUP_NAMESPACE)
         line = next((line for line in etcd.splitlines() if line.startswith("ETCD ")), "")
         parts = line.split()

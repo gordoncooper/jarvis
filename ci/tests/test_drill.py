@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import signal
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -53,7 +56,11 @@ class Cluster:
         repo_exists: bool = False,
         etcd_image: str = "restic/restic@sha256:" + "a" * 64,
         etcd_present: bool = True,
+        etcd_copied: bool = True,
+        synced: bool = True,
     ) -> None:
+        self.etcd_copied = etcd_copied
+        self.synced = synced
         self.hold = hold
         self.namespace = namespace
         self.reader_sum = reader_sum
@@ -247,18 +254,24 @@ class Cluster:
                         }
                     },
                 )
-            phase = (
-                "Failed"
-                if self.cleanup_fails and name == drill_tool.CLEANUP_POD
-                else "Succeeded"
+            failed = (self.cleanup_fails and name == drill_tool.CLEANUP_POD) or (
+                not self.etcd_copied and name == drill_tool.ETCD_POD
             )
-            return _completed(argv, {"status": {"phase": phase}})
+            return _completed(
+                argv,
+                {
+                    "spec": {"nodeName": "node-a"},
+                    "status": {"phase": "Failed" if failed else "Succeeded"},
+                },
+            )
         if argv[0] == "logs":
             name = argv[1]
             if name == drill_tool.WRITER:
                 return _completed(argv, f"VOLUME {SUM}\n")
             if name == drill_tool.READER:
                 return _completed(argv, f"VOLUME {self.reader_sum}\n")
+            if name == drill_tool.ETCD_POD and not self.etcd_copied:
+                return _completed(argv, f"{drill_tool.NOT_COPIED} etcd-snapshot-fixture\n")
             if name == drill_tool.ETCD_POD:
                 return _completed(
                     argv,
@@ -271,6 +284,8 @@ class Cluster:
                 )
             return _completed(argv)
         if argv[:2] == ["get", "replicationsource"]:
+            if not self.synced:
+                return _completed(argv, {"status": {}})
             return _completed(argv, {"status": {"lastSyncTime": "2026-10-31T00:00:00Z"}})
         if argv[0] == "annotate":
             return _completed(argv, "annotated\n")
@@ -349,7 +364,7 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     code, restores = _run(tmp_path, monkeypatch, cluster)
     assert code == 0
     assert restores == [
-        ["make", "restore", "ENV=env-test", "APP=platform-drill"]
+        ["make", "restore", "ENV=env-test", "APP=platform-drill", "NODE=node-a"]
     ]
     etcd_pod = next(
         body
@@ -694,6 +709,94 @@ def test_etcd_checksum_mismatch_fails(
     code, _ = _run(tmp_path, monkeypatch, cluster)
     assert code != 0
     assert "etcd snapshot checksum mismatch" in capsys.readouterr().out
+    _assert_cleanup(cluster)
+
+
+def test_etcd_snapshot_not_yet_copied_says_so_and_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A drill that runs before the etcd copy fails with that reason, not a checksum mismatch."""
+    cluster = Cluster(etcd_copied=False)
+    code, _ = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    output = capsys.readouterr().out
+    assert (
+        "FAIL drill: newest etcd snapshot etcd-snapshot-fixture is not yet in the restic copy"
+        in output
+    )
+    assert "checksum mismatch" not in output
+    _assert_cleanup(cluster)
+
+
+# Lists $LISTED (exit 1 when empty) and restores a file at target + original path, as restic does.
+_FAKE_RESTIC = """#!/bin/sh
+case "$1" in
+  ls) [ -n "$LISTED" ] || exit 1; echo 'snapshot 1 of [/snapshots]:'; echo "$LISTED" ;;
+  restore) [ -z "$EMPTY" ] || exit 0; mkdir -p "$4${6%/*}"; cp "$6" "$4$6" ;;
+esac
+"""
+
+
+@pytest.mark.parametrize(
+    ("listed", "empty", "code", "line"),
+    [
+        ("etcd-snapshot-1", "", 0, f"ETCD {hashlib.sha256(b'one').hexdigest()}"),
+        ("etcd-snapshot-0", "", 3, f"{drill_tool.NOT_COPIED} etcd-snapshot-1"),
+        ("", "", 1, ""),
+        ("etcd-snapshot-1", "yes", 1, ""),
+    ],
+)
+def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
+    tmp_path: Path, listed: str, empty: str, code: int, line: str
+) -> None:
+    """The newest local file must be in the latest restic snapshot; a failing restic is not
+    'not copied', and a restore that wrote no file fails before any checksum line."""
+    busybox = shutil.which("busybox")
+    shell = [busybox, "sh"] if busybox else ["bash"]
+    snaps, target, bindir = (tmp_path / name for name in ("snaps", "target", "bin"))
+    for path in (snaps, target, bindir):
+        path.mkdir()
+    (snaps / "etcd-snapshot-1").write_bytes(b"one")
+    (bindir / "restic").write_text(_FAKE_RESTIC, encoding="utf-8")
+    (bindir / "restic").chmod(0o755)
+    template = {"image": "x", "env": [], "nodeSelector": {}, "snapshotHostPath": {}}
+    command = drill_tool._etcd_pod(template)["spec"]["containers"][0]["command"]
+    script = command[2].replace("/snapshots", "\0S").replace("/restore", "\0R")
+    script = script.replace("\0S", str(snaps)).replace("\0R", str(target))
+    proc = subprocess.run(
+        [*shell, "-c", script, *command[3:]],
+        env={
+            "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+            "LISTED": f"{snaps}/{listed}" if listed else "",
+            "EMPTY": empty,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == code
+    assert line in proc.stdout
+    if code != 3:
+        assert drill_tool.NOT_COPIED not in proc.stdout
+    if code:
+        assert "ETCD " not in proc.stdout
+
+
+def test_drill_waits_for_a_fresh_backup_before_deleting_the_volume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without a completed sync of the scratch payload, the drill never deletes or restores it."""
+    monkeypatch.setattr(drill_tool, "WAIT_SECONDS", 0)
+    cluster = Cluster(synced=False)
+    code, restores = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    assert restores == []
+    assert ("pvc", drill_tool.PVC) not in cluster.deleted
+    assert "FAIL drill: fresh volume backup: timed out" in capsys.readouterr().out
     _assert_cleanup(cluster)
 
 

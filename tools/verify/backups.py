@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from lib._env import json_object, not_found, reason
 
@@ -14,12 +14,15 @@ from verify.common import (
     items,
     pending_first_run,
     recent,
+    scheduled_instants,
 )
 from verify.registry import register
 
 HOLD_NAMESPACE = "kube-system"
 HOLD_NAME = "backup-rebuild-hold"
 SECRET_KEYS_TEMPLATE = "{{range $k, $_ := .data}}{{println $k}}{{end}}"
+# Covers the check Job's 6h activeDeadlineSeconds (retries included) with room for a late start.
+CHECK_GRACE = timedelta(hours=12)
 
 
 def check_secret(kubectl: Kubectl) -> None:
@@ -106,21 +109,39 @@ def check_backups(
         raise CheckError(f"read backup rebuild hold: {reason(hold)}")
 
 
-def _cronjob(kubectl: Kubectl) -> dict:
+def _cronjob(kubectl: Kubectl, name: str = "etcd-snapshots") -> dict:
     return json_object(
-        kubectl(
-            [
-                "get",
-                "cronjob",
-                "etcd-snapshots",
-                "-n",
-                "platform-backups",
-                "-o",
-                "json",
-            ]
-        ),
-        "read etcd-snapshots CronJob",
+        kubectl(["get", "cronjob", name, "-n", "platform-backups", "-o", "json"]),
+        f"read {name} CronJob",
     )
+
+
+def check_repository_integrity(kubectl: Kubectl, *, now: datetime) -> None:
+    """The last restic-check success is at most one interval plus CHECK_GRACE old."""
+    cronjob = _cronjob(kubectl, "restic-check")
+    spec, status = cronjob.get("spec") or {}, cronjob.get("status") or {}
+    schedule, zone = spec.get("schedule"), spec.get("timeZone")
+    last = status.get("lastSuccessfulTime")
+    if not isinstance(schedule, str) or not isinstance(zone, str):
+        raise CheckError("repository check has no schedule or time zone")
+    if not isinstance(last, str):
+        created = (cronjob.get("metadata") or {}).get("creationTimestamp")
+        if (
+            not isinstance(status.get("lastScheduleTime"), str)
+            and isinstance(created, str)
+            and pending_first_run(created, schedule, zone, now)
+        ):
+            raise CheckWarning("repository check pending first run")
+        raise CheckError("repository check has no successful run")
+    try:
+        completed = datetime.fromisoformat(last.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CheckError("invalid repository check timestamp") from exc
+    if completed.tzinfo is None:
+        raise CheckError("repository check timestamp has no timezone")
+    previous = scheduled_instants(schedule, zone, now, 2)
+    if now.astimezone(timezone.utc) - completed > previous[0] - previous[1] + CHECK_GRACE:
+        raise CheckError("repository check is stale; read the restic-check Job logs")
 
 
 @register("backups")
@@ -135,5 +156,10 @@ def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
                 zone_name=str(ctx.values["time_zone"]),
                 now=ctx.now,
             ),
+        ),
+        (
+            65,
+            "repository integrity check",
+            lambda: check_repository_integrity(ctx.kubectl, now=ctx.now),
         ),
     ]

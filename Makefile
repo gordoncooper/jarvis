@@ -11,8 +11,8 @@ help:
 	@echo "  make verify             Read-only standing-state checks (ENV=<env> required)"
 	@echo "  make drill              Scratch volume and etcd restore drill (ENV=<env> required)"
 	@echo "  make drill-cleanup      Retry drill namespace/repository cleanup (ENV=<env> required)"
-	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339)"
-	@echo "  make restore-all        Restore all PVCs (ENV required; optional RETIRE, ACCEPT_EMPTY)"
+	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339, NODE)"
+	@echo "  make restore-all        Restore all PVCs (ENV required; optional RETIRE, ACCEPT_EMPTY, NODE)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
 	@echo
@@ -44,13 +44,15 @@ drill-cleanup:
 restore:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
-	@python3 tools/restore --env "$(ENV)" --app "$(APP)"
+	@python3 tools/restore --env "$(ENV)" --app "$(APP)" \
+		$(if $(NODE),--node "$(NODE)")
 
 restore-all:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@python3 tools/restore --env "$(ENV)" --all \
 		$(if $(RETIRE),--retire "$(RETIRE)") \
-		$(if $(ACCEPT_EMPTY),--accept-empty "$(ACCEPT_EMPTY)")
+		$(if $(ACCEPT_EMPTY),--accept-empty "$(ACCEPT_EMPTY)") \
+		$(if $(NODE),--node "$(NODE)")
 
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)

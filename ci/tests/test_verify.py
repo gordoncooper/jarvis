@@ -11,6 +11,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
+import yaml
 
 from support import REPO_ROOT, load_tool
 
@@ -61,6 +62,9 @@ class Cluster:
         self.etcd_sync: str | None = "2026-10-31T05:10:00Z"
         self.etcd_scheduled: str | None = None
         self.etcd_created = "2026-01-01T00:00:00Z"
+        self.check_sync: str | None = "2026-10-28T06:40:00Z"
+        self.check_created = "2026-01-01T00:00:00Z"
+        self.check_scheduled: str | None = None
         self.hold = False
         self.bad_sources_json = False
         self.node_ready = True
@@ -164,6 +168,20 @@ class Cluster:
                         "timeZone": self.etcd_zone,
                     },
                     "status": status,
+                },
+            )
+        if argv[:3] == ["get", "cronjob", "restic-check"]:
+            check_status = {}
+            if self.check_sync is not None:
+                check_status["lastSuccessfulTime"] = self.check_sync
+            if self.check_scheduled is not None:
+                check_status["lastScheduleTime"] = self.check_scheduled
+            return _completed(
+                argv,
+                {
+                    "metadata": {"creationTimestamp": self.check_created},
+                    "spec": {"schedule": "30 6 * * 3", "timeZone": "Etc/UTC"},
+                    "status": check_status,
                 },
             )
         if argv[:3] == ["get", "configmap", verify_tool.HOLD_NAME]:
@@ -270,6 +288,7 @@ def test_verify_passes_without_writes_or_secret_output(
     assert "PASS nodes Ready" in output
     assert "PASS pod health" in output
     assert "PASS backup freshness" in output
+    assert "PASS repository integrity check" in output
     assert "PASS LAN HTTPS and certificate issuer=issuer=CN = fixture-ca" in output
     _assert_read_only_calls(cluster.calls, [])
 
@@ -566,6 +585,61 @@ def test_old_cronjob_without_success_fails(
     cluster.etcd_created = "2026-10-30T00:00:00Z"
     assert _run(tmp_path, cluster, monkeypatch) != 0
     assert "etcd snapshot copy has no successful scheduled run" in capsys.readouterr().out
+
+
+# NOW is Saturday 12:00Z; the weekly check is Wednesday 06:30, so interval plus grace is 7d12h.
+_YOUNG = "2026-10-30T00:00:00Z"
+_OLD = "2026-01-01T00:00:00Z"
+_NO_RUN = "FAIL repository integrity check: repository check has no successful run"
+
+
+@pytest.mark.parametrize(
+    ("last", "created", "scheduled", "code", "line"),
+    [
+        ("2026-10-24T01:00:00Z", _OLD, None, 0, "PASS repository integrity check"),
+        (
+            "2026-10-23T23:00:00Z",
+            _OLD,
+            None,
+            1,
+            "FAIL repository integrity check: repository check is stale",
+        ),
+        (
+            None,
+            _YOUNG,
+            None,
+            0,
+            "WARN repository integrity check: repository check pending first run",
+        ),
+        (None, _YOUNG, "2026-10-31T06:30:00Z", 1, _NO_RUN),
+        (None, "2026-10-20T00:00:00Z", None, 1, _NO_RUN),
+    ],
+)
+def test_repository_check_freshness_allows_one_interval_plus_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    last: str | None,
+    created: str,
+    scheduled: str | None,
+    code: int,
+    line: str,
+) -> None:
+    cluster = Cluster()
+    cluster.check_sync = last
+    cluster.check_created = created
+    cluster.check_scheduled = scheduled
+    assert _run(tmp_path, cluster, monkeypatch) == code
+    assert line in capsys.readouterr().out
+
+
+def test_repository_check_deadline_fits_inside_verify_grace() -> None:
+    """A check Job still inside its deadline never makes verify report it stale."""
+    job = yaml.safe_load(
+        (REPO_ROOT / "platform/backups/restic-check.yaml").read_text(encoding="utf-8")
+    )["spec"]["jobTemplate"]["spec"]
+    grace = sys.modules["verify.backups"].CHECK_GRACE
+    assert 0 < job["activeDeadlineSeconds"] < grace.total_seconds()
 
 
 def test_not_ready_node_fails(
