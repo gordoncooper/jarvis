@@ -58,7 +58,8 @@ A required key that is present but null counts as unset and fails.
 | `apps_git_repo_url` | no | When set, an https Git remote for the apps repo, with the same owner handle as `flux_git_repo_url`. When unset, the env owner is the `flux_git_repo_url` handle. That handle is the same across every non-example env. |
 | `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
 | `llm_provider_host` | no | When set, an AI provider API hostname, with no scheme, path, or port. |
-| `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4 nts` line. |
+| `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
+| `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
 | `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
 | `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
 | `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. |
@@ -101,7 +102,7 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR. It has no `secrets/`, no SOPS creation rule, and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
+`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
 ### Explicit env
 

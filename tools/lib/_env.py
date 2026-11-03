@@ -39,19 +39,28 @@ def kubectl(
     *,
     repo_root: Path,
     kubeconfig: Path,
+    request_timeout: str | None = None,
+    timeout: float | None = None,
 ) -> CompletedProcess[str]:
+    argv = ["kubectl", "--kubeconfig", str(kubeconfig)]
+    if request_timeout is not None:
+        argv.append(f"--request-timeout={request_timeout}")
+    argv.extend(args)
     try:
         return subprocess.run(
-            ["kubectl", "--kubeconfig", str(kubeconfig), *args],
+            argv,
             input=input,
             env=tool_env(repo_root),
             capture_output=True,
             text=True,
+            timeout=timeout,
             check=False,
         )
     except FileNotFoundError:
         print("run make deps", flush=True)
         raise SystemExit(1) from None
+    except subprocess.TimeoutExpired:
+        return CompletedProcess(argv, 1, "", "kubectl timed out")
 
 
 def reason(proc: CompletedProcess[str]) -> str:

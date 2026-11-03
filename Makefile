@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all
+.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check
 help:
 	@echo "JARVIS Makefile"
 	@echo
@@ -13,8 +13,9 @@ help:
 	@echo "  make drill-cleanup      Retry drill namespace/repository cleanup (ENV=<env> required)"
 	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339)"
 	@echo "  make restore-all        Restore all PVCs (ENV required; optional RETIRE, ACCEPT_EMPTY)"
-	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
+	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
+	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
 	@echo
 	@echo "Developer commands"
 	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
@@ -31,36 +32,41 @@ ci-verify: deps
 
 verify:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/verify/run --env "$(ENV)"
+	@.venv/bin/python tools/verify/run --env "$(ENV)"
 
 drill:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/drill --env "$(ENV)"
+	@.venv/bin/python tools/drill --env "$(ENV)"
 
 drill-cleanup:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/drill --env "$(ENV)" --cleanup-only
+	@.venv/bin/python tools/drill --env "$(ENV)" --cleanup-only
 
 restore:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
-	@python3 tools/restore --env "$(ENV)" --app "$(APP)"
+	@.venv/bin/python tools/restore --env "$(ENV)" --app "$(APP)"
 
 restore-all:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/restore --env "$(ENV)" --all \
+	@.venv/bin/python tools/restore --env "$(ENV)" --all \
 		$(if $(RETIRE),--retire "$(RETIRE)") \
 		$(if $(ACCEPT_EMPTY),--accept-empty "$(ACCEPT_EMPTY)")
 
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/bootstrap-secrets --env "$(ENV)"
+	@.venv/bin/python tools/bootstrap-secrets --env "$(ENV)" $(if $(filter 1,$(ROTATE_RESTIC)),--rotate-restic,)
+
+age-key-check:
+	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
+	@test -n "$(KEY)" || (echo "KEY is required" >&2; exit 1)
+	@.venv/bin/python tools/age-key-check --env "$(ENV)" --key-file "$(KEY)"
 
 seal:
 	@test -n "$(NAME)" || (echo "NAME is required (<component>-<purpose>)" >&2; exit 1)
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@if [ -n "$(FILE)" ]; then \
-		python3 tools/seal --env "$(ENV)" --name "$(NAME)" "$(FILE)"; \
+		.venv/bin/python tools/seal --env "$(ENV)" --name "$(NAME)" "$(FILE)"; \
 	else \
-		python3 tools/seal --env "$(ENV)" --name "$(NAME)"; \
+		.venv/bin/python tools/seal --env "$(ENV)" --name "$(NAME)"; \
 	fi
