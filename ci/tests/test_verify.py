@@ -608,6 +608,39 @@ def test_first_run_warns_only_while_pending_or_running_in_its_first_interval(
 
 
 @pytest.mark.parametrize(
+    ("created", "code", "line"),
+    [
+        (
+            "2026-10-24T06:00:00Z",
+            0,
+            "WARN repository integrity check: repository check first run in progress",
+        ),
+        (
+            "2026-10-23T23:00:00Z",
+            1,
+            "FAIL repository integrity check: repository check has no successful scheduled run",
+        ),
+    ],
+)
+def test_repository_check_first_run_gets_the_same_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    created: str,
+    code: int,
+    line: str,
+) -> None:
+    """A first run still going just past one interval after creation warns, not fails."""
+    cluster = Cluster()
+    cluster.check_sync = None
+    cluster.check_created = created
+    cluster.check_scheduled = "2026-10-31T06:30:00Z"
+    cluster.check_active = True
+    assert _run(tmp_path, cluster, monkeypatch) == code
+    assert line in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
     ("last", "code", "line"),
     [
         ("2026-10-24T01:00:00Z", 0, "PASS repository integrity check"),

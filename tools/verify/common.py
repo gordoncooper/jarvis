@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from subprocess import CompletedProcess
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -137,7 +137,11 @@ def recent(stamp: str, schedule: str, zone_name: str, now: datetime) -> bool:
 
 
 def pending_first_run(
-    created_stamp: str, schedule: str, zone_name: str, now: datetime
+    created_stamp: str,
+    schedule: str,
+    zone_name: str,
+    now: datetime,
+    grace: timedelta = timedelta(0),
 ) -> bool:
     try:
         created = datetime.fromisoformat(created_stamp.replace("Z", "+00:00"))
@@ -148,18 +152,25 @@ def pending_first_run(
     previous = scheduled_instants(schedule, zone_name, now, 2)
     interval = previous[0] - previous[1]
     age = now.astimezone(timezone.utc) - created.astimezone(timezone.utc)
-    return age < interval
+    return age < interval + grace
 
 
 def no_success_yet(
-    cronjob: dict, schedule: str, zone_name: str, now: datetime, what: str
+    cronjob: dict,
+    schedule: str,
+    zone_name: str,
+    now: datetime,
+    what: str,
+    grace: timedelta = timedelta(0),
 ) -> None:
-    """A CronJob with no successful run: WARN inside its first interval while its first run
-    is not scheduled yet or still running; FAIL once a run finished without success, or after
-    the first interval."""
+    """A CronJob with no successful run: WARN inside its first interval plus grace while its
+    first run is not scheduled yet or still running; FAIL once a run finished without success,
+    or after the first interval plus grace."""
     status = cronjob.get("status") or {}
     created = (cronjob.get("metadata") or {}).get("creationTimestamp")
-    if isinstance(created, str) and pending_first_run(created, schedule, zone_name, now):
+    if isinstance(created, str) and pending_first_run(
+        created, schedule, zone_name, now, grace
+    ):
         if status.get("active"):
             raise CheckWarning(f"{what} first run in progress")
         if not isinstance(status.get("lastScheduleTime"), str):

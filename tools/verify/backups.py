@@ -116,7 +116,7 @@ def check_repository_integrity(kubectl: Kubectl, *, now: datetime) -> None:
     if not isinstance(schedule, str) or not isinstance(zone, str):
         raise CheckError("repository check has no schedule or time zone")
     if not isinstance(last, str):
-        no_success_yet(cronjob, schedule, zone, now, "repository check")
+        no_success_yet(cronjob, schedule, zone, now, "repository check", CHECK_GRACE)
     try:
         completed = datetime.fromisoformat(last.replace("Z", "+00:00"))
     except ValueError as exc:
