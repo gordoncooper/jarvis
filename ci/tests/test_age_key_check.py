@@ -125,6 +125,41 @@ def test_default_key_location_does_not_rescue_a_wrong_key(
     assert passed.err == ""
 
 
+@pytest.mark.parametrize("mode", [0o640, 0o620, 0o604, 0o602])
+def test_group_or_other_read_or_write_fails_before_sops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    mode: int,
+) -> None:
+    """A key file readable or writable by group or others prints FAIL and does not call sops."""
+    mod = _load()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    secrets = tmp_path / "envs" / "env-test" / "secrets"
+    secrets.mkdir(parents=True)
+    (secrets / "app.sops.yaml").write_text("fake-ciphertext\n", encoding="utf-8")
+    key = tmp_path / "key.txt"
+    key.write_text("not-a-real-age-key\n", encoding="utf-8")
+    key.chmod(mode)
+
+    def which(name: str) -> str | None:
+        return "/usr/bin/sops" if name == "sops" else None
+
+    monkeypatch.setattr(mod.shutil, "which", which)
+    calls: list[object] = []
+
+    def spy(*args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess([], 1, b"", b"")
+
+    monkeypatch.setattr(mod.subprocess, "run", spy)
+    assert mod.main(["--env", "env-test", "--key-file", str(key)]) == 1
+    captured = capfd.readouterr()
+    assert captured.out == "FAIL\n"
+    assert captured.err == ""
+    assert calls == []
+
+
 def test_env_with_no_secrets_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
     """An env with no secrets prints FAIL."""
     mod = _load()

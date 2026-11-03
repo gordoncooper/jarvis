@@ -46,6 +46,7 @@ restore:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
 	@.venv/bin/python tools/restore --env "$(ENV)" --app "$(APP)" \
+		$(if $(AS_OF),--as-of "$(AS_OF)") \
 		$(if $(NODE),--node "$(NODE)")
 
 restore-all:
