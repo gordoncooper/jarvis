@@ -26,9 +26,32 @@ from support import REPO_ROOT, _valid_cluster_vars, _write_env
 def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
     _write_env(tmp_path)
     (tmp_path / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
+    validate_env_tree(tmp_path, pre_host=True)
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "envs/env-test/secrets/" in "\n".join(excinfo.value.messages)
+
+
+def test_pre_host_rejects_two_sops_rules_for_one_env(tmp_path: Path):
+    """A duplicate creation rule fails before a host is touched."""
+    _write_env(tmp_path)
+    path = tmp_path / ".sops.yaml"
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    loaded["creation_rules"].append(dict(loaded["creation_rules"][0]))
+    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path, pre_host=True)
+    assert "found 2" in "\n".join(excinfo.value.messages)
+
+
+def test_pre_host_rejects_invalid_sops_yaml(tmp_path: Path):
+    """Invalid .sops.yaml is reported in pre-host, not swallowed."""
+    _write_env(tmp_path)
+    (tmp_path / ".sops.yaml").write_text("{\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path, pre_host=True)
+    assert "invalid YAML" in "\n".join(excinfo.value.messages)
 
 
 def test_sops_creation_rule_for_missing_env_fails(tmp_path: Path):
@@ -65,7 +88,7 @@ def test_sops_creation_rule_rejects_example_env(tmp_path: Path):
     )
     path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
+        validate_env_tree(tmp_path, pre_host=True)
     assert f"{EXAMPLE_ENV} must not have a creation rule" in "\n".join(
         excinfo.value.messages
     )
@@ -273,7 +296,9 @@ def test_apps_git_repo_url_must_be_https_when_set(tmp_path: Path):
     [
         ("https://user@github.com/example-owner/example-cluster", "userinfo"),
         ("https://github.com/example-owner/example-cluster?foo=1", "query"),
+        ("https://github.com/example-owner/example-cluster?", "query"),
         ("https://github.com/example-owner/example-cluster#frag", "fragment"),
+        ("https://github.com/example-owner/example-cluster#", "fragment"),
     ],
 )
 def test_repo_urls_reject_userinfo_query_and_fragment(
@@ -328,6 +353,33 @@ def test_flux_instance_example_sync_fails_when_cluster_vars_differ(tmp_path: Pat
     assert "flux-instance.yaml" in msg
     assert "flux_git_repo_url" in msg
     assert "flux_git_ref" in msg
+
+
+def test_flux_instance_path_must_match_this_env(tmp_path: Path) -> None:
+    """FluxInstance spec.sync.path must be envs/<env>/flux."""
+    env = _write_env(tmp_path)
+    cv = yaml.safe_load((env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
+    flux = env / "flux"
+    flux.mkdir()
+    (flux / "flux-instance.yaml").write_text(
+        textwrap.dedent(
+            f"""
+            spec:
+              sync:
+                url: "{cv["flux_git_repo_url"]}"
+                ref: "{cv["flux_git_ref"]}"
+                path: "envs/env-other/flux"
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    msg = "\n".join(excinfo.value.messages)
+    assert "flux-instance.yaml" in msg
+    assert "spec.sync.path" in msg
+    assert "envs/env-test/flux" in msg
 
 
 def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -> None:

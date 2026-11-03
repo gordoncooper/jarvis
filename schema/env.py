@@ -119,8 +119,8 @@ def validate_env_tree(
 ) -> dict[str, dict[str, Any]]:
     """Validate every env under envs/. Returns resolved cluster-vars per env name.
 
-    pre_host skips the per-env .sops.yaml recipient requirement and the generated
-    ConfigMap render check. Those still run in the full check.
+    pre_host skips the missing-recipient requirement and the generated ConfigMap
+    render check. Other .sops.yaml checks still run. The full check runs both.
     """
     root = Path(repo_root).resolve()
     envs_dir = root / "envs"
@@ -143,33 +143,46 @@ def validate_env_tree(
         if env_resolved is not None:
             resolved_by_env[env_dir.name] = env_resolved
 
-    if not pre_host:
-        errors.extend(_validate_sops_creation_rules(root, env_names))
-    errors.extend(_validate_sops_unknown_env_rules(root, env_names))
+    rules, sops_errors = _load_sops_creation_rules(root)
+    errors.extend(sops_errors)
+    if rules is not None:
+        errors.extend(
+            _validate_sops_creation_rules(
+                rules, env_names, require_recipient=not pre_host
+            )
+        )
+        errors.extend(_validate_sops_unknown_env_rules(rules, env_names))
 
     if errors:
         raise ValidationError(errors)
     return resolved_by_env
 
 
-def _validate_sops_creation_rules(repo_root: Path, env_names: list[str]) -> list[str]:
-    """One age creation rule per non-example env, and none for the example env."""
+def _load_sops_creation_rules(
+    repo_root: Path,
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Load .sops.yaml creation rules. None means the file is unusable."""
     path = repo_root / ".sops.yaml"
     if not path.is_file():
-        rules: list[dict[str, Any]] = []
-    else:
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            return [f".sops.yaml: invalid YAML: {exc}"]
-        if data is None:
-            data = {}
-        if not isinstance(data, dict):
-            return [".sops.yaml: expected a YAML mapping"]
-        raw = data.get("creation_rules", [])
-        if not isinstance(raw, list):
-            return [".sops.yaml: creation_rules must be a list"]
-        rules = [rule for rule in raw if isinstance(rule, dict)]
+        return [], []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        return None, [f".sops.yaml: invalid YAML: {exc}"]
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return None, [".sops.yaml: expected a YAML mapping"]
+    raw = data.get("creation_rules", [])
+    if not isinstance(raw, list):
+        return None, [".sops.yaml: creation_rules must be a list"]
+    return [rule for rule in raw if isinstance(rule, dict)], []
+
+
+def _validate_sops_creation_rules(
+    rules: list[dict[str, Any]], env_names: list[str], *, require_recipient: bool
+) -> list[str]:
+    """One age creation rule per non-example env, and none for the example env."""
 
     def keyed(env_name: str) -> list[dict[str, Any]]:
         needle = f"envs/{env_name}/secrets/"
@@ -191,7 +204,7 @@ def _validate_sops_creation_rules(repo_root: Path, env_names: list[str]) -> list
                     f".sops.yaml: {env_name} must not have a creation rule, found {count}"
                 )
             continue
-        if count != 1:
+        if count > 1 or (require_recipient and count != 1):
             errors.append(
                 f".sops.yaml: expected exactly one creation rule for "
                 f"envs/{env_name}/secrets/, found {count}"
@@ -199,26 +212,14 @@ def _validate_sops_creation_rules(repo_root: Path, env_names: list[str]) -> list
     return errors
 
 
-def _validate_sops_unknown_env_rules(repo_root: Path, env_names: list[str]) -> list[str]:
+def _validate_sops_unknown_env_rules(
+    rules: list[dict[str, Any]], env_names: list[str]
+) -> list[str]:
     """A creation rule must name an env folder that exists."""
-    path = repo_root / ".sops.yaml"
-    if not path.is_file():
-        return []
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return []
-    if not isinstance(data, dict):
-        return []
-    raw = data.get("creation_rules", [])
-    if not isinstance(raw, list):
-        return []
     known = set(env_names)
     errors: list[str] = []
     seen: set[str] = set()
-    for rule in raw:
-        if not isinstance(rule, dict):
-            continue
+    for rule in rules:
         regex = rule.get("path_regex")
         if not isinstance(regex, str):
             continue
@@ -701,9 +702,9 @@ def _validate_https_url(rel_path: str, key: str, value: Any) -> list[str]:
         return [f"{rel_path}: {key} must be an https URL"]
     if parsed.username is not None or parsed.password is not None:
         return [f"{rel_path}: {key} must not include userinfo"]
-    if parsed.query:
+    if "?" in value:
         return [f"{rel_path}: {key} must not include a query"]
-    if parsed.fragment:
+    if "#" in value:
         return [f"{rel_path}: {key} must not include a fragment"]
     return []
 

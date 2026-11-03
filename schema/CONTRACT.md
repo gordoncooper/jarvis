@@ -118,7 +118,7 @@ The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_
 
 The FluxInstance `spec.sync` url, ref, and path match `flux_git_repo_url`, `flux_git_ref`, and `envs/<env>/flux`.
 
-`validate_env_tree(..., pre_host=True)` skips the per-env `.sops.yaml` recipient requirement and the generated ConfigMap match. `tools/prep-node` uses that mode before it contacts a host, then runs the full check at the end.
+`validate_env_tree(..., pre_host=True)` skips the missing `.sops.yaml` recipient requirement and the generated ConfigMap match. Other `.sops.yaml` checks still run. `tools/prep-node` uses that mode before it contacts a host, then runs the full check at the end.
 
 ### Identity values and product rules
 

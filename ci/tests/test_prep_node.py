@@ -104,22 +104,39 @@ def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
     assert generated.stat().st_mtime_ns == generated_mtime
 
 
-def test_ssh_user_mismatch_is_refused(tmp_path: Path) -> None:
-    """A second node may not change the env-wide ssh_user; per-host users come later."""
+def _copy_example_env(root: Path, name: str = "env-new") -> Path:
+    dest = root / "envs" / name
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    _rename_copied_env(dest, "env-00", name)
+    return dest
+
+
+def test_first_node_replaces_example_ssh_user(tmp_path: Path) -> None:
+    """A fresh env-00 copy records a real login in place of the example placeholder."""
     module = _load()
-    env = tmp_path / "envs" / "env-test"
-    inventory = env / "inventory" / "hosts.yml"
-    cluster = env / "values" / "cluster-vars.yaml"
-    inventory.parent.mkdir(parents=True)
-    cluster.parent.mkdir(parents=True)
-    inventory.write_text(_HOSTS, encoding="utf-8")
-    cluster.write_text(_CLUSTER, encoding="utf-8")
+    dest = _copy_example_env(tmp_path)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    inventory = dest / "inventory" / "hosts.yml"
+    assert "ssh_user: example" in cluster.read_text(encoding="utf-8")
 
-    with pytest.raises(module.PrepError, match="per-host users come later"):
-        module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "ops")
+    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ubuntu")
 
-    assert inventory.read_text(encoding="utf-8") == _HOSTS
-    assert cluster.read_text(encoding="utf-8") == _CLUSTER
+    text = cluster.read_text(encoding="utf-8")
+    assert "ssh_user: ubuntu" in text
+    assert "ssh_user: example" not in text
+    assert "cp-1:" in inventory.read_text(encoding="utf-8")
+
+
+def test_same_ssh_user_passes_on_a_second_node(tmp_path: Path) -> None:
+    """The same recorded ssh_user may be used again."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ubuntu")
+    cluster = dest / "values" / "cluster-vars.yaml"
+    before = cluster.read_text(encoding="utf-8")
+    module.require_recorded_ssh_user(tmp_path, "env-new", "ubuntu")
+    module.apply_env_edits(tmp_path, "env-new", "wk-1", "wk-1", "ubuntu")
+    assert cluster.read_text(encoding="utf-8") == before
 
 
 def _ssh_snapshot() -> tuple[tuple[str, ...], bytes | None, int | None]:
@@ -506,19 +523,7 @@ def test_env_schema_oserror_is_prep_error(tmp_path: Path) -> None:
     assert isinstance(excinfo.value.__cause__, OSError)
 
 
-def test_schema_error_makes_zero_host_calls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A schema error exits before SSH, ssh-keyscan, or other host calls."""
-    module = _load()
-    dest = tmp_path / "envs" / "env-00"
-    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
-    cluster = dest / "values" / "cluster-vars.yaml"
-    original = cluster.read_text(encoding="utf-8")
-    seeded = original.replace("dns_suffix: env-00.example", "dns_suffix: Home_Lab", 1)
-    assert seeded != original
-    cluster.write_text(seeded, encoding="utf-8")
-
+def _block_host_calls(module: object, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     host_calls: list[str] = []
 
     def record(name: str):
@@ -537,7 +542,6 @@ def test_schema_error_makes_zero_host_calls(
             raise AssertionError(f"{command} called")
         return real_run(argv, *args, **kwargs)
 
-    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(module, "assert_host_resolves", record("assert_host_resolves"))
     monkeypatch.setattr(module, "ensure_host_key", record("ensure_host_key"))
     monkeypatch.setattr(module, "scan_host_keys", record("scan_host_keys"))
@@ -545,11 +549,132 @@ def test_schema_error_makes_zero_host_calls(
     monkeypatch.setattr(module, "ssh", record("ssh"))
     monkeypatch.setattr(module, "batch_ssh", record("batch_ssh"))
     monkeypatch.setattr(module.subprocess, "run", guarded_run)
+    return host_calls
+
+
+def test_schema_error_makes_zero_host_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema error exits before SSH, ssh-keyscan, or other host calls."""
+    module = _load()
+    dest = tmp_path / "envs" / "env-00"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    original = cluster.read_text(encoding="utf-8")
+    seeded = original.replace("dns_suffix: env-00.example", "dns_suffix: Home_Lab", 1)
+    assert seeded != original
+    cluster.write_text(seeded, encoding="utf-8")
+    host_calls = _block_host_calls(module, monkeypatch)
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
 
     with pytest.raises(module.PrepError) as excinfo:
-        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "tester"])
+        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
     assert "dns_suffix" in str(excinfo.value)
     assert host_calls == []
+
+
+def test_second_node_ssh_user_mismatch_is_refused_before_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A different ssh_user on a second node fails before any host step."""
+    module = _load()
+    dest = _copy_example_env(tmp_path)
+    module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ubuntu")
+    assert "ssh_user: ubuntu" in dest.joinpath("values/cluster-vars.yaml").read_text(
+        encoding="utf-8"
+    )
+    host_calls = _block_host_calls(module, monkeypatch)
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+
+    with pytest.raises(module.PrepError, match="per-host users come later"):
+        module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ops"])
+    assert host_calls == []
+
+
+def test_first_node_placeholder_ssh_user_reaches_host_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh copy does not refuse a real login; host checks are what run next."""
+    module = _load()
+    _copy_example_env(tmp_path)
+    host_calls: list[str] = []
+
+    def stop(*_args: object, **_kwargs: object) -> None:
+        host_calls.append("assert_host_resolves")
+        raise module.PrepError("stopped after pre-host")
+
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(module, "assert_host_resolves", stop)
+
+    with pytest.raises(module.PrepError, match="stopped after pre-host"):
+        module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ubuntu"])
+    assert host_calls == ["assert_host_resolves"]
+
+
+def test_missing_age_keygen_exits_before_host_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """age-keygen is required before any host call."""
+    module = _load()
+    real_which = module.shutil.which
+
+    def which(name: str) -> str | None:
+        if name == "age-keygen":
+            return None
+        return real_which(name)
+
+    host_calls = _block_host_calls(module, monkeypatch)
+    monkeypatch.setattr(module.shutil, "which", which)
+
+    with pytest.raises(module.PrepError, match="age-keygen"):
+        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
+    assert host_calls == []
+
+
+def test_run_calls_full_schema_after_host_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After host edits, run() still applies the full env schema."""
+    module = _load()
+    dest = tmp_path / "envs" / "env-00"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    schema_modes: list[bool] = []
+
+    def track_schema(repo: Path, *, pre_host: bool = False) -> None:
+        schema_modes.append(pre_host)
+        if pre_host:
+            module.validate_env_tree(repo, pre_host=True)
+            return
+        raise module.PrepError("full schema failed")
+
+    class _Session:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(module, "run_env_schema", track_schema)
+    monkeypatch.setattr(module, "assert_host_resolves", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "ensure_public_key", lambda: Path("/tmp/id.pub"))
+    monkeypatch.setattr(module, "public_key_text", lambda _p: "ssh-ed25519 AAAA")
+    monkeypatch.setattr(module, "ensure_host_key", lambda _h: None)
+    monkeypatch.setattr(module, "open_session", lambda *_a, **_k: _Session())
+    monkeypatch.setattr(module, "install_login_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "ensure_sudo", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "configure_hostname", lambda *_a, **_k: "cp-1")
+    monkeypatch.setattr(module, "choose_ansible_user", lambda login: login)
+    monkeypatch.setattr(module, "ensure_ansible_user", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "install_minimum", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "report_address", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "proof", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "offer_ssh_passwords_off", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "check_clock", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "apply_env_edits", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "sync_age_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "show_git_diff", lambda *_a, **_k: None)
+
+    with pytest.raises(module.PrepError, match="full schema failed"):
+        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
+    assert schema_modes == [True, False]
 
 
 def test_doc_order_copy_passes_pre_host_without_creation_rule(
@@ -574,7 +699,7 @@ def test_doc_order_copy_passes_pre_host_without_creation_rule(
 
     module.run_env_schema(root, pre_host=True)
 
-    module.apply_env_edits(root, "env-new", "cp-1", "cp-1", "example")
+    module.apply_env_edits(root, "env-new", "cp-1", "cp-1", "ubuntu")
     monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: True)
     module.sync_age_key(root, "env-new")
     module.run_env_schema(root)
