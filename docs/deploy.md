@@ -106,9 +106,35 @@ make drill ENV=<env>
 
 Produces a scratch-volume restore and an etcd snapshot-copy check, then removes the scratch namespace and repository. Success is `PASS drill cleanup complete` and exit 0. If cleanup cannot finish, the tool prints `make drill-cleanup ENV=<env>`. What the drill changes is in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md).
 
-## Backups
+## Restore
 
-Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss. Restore and the etcd reset are in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md).
+One namespace:
+
+```bash
+make restore ENV=<env> APP=<namespace>
+```
+
+Optional `AS_OF=<RFC3339>` and `NODE=<node>`. Produces a restore of that namespace's PVCs. Success is a `PASS restore <namespace>/<pvc>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0.
+
+Every enrolled PVC:
+
+```bash
+make restore-all ENV=<env>
+```
+
+Optional `RETIRE` and `ACCEPT_EMPTY`. Produces a restore of every enrolled PVC. Success is `HOLD lifted` when a hold was set, the same `SUMMARY` line, and exit 0.
+
+The etcd cluster reset is owner-run and is not a make target. Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss. Detail is in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md).
+
+## Age key
+
+Keep two copies of the one age private key. The second copy stays offline, off the controller. Prove each copy as the owner, under their own user, on a file with mode `0600`:
+
+```bash
+make age-key-check ENV=<env> KEY=<path>
+```
+
+Prints `PASS` or `FAIL` only. Keep the key, and where the offline copy is stored, in the owner's password manager. If a copy is lost, follow [Recovery](../envs/env-00/secrets/README.md#recovery). Custody is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md#age-key-custody).
 
 ## Dependency updates
 
