@@ -182,6 +182,68 @@ How to tell it worked: k3s starts and serves the restored datastore.
 
 k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the original k3s server token. Same-node restore is the scope. The drill only checks that the newest restic copy matches the k3s file's sha256.
 
+### Rotate the restic password
+
+Every repository uses the one password in Secret `platform-backups/backups-restic`. Kyverno copies it into each `restic-<pvc>` Secret (`synchronize: true` on an apiCall). CronJob `etcd-snapshots` reads that same Secret and writes repository `host-etcd-snapshots`. Changing the Secret changes every repository at once.
+
+`make bootstrap-secrets` does not replace a `backups-restic` file git already records unless `ROTATE_RESTIC=1`. That flag mints a new password and does not add it to existing repositories. A live rotation is the steps below. Do not point them at the drill repository: `make drill` creates and deletes `ns-platform-drill/pvc-drill` in the same run. Keep the old key until the last step. While any Secret still holds the old password, that key still opens every repository.
+
+Password files are mode `0600` and are not printed. `sops` decrypts with `SOPS_AGE_KEY_FILE` when that is set, otherwise with the default age key path.
+
+1. On the backup-role node, list repositories. `<backup_path>` is the env setting. Each directory that contains `config` is one repository, including `host-etcd-snapshots`. Record this list. It is the list used again in the last step.
+
+```bash
+find <backup_path>/restic -type f -name config -printf '%h\n'
+```
+
+Write the new password with no trailing newline, and write the current password the same way. `openssl rand -base64 32 | tr -d '\n' > new-password` creates the new file. For each directory, record the current id from `restic key list`, then add the new key and keep the old one:
+
+```bash
+RESTIC_PASSWORD_FILE=old-password restic -r <repo> key list
+RESTIC_PASSWORD_FILE=old-password restic -r <repo> key add --new-password-file new-password
+```
+
+2. Write that same new password into the sealed file, then commit and push to the branch `flux_git_ref` names. Flux updates Secret `platform-backups/backups-restic`. The value file is a JSON string, so the password is not a command argument.
+
+```bash
+python3 -c 'import json, pathlib, sys; pathlib.Path(sys.argv[2]).write_text(json.dumps(pathlib.Path(sys.argv[1]).read_text()))' new-password new-password.json
+sops set --value-file envs/<env>/secrets/backups-restic.sops.yaml '["stringData"]["RESTIC_PASSWORD"]' new-password.json
+```
+
+3. Confirm Secret `platform-backups/backups-restic` and every generated `restic-<pvc>` Secret changed. Compare sha256 of `new-password` with sha256 of each Secret's `RESTIC_PASSWORD` bytes. The command prints hashes only.
+
+```bash
+sha256sum new-password
+KUBECONFIG=~/.kube/jarvis-<env>.yaml python3 -c 'import base64, hashlib, json, subprocess
+doc = json.loads(subprocess.check_output(["kubectl", "get", "secrets", "-A", "-o", "json"]))
+for item in doc["items"]:
+    meta, data = item["metadata"], item.get("data") or {}
+    name, ns = meta["name"], meta["namespace"]
+    if (ns, name) != ("platform-backups", "backups-restic") and not name.startswith("restic-"):
+        continue
+    raw = data.get("RESTIC_PASSWORD")
+    print(f"{ns}/{name} MISSING" if raw is None else f"{ns}/{name} {hashlib.sha256(base64.b64decode(raw)).hexdigest()}")'
+```
+
+The pinned Kyverno chart does not promise that a change only in the apiCall source regenerates those Secrets. If a hash is still the old one, change an annotation on each enrolled PVC (every PVC that is not `backup: none`) so the generate rule runs again, then repeat the hash check. Do not edit a generated Secret. `kubectl annotate pvc -n <namespace> <name> restic-password-generation=<token> --overwrite` is enough. Until every hash matches `new-password`, leave the old key in place.
+
+4. Run one backup of a real repository, then the drill and the standing checks. A Job from CronJob `etcd-snapshots` copies into `host-etcd-snapshots`, which already has the new key. Delete a finished Job of this name first if it exists.
+
+```bash
+KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl -n platform-backups create job --from=cronjob/etcd-snapshots restic-password-rotation
+KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl -n platform-backups wait --for=condition=complete job/restic-password-rotation --timeout=600s
+make drill ENV=<env>
+make verify ENV=<env>
+```
+
+5. Only after that Job, `make drill`, and `make verify` are green, remove the old key id from each repository recorded in step 1. Do not remove it from a repository created later by the drill.
+
+```bash
+RESTIC_PASSWORD_FILE=new-password restic -r <repo> key remove <old-id>
+```
+
+Delete `old-password`, `new-password`, and `new-password.json`.
+
 ## Limits
 
 - Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss.
