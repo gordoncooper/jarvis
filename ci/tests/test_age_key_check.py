@@ -73,7 +73,7 @@ def _holding(root: Path, needle: bytes) -> list[Path]:
 
 
 def test_right_key_passes_and_wrong_key_fails_without_plaintext(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
     """The right throwaway key prints PASS, a wrong key prints FAIL, and neither shows plaintext."""
     mod = _load()
@@ -85,26 +85,53 @@ def test_right_key_passes_and_wrong_key_fails_without_plaintext(
     assert _holding(tmp_path, needle) == []
 
     assert mod.main(["--env", "env-test", "--key-file", str(right)]) == 0
-    passed = capsys.readouterr()
+    passed = capfd.readouterr()
     assert passed.out == "PASS\n"
     assert passed.err == ""
     assert _SENTINEL not in f"{passed.out}{passed.err}"
 
     assert mod.main(["--env", "env-test", "--key-file", str(wrong)]) == 1
-    failed = capsys.readouterr()
+    failed = capfd.readouterr()
     assert failed.out == "FAIL\n"
+    # capfd reads the process fds. A sops stderr leak, including plaintext, fails here.
     assert failed.err == ""
     assert _SENTINEL not in f"{failed.out}{failed.err}"
     assert _holding(tmp_path, needle) == []
 
 
-def test_env_with_no_secrets_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_default_key_location_does_not_rescue_a_wrong_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """A valid throwaway key in the default per-user location does not make a wrong KEY pass."""
+    mod = _load()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    right = _key(tmp_path, "right.txt")
+    wrong = _key(tmp_path, "wrong.txt")
+    _secret(tmp_path, _public(right))
+    home = tmp_path / "home"
+    key_dir = home / ".config" / "sops" / "age"
+    key_dir.mkdir(parents=True)
+    (key_dir / "keys.txt").write_text(right.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    assert mod.main(["--env", "env-test", "--key-file", str(wrong)]) == 1
+    failed = capfd.readouterr()
+    assert failed.out == "FAIL\n"
+    assert failed.err == ""
+    assert _SENTINEL not in f"{failed.out}{failed.err}"
+    assert mod.main(["--env", "env-test", "--key-file", str(right)]) == 0
+    passed = capfd.readouterr()
+    assert passed.out == "PASS\n"
+    assert passed.err == ""
+
+
+def test_env_with_no_secrets_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
     """An env with no secrets prints FAIL."""
     mod = _load()
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     key = _key(tmp_path, "right.txt")
     (tmp_path / "envs" / "env-test").mkdir(parents=True)
     assert mod.main(["--env", "env-test", "--key-file", str(key)]) == 1
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert captured.out == "FAIL\n"
     assert captured.err == ""

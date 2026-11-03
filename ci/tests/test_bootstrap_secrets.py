@@ -411,7 +411,9 @@ def _scalars(value: object) -> list[str]:
     return []
 
 
-def _sign_leaf(tmp_path: Path, ca_cert: Path, ca_key: Path, dns_name: str, stem: str) -> Path:
+def _sign_leaf(
+    tmp_path: Path, ca_cert: Path, ca_key: Path, dns_name: str, stem: str, *, san: str | None = None
+) -> Path:
     csr = tmp_path / f"{stem}.csr"
     crt = tmp_path / f"{stem}.crt"
     subprocess.check_call(
@@ -420,7 +422,7 @@ def _sign_leaf(tmp_path: Path, ca_cert: Path, ca_key: Path, dns_name: str, stem:
             "-keyout", str(tmp_path / f"{stem}.key"),
             "-out", str(csr),
             "-subj", f"/CN={dns_name}",
-            "-addext", f"subjectAltName=DNS:{dns_name}",
+            "-addext", f"subjectAltName={san or f'DNS:{dns_name}'}",
             "-batch",
         ],
         stdout=subprocess.DEVNULL,
@@ -466,6 +468,78 @@ def test_tracked_restic_is_not_recreated_without_rotate(tmp_path, monkeypatch):
     assert (tmp_path / rel).read_bytes() != recorded
 
 
+def _record_restic(tmp_path, monkeypatch):
+    mod = _load_module()
+    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
+    _write_test_sops_yaml(tmp_path, public)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    sops_bin = _require_tool("sops")
+    _prepare_env(tmp_path)
+    mod.bootstrap("env-test", sops_bin=sops_bin)
+    rel = "envs/env-test/secrets/backups-restic.sops.yaml"
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "--", rel)
+    _git(
+        tmp_path,
+        "-c", "user.name=test",
+        "-c", "user.email=test@example.invalid",
+        "commit", "-q", "-m", "record restic",
+    )
+    return mod, sops_bin, rel
+
+
+def test_staged_restic_deletion_is_still_recorded(tmp_path, monkeypatch):
+    """A staged but uncommitted deletion is still recorded, so bootstrap refuses."""
+    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
+    _git(tmp_path, "rm", "-q", "--", rel)
+    with pytest.raises(SystemExit, match="refusing to recreate backups-restic"):
+        mod.bootstrap("env-test", sops_bin=sops_bin)
+    assert not (tmp_path / rel).exists()
+
+
+def test_git_error_does_not_mint_a_new_restic_password(tmp_path, monkeypatch):
+    """A repository git cannot read refuses, and does not write a new restic file."""
+    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
+    (tmp_path / rel).unlink()
+    git_dir = tmp_path / ".git"
+    shutil.rmtree(git_dir)
+    git_dir.write_text("gitdir: /no/such/gitdir\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="git could not"):
+        mod.bootstrap("env-test", sops_bin=sops_bin)
+    assert not (tmp_path / rel).exists()
+
+
+def test_git_location_env_does_not_hide_a_recorded_restic(tmp_path, monkeypatch):
+    """A git-location variable pointing at another repository does not let bootstrap mint."""
+    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
+    (tmp_path / rel).unlink()
+    other = tmp_path / "other-repo"
+    other.mkdir()
+    _git(other, "init", "-q")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    with pytest.raises(SystemExit, match="refusing to recreate backups-restic"):
+        mod.bootstrap("env-test", sops_bin=sops_bin)
+    assert not (tmp_path / rel).exists()
+
+
+def test_make_rotate_restic_maps_only_one() -> None:
+    """ROTATE_RESTIC=1 is the only value that adds --rotate-restic."""
+    def dry(*args: str) -> str:
+        result = subprocess.run(
+            ["make", "-n", "-C", str(REPO_ROOT), "bootstrap-secrets", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    assert "--rotate-restic" in dry("ENV=env-test", "ROTATE_RESTIC=1")
+    assert "--rotate-restic" not in dry("ENV=env-test")
+    assert "--rotate-restic" not in dry("ENV=env-test", "ROTATE_RESTIC=0")
+
+
 def test_ca_regeneration_refuses_a_mismatched_root(tmp_path, monkeypatch):
     """A CA-only regeneration refuses while ca.crt is still present."""
     mod = _load_module()
@@ -504,12 +578,18 @@ def test_new_ca_permits_only_the_dns_suffix(tmp_path: Path) -> None:
     text = subprocess.check_output(["openssl", "x509", "-in", str(ca_cert), "-noout", "-text"], text=True)
     assert "Name Constraints: critical" in text
     assert f"DNS:{suffix}" in text
-    for dns_name, stem, ok in (
-        (f"app.{suffix}", "child", True),
-        (f"*.{suffix}", "wild", True),
-        ("outside.example", "outside", False),
+    assert "IP:0.0.0.0/0.0.0.0" in text
+    assert "email:none@nameconstraint.invalid" in text
+    for dns_name, stem, ok, san in (
+        (suffix, "apex", True, None),
+        (f"app.{suffix}", "child", True, None),
+        (f"*.{suffix}", "wild", True, None),
+        ("outside.example", "outside", False, None),
+        ("192.0.2.10", "ip", False, "IP:192.0.2.10"),
+        ("ip6", "ip6", False, "IP:2001:db8::1"),
+        ("user@app.example", "mail", False, "email:user@app.example"),
     ):
-        leaf = _sign_leaf(tmp_path, ca_cert, ca_key, dns_name, stem)
+        leaf = _sign_leaf(tmp_path, ca_cert, ca_key, dns_name, stem, san=san)
         verified = subprocess.run(
             ["openssl", "verify", "-x509_strict", "-CAfile", str(ca_cert), str(leaf)],
             text=True,
@@ -517,6 +597,14 @@ def test_new_ca_permits_only_the_dns_suffix(tmp_path: Path) -> None:
             check=False,
         )
         assert (verified.returncode == 0) is ok, verified.stderr
+
+
+def test_single_label_dns_suffix_is_not_a_ca_constraint(tmp_path: Path) -> None:
+    """A single label would permit every name under it, so the CA is not minted."""
+    mod = _load_module()
+    with pytest.raises(SystemExit, match="DNS suffix"):
+        mod._generate_ca_material("lan")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_age_key_file_is_used_when_sops_age_key_file_is_unset(tmp_path, monkeypatch):

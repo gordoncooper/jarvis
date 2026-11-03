@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -32,24 +33,38 @@ def _one_secret(env: str) -> Path | None:
     return None
 
 
+def _decrypt_env(key_file: Path, empty: str) -> dict[str, str]:
+    """Pass sops this key file and no other identity.
+
+    The process environment is not copied. HOME and XDG_CONFIG_HOME point at
+    an empty directory, so the default per-user key file and the default SSH
+    key files are absent.
+    """
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": empty,
+        "XDG_CONFIG_HOME": empty,
+        "TMPDIR": empty,
+        "SOPS_AGE_KEY_FILE": str(key_file),
+    }
+
+
 def check(env: str, key_file: Path) -> bool:
     """Return True only when key_file decrypts one of the env's secrets."""
     secret = _one_secret(env)
     sops = shutil.which("sops")
     if secret is None or sops is None or not key_file.is_file():
         return False
-    child = os.environ.copy()
-    child["SOPS_AGE_KEY_FILE"] = str(key_file)
-    child.pop("SOPS_AGE_KEY", None)
     try:
-        result = subprocess.run(
-            [sops, "decrypt", str(secret)],
-            cwd=REPO_ROOT,
-            env=child,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="jarvis-age-key-check-") as empty:
+            result = subprocess.run(
+                [sops, "decrypt", str(secret)],
+                cwd=REPO_ROOT,
+                env=_decrypt_env(key_file, empty),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
     except OSError:
         return False
     return result.returncode == 0 and bool(result.stdout.strip())
