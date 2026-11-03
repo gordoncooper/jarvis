@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from conftest import require_cli
-from support import REPO_ROOT, _ensure_sops_creation_rule, _rename_copied_env, load_tool
+from support import REPO_ROOT, _rename_copied_env, load_tool
 
 SCRIPT = REPO_ROOT / "tools" / "prep-node"
 
@@ -552,9 +552,16 @@ def test_schema_error_makes_zero_host_calls(
     assert host_calls == []
 
 
-def test_doc_order_copy_passes_pre_host_without_creation_rule(tmp_path: Path) -> None:
+def test_doc_order_copy_passes_pre_host_without_creation_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A copied env-00 with no creation rule yet passes pre-host; after edits, full."""
+    require_cli("age-keygen")
     module = _load()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
     root = tmp_path / "repo"
     dest = root / "envs" / "env-new"
     shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
@@ -568,5 +575,6 @@ def test_doc_order_copy_passes_pre_host_without_creation_rule(tmp_path: Path) ->
     module.run_env_schema(root, pre_host=True)
 
     module.apply_env_edits(root, "env-new", "cp-1", "cp-1", "example")
-    _ensure_sops_creation_rule(root, "env-new")
+    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: True)
+    module.sync_age_key(root, "env-new")
     module.run_env_schema(root)
