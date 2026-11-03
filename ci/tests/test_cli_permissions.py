@@ -101,6 +101,8 @@ def test_corpus_expansions_and_bad_rows_fail(tmp_path: Path):
         ("claude", "Bash(git *push * main)", "forge-write"),
         ("cursor", "Shell(flux:*reconcile*)", "cluster-write"),
         ("claude", "Bash(flux *reconcile*)", "cluster-write"),
+        ("cursor", "Shell(sops)", "secret-decrypt"),
+        ("claude", "Bash(sops *)", "secret-decrypt"),
     ],
 )
 def test_deleted_deny_entry_fails_its_category(client: str, entry: str, category: str):

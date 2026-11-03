@@ -17,8 +17,15 @@ block	secret-read	shell	watch kubectl get secret -A
 block	secret-read	shell	helm {any:,--kube-context demo }{any:get values,get manifest,history,hist,list,ls,status} demo
 block	secret-read	shell	bash -c 'helm list'
 # secret-decrypt: sops and age on secret files, and the repo entrypoints that decrypt.
-block	secret-decrypt	wrapped	sops {any:decrypt,-d,edit,encrypt,-e,--encrypt} envs/env-00/secrets/demo.sops.yaml
-block	secret-decrypt	shell	{any:'sops' -d demo.sops.yaml,"sops" -d demo.sops.yaml,diff <(sops -d a.yaml) b.yaml}
+# Every sops form that names a file can print or write plaintext (a bare file opens the
+# editor), so the lists block sops at the command position, with no argument exemptions.
+block	secret-decrypt	wrapped	sops {any:,decrypt,-d,--decrypt,edit,encrypt,-e,--encrypt,-i -d,-d --output plain.yaml,--extract x -d,exec-env,exec-file,publish,rotate -i,updatekeys,set} envs/env-00/secrets/demo.sops.yaml
+block	secret-decrypt	shell	{any:sops keyservice,'sops' -d demo.sops.yaml,"sops" -d demo.sops.yaml,diff <(sops -d a.yaml) b.yaml}
+block	secret-decrypt	shell	{any:A=1,eval,exec,command,time,watch,/usr/bin/sudo,/usr/bin/timeout 5} sops demo.sops.yaml
+# Help and version are blocked with the rest: keeping three exact argument lists open
+# while blocking every other single argument (a bare file) needs negation, which neither
+# client's patterns have.
+block	secret-decrypt	shell	sops {any:--help,-h,--version}
 block	secret-decrypt	shell	age {any:-d,--decrypt,-i key.txt -d,-i key.txt --decrypt} secret.txt
 block	secret-decrypt	shell	age -i key.txt -d
 block	secret-decrypt	shell	{any:/usr/bin/age -d secret.txt,timeout 5 age -d secret.txt,ls | xargs -n1 age -d}
@@ -118,7 +125,7 @@ allow	text-mention	shell	git log --grep 'make restore'
 allow	text-mention	shell	git commit -m "the read-only ansible modes pass" -m "second paragraph"
 allow	text-mention	shell	{any:rg -n /etc/rancher infra/ansible,rg -n lib/rancher infra,rg -n 'kubectl get secret' docs,rg ssh .}
 allow	text-mention	shell	{any:git grep ssh,pytest -q -k sops,command -v sops,which sops,echo 'a | ssh b'}
-allow	help	shell	{any:tools/restore --help,./tools/drill --help,sops --version,sops --help,ansible-playbook --help}
+allow	help	shell	{any:tools/restore --help,./tools/drill --help,ansible-playbook --help}
 allow	help	shell	{any:,./,python3 ,.venv/bin/python }tools/prep-node {any:--help,-h}
 allow	help	shell	{any:make help,make -n help,tools/bootstrap-secrets --help,tools/age-key-check --help}
 allow	cluster-read	shell	kubectl get {any:pods -A,nodes --show-labels,statefulsets -A,replicasets -A,pods --field-selector=status.phase=Running,certificate "<name>"}
