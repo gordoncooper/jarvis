@@ -410,8 +410,8 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     [["restore", "ENV=env-00", "APP=demo"], ["restore-all", "ENV=env-00"]],
 )
 def test_make_forwards_node_only_when_set(target: list[str]) -> None:
-    """NODE=<node> reaches tools/restore as --node; without NODE there is no --node."""
-    env = {key: value for key, value in os.environ.items() if key != "NODE"}
+    """NODE=<node> reaches tools/restore as --node; make restore passes AS_OF as --as-of."""
+    env = {key: value for key, value in os.environ.items() if key not in {"NODE", "AS_OF"}}
 
     def recipe(*extra: str) -> str:
         proc = subprocess.run(
@@ -428,6 +428,9 @@ def test_make_forwards_node_only_when_set(target: list[str]) -> None:
 
     assert '--node "node-a"' in recipe("NODE=node-a")
     assert "--node" not in recipe()
+    if target[0] == "restore":
+        assert '--as-of "2026-10-29T12:00:00Z"' in recipe("AS_OF=2026-10-29T12:00:00Z")
+        assert "--as-of" not in recipe()
 
 
 def _run(cluster: _Cluster, **kwargs: object) -> int:
@@ -508,6 +511,33 @@ def test_live_volume_uses_as_of(capsys) -> None:
     )
     assert cluster.applied[0]["spec"]["restic"]["restoreAsOf"] == "2026-10-29T12:00:00Z"
     assert "as-of 2026-10-29T12:00:00Z" in capsys.readouterr().out
+
+
+def test_restore_all_node_pins_every_unbound_pvc(capsys) -> None:
+    """A restore-all run with one NODE pins every unbound PVC's bind pod to that node."""
+    cluster = _Cluster(
+        [
+            _pvc("demo", "one", volume=""),
+            _pvc("other", "two", volume=""),
+            _pvc("demo", "bound"),
+        ],
+        will_pause=True,
+    )
+    assert _run(cluster, app=None, all_pvcs=True, node="node-a") == 0
+    pinned = restore_tool._node_placement("node-a")["affinity"]
+    claims = {
+        (
+            pod["metadata"]["namespace"],
+            pod["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"],
+        )
+        for pod in cluster.binders
+    }
+    assert claims == {("demo", "one"), ("other", "two")}
+    assert [pod["spec"]["affinity"] for pod in cluster.binders] == [pinned, pinned]
+    out = capsys.readouterr().out
+    assert "PASS restore demo/one" in out
+    assert "PASS restore other/two" in out
+    assert "PASS restore demo/bound" in out
 
 
 def test_unbound_pvc_is_paused_then_bound(capsys) -> None:

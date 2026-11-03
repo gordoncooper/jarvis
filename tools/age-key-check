@@ -2,8 +2,8 @@
 """Test-decrypt one secret for an env. Prints PASS or FAIL and nothing else.
 
 The owner runs this under their own user, never a coding-agent user.
-The key file must be unreadable by other users. Decrypted secret text is
-not written to stdout, stderr, logs, or disk.
+The key file must not be readable or writable by group or others.
+Decrypted secret text is not written to stdout, stderr, logs, or disk.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _SEGMENT = re.compile(r"^[a-z0-9-]+$")
+_GROUP_OTHER_RW = 0o066
 
 
 def _one_secret(env: str) -> Path | None:
@@ -51,9 +52,11 @@ def _decrypt_env(key_file: Path, empty: str) -> dict[str, str]:
 
 def check(env: str, key_file: Path) -> bool:
     """Return True only when key_file decrypts one of the env's secrets."""
+    if not key_file.is_file() or key_file.stat().st_mode & _GROUP_OTHER_RW:
+        return False
     secret = _one_secret(env)
     sops = shutil.which("sops")
-    if secret is None or sops is None or not key_file.is_file():
+    if secret is None or sops is None:
         return False
     try:
         with tempfile.TemporaryDirectory(prefix="jarvis-age-key-check-") as empty:
