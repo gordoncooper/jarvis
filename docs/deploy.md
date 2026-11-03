@@ -5,8 +5,8 @@ From a fresh copy of this repo to a running cluster, then `make verify` and `mak
 ## Prerequisites
 
 - amd64 Ubuntu Server nodes. Exactly one host has the `control_plane` role. A host with the `gpu` role must have an NVIDIA device. The opening play of `site.yml` checks this before it changes a node.
-- Internet access during the build, on the nodes and on the machine that runs the playbook.
-- Encrypting needs the public age recipient in `.sops.yaml`. The private key decrypts. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. `site.yml` reads the private key whenever that file exists, including when `flux-system/sops-age` is already present, and it refuses a file that is not mode 0600 or not owned by the user running the play. When the secret is absent, that read creates it. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. `tools/prep-node` can create a missing key or read one that is already there. Keep the private key offline except for those reads.
+- Internet access during the build, on the nodes and on the machine that runs the playbook. The controller needs Python 3.12 or newer (the pinned `ansible-core` requires it).
+- Encrypting needs the public age recipient in `.sops.yaml`. The private key decrypts. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. `site.yml` reads the private key whenever that file exists, including when `flux-system/sops-age` is already present, and it refuses a file that is not mode 0600 or not owned by the user running the play. It keeps only the identities whose public key is the env's `.sops.yaml` recipient, and refuses a file with none. When the secret is absent, it creates the secret with those identities. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. `tools/prep-node` can create a missing key or read one that is already there. Keep the private key offline except for those reads.
 - Inventory hostnames must resolve from the controller and from every node.
 - A Git repository Flux can fetch over https. `flux_git_repo_url` is that remote.
 - The GitHub Actions repository variable `OWNER_NAME`, set to the owner's personal name. `make ci-verify` needs the same value in the environment. An unset value fails with a message that names `OWNER_NAME`.
@@ -39,7 +39,7 @@ Copy `envs/env-00` to `envs/<env>`. Copy that example only, never a real env and
 5. Render the ConfigMap with `python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`. prep-node also rewrites that file when it already exists.
 6. Commit `envs/<env>/` and `.sops.yaml`. Do not commit the age private key. Push to the branch `flux_git_ref` names, then run `site.yml` as below.
 
-The copy already has `flux/`: `flux-instance.yaml` (sync `url`, `ref` and `path` are this env's `flux_git_repo_url`, `flux_git_ref` and `envs/<env>/flux`; it is the env's only Flux version pin), the four Kustomizations `platform-controllers` (`./platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./services`) and `apps` (`./apps`), chained with `dependsOn`, and `platform-configs/kustomization.yaml`. That list is `platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`. Step 4 creates those files, so the list needs no hand edit. `k3s_version`, `k3s_sha256`, and the Flux version pin are already set. `site.yml` applies the FluxInstance once on a new cluster, and stops before any change when it is missing. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). A second `make bootstrap-secrets` changes nothing once the files exist.
+The copy already has `flux/`: `flux-instance.yaml` (sync `url`, `ref` and `path` are this env's `flux_git_repo_url`, `flux_git_ref` and `envs/<env>/flux`; it is the env's only Flux version pin), the four Kustomizations `platform-controllers` (`./platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./services`) and `apps` (`./apps`), chained with `dependsOn`, `identities.yaml` (the service accounts those Kustomizations and the platform HelmReleases run as), and `platform-configs/kustomization.yaml`. That list is `platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`. Step 4 creates those files, so the list needs no hand edit. `k3s_version`, `k3s_sha256`, and the Flux version pin are already set. `site.yml` applies the FluxInstance once on a new cluster, and stops before any change when it is missing. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). A second `make bootstrap-secrets` changes nothing once the files exist.
 
 ## Prepare a data disk
 
@@ -74,7 +74,7 @@ If the New env steps have not already created the secrets, run this from the rep
 make bootstrap-secrets ENV=<env>
 ```
 
-Commit all of `envs/<env>/`: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in that env's `secrets/README.md`.
+Commit all of `envs/<env>/`: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md).
 
 ## Bootstrap the cluster
 
@@ -95,7 +95,7 @@ Produces a k3s cluster, node role labels, kubeconfig `~/.kube/jarvis-<env>.yaml`
 make verify ENV=<env>
 ```
 
-Uses `~/.kube/jarvis-<env>.yaml`. Produces one `PASS` line per standing check, and exits 0. A failing check prints `FAIL` and the command exits 1.
+Uses `~/.kube/jarvis-<env>.yaml`. Each standing check prints `PASS`, `WARN`, or `FAIL`. `WARN` is a pending first run (exit 0). Any `FAIL` exits 1.
 
 ## Drill
 

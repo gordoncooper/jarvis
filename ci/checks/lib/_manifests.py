@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import yaml
+
+from schema.env import EXAMPLE_ENV
 
 SCAN_ROOTS = ("apps/", "platform/", "services/", "envs/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
@@ -51,6 +55,39 @@ def load_documents(
                 elif doc is not None:
                     found.append((rel, None, f"YAML document is a {type(doc).__name__}, not a mapping"))
     return found
+
+
+def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
+    """The documents `kustomize build` renders for rel, or an error."""
+    kustomize = shutil.which("kustomize")
+    if kustomize is None:
+        return [], "kustomize not found on PATH (run make deps)"
+    proc = subprocess.run(
+        [kustomize, "build", "--load-restrictor", "LoadRestrictionsNone", str(root / rel)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=root,
+    )
+    if proc.returncode != 0:
+        return [], f"kustomize build {rel} failed: {(proc.stderr or proc.stdout).strip()}"
+    return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)], None
+
+
+def example_platform_configs(env_rel: str, path: str) -> bool:
+    """The example env's platform-configs path lists bootstrap secrets that are not in Git.
+
+    A copy builds this path after bootstrap-secrets. The example tree does not.
+    """
+    if not env_rel.startswith(f"envs/{EXAMPLE_ENV}/"):
+        return False
+    return path.strip().removeprefix("./") == f"envs/{EXAMPLE_ENV}/flux/platform-configs"
+
+
+def namespace_of(doc: dict) -> str:
+    metadata = doc.get("metadata")
+    namespace = metadata.get("namespace") if isinstance(metadata, dict) else None
+    return namespace if isinstance(namespace, str) and namespace else "default"
 
 
 def kind_of(doc: dict) -> str:

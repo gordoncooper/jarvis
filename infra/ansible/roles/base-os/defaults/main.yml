@@ -5,3 +5,7 @@ jarvis_journald_system_max_use: "2G"
 chrony_config_dir: /etc/chrony
 chrony_config_owner: root
 chrony_config_group: root
+# cluster-vars chrony_nts overrides this. Off drops nts from every pool line.
+chrony_nts: true
+# Ubuntu creates this file when an installed update needs a reboot.
+base_os_reboot_required_path: /var/run/reboot-required

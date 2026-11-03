@@ -12,6 +12,7 @@ metadata:
 spec:
   interval: 30m
   releaseName: k8s-gateway
+  serviceAccountName: flux-platform
   targetNamespace: platform-app-dns
   chart:
     spec:

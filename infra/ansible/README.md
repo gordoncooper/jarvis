@@ -12,7 +12,7 @@
 tools/prep-node --env <env> --host <hostname> --login-user <user>
 ```
 
-The host name must already be an inventory key and must resolve with `getent hosts` before the node is changed. The script confirms the host key, installs your public key, and asks before changing the short hostname. A new short hostname is recorded as `<short>.<same domain as --host>` and must resolve first. It prints the node's primary address and whether that address came from DHCP. On DHCP it warns that the address must stay stable (for example, a router DHCP reservation), because k3s breaks when the address changes. It does not write or rename netplan files, and it does not write the address into the repo. It installs only `openssh-server`, `python3`, and `sudo` if they are missing, and grants the chosen user passwordless sudo. It checks that key login works, then can turn off SSH password login. If the clock is not synced, it warns and asks before recording the env. If the age key file is missing it can create one and, if you agree, point `.sops.yaml` at the new public key and delete that env's existing `*.sops.yaml` files. It shows `git diff` and does not commit.
+The host name must already be an inventory key and must resolve with `getent hosts` before the node is changed. The script confirms the host key, installs your public key, and asks before changing the short hostname. A new short hostname is recorded as `<short>.<same domain as --host>` and must resolve first. It prints the node's primary address and whether that address came from DHCP. On DHCP it warns that the address must stay stable (for example, a router DHCP reservation), because k3s breaks when the address changes. It does not write or rename netplan files, and it does not write the address into the repo. It installs only `openssh-server`, `python3`, and `sudo` if they are missing, and grants the chosen user passwordless sudo. It checks that key login works, then can turn off SSH password login. If the clock is not synced, it warns and asks before recording the env. If the age key file is missing it can create one. It adds a missing `.sops.yaml` rule for this env and leaves a mismatched recipient unchanged. It shows `git diff` and does not commit.
 
 When you are not using the default age key file, set the same `SOPS_AGE_KEY_FILE` for `prep-node`, `bootstrap-secrets`, and `site.yml`.
 
@@ -24,7 +24,7 @@ make bootstrap-secrets ENV=<env>
 
 ## Before the first run
 
-The age private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides that path. The file must be the private half of the recipient in `.sops.yaml` (`age-keygen -y` prints the public half). When `flux-system/sops-age` already exists and the key file is absent, the run leaves the secret alone.
+The age private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides that path. The file must hold the private half of the env's recipient in `.sops.yaml` (`age-keygen -y` prints the public half). It may hold other identities and comment lines. When the file exists, `flux-operator` checks it before any cluster change and refuses a file with no identity for that recipient. A new `flux-system/sops-age` holds only the matching identities. An existing secret whose identities include them passes and is left as it is. Any other existing secret refuses the run (see Recovery). When `flux-system/sops-age` already exists and the key file is absent, the run leaves the secret alone. The check runs `age-keygen` on the controller (`make deps`).
 
 Every env run passes the env hosts file, then the constructed role groups. The second inventory lives in core and is not copied into an env. `node_roles` become groups of the same name. Hosts with `data_disk: true` are the `data_disk` group. That group is always present, including when no host sets `data_disk`.
 
@@ -47,7 +47,7 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 | `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags flux-operator` |
 | `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags kubeconfig` |
 | `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags time` |
-| `apt-policy` | Apt list refresh timers and inert unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags apt-policy` |
+| `apt-policy` | Apt list refresh and upgrade timers and the security-only unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags apt-policy` |
 | `journald` | journald drop-in and restart | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags journald` |
 | `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags resolved` |
 
@@ -61,6 +61,21 @@ On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listen
 
 Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
 
+## Patching and reboots
+
+Every node installs updates from its distro's `-security` origin by itself (`unattended-upgrades` with `apt-daily-upgrade.timer` enabled). No other origin is allowed (Ubuntu Pro ESM included), nothing is auto-removed, and a node never reboots on its own.
+
+When an update needs a reboot, Ubuntu creates `/var/run/reboot-required`. Each `site.yml` run, `--check` included, prints `REBOOT PENDING on <host>` for every host that has the file. The warning does not fail the run, and it appears only when someone runs `site.yml`.
+
+Drain and reboot one node at a time, workers before the control plane:
+
+1. `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`
+2. `sudo reboot` on that node.
+3. Wait until the node is `Ready`, then `kubectl uncordon <node>`.
+4. Run `make verify ENV=<env>` before the next node.
+
+The single control plane has no peer, so the API is down while it reboots; plan that outage. GPU nodes use Ubuntu's signed `linux-modules-nvidia-*` packages, so a kernel update brings matching modules.
+
 ## Rebuild hold
 
 See `platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before the first FluxInstance.
@@ -71,8 +86,8 @@ If node-disk refuses a node because the data path is empty and k3s has already r
 
 The node address changed and k3s fails with an etcd member URL mismatch. Stop k3s (`systemctl stop k3s`), run `/usr/local/bin/k3s server --cluster-reset` once, then start it (`systemctl start k3s`). A later `site.yml` run does not clear this. A stable address prevents it. prep-node prints the address and, when it came from DHCP, warns that it must stay stable (for example, a router DHCP reservation). It does not pin the address.
 
-Flux rollback: while the controllers are up, revert the commit. When the FluxInstance or the operator is the broken part, from the controller's reverted checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml` with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. The file is plain YAML with no substitution. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `--tags flux-operator`.
+Flux rollback: while the controllers are up, revert the commit. The root sync that applies `envs/<env>/flux` runs as kustomize-controller itself, so a revert applies even when a Kustomization's own identity is broken. When the FluxInstance or the operator is the broken part, from the controller's reverted checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml` with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. The file is plain YAML with no substitution. The Flux Kustomizations and HelmReleases run as the service accounts in `envs/<env>/flux/identities.yaml`. If those are missing, apply that file the same way. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `--tags flux-operator`.
 
-Age key: back up the key file (`age_key_file`, default `~/.config/sops/age/keys.txt`). If the file is lost while `flux-system/sops-age` still exists, copy `age.agekey` from that secret back to the key path at mode `0600` before deleting anything. If both are lost, the old secret values are gone. Accept the prep-node swap prompt (it deletes `envs/<env>/secrets/*.sops.yaml`), run `make bootstrap-secrets`, commit and push, then re-run `site.yml`. If a differing `flux-system/sops-age` still exists, see the case above and don't delete it.
+Age key: keep two copies of the one key (`age_key_file`, default `~/.config/sops/age/keys.txt`). The second copy stays offline. Prove a copy with `make age-key-check ENV=<env> KEY=<path>` as described in `envs/env-00/secrets/README.md`. If the key file is lost and the cluster is up, copy `age.agekey` from Secret `flux-system/sops-age` back to that path at mode `0600`. Do not delete sealed files. If that Secret is gone too and the cluster is still up, reseal the live Secrets to a new key. Do not regenerate. Run `make bootstrap-secrets` only when the cluster is gone as well. A mismatched age key in prep-node changes neither `.sops.yaml` nor the sealed files.
 
-Clock: if Flux is stuck fetching git while the network is fine, check `timedatectl`. chrony uses NTS only, against cluster-vars' `ntp_pools`.
+Clock: if Flux is stuck fetching git while the network is fine, check `timedatectl`. chrony uses NTS against cluster-vars' `ntp_pools`; set `chrony_nts: false` for a LAN time source that does not speak NTS.
