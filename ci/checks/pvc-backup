@@ -12,7 +12,7 @@ from pathlib import Path
 
 from _pvc_backup import format_violations, scan_pvc_backup
 
-violations = scan_pvc_backup(Path("."))
+violations = scan_pvc_backup(Path("."), require_roots=True)
 if violations:
     for line in format_violations(violations):
         print(line, flush=True)

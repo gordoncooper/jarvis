@@ -32,11 +32,17 @@ class FluxSubstituteViolation:
 def scan_flux_substitute(repo_root: Path | str) -> list[FluxSubstituteViolation]:
     root = Path(repo_root).resolve()
     violations: list[FluxSubstituteViolation] = []
-    for flux_dir in sorted(path for path in root.glob("envs/*/flux") if path.is_dir()):
+    flux_dirs = sorted(path for path in root.glob("envs/*/flux") if path.is_dir())
+    if not flux_dirs:
+        return [FluxSubstituteViolation("envs", "no envs/<env>/flux tree to check")]
+    for flux_dir in flux_dirs:
         env_rel = flux_dir.relative_to(root).as_posix()
         env_docs, error = kustomize_build(root, env_rel)
         if error:
             violations.append(FluxSubstituteViolation(env_rel, error))
+            continue
+        if not env_docs:
+            violations.append(FluxSubstituteViolation(env_rel, "flux tree builds to no objects"))
             continue
         for kustomization in env_docs:
             violations.extend(_kustomization_violations(root, env_rel, kustomization, env_docs))

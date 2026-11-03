@@ -135,6 +135,21 @@ def test_example_env_platform_configs_is_not_built_when_secrets_are_absent(tmp_p
     assert {item.path for item in violations} == {"envs/env-test/flux"}
 
 
+def test_a_tree_with_no_env_flux_directory_fails(tmp_path: Path) -> None:
+    """Nothing to check is a failure, not a pass."""
+    (tmp_path / "platform").mkdir()
+    assert [item.message for item in scan_flux_substitute(tmp_path)] == [
+        "no envs/<env>/flux tree to check"
+    ]
+
+
+def test_an_env_flux_tree_that_builds_to_nothing_fails(tmp_path: Path) -> None:
+    flux = tmp_path / "envs" / "env-test" / "flux"
+    flux.mkdir(parents=True)
+    (flux / "kustomization.yaml").write_text("resources: []\n", encoding="utf-8")
+    assert scan_flux_substitute(tmp_path)
+
+
 def test_bootstrapped_copy_scans_platform_configs(example_copy: ExampleCopy) -> None:
     """A copy scans platform/configs. That repo contains only the copy."""
     assert [path.name for path in (example_copy.root / "envs").iterdir()] == [example_copy.name]

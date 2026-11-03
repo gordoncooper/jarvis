@@ -26,9 +26,11 @@ class LoadBalancerViolation:
     message: str
 
 
-def scan_loadbalancer(repo_root: Path | str) -> list[LoadBalancerViolation]:
+def scan_loadbalancer(
+    repo_root: Path | str, *, require_roots: bool = False
+) -> list[LoadBalancerViolation]:
     violations: list[LoadBalancerViolation] = []
-    for rel, doc, error in load_documents(repo_root):
+    for rel, doc, error in load_documents(repo_root, require_roots=require_roots):
         if error or doc is None:
             violations.append(LoadBalancerViolation(rel, error or "unreadable YAML"))
             continue

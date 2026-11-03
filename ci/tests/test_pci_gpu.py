@@ -23,13 +23,13 @@ def _sysfs(root: Path, vendor: str) -> Path:
     return devices
 
 
-def _assert_gpu(devices: Path) -> subprocess.CompletedProcess[str]:
+def _assert_gpu(devices: Path, hosts: str = "hosts.yml") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             "ansible-playbook",
             str(FIXTURE_DIR / "play.yml"),
             "-i",
-            str(FIXTURE_DIR / "hosts.yml"),
+            str(FIXTURE_DIR / hosts),
             "-e",
             f"node_pci_devices_path={devices}",
             "-e",
@@ -46,6 +46,24 @@ def test_nvidia_vendor_behind_a_symlink_passes(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     proc = _assert_gpu(_sysfs(tmp_path, NVIDIA))
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_host_outside_the_gpu_group_skips_the_assert(tmp_path: Path) -> None:
+    """Only hosts declared gpu need an NVIDIA device. A worker with none still passes."""
+    require_cli("ansible-playbook")
+    proc = _assert_gpu(_sysfs(tmp_path, OTHER), hosts="hosts-no-gpu.yml")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "no NVIDIA device" not in proc.stdout + proc.stderr
+
+
+def test_gpu_host_with_no_pci_devices_fails(tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    devices = tmp_path / "devices"
+    devices.mkdir()
+    proc = _assert_gpu(devices)
+    text = proc.stdout + proc.stderr
+    assert proc.returncode != 0, text
+    assert "no NVIDIA device" in text
 
 
 def test_missing_nvidia_vendor_behind_a_symlink_fails(tmp_path: Path) -> None:

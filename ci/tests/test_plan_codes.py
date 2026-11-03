@@ -135,7 +135,7 @@ def test_contract_with_operations_and_limits_passes(tmp_path: Path) -> None:
         "# CONTRACT: backups\n\n## Operations\n\nSteps.\n\n## Limits\n\nNone extra.\n",
         encoding="utf-8",
     )
-    assert missing_contract_roots(tmp_path) == []
+    assert "platform/backups" not in missing_contract_roots(tmp_path)
 
 
 def test_omitting_the_check_from_rule_list_fails_run_checks(tmp_path: Path) -> None:

@@ -92,7 +92,8 @@ def test_k3s_renovate_rule_names_the_traefik_recheck() -> None:
         for item in renovate["packageRules"]
         if item.get("matchPackageNames") == ["k3s-io/k3s"]
     )
-    assert rule["enabled"] is False
+    assert rule["dependencyDashboardApproval"] is True
+    assert "enabled" not in rule
     assert "prBodyNotes" not in rule
     description = rule["description"]
     assert "re-check" in description

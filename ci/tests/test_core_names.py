@@ -269,17 +269,76 @@ def test_example_env_values_are_not_sources(tmp_path: Path) -> None:
     assert scan_core_names(tmp_path) == []
 
 
-def test_file_outside_scan_roots_is_ignored(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "rel_path",
+    ["Makefile", "renovate.json", "AGENTS.md", ".cursor/cli.json", ".claude/settings.json", "apps/leak.txt"],
+)
+def test_tracked_file_outside_the_product_folders_is_scanned(tmp_path: Path, rel_path: str) -> None:
+    """Root-level files and dot folders are scanned like any other tracked file."""
     _init_git_repo(tmp_path)
     _write_env(tmp_path, env_name="env-test")
     dns_suffix = _dns_suffix(tmp_path)
 
-    apps = tmp_path / "apps"
-    apps.mkdir()
-    (apps / "leak.txt").write_text(f"host: {dns_suffix}\n", encoding="utf-8")
+    leak = tmp_path / rel_path
+    leak.parent.mkdir(parents=True, exist_ok=True)
+    leak.write_text(f"host: {dns_suffix}\n", encoding="utf-8")
+    _git_add_all(tmp_path)
+
+    violations = scan_core_names(tmp_path)
+    assert [(v.path, v.kind) for v in violations] == [(rel_path, "dns_suffix")]
+
+
+def test_mailmap_is_not_scanned(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    _write_env(tmp_path, env_name="env-test")
+    (tmp_path / ".mailmap").write_text(f"{_FIXTURE_OWNER_NAME} <owner@example.invalid>\n", encoding="utf-8")
     _git_add_all(tmp_path)
 
     assert scan_core_names(tmp_path) == []
+
+
+def test_env_folder_may_hold_its_own_values_but_not_another_envs(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    _write_env(tmp_path, env_name="env-test")
+    other = _valid_cluster_vars()
+    other["dns_suffix"] = "other.example"
+    _write_env(tmp_path, env_name="env-other", cluster_vars=other)
+    own = _dns_suffix(tmp_path)
+    (tmp_path / "envs/env-test/notes.txt").write_text(f"host: {own}\n", encoding="utf-8")
+    (tmp_path / "envs/env-other/notes.txt").write_text(f"host: {own}\n", encoding="utf-8")
+    _git_add_all(tmp_path)
+
+    violations = scan_core_names(tmp_path)
+    assert [(v.path, v.kind) for v in violations] == [("envs/env-other/notes.txt", "dns_suffix")]
+
+
+def test_sops_yaml_may_name_an_env_in_path_regex_only(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    _write_env(tmp_path, env_name="env-test")
+    sops = tmp_path / ".sops.yaml"
+    assert "path_regex: envs/env-test/secrets/" in sops.read_text(encoding="utf-8")
+    _git_add_all(tmp_path)
+    assert scan_core_names(tmp_path) == []
+
+    sops.write_text(
+        sops.read_text(encoding="utf-8") + "# rotate the env-test key first\n", encoding="utf-8"
+    )
+    _git_add_all(tmp_path)
+    violations = scan_core_names(tmp_path)
+    assert [(v.path, v.kind) for v in violations] == [(".sops.yaml", "env_name")]
+
+
+def test_sops_yaml_env_name_after_path_regex_on_the_same_line_fails(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    _write_env(tmp_path, env_name="env-test")
+    (tmp_path / ".sops.yaml").write_text(
+        "creation_rules:\n  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$  # env-test\n"
+        "    age: age1fixture\n",
+        encoding="utf-8",
+    )
+    _git_add_all(tmp_path)
+
+    assert [(v.path, v.kind) for v in scan_core_names(tmp_path)] == [(".sops.yaml", "env_name")]
 
 
 def test_personal_name_in_env_readme_fails(tmp_path: Path) -> None:
