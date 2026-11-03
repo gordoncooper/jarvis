@@ -95,7 +95,7 @@ Produces a k3s cluster, node role labels, kubeconfig `~/.kube/jarvis-<env>.yaml`
 make verify ENV=<env>
 ```
 
-Uses `~/.kube/jarvis-<env>.yaml`. Produces one `PASS` line per standing check, and exits 0. A failing check prints `FAIL` and the command exits 1.
+Uses `~/.kube/jarvis-<env>.yaml`. Each standing check prints `PASS`, `WARN`, or `FAIL`. `WARN` is a pending first run (exit 0). Any `FAIL` exits 1.
 
 ## Drill
 
