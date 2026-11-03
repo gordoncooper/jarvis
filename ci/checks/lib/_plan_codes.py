@@ -1,4 +1,4 @@
-"""Product docs and CONTRACTs contain no plan codes.
+"""Markdown docs, READMEs and docs/ contain no plan codes, including rulebooks/; not AGENTS.md or .github/.
 
 Scanned paths: every Markdown file, every README* (any case, any extension),
 and everything under docs/ (including docs/CONTRACT.template.md). That picks
