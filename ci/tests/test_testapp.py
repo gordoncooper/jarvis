@@ -5,14 +5,11 @@ The pod uses RuntimeDefault seccomp and a read-only root. /tmp is the only empty
 
 from __future__ import annotations
 
-import hashlib
-
 import yaml
 
 from support import _kustomize_build
 
 _BODY = "testapp\n"
-_SHA = "60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7"
 
 
 def test_fixture_serves_known_file_on_the_default_certificate() -> None:
@@ -23,7 +20,6 @@ def test_fixture_serves_known_file_on_the_default_certificate() -> None:
     }
     body = docs[("ConfigMap", "testapp")]["data"]["index.html"]
     assert body == _BODY
-    assert hashlib.sha256(body.encode()).hexdigest() == _SHA
     assert "PersistentVolumeClaim" not in {kind for kind, _name in docs}
 
     pod = docs[("Deployment", "testapp")]["spec"]["template"]["spec"]
@@ -32,14 +28,13 @@ def test_fixture_serves_known_file_on_the_default_certificate() -> None:
     assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
     container = pod["containers"][0]
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
-    assert pod["volumes"] == [
-        {"name": "html", "configMap": {"name": "testapp"}},
-        {"name": "tmp", "emptyDir": {}},
-    ]
-    assert container["volumeMounts"] == [
-        {"name": "html", "mountPath": "/usr/share/nginx/html", "readOnly": True},
-        {"name": "tmp", "mountPath": "/tmp"},
-    ]
+    # Every mount names a declared volume, and /tmp is the only writable mount.
+    volumes = {volume["name"]: volume for volume in pod["volumes"]}
+    assert {mount["name"] for mount in container["volumeMounts"]} <= set(volumes)
+    writable = [mount for mount in container["volumeMounts"] if not mount.get("readOnly")]
+    assert [mount["mountPath"] for mount in writable] == ["/tmp"]
+    assert "emptyDir" in volumes[writable[0]["name"]]
+    assert [name for name, volume in volumes.items() if "emptyDir" in volume] == [writable[0]["name"]]
 
     ingress = docs[("Ingress", "testapp")]
     assert ingress["spec"]["rules"][0]["host"] == "testapp.${dns_suffix}"

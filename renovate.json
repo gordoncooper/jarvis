@@ -4,10 +4,10 @@
   "automerge": false,
   "packageRules": [
     {
-      "description": "k3s host binary is pinned in cluster-vars.yaml and changes only by PR. A bump has to re-check platform/traefik and update the bundled chart and k3s versions in platform/traefik/CONTRACT.md.",
+      "description": "k3s host binary is pinned in cluster-vars.yaml and changes only by PR, opened after approval in the dependency dashboard. A bump has to re-check platform/traefik and update the bundled chart and k3s versions in platform/traefik/CONTRACT.md.",
       "matchDatasources": ["github-releases"],
       "matchPackageNames": ["k3s-io/k3s"],
-      "enabled": false
+      "dependencyDashboardApproval": true
     },
     {
       "description": "Group Flux Operator chart pin (platform/flux-operator/oci-repository.yaml).",
@@ -52,10 +52,10 @@
       "automerge": false
     },
     {
-      "description": "Helm host CLI version and sha256 are bumped together by PR.",
+      "description": "Helm host CLI version and sha256 are bumped together by PR, opened after approval in the dependency dashboard.",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["helm/helm"],
-      "enabled": false
+      "dependencyDashboardApproval": true
     },
     {
       "description": "Python dev dependencies in requirements-dev.txt update as one PR. Exact == pins stay exact.",
@@ -72,6 +72,24 @@
     }
   ],
   "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Pinned CLI versions in tools/versions.env. Renovate bumps the version only. The sha256 lines are bumped by hand in the same PR.",
+      "managerFilePatterns": ["/^tools\\/versions\\.env$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)\\s*\\n\\w+_version=(?<currentValue>\\S+)"
+      ],
+      "extractVersionTemplate": "^(?:kustomize/)?v?(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "description": "k3s version in each env's cluster-vars.yaml. k3s_sha256 is bumped by hand in the same PR.",
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "k3s-io/k3s",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$",
+      "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
+      "matchStrings": ["k3s_version:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+\\+k3s\\d+)"]
+    },
     {
       "customType": "regex",
       "description": "Datasource comments in Ansible defaults and Flux OCIRepository.",
