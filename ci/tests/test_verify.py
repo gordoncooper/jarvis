@@ -640,6 +640,23 @@ def test_repository_check_first_run_gets_the_same_grace(
     assert line in capsys.readouterr().out
 
 
+def test_etcd_copy_first_run_gets_no_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Unlike the repository check, a first run still going 30 minutes past one 12h interval fails."""
+    cluster = Cluster()
+    cluster.etcd_sync = None
+    cluster.etcd_created = "2026-10-30T23:30:00Z"
+    cluster.etcd_scheduled = "2026-10-31T05:05:00Z"
+    cluster.etcd_active = True
+    assert _run(tmp_path, cluster, monkeypatch) == 1
+    assert "FAIL backup freshness: etcd snapshot copy has no successful scheduled run" in (
+        capsys.readouterr().out
+    )
+
+
 @pytest.mark.parametrize(
     ("last", "code", "line"),
     [

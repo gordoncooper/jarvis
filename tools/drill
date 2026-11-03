@@ -647,6 +647,7 @@ def _run(
         _line(f"DELETE PVC {NAMESPACE}/{PVC}")
         _apply(kubectl, _pvc(), "recreate paused drill PVC")
 
+        _line(f"NODE restoring onto {node}")
         restored = restore(
             ["make", "restore", f"ENV={env}", f"APP={NAMESPACE}", f"NODE={node}"]
         )

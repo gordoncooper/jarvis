@@ -237,6 +237,40 @@ def _same_minor(left: str, right: str) -> bool:
     return tuple(left.split(".")[:2]) == tuple(right.split(".")[:2])
 
 
+def test_kubectl_stays_on_the_k3s_minor() -> None:
+    """Renovate offers no kubectl minor ahead of k3s, and the pin and the cap match each env's k3s."""
+    rule = next(
+        item
+        for item in _renovate_config()["packageRules"]
+        if item.get("matchDepNames") == ["kubernetes/kubernetes"]
+    )
+    pinned = re.search(
+        r"^kubectl_version=(\S+)$", (ROOT / "tools/versions.env").read_text(encoding="utf-8"), re.M
+    )
+    assert pinned
+    paths = sorted(ROOT.glob("envs/*/values/cluster-vars.yaml"))
+    assert paths
+    for path in paths:
+        k3s = yaml.safe_load(path.read_text(encoding="utf-8"))["k3s_version"]
+        k3s_version = k3s.removeprefix("v").split("+")[0]
+        assert _same_minor(pinned.group(1), k3s_version), path
+        assert rule["allowedVersions"] == _next_minor_cap(k3s_version), path
+
+
+def test_only_kustomize_prefixed_tags_are_kustomize_releases() -> None:
+    """The kustomize repo also tags api/, cmd/config/ and old unprefixed releases."""
+    rule = next(
+        item
+        for item in _renovate_config()["packageRules"]
+        if item.get("matchDepNames") == ["kubernetes-sigs/kustomize"]
+    )
+    pattern = re.compile(_js_to_python(rule["extractVersion"]))
+    match = pattern.match("kustomize/v5.6.0")
+    assert match and match.group("version") == "5.6.0"
+    for tag in ("api/v0.19.0", "cmd/config/v0.19.0", "v4.5.7"):
+        assert pattern.match(tag) is None, tag
+
+
 def test_managed_image_without_a_version_tag_fails() -> None:
     """Every custom manager that captures a digest also captures a version. A digest-only line does not match."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
