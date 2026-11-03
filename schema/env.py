@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import sys
 import zoneinfo
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ def is_example_env(name: str) -> bool:
 
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 _HOSTNAME = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
+_DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_SOPS_ENV_SECRETS = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/secrets/")
 _TIER_VALUES = frozenset({"frontier", "mid", "cheap"})
 _CODE_DELIVERY_ALLOWED = ("github",)
 _BUILD_AGENT_ALLOWED = ("cursor",)
@@ -110,8 +113,14 @@ def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
-def validate_env_tree(repo_root: Path | str) -> dict[str, dict[str, Any]]:
-    """Validate every env under envs/. Returns resolved cluster-vars per env name."""
+def validate_env_tree(
+    repo_root: Path | str, *, pre_host: bool = False
+) -> dict[str, dict[str, Any]]:
+    """Validate every env under envs/. Returns resolved cluster-vars per env name.
+
+    pre_host skips the per-env .sops.yaml recipient requirement and the generated
+    ConfigMap render check. Those still run in the full check.
+    """
     root = Path(repo_root).resolve()
     envs_dir = root / "envs"
     if not envs_dir.is_dir():
@@ -119,24 +128,23 @@ def validate_env_tree(repo_root: Path | str) -> dict[str, dict[str, Any]]:
 
     errors: list[str] = []
     resolved_by_env: dict[str, dict[str, Any]] = {}
-    owners_by_env: dict[str, str] = {}
     env_dirs = sorted(p for p in envs_dir.iterdir() if p.is_dir())
     if not env_dirs:
         errors.append(f"no env directories under {_display_path(envs_dir, root)}")
         raise ValidationError(errors)
 
+    env_names = [env_dir.name for env_dir in env_dirs]
     for env_dir in env_dirs:
-        env_errors, env_resolved, owner = _validate_env(env_dir, root)
+        env_errors, env_resolved, _owner = _validate_env(
+            env_dir, root, pre_host=pre_host
+        )
         errors.extend(env_errors)
         if env_resolved is not None:
             resolved_by_env[env_dir.name] = env_resolved
-        if owner and not is_example_env(env_dir.name):
-            owners_by_env[env_dir.name] = owner
 
-    errors.extend(_cross_env_owner_errors(owners_by_env))
-    errors.extend(
-        _validate_sops_creation_rules(root, [env_dir.name for env_dir in env_dirs])
-    )
+    if not pre_host:
+        errors.extend(_validate_sops_creation_rules(root, env_names))
+    errors.extend(_validate_sops_unknown_env_rules(root, env_names))
 
     if errors:
         raise ValidationError(errors)
@@ -190,6 +198,40 @@ def _validate_sops_creation_rules(repo_root: Path, env_names: list[str]) -> list
     return errors
 
 
+def _validate_sops_unknown_env_rules(repo_root: Path, env_names: list[str]) -> list[str]:
+    """A creation rule must name an env folder that exists."""
+    path = repo_root / ".sops.yaml"
+    if not path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("creation_rules", [])
+    if not isinstance(raw, list):
+        return []
+    known = set(env_names)
+    errors: list[str] = []
+    seen: set[str] = set()
+    for rule in raw:
+        if not isinstance(rule, dict):
+            continue
+        regex = rule.get("path_regex")
+        if not isinstance(regex, str):
+            continue
+        for name in _SOPS_ENV_SECRETS.findall(regex):
+            if name in known or name in seen:
+                continue
+            seen.add(name)
+            errors.append(
+                f".sops.yaml: creation rule names envs/{name}/secrets/, "
+                f"but that env folder does not exist; remove the rule"
+            )
+    return errors
+
+
 def _display_path(path: Path, repo_root: Path) -> str:
     try:
         return str(path.resolve().relative_to(repo_root))
@@ -198,7 +240,7 @@ def _display_path(path: Path, repo_root: Path) -> str:
 
 
 def _validate_env(
-    env_dir: Path, repo_root: Path
+    env_dir: Path, repo_root: Path, *, pre_host: bool = False
 ) -> tuple[list[str], dict[str, Any] | None, str | None]:
     errors: list[str] = []
     env_name = env_dir.name
@@ -235,6 +277,20 @@ def _validate_env(
     errors.extend(_validate_apps(apps, _display_path(apps_path, repo_root)))
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
+    errors.extend(
+        _validate_flux_instance_sync(
+            env_dir,
+            repo_root,
+            env_name,
+            cluster_vars.get("flux_git_repo_url"),
+            cluster_vars.get("flux_git_ref"),
+        )
+    )
+    errors.extend(
+        _validate_committed_configmap(
+            env_dir, repo_root, cluster_vars_path, pre_host=pre_host
+        )
+    )
 
     if errors:
         return errors, None, owner
@@ -361,6 +417,10 @@ def _validate_cluster_vars(
     if isinstance(time_zone, str) and time_zone.strip():
         errors.extend(_validate_time_zone(rel_path, time_zone.strip()))
 
+    dns_suffix = data.get("dns_suffix")
+    if isinstance(dns_suffix, str) and dns_suffix.strip():
+        errors.extend(_validate_dns_suffix(rel_path, dns_suffix.strip()))
+
     k3s_version = data.get("k3s_version")
     if isinstance(k3s_version, str) and k3s_version.strip():
         if kubernetes_version_from_k3s(k3s_version) is None:
@@ -412,6 +472,14 @@ def _validate_time_zone(rel_path: str, value: str) -> list[str]:
         zoneinfo.ZoneInfo(value)
     except (zoneinfo.ZoneInfoNotFoundError, ValueError):
         return [f"{rel_path}: time_zone must be an IANA time zone"]
+    return []
+
+
+def _validate_dns_suffix(rel_path: str, value: str) -> list[str]:
+    if len(value) > 253 or not value or value.startswith(".") or value.endswith("."):
+        return [f"{rel_path}: dns_suffix must be a lowercase DNS name"]
+    if not all(_DNS_LABEL.fullmatch(label) for label in value.split(".")):
+        return [f"{rel_path}: dns_suffix must be a lowercase DNS name"]
     return []
 
 
@@ -483,6 +551,87 @@ def _validate_flux_env_paths(env_dir: Path, repo_root: Path, env_name: str) -> l
     return errors
 
 
+def _validate_flux_instance_sync(
+    env_dir: Path,
+    repo_root: Path,
+    env_name: str,
+    flux_url: Any,
+    flux_ref: Any,
+) -> list[str]:
+    """FluxInstance spec.sync must match flux_git_* and this env's flux path."""
+    path = env_dir / "flux" / "flux-instance.yaml"
+    if not path.is_file():
+        return []
+    rel = _display_path(path, repo_root)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        return [f"{rel}: invalid YAML: {exc}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: expected a YAML mapping"]
+    spec = data.get("spec")
+    sync = spec.get("sync") if isinstance(spec, dict) else None
+    if not isinstance(sync, dict):
+        sync = {}
+    expected = {
+        "url": flux_url if isinstance(flux_url, str) and flux_url.strip() else None,
+        "ref": flux_ref if isinstance(flux_ref, str) and flux_ref.strip() else None,
+        "path": f"envs/{env_name}/flux",
+    }
+    sources = {
+        "url": "flux_git_repo_url in values/cluster-vars.yaml",
+        "ref": "flux_git_ref in values/cluster-vars.yaml",
+        "path": f"envs/{env_name}/flux",
+    }
+    errors: list[str] = []
+    for key, want in expected.items():
+        if want is None:
+            continue
+        got = sync.get(key)
+        if got != want:
+            errors.append(
+                f"{rel}: spec.sync.{key} is {got!r}, expected {want!r}; "
+                f"set it to {sources[key]}"
+            )
+    return errors
+
+
+def _rendered_cluster_vars_configmap(cluster_vars_path: Path) -> str:
+    lib = Path(__file__).resolve().parents[1] / "tools" / "lib"
+    if str(lib) not in sys.path:
+        sys.path.insert(0, str(lib))
+    from render_cluster_vars_configmap import render_document
+
+    return render_document(cluster_vars_path)
+
+
+def _validate_committed_configmap(
+    env_dir: Path,
+    repo_root: Path,
+    cluster_vars_path: Path,
+    *,
+    pre_host: bool,
+) -> list[str]:
+    """The committed ConfigMap must match an in-memory render of cluster-vars."""
+    if pre_host:
+        return []
+    generated = env_dir / "flux" / "generated" / "cluster-vars-configmap.yaml"
+    if not generated.is_file():
+        return []
+    rel = _display_path(generated, repo_root)
+    try:
+        rendered = _rendered_cluster_vars_configmap(cluster_vars_path)
+    except SystemExit as exc:
+        detail = str(exc).strip() or "cluster-vars render failed"
+        return [f"{rel}: {detail}"]
+    if generated.read_text(encoding="utf-8") == rendered:
+        return []
+    return [
+        f"{rel}: does not match values/cluster-vars.yaml; "
+        f"re-render with tools/lib/render_cluster_vars_configmap.py"
+    ]
+
+
 def _validate_ntp_pools(rel_path: str, value: Any) -> list[str]:
     if value is None:
         return [f"{rel_path}: missing required key: ntp_pools"]
@@ -532,13 +681,6 @@ def _validate_bare_hostname(rel_path: str, key: str, value: Any) -> list[str]:
     return []
 
 
-def _cross_env_owner_errors(owners_by_env: dict[str, str]) -> list[str]:
-    if len(set(owners_by_env.values())) <= 1:
-        return []
-    detail = ", ".join(f"{name}={owners_by_env[name]}" for name in sorted(owners_by_env))
-    return [f"repo owner handle must be the same across non-example envs: {detail}"]
-
-
 def _validate_https_url(rel_path: str, key: str, value: Any) -> list[str]:
     if value is None:
         return []
@@ -549,6 +691,12 @@ def _validate_https_url(rel_path: str, key: str, value: Any) -> list[str]:
     parsed = urlparse(value)
     if parsed.scheme != "https" or not parsed.netloc:
         return [f"{rel_path}: {key} must be an https URL"]
+    if parsed.username is not None or parsed.password is not None:
+        return [f"{rel_path}: {key} must not include userinfo"]
+    if parsed.query:
+        return [f"{rel_path}: {key} must not include a query"]
+    if parsed.fragment:
+        return [f"{rel_path}: {key} must not include a fragment"]
     return []
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from conftest import require_cli
-from support import REPO_ROOT, load_tool
+from support import REPO_ROOT, _ensure_sops_creation_rule, _rename_copied_env, load_tool
 
 SCRIPT = REPO_ROOT / "tools" / "prep-node"
 
@@ -45,13 +45,6 @@ ssh_user: example # the login
 backup_path: /var/lib/jarvis/backup
 """
 
-_CLUSTER_EDITED = """\
-# cluster header
-build_agent: cursor
-ssh_user: ops # the login
-backup_path: /var/lib/jarvis/backup
-"""
-
 
 def _load():
     return load_tool("prep_node", SCRIPT)
@@ -67,17 +60,17 @@ def test_env_update_renames_host_and_keeps_comments(tmp_path: Path) -> None:
     inventory.write_text(_HOSTS, encoding="utf-8")
     cluster.write_text(_CLUSTER, encoding="utf-8")
 
-    module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "ops")
+    module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
 
     assert inventory.read_text(encoding="utf-8") == _HOSTS_RENAMED
-    assert cluster.read_text(encoding="utf-8") == _CLUSTER_EDITED
+    assert cluster.read_text(encoding="utf-8") == _CLUSTER
     inventory_mtime = inventory.stat().st_mtime_ns
     cluster_mtime = cluster.stat().st_mtime_ns
 
-    module.apply_env_edits(tmp_path, "env-test", "node-a", "node-a", "ops")
+    module.apply_env_edits(tmp_path, "env-test", "node-a", "node-a", "example")
 
     assert inventory.read_text(encoding="utf-8") == _HOSTS_RENAMED
-    assert cluster.read_text(encoding="utf-8") == _CLUSTER_EDITED
+    assert cluster.read_text(encoding="utf-8") == _CLUSTER
     assert inventory.stat().st_mtime_ns == inventory_mtime
     assert cluster.stat().st_mtime_ns == cluster_mtime
 
@@ -95,7 +88,7 @@ def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
     cluster.write_text(_CLUSTER, encoding="utf-8")
     generated.write_text("stale\n", encoding="utf-8")
 
-    module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "ops")
+    module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
 
     from render_cluster_vars_configmap import render_document
 
@@ -105,10 +98,28 @@ def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
     assert generated.read_text(encoding="utf-8") == rendered
     generated_mtime = generated.stat().st_mtime_ns
 
-    module.apply_env_edits(tmp_path, "env-test", "node-a", "node-a", "ops")
+    module.apply_env_edits(tmp_path, "env-test", "node-a", "node-a", "example")
 
     assert generated.read_text(encoding="utf-8") == rendered
     assert generated.stat().st_mtime_ns == generated_mtime
+
+
+def test_ssh_user_mismatch_is_refused(tmp_path: Path) -> None:
+    """A second node may not change the env-wide ssh_user; per-host users come later."""
+    module = _load()
+    env = tmp_path / "envs" / "env-test"
+    inventory = env / "inventory" / "hosts.yml"
+    cluster = env / "values" / "cluster-vars.yaml"
+    inventory.parent.mkdir(parents=True)
+    cluster.parent.mkdir(parents=True)
+    inventory.write_text(_HOSTS, encoding="utf-8")
+    cluster.write_text(_CLUSTER, encoding="utf-8")
+
+    with pytest.raises(module.PrepError, match="per-host users come later"):
+        module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "ops")
+
+    assert inventory.read_text(encoding="utf-8") == _HOSTS
+    assert cluster.read_text(encoding="utf-8") == _CLUSTER
 
 
 def _ssh_snapshot() -> tuple[tuple[str, ...], bytes | None, int | None]:
@@ -470,3 +481,69 @@ def test_env_schema_oserror_is_prep_error(tmp_path: Path) -> None:
     assert "Permission denied" in message
     assert "Traceback" not in message
     assert isinstance(excinfo.value.__cause__, OSError)
+
+
+def test_schema_error_makes_zero_host_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema error exits before SSH, ssh-keyscan, or other host calls."""
+    module = _load()
+    dest = tmp_path / "envs" / "env-00"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    original = cluster.read_text(encoding="utf-8")
+    seeded = original.replace("dns_suffix: env-00.example", "dns_suffix: Home_Lab", 1)
+    assert seeded != original
+    cluster.write_text(seeded, encoding="utf-8")
+
+    host_calls: list[str] = []
+
+    def record(name: str):
+        def _blocked(*_args: object, **_kwargs: object) -> object:
+            host_calls.append(name)
+            raise AssertionError(f"{name} called")
+
+        return _blocked
+
+    real_run = module.subprocess.run
+
+    def guarded_run(argv: object, *args: object, **kwargs: object) -> object:
+        command = argv[0] if argv else ""
+        if command in {"ssh", "ssh-keyscan", "getent"}:
+            host_calls.append(str(command))
+            raise AssertionError(f"{command} called")
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(module, "assert_host_resolves", record("assert_host_resolves"))
+    monkeypatch.setattr(module, "ensure_host_key", record("ensure_host_key"))
+    monkeypatch.setattr(module, "scan_host_keys", record("scan_host_keys"))
+    monkeypatch.setattr(module, "open_session", record("open_session"))
+    monkeypatch.setattr(module, "ssh", record("ssh"))
+    monkeypatch.setattr(module, "batch_ssh", record("batch_ssh"))
+    monkeypatch.setattr(module.subprocess, "run", guarded_run)
+
+    with pytest.raises(module.PrepError) as excinfo:
+        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "tester"])
+    assert "dns_suffix" in str(excinfo.value)
+    assert host_calls == []
+
+
+def test_doc_order_copy_passes_pre_host_without_creation_rule(tmp_path: Path) -> None:
+    """A copied env-00 with no creation rule yet passes pre-host; after edits, full."""
+    module = _load()
+    root = tmp_path / "repo"
+    dest = root / "envs" / "env-new"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    _rename_copied_env(dest, "env-00", "env-new")
+    cluster = dest / "values" / "cluster-vars.yaml"
+    original = cluster.read_text(encoding="utf-8")
+    edited = original.replace("dns_suffix: env-00.example", "dns_suffix: lab.example", 1)
+    assert edited != original
+    cluster.write_text(edited, encoding="utf-8")
+
+    module.run_env_schema(root, pre_host=True)
+
+    module.apply_env_edits(root, "env-new", "cp-1", "cp-1", "example")
+    _ensure_sops_creation_rule(root, "env-new")
+    module.run_env_schema(root)

@@ -32,9 +32,10 @@ Installs the pinned `sops`, `age`, `age-keygen`, `kubectl`, `kustomize`, `kubeco
 
 Copy `envs/env-00` to `envs/<env>`. Copy that example only, never a real env and never its secrets.
 
+0. If this checkout is a fork of this repo, delete `envs/env-01/` and its `.sops.yaml` creation rule.
 1. Replace the values in `envs/<env>/values/` and the hosts in `envs/<env>/inventory/hosts.yml`. Set `jarvis_env` to `<env>`. Every `envs/env-00/` path under `flux/` must name `<env>`.
-2. Run `tools/prep-node` for the first host ([Prepare a node](#prepare-a-node)). It can create the age private key, or read one that is already there, and it prints the public key. It rewrites an age recipient that already exists. It does not add a missing creation rule.
-3. Add one age creation rule in the repo root `.sops.yaml` for `envs/<env>/secrets/`, using that public key.
+2. Run `tools/prep-node` for the first host ([Prepare a node](#prepare-a-node)). It validates the env before it changes a host. It can create the age private key, or read one that is already there, and it prints the public key. It adds a missing age creation rule, or rewrites one that already exists.
+3. Check that `.sops.yaml` has one age creation rule for `envs/<env>/secrets/`.
 4. `make bootstrap-secrets ENV=<env>`
 5. Render the ConfigMap with `python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output envs/<env>/flux/generated/cluster-vars-configmap.yaml`. prep-node also rewrites that file when it already exists.
 6. Commit `envs/<env>/` and `.sops.yaml`. Do not commit the age private key. Push to the branch `flux_git_ref` names, then run `site.yml` as below.
