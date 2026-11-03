@@ -12,7 +12,7 @@ from pathlib import Path
 
 from _loadbalancer import format_violations, scan_loadbalancer
 
-violations = scan_loadbalancer(Path("."))
+violations = scan_loadbalancer(Path("."), require_roots=True)
 if violations:
     for line in format_violations(violations):
         print(line, flush=True)

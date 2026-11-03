@@ -10,13 +10,21 @@ SCAN_ROOTS = ("apps/", "platform/", "services/", "envs/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
 
 
-def load_documents(repo_root: Path | str) -> list[tuple[str, dict | None, str | None]]:
-    """Return (relative path, document, error). One of document or error is set."""
+def load_documents(
+    repo_root: Path | str, *, require_roots: bool = False
+) -> list[tuple[str, dict | None, str | None]]:
+    """Return (relative path, document, error). One of document or error is set.
+
+    The checks pass require_roots=True, so a missing manifest root is an error
+    instead of an empty scan. Fixture trees in tests build only the roots they use.
+    """
     root = Path(repo_root).resolve()
     found: list[tuple[str, dict | None, str | None]] = []
     for scan_root in SCAN_ROOTS:
         base = root / scan_root.rstrip("/")
         if not base.is_dir():
+            if require_roots:
+                found.append((scan_root.rstrip("/"), None, "manifest root is missing"))
             continue
         for path in sorted(item for item in base.rglob("*") if item.is_file()):
             if path.suffix not in {".yaml", ".yml"}:

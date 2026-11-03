@@ -14,6 +14,11 @@ metadata:
 spec:
   rules:
     - name: replication-source
+      match:
+        any:
+          - resources:
+              kinds:
+                - PersistentVolumeClaim
       generate:
         kind: ReplicationSource
 """
@@ -110,6 +115,23 @@ def test_r31_decoy_policy_name_fails(tmp_path: Path) -> None:
 
 def test_r31_policy_without_a_replication_source_rule_fails(tmp_path: Path) -> None:
     _policy(tmp_path, _POLICY.replace("kind: ReplicationSource", "kind: ConfigMap"))
+    assert _reasons(tmp_path) == ["backup enrollment ClusterPolicy is missing"]
+
+
+def test_policy_that_does_not_match_pvcs_fails(tmp_path: Path) -> None:
+    """A pvc-backup policy that generates sources but matches something else enrolls nothing."""
+    _policy(tmp_path, _POLICY.replace("- PersistentVolumeClaim", "- Pod"))
+    assert _reasons(tmp_path) == ["backup enrollment ClusterPolicy is missing"]
+
+
+def test_policy_rule_without_a_match_fails(tmp_path: Path) -> None:
+    without_match = _POLICY.replace(
+        "      match:\n        any:\n          - resources:\n              kinds:\n"
+        "                - PersistentVolumeClaim\n",
+        "",
+    )
+    assert "match:" not in without_match
+    _policy(tmp_path, without_match)
     assert _reasons(tmp_path) == ["backup enrollment ClusterPolicy is missing"]
 
 

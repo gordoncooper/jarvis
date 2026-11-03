@@ -12,7 +12,7 @@ from pathlib import Path
 
 from _digest_pin import format_violations, scan_digest_pin
 
-violations = scan_digest_pin(Path("."))
+violations = scan_digest_pin(Path("."), require_roots=True)
 if violations:
     for line in format_violations(violations):
         print(line, flush=True)

@@ -24,9 +24,11 @@ class DigestPinViolation:
     message: str
 
 
-def scan_digest_pin(repo_root: Path | str) -> list[DigestPinViolation]:
+def scan_digest_pin(
+    repo_root: Path | str, *, require_roots: bool = False
+) -> list[DigestPinViolation]:
     violations: list[DigestPinViolation] = []
-    for rel, doc, error in load_documents(repo_root):
+    for rel, doc, error in load_documents(repo_root, require_roots=require_roots):
         if error or doc is None:
             violations.append(DigestPinViolation(rel, error or "unreadable YAML"))
             continue
