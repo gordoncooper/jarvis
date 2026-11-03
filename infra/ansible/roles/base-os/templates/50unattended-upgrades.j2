@@ -1,6 +1,7 @@
-// Managed by Ansible (base-os): unattended-upgrades package present but inactive; no auto-removals.
-// apt-daily-upgrade.timer is disabled in role tasks; upgrades are run manually by the admin.
+// Managed by Ansible (base-os): unattended upgrades from the distro security origin only; no auto-removals; no automatic reboot.
+// A reboot-required file marks a node that needs a reboot; site.yml reports it.
 Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}-security";
 };
 
 Unattended-Upgrade::Package-Blacklist {
