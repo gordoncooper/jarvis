@@ -1,0 +1,19 @@
+---
+# Read-only, so it also runs under --check. Never reboots and never fails the play.
+- name: Look for a pending reboot
+  ansible.builtin.stat:
+    path: "{{ base_os_reboot_required_path }}"
+  register: base_os_reboot_required
+  tags:
+    - base-os
+    - reboot-required
+
+- name: Warn that this host needs a reboot
+  ansible.builtin.debug:
+    msg: >-
+      REBOOT PENDING on {{ inventory_hostname }}: an installed update needs a reboot.
+      Drain and reboot it (infra/ansible/README.md, Patching and reboots).
+  when: base_os_reboot_required.stat.exists
+  tags:
+    - base-os
+    - reboot-required

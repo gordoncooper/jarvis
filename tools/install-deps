@@ -85,8 +85,6 @@ def _missing_apt_packages() -> list[str]:
             missing.append("python3-yaml")
         if not _python_probe(code="import ensurepip"):
             missing.append("python3-venv")
-        if not _python_probe(code="import bcrypt"):
-            missing.append("python3-bcrypt")
     return missing
 
 
@@ -95,6 +93,7 @@ def _apt_install_command(packages: list[str]) -> str:
 
 
 def _try_apt_install(packages: list[str]) -> None:
+    subprocess.run(["sudo", "apt-get", "update"], check=True)
     subprocess.run(
         ["sudo", "apt-get", "install", "-y", *packages],
         check=True,
@@ -111,14 +110,14 @@ def require_system_tools() -> None:
             _try_apt_install(missing)
         except subprocess.CalledProcessError as err:
             raise SystemExit(
-                f"apt-get install failed (exit {err.returncode}); try:\n"
-                f"  {_apt_install_command(missing)}"
+                f"apt-get failed (exit {err.returncode}); try:\n"
+                f"  sudo apt-get update && {_apt_install_command(missing)}"
             ) from err
         missing = _missing_apt_packages()
     if missing:
         raise SystemExit(
             "missing system packages; install with:\n"
-            f"  {_apt_install_command(missing)}"
+            f"  sudo apt-get update && {_apt_install_command(missing)}"
         )
 
 

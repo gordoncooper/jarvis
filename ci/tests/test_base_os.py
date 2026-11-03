@@ -6,6 +6,7 @@ import getpass
 import grp
 import json
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -26,16 +27,15 @@ from ansible_role_proof import (
 ROLE_TEMPLATES = ANSIBLE_DIR / "roles" / "base-os" / "templates"
 
 
-def test_base_os_templates_encode_manual_upgrade_policy() -> None:
+def test_base_os_templates_encode_security_only_upgrade_policy() -> None:
     cluster = load_cluster_vars()
     pools = cluster["ntp_pools"]
     assert isinstance(pools, list)
     chrony = ansible_render_template(
-        "chrony.conf.j2", {"ntp_pools": pools}, templates_dir=ROLE_TEMPLATES
+        "chrony.conf.j2", {"ntp_pools": pools, "chrony_nts": True}, templates_dir=ROLE_TEMPLATES
     )
-    assert " nts" in chrony
     for pool in pools:
-        assert f"pool {pool}" in chrony
+        assert f"pool {pool} iburst maxsources 4 nts\n" in chrony
 
     journald_cap = load_role_defaults(ANSIBLE_DIR / "roles" / "base-os")[
         "jarvis_journald_system_max_use"
@@ -52,12 +52,43 @@ def test_base_os_templates_encode_manual_upgrade_policy() -> None:
     auto_upgrades = ansible_render_template(
         "20auto-upgrades.j2", {}, templates_dir=ROLE_TEMPLATES
     )
-    assert 'Unattended-Upgrade "0"' in auto_upgrades
+    assert 'Unattended-Upgrade "1"' in auto_upgrades
 
     unattended = ansible_render_template(
         "50unattended-upgrades.j2", {}, templates_dir=ROLE_TEMPLATES
     )
     assert 'Automatic-Reboot "false"' in unattended
+    origins = re.search(r"Allowed-Origins \{(.*?)\};\n", unattended, re.DOTALL)
+    assert origins is not None
+    assert re.findall(r'"([^"]+)";', origins.group(1)) == ["${distro_id}:${distro_codename}-security"]
+
+
+def test_upgrade_timer_is_enabled() -> None:
+    """Security updates need apt-daily-upgrade.timer enabled and started."""
+    tasks = yaml.safe_load(
+        (ANSIBLE_DIR / "roles" / "base-os" / "tasks" / "main.yml").read_text(encoding="utf-8")
+    )
+    timers = [
+        task["ansible.builtin.systemd"]
+        for task in tasks
+        if isinstance(task, dict)
+        and task.get("ansible.builtin.systemd", {}).get("name") == "apt-daily-upgrade.timer"
+    ]
+    assert len(timers) == 1
+    assert timers[0]["enabled"] is True
+    assert timers[0]["state"] == "started"
+
+
+def test_chrony_nts_off_renders_pools_without_nts() -> None:
+    """chrony_nts false lets a LAN time source without NTS be used."""
+    chrony = ansible_render_template(
+        "chrony.conf.j2",
+        {"ntp_pools": ["time.example", "lan.example"], "chrony_nts": False},
+        templates_dir=ROLE_TEMPLATES,
+    )
+    assert "pool time.example iburst maxsources 4\n" in chrony
+    assert "pool lan.example iburst maxsources 4\n" in chrony
+    assert "nts" not in chrony.replace("ntsdumpdir", "")
 
 
 def test_resolv_conf_link_does_not_touch_its_target(tmp_path: Path) -> None:
@@ -169,7 +200,7 @@ def test_edge_hosts_do_not_use_the_resolved_stub() -> None:
     assert any(
         isinstance(handler, dict)
         and handler.get("name") == "Restart systemd-resolved"
-        and handler["ansible.builtin.service"]["name"] == "systemd-resolved"
+        and handler["ansible.builtin.systemd"]["name"] == "systemd-resolved"
         for handler in handlers
     )
 
@@ -337,3 +368,63 @@ def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> N
     assert playbook_recap_field(checked_out, "changed") == 0
     assert "RUNNING HANDLER" not in checked_out
     assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
+
+
+def test_pending_reboot_warns_only_the_host_that_needs_one(tmp_path: Path) -> None:
+    """A host with the reboot-required file is named in a warning, also under --check. A host without it is not."""
+    require_cli("ansible-playbook")
+    flagged = tmp_path / "reboot-required"
+    flagged.write_text("", encoding="utf-8")
+    play = tmp_path / "play.yml"
+    play.write_text(
+        textwrap.dedent(
+            """\
+            ---
+            - name: Reboot signal
+              hosts: all
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_role:
+                    name: base-os
+                    tasks_from: reboot-required.yml
+            """
+        ),
+        encoding="utf-8",
+    )
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text(
+        yaml.safe_dump(
+            {
+                "all": {
+                    "hosts": {
+                        "stale-node": {
+                            "ansible_connection": "local",
+                            "base_os_reboot_required_path": str(flagged),
+                        },
+                        "fresh-node": {
+                            "ansible_connection": "local",
+                            "base_os_reboot_required_path": str(tmp_path / "absent"),
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    for extra_args in ([], ["--check"]):
+        run = subprocess.run(
+            ["ansible-playbook", str(play), "-i", str(inventory), *extra_args],
+            cwd=ANSIBLE_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        output = run.stdout + run.stderr
+        assert run.returncode == 0, output
+        assert "REBOOT PENDING on stale-node" in output
+        assert "REBOOT PENDING on fresh-node" not in output

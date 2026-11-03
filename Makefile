@@ -32,41 +32,41 @@ ci-verify: deps
 
 verify:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/verify/run --env "$(ENV)"
+	@.venv/bin/python tools/verify/run --env "$(ENV)"
 
 drill:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/drill --env "$(ENV)"
+	@.venv/bin/python tools/drill --env "$(ENV)"
 
 drill-cleanup:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/drill --env "$(ENV)" --cleanup-only
+	@.venv/bin/python tools/drill --env "$(ENV)" --cleanup-only
 
 restore:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
-	@python3 tools/restore --env "$(ENV)" --app "$(APP)"
+	@.venv/bin/python tools/restore --env "$(ENV)" --app "$(APP)"
 
 restore-all:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/restore --env "$(ENV)" --all \
+	@.venv/bin/python tools/restore --env "$(ENV)" --all \
 		$(if $(RETIRE),--retire "$(RETIRE)") \
 		$(if $(ACCEPT_EMPTY),--accept-empty "$(ACCEPT_EMPTY)")
 
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@python3 tools/bootstrap-secrets --env "$(ENV)" $(if $(filter 1,$(ROTATE_RESTIC)),--rotate-restic,)
+	@.venv/bin/python tools/bootstrap-secrets --env "$(ENV)" $(if $(filter 1,$(ROTATE_RESTIC)),--rotate-restic,)
 
 age-key-check:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(KEY)" || (echo "KEY is required" >&2; exit 1)
-	@python3 tools/age-key-check --env "$(ENV)" --key-file "$(KEY)"
+	@.venv/bin/python tools/age-key-check --env "$(ENV)" --key-file "$(KEY)"
 
 seal:
 	@test -n "$(NAME)" || (echo "NAME is required (<component>-<purpose>)" >&2; exit 1)
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@if [ -n "$(FILE)" ]; then \
-		python3 tools/seal --env "$(ENV)" --name "$(NAME)" "$(FILE)"; \
+		.venv/bin/python tools/seal --env "$(ENV)" --name "$(NAME)" "$(FILE)"; \
 	else \
-		python3 tools/seal --env "$(ENV)" --name "$(NAME)"; \
+		.venv/bin/python tools/seal --env "$(ENV)" --name "$(NAME)"; \
 	fi

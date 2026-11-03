@@ -47,7 +47,7 @@ Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and 
 | `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags flux-operator` |
 | `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags kubeconfig` |
 | `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags time` |
-| `apt-policy` | Apt list refresh timers and inert unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags apt-policy` |
+| `apt-policy` | Apt list refresh and upgrade timers and the security-only unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags apt-policy` |
 | `journald` | journald drop-in and restart | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags journald` |
 | `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags resolved` |
 
@@ -60,6 +60,21 @@ The kubeconfig role reads `k3s_kubeconfig_path` on the control-plane node, rewri
 On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `site.yml`. Leaving `edge` does not turn the stub back on. On an existing cluster, run `site.yml --tags resolved` on the edge hosts before App DNS is applied, and again after a `--tags k3s` run that adds a host to edge.
 
 Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
+
+## Patching and reboots
+
+Every node installs updates from its distro's `-security` origin by itself (`unattended-upgrades` with `apt-daily-upgrade.timer` enabled). No other origin is allowed (Ubuntu Pro ESM included), nothing is auto-removed, and a node never reboots on its own.
+
+When an update needs a reboot, Ubuntu creates `/var/run/reboot-required`. Each `site.yml` run, `--check` included, prints `REBOOT PENDING on <host>` for every host that has the file. The warning does not fail the run, and it appears only when someone runs `site.yml`.
+
+Drain and reboot one node at a time, workers before the control plane:
+
+1. `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`
+2. `sudo reboot` on that node.
+3. Wait until the node is `Ready`, then `kubectl uncordon <node>`.
+4. Run `make verify ENV=<env>` before the next node.
+
+The single control plane has no peer, so the API is down while it reboots; plan that outage. GPU nodes use Ubuntu's signed `linux-modules-nvidia-*` packages, so a kernel update brings matching modules.
 
 ## Rebuild hold
 
@@ -75,4 +90,4 @@ Flux rollback: while the controllers are up, revert the commit. When the FluxIns
 
 Age key: keep two copies of the one key (`age_key_file`, default `~/.config/sops/age/keys.txt`). The second copy stays offline. Prove a copy with `make age-key-check ENV=<env> KEY=<path>` as described in `envs/env-00/secrets/README.md`. If the key file is lost and the cluster is up, copy `age.agekey` from Secret `flux-system/sops-age` back to that path at mode `0600`. Do not delete sealed files. If that Secret is gone too and the cluster is still up, reseal the live Secrets to a new key. Do not regenerate. Run `make bootstrap-secrets` only when the cluster is gone as well. A mismatched age key in prep-node changes neither `.sops.yaml` nor the sealed files.
 
-Clock: if Flux is stuck fetching git while the network is fine, check `timedatectl`. chrony uses NTS only, against cluster-vars' `ntp_pools`.
+Clock: if Flux is stuck fetching git while the network is fine, check `timedatectl`. chrony uses NTS against cluster-vars' `ntp_pools`; set `chrony_nts: false` for a LAN time source that does not speak NTS.
