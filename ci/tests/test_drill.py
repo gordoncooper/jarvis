@@ -734,25 +734,32 @@ def test_etcd_snapshot_not_yet_copied_says_so_and_fails(
 _FAKE_RESTIC = """#!/bin/sh
 case "$1" in
   ls) [ -n "$LISTED" ] || exit 1; echo 'snapshot 1 of [/snapshots]:'; echo "$LISTED" ;;
-  restore) [ -z "$EMPTY" ] || exit 0; mkdir -p "$4${6%/*}"; cp "$6" "$4$6" ;;
+  restore)
+    [ -z "$EMPTY" ] || exit 0
+    mkdir -p "$4${6%/*}"; cp "$6" "$4$6"
+    [ -z "$UNREADABLE" ] || chmod 000 "$4$6" ;;
 esac
 """
 
 
 @pytest.mark.parametrize(
-    ("listed", "empty", "code", "line"),
+    ("listed", "empty", "unreadable", "code", "line"),
     [
-        ("etcd-snapshot-1", "", 0, f"ETCD {hashlib.sha256(b'one').hexdigest()}"),
-        ("etcd-snapshot-0", "", 3, f"{drill_tool.NOT_COPIED} etcd-snapshot-1"),
-        ("", "", 1, ""),
-        ("etcd-snapshot-1", "yes", 1, ""),
+        ("etcd-snapshot-1", "", "", 0, f"ETCD {hashlib.sha256(b'one').hexdigest()}"),
+        ("etcd-snapshot-0", "", "", 3, f"{drill_tool.NOT_COPIED} etcd-snapshot-1"),
+        ("", "", "", 1, ""),
+        ("etcd-snapshot-1", "yes", "", 1, ""),
+        ("etcd-snapshot-1", "", "yes", 1, ""),
     ],
 )
 def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
-    tmp_path: Path, listed: str, empty: str, code: int, line: str
+    tmp_path: Path, listed: str, empty: str, unreadable: str, code: int, line: str
 ) -> None:
     """The newest local file must be in the latest restic snapshot; a failing restic is not
-    'not copied', and a restore that wrote no file fails before any checksum line."""
+    'not copied'; a restore that wrote no file fails; and a sha256sum that fails on the left
+    of `| cut` fails the step (pipefail) instead of printing an empty checksum."""
+    if unreadable and os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file")
     busybox = shutil.which("busybox")
     shell = [busybox, "sh"] if busybox else ["bash"]
     snaps, target, bindir = (tmp_path / name for name in ("snaps", "target", "bin"))
@@ -771,6 +778,7 @@ def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
             "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
             "LISTED": f"{snaps}/{listed}" if listed else "",
             "EMPTY": empty,
+            "UNREADABLE": unreadable,
         },
         capture_output=True,
         text=True,

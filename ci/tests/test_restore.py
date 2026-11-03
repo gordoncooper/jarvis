@@ -405,6 +405,31 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     assert restored == {"demo/drill", "other/keep"}
 
 
+@pytest.mark.parametrize(
+    "target",
+    [["restore", "ENV=env-00", "APP=demo"], ["restore-all", "ENV=env-00"]],
+)
+def test_make_forwards_node_only_when_set(target: list[str]) -> None:
+    """NODE=<node> reaches tools/restore as --node; without NODE there is no --node."""
+    env = {key: value for key, value in os.environ.items() if key != "NODE"}
+
+    def recipe(*extra: str) -> str:
+        proc = subprocess.run(
+            ["make", "-n", *target, *extra],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
+        # make -n prints the recipe, with its continuation lines, instead of running it.
+        assert "tools/restore" in proc.stdout
+        return proc.stdout
+
+    assert '--node "node-a"' in recipe("NODE=node-a")
+    assert "--node" not in recipe()
+
+
 def _run(cluster: _Cluster, **kwargs: object) -> int:
     args = {
         "env": "env-00",

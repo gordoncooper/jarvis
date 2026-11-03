@@ -253,7 +253,8 @@ def _restic_check(root: Path, env: str) -> dict:
 
 def test_restic_check_reads_repositories_without_a_lock(example_copy: ExampleCopy) -> None:
     """The check takes no lock and mounts the repositories read-only, so it never blocks,
-    deletes, prunes or unlocks anything; it runs the etcd copy's pinned image with a memory cap."""
+    deletes, prunes or unlocks anything; it has no API token or capabilities, and runs the
+    etcd copy's pinned image with a memory cap."""
     etcd = _docs(ROOT / "platform/backups/etcd-snapshots.yaml")[0]
     etcd_image = etcd["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"]
     for root, env in real_and_copy_envs(example_copy):
@@ -264,6 +265,12 @@ def test_restic_check_reads_repositories_without_a_lock(example_copy: ExampleCop
         assert container["resources"]["requests"]["memory"]
         assert container["resources"]["limits"]["memory"]
         assert pod["nodeSelector"] == {"role.${dns_suffix}/backup": "true"}
+        # No API token and no capabilities: root may only read files it owns.
+        assert pod["automountServiceAccountToken"] is False
+        security = container["securityContext"]
+        assert security["capabilities"]["drop"] == ["ALL"]
+        assert "add" not in security["capabilities"]
+        assert security["allowPrivilegeEscalation"] is False
         assert re.search(r"\brestic\b[^\n]*--no-lock\b[^\n]*\bcheck\b", container["command"][-1])
         mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
         for volume in pod["volumes"]:
