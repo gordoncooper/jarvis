@@ -58,7 +58,8 @@ A required key that is present but null counts as unset and fails.
 | `apps_git_repo_url` | no | When set, an https Git remote for the apps repo, with the same owner handle as `flux_git_repo_url`. When unset, the env owner is the `flux_git_repo_url` handle. That handle is the same across every non-example env. |
 | `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
 | `llm_provider_host` | no | When set, an AI provider API hostname, with no scheme, path, or port. |
-| `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4 nts` line. |
+| `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
+| `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
 | `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
 | `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
 | `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. |

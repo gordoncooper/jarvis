@@ -5,7 +5,7 @@ From a fresh copy of this repo to a running cluster, then `make verify` and `mak
 ## Prerequisites
 
 - amd64 Ubuntu Server nodes. Exactly one host has the `control_plane` role. A host with the `gpu` role must have an NVIDIA device. The opening play of `site.yml` checks this before it changes a node.
-- Internet access during the build, on the nodes and on the machine that runs the playbook.
+- Internet access during the build, on the nodes and on the machine that runs the playbook. The controller needs Python 3.12 or newer (the pinned `ansible-core` requires it).
 - Encrypting needs the public age recipient in `.sops.yaml`. The private key decrypts. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. `site.yml` reads the private key whenever that file exists, including when `flux-system/sops-age` is already present, and it refuses a file that is not mode 0600 or not owned by the user running the play. When the secret is absent, that read creates it. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. `tools/prep-node` can create a missing key or read one that is already there. Keep the private key offline except for those reads.
 - Inventory hostnames must resolve from the controller and from every node.
 - A Git repository Flux can fetch over https. `flux_git_repo_url` is that remote.

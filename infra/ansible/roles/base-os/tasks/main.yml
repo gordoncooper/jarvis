@@ -47,7 +47,7 @@
   ansible.builtin.import_tasks: chrony.yml
 
 - name: Enable and start chrony
-  ansible.builtin.service:
+  ansible.builtin.systemd:
     name: chrony
     state: started
     enabled: true
@@ -56,7 +56,7 @@
     - time
     - chrony-service
 
-- name: Configure periodic apt (list refresh only)
+- name: Configure periodic apt (list refresh and security upgrades)
   ansible.builtin.template:
     src: 20auto-upgrades.j2
     dest: /etc/apt/apt.conf.d/20auto-upgrades
@@ -67,7 +67,7 @@
     - base-os
     - apt-policy
 
-- name: Keep unattended-upgrades package policy inert
+- name: Limit unattended-upgrades to security updates, no automatic reboot
   ansible.builtin.template:
     src: 50unattended-upgrades.j2
     dest: /etc/apt/apt.conf.d/50unattended-upgrades
@@ -87,14 +87,17 @@
     - base-os
     - apt-policy
 
-- name: Disable automatic package upgrades timer
+- name: Keep apt-daily-upgrade timer enabled for security upgrades
   ansible.builtin.systemd:
     name: apt-daily-upgrade.timer
-    enabled: false
-    state: stopped
+    enabled: true
+    state: started
   tags:
     - base-os
     - apt-policy
+
+- name: Report a pending reboot
+  ansible.builtin.import_tasks: reboot-required.yml
 
 - name: Set node timezone from cluster-vars
   community.general.timezone:
