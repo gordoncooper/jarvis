@@ -6,7 +6,6 @@ flux get sources git -A
 flux logs kustomization demo
 flux tree kustomization demo
 flux events --for Kustomization/demo
-flux reconcile kustomization demo --with-source
 kubectl get nodes --show-labels
 kubectl get statefulsets -A
 kubectl get replicasets -A
@@ -40,3 +39,7 @@ kubectl describe certificate "<name>"
 flux logs --level debug
 bash -c 'rsync -av ./a/ ./b/; echo a:b'
 helm delta
+rg ssh .
+git commit -m 'tighten sops rule'
+echo 'a | ssh b'
+command -v sops
