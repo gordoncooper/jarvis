@@ -8,6 +8,8 @@ Run `bash ci/run-checks` and the tests near your change before pushing. CI at th
 
 `ci/checks/cli-deny` proves `.cursor/cli.json` and `.claude/settings.json` against one corpus, `ci/checks/fixtures/guard-corpus.tsv`. To add a category, add `block` rows that name it (the bare command and the wrapper forms both clients see), add `allow` rows for the everyday commands nearest to it, then add entries to both files until the check passes. Leave a form neither client can block out of the corpus and describe it by category only. A failure names the client, category and corpus line, never the command.
 
+Write each entry so it names a command position, not a word anywhere in the line: a guarded word also appears in commit messages, search patterns, test selectors and file paths, and an allow rule cannot carve an exception out of a deny rule in either client. A deny entry that fires on a wrapper names both the wrapper and the program it wraps, so an unrelated command that merely mentions the program stays allowed.
+
 ## Known weak spots
 
 These are gaps a maintainer should know about when a change looks green.

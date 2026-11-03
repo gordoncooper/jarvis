@@ -141,9 +141,6 @@ age decrypt	age -i key.txt -d
 gh merge	gh api -X PUT repos/owner/repo/pulls/98/merge
 kubectl mutations	time kubectl delete ns foo
 kubectl mutations	/usr/bin/env kubectl delete ns foo
-remote shell and copy	rg ssh .
-sops decrypt or edit	git commit -m 'tighten sops rule'
-remote shell and copy	echo 'a | ssh b'
 kubectl Secret reads	kubectl get secretstores -A
 kubectl Secret reads	kubectl get clustersecretstores
-sops decrypt or edit	command -v sops
+flux mutations	flux reconcile kustomization demo --with-source

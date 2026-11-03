@@ -12,7 +12,12 @@ Both clients split a line into commands at && || ; | & newlines, $( ),
 backticks and subshells, drop leading FOO=1 assignments, and match each
 command as raw word text (quotes kept, words joined by one space, so corpus
 rows use single spaces). Neither unwraps bash -c, eval, sudo, env, absolute
-paths or interpreters, so the lists name those wrappers or match a substring.
+paths or interpreters, so the lists name those wrappers one by one.
+
+Entries name a command position rather than a substring of the line, so a
+guarded word inside a commit message, a search pattern, a test selector or a
+path stays allowed. Neither client lets an allow rule carve an exception out
+of a deny rule, so breadth has to come off the deny side.
 
 Cursor, mirroring cursor-agent 2026.10.22-27dcf5f: Shell(cmd:args) or
 Shell(pattern), only * is a wildcard, anchored, case-sensitive, no wrapper

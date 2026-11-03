@@ -89,14 +89,18 @@ def test_corpus_expansions_and_bad_rows_fail(tmp_path: Path):
 @pytest.mark.parametrize(
     ("client", "entry", "category"),
     [
-        ("cursor", "Shell(*kubectl*get*CrEt*)", "secret-read"),
-        ("claude", "Bash(*kubectl*get*CrEt*)", "secret-read"),
-        ("cursor", "Shell(*.kube/*)", "admin-kubeconfig"),
-        ("claude", "Bash(*.kube/*)", "admin-kubeconfig"),
-        ("cursor", "Read(/etc/rancher/k3s/**)", "admin-kubeconfig"),
-        ("claude", "Read(//etc/rancher/k3s/**)", "admin-kubeconfig"),
+        ("cursor", "Shell(kubectl:*get*CrEt*)", "secret-read"),
+        ("claude", "Bash(kubectl *get*CrEt*)", "secret-read"),
+        ("cursor", "Shell(cat:*.kube/*)", "admin-kubeconfig"),
+        ("claude", "Bash(cat *.kube/*)", "admin-kubeconfig"),
+        ("cursor", "Read(/etc/rancher/**)", "admin-kubeconfig"),
+        ("claude", "Read(//etc/rancher/**)", "admin-kubeconfig"),
         ("cursor", "Shell(make:*drill*)", "cluster-entrypoint"),
         ("claude", "Bash(make *drill*)", "cluster-entrypoint"),
+        ("cursor", "Shell(git:*push * main)", "forge-write"),
+        ("claude", "Bash(git *push * main)", "forge-write"),
+        ("cursor", "Shell(flux:*reconcile*)", "cluster-write"),
+        ("claude", "Bash(flux *reconcile*)", "cluster-write"),
     ],
 )
 def test_deleted_deny_entry_fails_its_category(client: str, entry: str, category: str):
@@ -114,6 +118,23 @@ def test_claude_file_missing_a_cursor_category_fails(category: str):
     deny = [t for t in _deny("claude") if not any(row_blocked("claude", [t], r) for r in rows)]
     assert not _blocks_fail(_failures("cursor", _deny("cursor")), "cursor", category)
     assert _blocks_fail(_failures("claude", deny), "claude", category)
+
+
+def test_intended_client_differences_are_pinned():
+    """Rule: the lists differ only where the clients' documented semantics differ. Cursor
+    needs one entry per process wrapper; Claude strips those wrappers, but needs an
+    end-anchored verb because stripping a bare xargs can leave the verb last."""
+    cursor, claude = _deny("cursor"), _deny("claude")
+    wrapped = "timeout 5 kubectl delete ns demo"
+    no_timeout = ([t for t in cursor if "timeout" not in t], [t for t in claude if "timeout" not in t])
+    assert shell_blocked("cursor", cursor, wrapped) and shell_blocked("claude", claude, wrapped)
+    assert not shell_blocked("cursor", no_timeout[0], wrapped)
+    assert shell_blocked("claude", no_timeout[1], wrapped)
+    piped = "kubectl get pods -o name | xargs kubectl delete"
+    bare_verb = ([t for t in cursor if not t.endswith("delete)")], [t for t in claude if not t.endswith("delete)")])
+    assert shell_blocked("cursor", cursor, piped) and shell_blocked("claude", claude, piped)
+    assert shell_blocked("cursor", bare_verb[0], piped)
+    assert not shell_blocked("claude", bare_verb[1], piped)
 
 
 @pytest.mark.parametrize(("client", "entry"), [("cursor", "Shell(git:*)"), ("claude", "Bash(git *)")])
