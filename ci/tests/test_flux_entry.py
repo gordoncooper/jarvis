@@ -100,7 +100,7 @@ def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
 def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
     """The four standard Kustomizations, in dependsOn order, with their paths.
 
-    platform-controllers carries the two HelmRelease health checks and a
+    platform-controllers carries the HelmRelease health checks and a
     timeout. No other Kustomization carries health checks.
     """
     expected = standard_flux_kustomization_paths(env)
@@ -328,13 +328,13 @@ def _drop_one_health_check(docs: list[dict]) -> None:
     _controllers_spec(docs)["healthChecks"] = _controllers_spec(docs)["healthChecks"][:1]
 
 
-def _add_volsync_health_check(docs: list[dict]) -> None:
+def _add_unlisted_health_check(docs: list[dict]) -> None:
     _controllers_spec(docs)["healthChecks"] = [
         *_controllers_spec(docs)["healthChecks"],
         {
             "apiVersion": "helm.toolkit.fluxcd.io/v2",
             "kind": "HelmRelease",
-            "name": "volsync",
+            "name": "k8s-gateway",
             "namespace": "flux-system",
         },
     ]
@@ -354,13 +354,13 @@ def _health_check_on_platform_configs(docs: list[dict]) -> None:
     "mutate",
     [
         _drop_one_health_check,
-        _add_volsync_health_check,
+        _add_unlisted_health_check,
         _drop_timeout,
         _health_check_on_platform_configs,
     ],
 )
-def test_health_checks_are_exactly_the_two_helmreleases(tmp_path: Path, mutate) -> None:
-    """R1: platform-controllers waits for the two HelmReleases, and only those."""
+def test_health_checks_are_exactly_the_listed_helmreleases(tmp_path: Path, mutate) -> None:
+    """R1: platform-controllers waits for cert-manager, Kyverno and VolSync, and only those."""
     entry = example_flux_entry(tmp_path)
     assert _flux_kustomization_errors(entry.kustomizations, entry.env) == []
     docs = copy.deepcopy(entry.kustomizations)

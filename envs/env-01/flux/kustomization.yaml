@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - generated/cluster-vars-configmap.yaml
   - flux-instance.yaml
+  - identities.yaml
   - kustomizations/platform-controllers.yaml
   - kustomizations/platform-configs.yaml
   - kustomizations/services.yaml

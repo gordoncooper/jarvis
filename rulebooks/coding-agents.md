@@ -9,6 +9,7 @@ Rules here are prose only for what `ci/checks/`, `.cursor/cli.json`, and `.claud
 - **Core stays env-agnostic and identity-free:** `ci/checks/core-names`. Its spec is the identity section of `schema/CONTRACT.md`; read it there, not here. LoadBalancer Services are `ci/checks/loadbalancer`.
 - **Images the repo adds are digest-pinned:** `ci/checks/digest-pin`.
 - **Env schema (values under `envs/<env>/`):** `ci/checks/env-schema`.
+- **Every Flux Kustomization and HelmRelease names a service account the root sync applies, only the platform layer runs as the platform account, and refs stay in-namespace:** `ci/checks/flux-identity`.
 - **Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
 - **Plan codes stay out of Markdown docs, READMEs and `docs/` (not `AGENTS.md` or `.github/`):** `ci/checks/plan-codes`.
 - **No plaintext secrets in Git:** `ci/checks/secret-scan`.

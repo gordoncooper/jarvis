@@ -1,4 +1,6 @@
 ---
+# Read-only. Runs before the operator install, so a wrong key file stops the run
+# before any cluster change. sops_age_secret.yml creates the secret.
 - name: Check whether flux-system sops-age secret exists
   ansible.builtin.command:
     cmd: >-
@@ -55,6 +57,27 @@
   when: sops_age_key_stat.stat.exists | default(false)
   no_log: true
   block:
+    - name: Read the env's age recipients from the SOPS config
+      ansible.builtin.set_fact:
+        flux_sops_recipients: >-
+          {{ ((lookup('file', flux_sops_config_file, errors='ignore') or '{}') | from_yaml).creation_rules
+             | default([], true)
+             | selectattr('path_regex', 'defined')
+             | selectattr('path_regex', 'contains', 'envs/' ~ jarvis_env ~ '/secrets/')
+             | selectattr('age', 'defined')
+             | map(attribute='age') | flatten | join(',') | split(',')
+             | map('trim') | select | list }}
+
+    - name: Require an age recipient for this env
+      ansible.builtin.assert:
+        that:
+          - flux_sops_recipients | length > 0
+        fail_msg: >-
+          .sops.yaml has no age recipient in a creation rule for
+          envs/{{ jarvis_env }}/secrets/, so no identity in the key file can be chosen.
+      # Public recipients only, so the reason stays visible.
+      no_log: false
+
     - name: Require age private key file on the controller
       ansible.builtin.assert:
         that:
@@ -64,9 +87,49 @@
           or age_key_file.
       no_log: true
 
-    - name: Load age private key from the controller
+    - name: Read the identities in the age private key file
       ansible.builtin.set_fact:
-        flux_sops_age_key_content: "{{ lookup('file', sops_age_key_file) }}"
+        flux_sops_age_file_identities: >-
+          {{ lookup('file', sops_age_key_file).splitlines() | map('trim')
+             | select('match', '^AGE-SECRET-KEY-1[0-9A-Z]+$') | list }}
+      no_log: true
+
+    - name: Derive the public key of each identity in the age private key file
+      ansible.builtin.command:
+        argv:
+          - age-keygen
+          - -y
+        stdin: "{{ item }}"
+      loop: "{{ flux_sops_age_file_identities | default([]) }}"
+      register: flux_sops_age_publics
+      changed_when: false
+      check_mode: false
+      delegate_to: localhost
+      become: false
+      run_once: true
+      no_log: true
+
+    - name: Keep only the identities for the env's age recipients
+      ansible.builtin.set_fact:
+        flux_sops_age_key_content: >-
+          {{ flux_sops_age_publics.results | default([])
+             | selectattr('stdout', 'in', flux_sops_recipients)
+             | map(attribute='item') | join('\n') }}
+      no_log: true
+
+    - name: Record whether the key file holds an identity for the env
+      ansible.builtin.set_fact:
+        flux_sops_age_matched: "{{ flux_sops_age_key_content | length > 0 }}"
+      no_log: true
+
+    - name: Refuse a key file with no identity for the env's age recipient
+      ansible.builtin.assert:
+        that:
+          - flux_sops_age_matched | bool
+        fail_msg: >-
+          No identity in the age key file matches the age recipient for
+          envs/{{ jarvis_env }}/secrets/ in .sops.yaml. Point SOPS_AGE_KEY_FILE
+          or age_key_file at the key for this env.
       no_log: true
 
     - name: Read existing sops-age secret data when present
@@ -80,21 +143,25 @@
       check_mode: false
       no_log: true
 
-    - name: Decode existing sops-age secret key when present
+    # The secret may hold more than the env's identity, and comment lines.
+    # It passes when its identities include every one chosen from the key file.
+    - name: Record whether the existing sops-age secret holds the env's identity
       ansible.builtin.set_fact:
-        flux_sops_age_existing_key_content: >-
-          {{ (flux_sops_age_existing_json.stdout | from_json).data['age.agekey'] | b64decode }}
+        flux_sops_age_secret_holds_match: >-
+          {{ flux_sops_age_key_content.splitlines()
+             | difference(_existing.splitlines() | map('trim') | list)
+             | length == 0 }}
+      vars:
+        _existing: >-
+          {{ ((flux_sops_age_existing_json.stdout | from_json).get('data') or {}).get('age.agekey', '')
+             | b64decode }}
       when: flux_sops_age_present | bool
       no_log: true
 
     - name: Refuse to overwrite an existing sops-age secret with different content
       ansible.builtin.assert:
         that:
-          - flux_sops_age_existing_json is defined
-          - flux_sops_age_existing_json.stdout | length > 0
-          - (flux_sops_age_existing_json.stdout | from_json).data['age.agekey'] is defined
-          - (flux_sops_age_existing_json.stdout | from_json).data['age.agekey'] | length > 0
-          - (flux_sops_age_existing_key_content | trim) == (flux_sops_age_key_content | trim)
+          - flux_sops_age_secret_holds_match | bool
         fail_msg: >-
           flux-system/sops-age already exists with different content and may be
           the only copy of the age key. Do not delete it. Point SOPS_AGE_KEY_FILE
@@ -102,10 +169,3 @@
           back to that path first (infra/ansible/README.md, Recovery).
       when: flux_sops_age_present | bool
       no_log: true
-
-- name: Create flux-system sops-age secret once
-  ansible.builtin.command:
-    cmd: "{{ k3s_binary_path }} kubectl create -f -"
-    stdin: "{{ lookup('template', 'sops-age-secret.yaml.j2') }}"
-  when: not (flux_sops_age_present | bool)
-  no_log: true
