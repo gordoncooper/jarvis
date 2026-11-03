@@ -74,7 +74,7 @@ If the New env steps have not already created the secrets, run this from the rep
 make bootstrap-secrets ENV=<env>
 ```
 
-Commit all of `envs/<env>/`: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in that env's `secrets/README.md`.
+Commit all of `envs/<env>/`: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md).
 
 ## Bootstrap the cluster
 

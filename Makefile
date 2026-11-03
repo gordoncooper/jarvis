@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all
+.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check
 help:
 	@echo "JARVIS Makefile"
 	@echo
@@ -13,8 +13,9 @@ help:
 	@echo "  make drill-cleanup      Retry drill namespace/repository cleanup (ENV=<env> required)"
 	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339, NODE)"
 	@echo "  make restore-all        Restore all PVCs (ENV required; optional RETIRE, ACCEPT_EMPTY, NODE)"
-	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required)"
+	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
+	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
 	@echo
 	@echo "Developer commands"
 	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
@@ -56,7 +57,12 @@ restore-all:
 
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
-	@.venv/bin/python tools/bootstrap-secrets --env "$(ENV)"
+	@.venv/bin/python tools/bootstrap-secrets --env "$(ENV)" $(if $(filter 1,$(ROTATE_RESTIC)),--rotate-restic,)
+
+age-key-check:
+	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
+	@test -n "$(KEY)" || (echo "KEY is required" >&2; exit 1)
+	@.venv/bin/python tools/age-key-check --env "$(ENV)" --key-file "$(KEY)"
 
 seal:
 	@test -n "$(NAME)" || (echo "NAME is required (<component>-<purpose>)" >&2; exit 1)
