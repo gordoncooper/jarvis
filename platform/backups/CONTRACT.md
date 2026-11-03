@@ -136,7 +136,7 @@ How to tell it worked: a `PASS restore <namespace>/<pvc>` line, then `SUMMARY re
 make restore-all ENV=<env>
 ```
 
-Optional `RETIRE=ns-<namespace>/pvc-<name>[,...]`, `ACCEPT_EMPTY=<namespace>/<pvc>[,...]`, and `NODE=<node>`. `NODE` pins an unbound PVC's bind pod the same way as in `make restore`.
+Optional `RETIRE=ns-<namespace>/pvc-<name>[,...]`, `ACCEPT_EMPTY=<namespace>/<pvc>[,...]`, and `NODE=<node>`. One `NODE` pins every unbound PVC in the run to that single node.
 
 `restore-all` selects every PVC that is not `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`, including one that is not bound yet. It reads the etcd CronJob image once, before any change, the same way `make restore` does.
 
