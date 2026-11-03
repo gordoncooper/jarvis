@@ -5,6 +5,7 @@
 | Path | Topic |
 | --- | --- |
 | [deploy.md](deploy.md) | Fresh copy to a running, verified cluster |
+| [../ci/README.md](../ci/README.md) | What `ci/run-checks` and the test suite do before a push |
 | [../README.md](../README.md) | What this repo is, and the hardware limits |
 | [../infra/ansible/README.md](../infra/ansible/README.md) | Node bootstrap (`site.yml`) |
 | [../AGENTS.md](../AGENTS.md) | Where coding agents start |
@@ -30,5 +31,7 @@
 
 | Path | Topic |
 | --- | --- |
+| [../envs/env-00/README.md](../envs/env-00/README.md) | Example env to copy; never copy a real env |
+| [../envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md) | Shared secrets and bootstrap rules a copy keeps |
 | [../envs/env-01/README.md](../envs/env-01/README.md) | env-01 |
 | [../envs/env-01/secrets/README.md](../envs/env-01/secrets/README.md) | env-01 bootstrap secrets |
