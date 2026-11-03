@@ -31,20 +31,21 @@
         KUBECONFIG: "{{ k3s_kubeconfig_path }}"
       when: not ansible_check_mode
 
-    - name: Wait for FluxInstance CRD to be established
-      ansible.builtin.command:
-        cmd: >-
-          {{ k3s_binary_path }} kubectl wait --for=condition=Established
-          crd/fluxinstances.fluxcd.controlplane.io
-          --timeout={{ flux_operator_crd_wait_timeout }}
-      changed_when: false
-      check_mode: false
+# Every run, so a run cut short after the install still waits before the FluxInstance.
+- name: Wait for FluxInstance CRD to be established
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl wait --for=condition=Established
+      crd/fluxinstances.fluxcd.controlplane.io
+      --timeout={{ flux_operator_crd_wait_timeout }}
+  changed_when: false
+  check_mode: false
 
-    - name: Wait for Flux Operator deployment rollout
-      ansible.builtin.command:
-        cmd: >-
-          {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }} wait
-          --for=condition=Available deployment/{{ flux_operator_deployment_name }}
-          --timeout={{ flux_operator_rollout_wait_timeout }}
-      changed_when: false
-      check_mode: false
+- name: Wait for Flux Operator deployment rollout
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }} wait
+      --for=condition=Available deployment/{{ flux_operator_deployment_name }}
+      --timeout={{ flux_operator_rollout_wait_timeout }}
+  changed_when: false
+  check_mode: false

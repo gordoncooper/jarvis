@@ -102,10 +102,11 @@ class PlatformControllerHealthCheck(NamedTuple):
         }
 
 
-# platform-controllers waits for these two HelmReleases and no other object.
+# platform-controllers waits for these HelmReleases and no other object.
 PLATFORM_CONTROLLER_HEALTH_CHECKS = (
     PlatformControllerHealthCheck("cert-manager", "flux-system"),
     PlatformControllerHealthCheck("kyverno", "flux-system"),
+    PlatformControllerHealthCheck("volsync", "flux-system"),
 )
 
 
