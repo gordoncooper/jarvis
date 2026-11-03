@@ -49,6 +49,16 @@ def test_wrong_download_bytes_install_nothing(
     assert not (dest_dir / name).exists()
 
 
+@pytest.mark.parametrize("machine", ["aarch64", "arm64", "riscv64"])
+def test_only_amd64_is_supported(machine: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    monkeypatch.setattr(mod.platform, "machine", lambda: machine)
+    with pytest.raises(SystemExit, match="amd64 only"):
+        mod.linux_arch()
+    monkeypatch.setattr(mod.platform, "machine", lambda: "x86_64")
+    assert mod.linux_arch() == "amd64"
+
+
 def test_apt_refreshes_once_and_asks_for_yaml_but_not_bcrypt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

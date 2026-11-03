@@ -58,6 +58,16 @@
       "dependencyDashboardApproval": true
     },
     {
+      "description": "The kustomize repo tags other modules too (api/v0.x, cmd/config/v0.x) and older releases without a prefix. Only kustomize/v tags are kustomize releases.",
+      "matchDepNames": ["kubernetes-sigs/kustomize"],
+      "extractVersion": "^kustomize/v(?<version>.+)$"
+    },
+    {
+      "description": "kubectl stays on the k3s minor. Raise this cap, and kubectl_version in tools/versions.env, in the same PR that moves k3s_version to the next minor. A test fails if they drift apart.",
+      "matchDepNames": ["kubernetes/kubernetes"],
+      "allowedVersions": "<1.37"
+    },
+    {
       "description": "Python dev dependencies in requirements-dev.txt update as one PR. Exact == pins stay exact.",
       "groupName": "python-dev",
       "matchManagers": ["pip_requirements"],
@@ -79,7 +89,7 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)\\s*\\n\\w+_version=(?<currentValue>\\S+)"
       ],
-      "extractVersionTemplate": "^(?:kustomize/)?v?(?<version>.*)$"
+      "extractVersionTemplate": "^v?(?<version>.*)$"
     },
     {
       "customType": "regex",

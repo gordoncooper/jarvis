@@ -376,6 +376,7 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     assert not any(call[:2] == ["get", "secret"] for call in cluster.calls)
     _assert_cleanup(cluster)
     output = capsys.readouterr().out
+    assert "NODE restoring onto node-a" in output.splitlines()
     assert f"ORIGINAL volume checksum {SUM}" in output
     assert f"RESTORED volume checksum {SUM}" in output
     assert f"ETCD snapshot etcd-snapshot-fixture checksum {SUM}" in output

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import atexit
 import copy
+import functools
 import json
 import posixpath
 import re
 import shutil
 import subprocess
+import tempfile
+import urllib.request
 from pathlib import Path
 from typing import NamedTuple
 
@@ -43,12 +47,55 @@ FLUX_SCHEMA = (
     "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
 # Local schemas, searched before the CRD catalog. helm.cattle.io is not in
-# the catalog. The catalog's VolSync schema predates moverVolumes.
+# the catalog.
 HELM_CATTLE_SCHEMA = (
     str(REPO_ROOT / "ci/tests/fixtures/schemas")
     + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
 _KUBECONFORM_SKIPPED = re.compile(r"Skipped:\s*(\d+)")
+# The catalog's VolSync schema predates moverVolumes, so VolSync kinds are checked
+# against the CRDs of the pinned chart version, fetched from upstream and converted here.
+_VOLSYNC_CRD = "https://raw.githubusercontent.com/backube/volsync/v{version}/config/crd/bases/volsync.backube_{plural}.yaml"
+_VOLSYNC_KINDS = {"replicationsource": "replicationsources", "replicationdestination": "replicationdestinations"}
+
+
+def _forbid_unknown_fields(node: object) -> None:
+    """kubeconform -strict does not close CRD objects, so close every object that lists properties."""
+    if isinstance(node, dict):
+        if "properties" in node and "additionalProperties" not in node and not node.get(
+            "x-kubernetes-preserve-unknown-fields"
+        ):
+            node["additionalProperties"] = False
+        for value in node.values():
+            _forbid_unknown_fields(value)
+    elif isinstance(node, list):
+        for value in node:
+            _forbid_unknown_fields(value)
+
+
+@functools.cache
+def _volsync_schema_location() -> str:
+    """A kubeconform schema location holding the pinned VolSync CRDs as JSON schemas."""
+    helmrelease = yaml.safe_load(
+        (REPO_ROOT / "platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
+    )
+    version = helmrelease["spec"]["chart"]["spec"]["version"]
+    out = Path(tempfile.mkdtemp(prefix="volsync-schemas-"))
+    atexit.register(shutil.rmtree, out, ignore_errors=True)
+    (out / "volsync.backube").mkdir()
+    for kind, plural in _VOLSYNC_KINDS.items():
+        url = _VOLSYNC_CRD.format(version=version, plural=plural)
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                crd = yaml.safe_load(response.read())
+        except (OSError, yaml.YAMLError) as exc:
+            pytest.fail(f"cannot fetch the VolSync CRD {url}: {exc}")
+        for served in crd["spec"]["versions"]:
+            schema = out / "volsync.backube" / f"{kind}_{served['name']}.json"
+            body = served["schema"]["openAPIV3Schema"]
+            _forbid_unknown_fields(body)
+            schema.write_text(json.dumps(body), encoding="utf-8")
+    return str(out) + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
 
 def _require_tool(name: str) -> str:
@@ -71,6 +118,8 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
             "default",
             "-schema-location",
             HELM_CATTLE_SCHEMA,
+            "-schema-location",
+            _volsync_schema_location(),
             "-schema-location",
             FLUX_SCHEMA,
         ],
@@ -587,6 +636,23 @@ def _record_object_identities(
 def test_kubernetes_version_matches_k3s_pin() -> None:
     assert kubernetes_version_from_k3s("v9.8.7+k3s2") == "9.8.0"
     assert kubernetes_version_from_k3s("v9.8.7") is None
+
+
+@pytest.mark.parametrize("kind", ["ReplicationSource", "ReplicationDestination"])
+def test_volsync_spec_is_checked_against_the_upstream_crd(kind: str) -> None:
+    """A VolSync spec field the pinned CRD does not know fails; a known one (moverVolumes) passes."""
+    version = kubernetes_version_from_k3s(load_cluster_vars()["k3s_version"])
+    doc = {
+        "apiVersion": "volsync.backube/v1alpha1",
+        "kind": kind,
+        "metadata": {"name": "x", "namespace": "x"},
+        "spec": {"trigger": {"manual": "once"}} if kind == "ReplicationDestination" else {"sourcePVC": "x"},
+    }
+    doc["spec"]["restic"] = {"repository": "x", "moverVolumes": []}
+    _kubeconform_validate(yaml.safe_dump(doc), version)
+    doc["spec"]["notAField"] = True
+    with pytest.raises(AssertionError):
+        _kubeconform_validate(yaml.safe_dump(doc), version)
 
 
 def validate_env_flux(root: Path, env: str) -> None:
