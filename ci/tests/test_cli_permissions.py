@@ -1,225 +1,183 @@
-"""cli-deny check and permission matcher (p0a-10, R34)."""
+"""cli-deny: both coding-agent deny lists against one category corpus."""
 
 from __future__ import annotations
 
+import functools
+import os
+import shutil
 from pathlib import Path
 
 import pytest
 
 from _cli_permissions import (
-    DENY_CLASS_NAMES,
-    KUBECTL_VERBS,
-    MAIN_MUST_BLOCK_PATH,
-    ToolVerbs,
-    _HELM_DENIED_READS,
-    _HELM_MUTATIONS,
-    _load_must_allow,
-    classification_failures,
-    command_allowed,
-    corpus_shell_cases,
-    deny_by_default_failures,
-    deny_without_class,
-    load_cli_permissions,
-    matches_shell,
-    parse_kubectl_help,
+    CLIENTS,
+    CORPUS_PATH,
+    WRAPPERS,
+    Row,
+    check_repo,
+    claude_forms,
+    load_corpus,
+    load_permissions,
+    load_regression,
+    matches_bash,
     policy_failures,
-    split_commands,
+    row_blocked,
+    shell_blocked,
 )
+from support import REPO_ROOT
 
-from support import REPO_ROOT as _REPO
-
-_CLI = _REPO / ".cursor" / "cli.json"
-_WRAPPERS = {
-    "bare",
-    "&&",
-    ";",
-    "|",
-    "$( )",
-    "backtick",
-    "bash -c",
-    "sh -c",
-    "env",
-    "timeout",
-    "xargs",
-    "nohup",
-    "sudo",
-    "absolute",
-}
-_GUARDED = {
-    "remote shell and copy",
-    "sops decrypt or edit",
-    "age decrypt",
-    "age key",
-    "kubectl Secret reads",
-    "kubectl mutations",
-    "helm mutations",
-    "flux mutations",
-}
+CORPUS = load_corpus(CORPUS_PATH)
+REGRESSION = load_regression()
+ROWS = CORPUS + REGRESSION
+BLOCK_CATEGORIES = sorted({r.category for r in CORPUS if r.verdict == "block"})
 
 
-def test_matches_shell_command_args_split():
-    assert matches_shell("Shell(kubectl:apply*)", "kubectl apply -f a.yaml")
-    assert not matches_shell("Shell(kubectl:apply*)", "kubectl get pods")
-    # Only * is a wildcard: ? is literal, and matching is case-sensitive.
-    assert not matches_shell("Shell(kubectl:get ?ecret)", "kubectl get secret")
-    assert not matches_shell("Shell(kubectl:get secret)", "kubectl get Secret")
+def _deny(client: str) -> list[str]:
+    rel = next(path for name, path, _ in CLIENTS if name == client)
+    return load_permissions(REPO_ROOT / rel)[1]
 
 
-def test_split_commands_like_the_cli():
-    assert split_commands("FOO=1 cd x && timeout 5 ssh h | tee o; echo $(sops -d f)") == [
-        "cd x",
-        "timeout 5 ssh h",
-        "tee o",
-        "sops -d f",
-        "echo $(sops -d f)",
+def _failures(client: str, deny: list[str]) -> list[str]:
+    return _cached_failures(client, tuple(deny))
+
+
+@functools.cache
+def _cached_failures(client: str, deny: tuple[str, ...]) -> list[str]:
+    return policy_failures(client, [], list(deny), ROWS)
+
+
+def _blocks_fail(failures: list[str], client: str, category: str) -> bool:
+    return any(f.startswith(f"{client}: expected block: {category} ") for f in failures)
+
+
+def test_claude_matcher_follows_its_permission_docs():
+    """Rule: Claude Code strips its documented wrappers, and a trailing " *" matches the bare command."""
+    assert claude_forms("timeout 30 npm test")[-1] == "npm test"
+    assert claude_forms("nohup stdbuf -o0 npm test") == [
+        "nohup stdbuf -o0 npm test", "stdbuf -o0 npm test", "npm test"
     ]
-    # bash -c is not unwrapped: the quoted script stays one argument.
-    assert split_commands("bash -c 'ssh h'") == ["bash -c 'ssh h'"]
+    assert claude_forms("xargs -n1 grep x") == ["xargs -n1 grep x"]
+    assert claude_forms("command -v sops") == ["command -v sops"]
+    assert matches_bash("ls *", "ls") and matches_bash("ls:*", "ls -la")
+    assert not matches_bash("ls *", "lsof") and matches_bash("ls*", "lsof")
+    assert not matches_bash("* --help *", "npm --help")
 
 
-def test_deny_beats_allow():
-    perms = {
-        "allow": ["Shell(kubectl)"],
-        "deny": ["Shell(kubectl:apply*)"],
-    }
-    assert not command_allowed(perms["allow"], perms["deny"], "kubectl apply -f x")
-    assert command_allowed(perms["allow"], perms["deny"], "kubectl get pods")
-    # Every command in a chain must be allowed, and any denied one blocks the line.
-    assert not command_allowed(perms["allow"], perms["deny"], "kubectl get pods && ls")
-    assert not command_allowed(
-        perms["allow"], perms["deny"], "kubectl get pods && kubectl apply -f x"
-    )
+def test_cursor_matcher_strips_no_wrapper():
+    """Rule: Cursor matches the wrapper as the command, so the lists must name wrappers."""
+    line = "timeout 5 kubectl apply -f x.yaml"
+    assert not shell_blocked("cursor", ["Shell(kubectl:*apply *)"], line)
+    assert shell_blocked("claude", ["Bash(kubectl *apply *)"], line)
 
 
-def test_corpus_crosses_each_guarded_category_with_each_wrapper():
-    """R34: must-block cases are the category × wrapper product."""
-    product = [case for case in corpus_shell_cases() if case.wrapper != "retained"]
-    categories = {case.category for case in product}
-    assert _GUARDED <= categories
-    assert {case.wrapper for case in product} == _WRAPPERS
-    for category in _GUARDED:
-        got = {case.wrapper for case in product if case.category == category}
-        assert got == _WRAPPERS
+def test_corpus_expansions_and_bad_rows_fail(tmp_path: Path):
+    """Rule: {anycase:} is every spelling, {any:} every option, wrapped every wrapper;
+    a malformed corpus row is an error."""
+    path = tmp_path / "corpus.tsv"
+    path.write_text("block\tdemo\tshell\tget {anycase:ab}{any:,s}\n", encoding="utf-8")
+    texts = sorted(r.text for r in load_corpus(path))
+    assert texts == sorted(f"get {a}{s}" for a in ("ab", "aB", "Ab", "AB") for s in ("", "s"))
+    path.write_text("block\tdemo\twrapped\tget x\n", encoding="utf-8")
+    rows = load_corpus(path)
+    assert {r.kind for r in rows} == {"shell"} and len(rows) == len(WRAPPERS)
+    assert {"get x", "sudo get x", "bash -c 'get x'", "/usr/bin/get x"} <= {r.text for r in rows}
+    path.write_text("deny\tdemo\tshell\tget x\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="want verdict, category, kind, input"):
+        load_corpus(path)
 
 
-def test_empty_allow_passes_deny_by_default():
-    """R34: an empty allow list is the default."""
-    assert deny_by_default_failures([]) == []
+@pytest.mark.parametrize(
+    ("client", "entry", "category"),
+    [
+        ("cursor", "Shell(*kubectl*get*CrEt*)", "secret-read"),
+        ("claude", "Bash(*kubectl*get*CrEt*)", "secret-read"),
+        ("cursor", "Shell(*.kube/*)", "admin-kubeconfig"),
+        ("claude", "Bash(*.kube/*)", "admin-kubeconfig"),
+        ("cursor", "Read(/etc/rancher/k3s/**)", "admin-kubeconfig"),
+        ("claude", "Read(//etc/rancher/k3s/**)", "admin-kubeconfig"),
+        ("cursor", "Shell(make:*drill*)", "cluster-entrypoint"),
+        ("claude", "Bash(make *drill*)", "cluster-entrypoint"),
+    ],
+)
+def test_deleted_deny_entry_fails_its_category(client: str, entry: str, category: str):
+    """Rule: deleting one guard entry makes the check fail and name the category."""
+    deny = _deny(client)
+    assert entry in deny
+    assert not _blocks_fail(_failures(client, deny), client, category)
+    assert _blocks_fail(_failures(client, [t for t in deny if t != entry]), client, category)
 
 
-def test_broad_shell_allow_fails_deny_by_default():
-    """R34: a broad Shell allow entry fails the deny-by-default assertion."""
-    failures = deny_by_default_failures(["Shell(*)"])
-    assert "deny-by-default: allow list must stay empty" in failures
-    assert any("must-block category" in line for line in failures)
+@pytest.mark.parametrize("category", BLOCK_CATEGORIES)
+def test_claude_file_missing_a_cursor_category_fails(category: str):
+    """Rule: parity. A category the Cursor list blocks and the Claude list lacks fails."""
+    rows = [r for r in ROWS if r.category == category and r.verdict == "block"]
+    deny = [t for t in _deny("claude") if not any(row_blocked("claude", [t], r) for r in rows)]
+    assert not _blocks_fail(_failures("cursor", _deny("cursor")), "cursor", category)
+    assert _blocks_fail(_failures("claude", deny), "claude", category)
 
 
-def test_unclassified_subcommand_fails():
-    """R34: a subcommand nobody has classed fails."""
-    tool = ToolVerbs("kubectl", ("get", "frobnicate"), frozenset(), frozenset({"get"}))
-    failures = classification_failures([], [], tools=(tool,))
-    assert failures == ["unclassified kubectl subcommand: frobnicate"]
+@pytest.mark.parametrize(("client", "entry"), [("cursor", "Shell(git:*)"), ("claude", "Bash(git *)")])
+def test_over_blocking_everyday_work_fails(client: str, entry: str):
+    """Rule: a deny entry that blocks a must-allow row fails the check."""
+    failures = _failures(client, _deny(client) + [entry])
+    assert any(f.startswith(f"{client}: expected allow: git ") for f in failures)
 
 
-def test_classed_mutation_must_be_denied():
-    """R34: a mutation class is a lie unless the guard denies that subcommand."""
-    tool = ToolVerbs("kubectl", ("delete",), frozenset({"delete"}), frozenset())
-    failures = classification_failures([], [], tools=(tool,))
+@pytest.mark.parametrize(("client", "allow", "deny"), [
+    ("cursor", ["Shell(*)"], []),
+    ("claude", [], ["Shell(*ssh *)"]),
+])
+def test_allow_entries_and_foreign_rules_fail(client: str, allow: list[str], deny: list[str]):
+    """Rule: the allow list stays empty, and a rule the client would ignore is an error."""
+    failures = policy_failures(client, allow, deny, [])
     assert failures == [
-        "kubectl mutation delete is not denied",
-        "kubectl mutation delete flag-first is not denied",
+        f"{client}: allow list must stay empty"
+        if allow
+        else f"{client}: deny entry is not a Bash(...) or Read(...) rule"
     ]
 
 
-def test_mutation_flag_first_must_be_denied():
-    """R34: a global flag before the subcommand is still that mutation."""
-    tool = ToolVerbs("helm", ("test",), frozenset({"test"}), frozenset())
-    failures = classification_failures([], ["Shell(helm:test*)"], tools=(tool,))
-    assert failures == ["helm mutation test flag-first is not denied"]
+@pytest.mark.parametrize("client", [name for name, _, _ in CLIENTS])
+def test_category_corpus_covers_the_regression_rows(client: str):
+    """Rule: deleting every entry that blocks a regression must-block row also fails the
+    category corpus, so the corpus alone guards each regression row; every regression
+    must-allow row is in the category corpus."""
+    deny = _deny(client)
+
+    def blockers(row: Row) -> frozenset[str]:
+        return frozenset(t for t in deny if row_blocked(client, [t], row))
+
+    corpus = {blockers(r) for r in CORPUS if r.verdict == "block"}
+    regression = [(r.where, blockers(r)) for r in REGRESSION if r.verdict == "block"]
+    uncovered = [where for where, b in regression if not any(c <= b for c in corpus)]
+    assert uncovered == []
+    allowed = {r.text for r in CORPUS if r.verdict == "allow"}
+    assert [r.where for r in REGRESSION if r.verdict == "allow" and r.text not in allowed] == []
 
 
-def test_named_read_must_stay_allowed():
-    """R34: a named read is a lie if a deny entry blocks it."""
-    tool = ToolVerbs("kubectl", ("get",), frozenset(), frozenset({"get"}))
-    failures = classification_failures([], ["Shell(*get*)"], tools=(tool,))
-    assert failures == [
-        "kubectl read get is denied",
-        "kubectl read get flag-first is denied",
-    ]
+def test_claude_readings_where_its_docs_are_silent():
+    """Rule: a Claude block row must match after stripping and in its own case; an allow
+    row fails if any form matches in any case."""
+    def run(verdict: str, deny: str, text: str) -> list[str]:
+        return policy_failures("claude", [], [deny], [Row(verdict, "demo", "shell", text, "t:1")])
+
+    for deny, text in (("Bash(timeout *)", "timeout 5 npm test"), ("Bash(NPM *)", "npm test")):
+        assert run("block", deny, text) == ["claude: expected block: demo (t:1)"]
+        assert run("allow", deny, text) == ["claude: expected allow: demo (t:1)"]
 
 
-def test_classing_a_mutation_as_a_read_fails():
-    """R34: moving a mutation into the read list fails when either form is denied."""
-    tool = ToolVerbs("kubectl", ("drain",), frozenset(), frozenset({"drain"}))
-    failures = classification_failures([], ["Shell(kubectl:*drain *)"], tools=(tool,))
-    assert failures == [
-        "kubectl read drain is denied",
-        "kubectl read drain flag-first is denied",
-    ]
-
-
-def test_denied_read_must_stay_denied():
-    """R34: a denied read is a lie if the guard allows it."""
-    tool = ToolVerbs(
-        "helm", ("history",), frozenset(), frozenset(), frozenset({"history"})
-    )
-    failures = classification_failures([], [], tools=(tool,))
-    assert failures == [
-        "helm denied read history is allowed",
-        "helm denied read history flag-first is allowed",
-    ]
-
-
-def test_helm_history_is_a_denied_read():
-    """R34: helm history reads release revisions; the guard denies that read."""
-    assert _HELM_DENIED_READS == frozenset({"hist", "history"})
-    assert not (_HELM_DENIED_READS & _HELM_MUTATIONS)
-
-
-def test_main_must_block_cases_stay_in_the_corpus():
-    """R34: the dry-run corpus is a superset of main's must-block list."""
-    rows: list[tuple[str, str]] = []
-    for line in MAIN_MUST_BLOCK_PATH.read_text(encoding="utf-8").splitlines():
-        if not line:
-            continue
-        category, command = line.split("\t", 1)
-        rows.append((category, command))
-    assert len(rows) == 149
-    assert len({command for _, command in rows}) == 149
-    corpus = {case.command for case in corpus_shell_cases()}
-    for category, command in rows:
-        assert category in DENY_CLASS_NAMES
-        assert command in corpus
-
-
-def test_must_allow_duplicate_row_is_an_error(tmp_path: Path):
-    """R34: must-allow lives in one fixture, and a repeated row is an error."""
-    path = tmp_path / "allow.txt"
-    path.write_text("kubectl get pods\nkubectl get pods\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="duplicates an earlier row"):
-        _load_must_allow(path)
-
-
-@pytest.mark.parametrize("category", DENY_CLASS_NAMES)
-def test_seeded_deny_class_removal_names_the_category(category: str):
-    """R34: removing one deny class makes the policy check fail and name it."""
-    perms = load_cli_permissions(_CLI)
-    deny = deny_without_class(perms["deny"], category)
-    assert len(deny) < len(perms["deny"])
-    failures = policy_failures(perms["allow"], deny, kubectl=KUBECTL_VERBS)
-    assert any(line.startswith(f"expected block: {category} ") for line in failures)
-
-
-def test_parse_kubectl_help_skips_plugin_commands():
-    text = """
-Basic Commands (Beginner):
-  get             Display one or many resources
-  delete          Delete resources
-
-Subcommands provided by plugins:
-  my-plugin       From a workstation plugin
-
-Other Commands:
-  version         Print the client and server version information
-"""
-    assert parse_kubectl_help(text) == ("get", "delete", "version")
+def test_result_does_not_depend_on_kubectl_on_path(tmp_path: Path, monkeypatch):
+    """Rule: the check never runs kubectl, so PATH does not change its result."""
+    for _, rel, _ in CLIENTS:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / rel, tmp_path / rel)
+    marker = tmp_path / "ran"
+    fake = tmp_path / "bin" / "kubectl"
+    fake.parent.mkdir()
+    fake.write_text(f"#!/bin/sh\ntouch {marker}\necho frobnicate\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", os.devnull)
+    without = check_repo(tmp_path)
+    monkeypatch.setenv("PATH", str(fake.parent))
+    assert check_repo(tmp_path) == without
+    assert not marker.exists()

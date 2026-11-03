@@ -1,32 +1,41 @@
-"""Cursor CLI shell permission matching for .cursor/cli.json (R34).
+"""Coding-agent deny lists, proved against one category corpus.
 
-Mirrors the matcher in cursor-agent 2026.10.22-27dcf5f. The dry-run proves
-the checked-in policy against this corpus. It does not prove the client.
-The deny list is best-effort defense in depth: a pattern list cannot close
-every syntactic form.
+`.cursor/cli.json` (Cursor) and `.claude/settings.json` (Claude Code) must
+block every `block` row and allow every `allow` row of
+`fixtures/guard-corpus.tsv`, plus the regression rows in
+`fixtures/must-block-main.tsv` and `fixtures/must-allow-main.txt`. The check
+proves the checked-in lists against this model of each client. It does not
+prove the clients. The lists are best-effort defence in depth; the boundary
+is that workers hold no kubeconfig and no age key.
 
-Matcher:
-- the line is split into commands at && || ; | & newlines, $( ), backticks
-  and subshells, and leading FOO=1 assignments are dropped;
-- each command is matched as "name args" (raw word text, quotes kept);
-- only * is a wildcard (? is literal), matching is case-sensitive and
-  anchored;
-- bash -c, eval, sudo, absolute paths and the like are NOT unwrapped.
-  cli.json lists some wrappers. sh -c rsync remote-path forms (relative,
-  home-based, empty, daemon module) are not closed.
-Read(pathOrGlob) keeps glob semantics. Deny beats allow. An empty allow
-list is the default: a command no deny entry matches is allowed.
+Both clients split a line into commands at && || ; | & newlines, $( ),
+backticks and subshells, drop leading FOO=1 assignments, and match each
+command as raw word text (quotes kept, words joined by one space, so corpus
+rows use single spaces). Neither unwraps bash -c, eval, sudo, env, absolute
+paths or interpreters, so the lists name those wrappers or match a substring.
+
+Cursor, mirroring cursor-agent 2026.10.22-27dcf5f: Shell(cmd:args) or
+Shell(pattern), only * is a wildcard, anchored, case-sensitive, no wrapper
+is stripped. Read(glob) without a leading / is scoped to the workspace.
+
+Claude Code, from https://code.claude.com/docs/en/permissions: Bash(pattern),
+* matches any text, a trailing " *" (or ":*") also matches the bare command,
+and timeout, time, nice, nohup, stdbuf, command, builtin, noglob and a bare
+xargs are stripped before matching. Read(path) uses gitignore patterns:
+//abs, ~/home, /project, and relative paths under the working directory.
+The docs do not say whether Bash matching is case-sensitive, whether nested
+wrappers are all stripped, or whether a deny rule also sees the unstripped
+command, so a block row must be blocked case-sensitively both after one
+wrapper is stripped and after all are, and an allow row must stay allowed
+case-insensitively in every form.
 """
 
 from __future__ import annotations
 
-import fnmatch
+import functools
+import itertools
 import json
-import os
 import re
-import shutil
-import subprocess
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +45,16 @@ _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 _LEADING_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{"}
 _HEAD_ONLY_KEYWORDS = {"for", "select", "case", "fi", "done", "esac", "}"}
 
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+CORPUS_PATH = FIXTURES / "guard-corpus.tsv"
+MAIN_MUST_BLOCK_PATH = FIXTURES / "must-block-main.tsv"
+MAIN_MUST_ALLOW_PATH = FIXTURES / "must-allow-main.txt"
+# Client name, settings file, shell tool name in that file.
+CLIENTS: tuple[tuple[str, str, str], ...] = (
+    ("cursor", ".cursor/cli.json", "Shell"),
+    ("claude", ".claude/settings.json", "Bash"),
+)
+
 
 @dataclass(frozen=True)
 class ShellEntry:
@@ -44,6 +63,7 @@ class ShellEntry:
     args_pattern: str | None
 
 
+@functools.cache
 def parse_shell_entry(token: str) -> ShellEntry | None:
     match = SHELL_ENTRY_RE.match(token.strip())
     if not match:
@@ -120,7 +140,7 @@ def _nested_commands(text: str, out: list[str]) -> None:
 
 
 def split_commands(line: str) -> list[str]:
-    """Split a shell line into "name args" strings, like the CLI's parser."""
+    """Split a shell line into "name args" strings, like the clients' parsers."""
     out: list[str] = []
     words: list[str] = []
     word = ""
@@ -246,13 +266,18 @@ def split_commands(line: str) -> list[str]:
     return out
 
 
+# Cursor's * stops at line and paragraph separators.
+_CURSOR_STAR = "[^\n\r" + chr(0x2028) + chr(0x2029) + "]*"
+
+
+@functools.cache
 def _pattern_regex(pattern: str) -> re.Pattern[str]:
     parts = (re.escape(p) for p in pattern.strip().split("*"))
-    return re.compile("^" + "[^\n\r\u2028\u2029]*".join(parts) + "$")
+    return re.compile("^" + _CURSOR_STAR.join(parts) + "$")
 
 
 def match_pattern(pattern: str, value: str) -> bool:
-    """CLI shell pattern match: only * is a wildcard, anchored, case-sensitive."""
+    """Cursor shell pattern match: only * is a wildcard, anchored, case-sensitive."""
     return bool(_pattern_regex(pattern).match(value))
 
 
@@ -263,7 +288,7 @@ def extract_base_command(command: str) -> str:
 
 
 def matches_shell(entry_token: str, command: str) -> bool:
-    """Match one deny/allow entry against ONE command (already split)."""
+    """Match one Cursor Shell entry against ONE command (already split)."""
     entry = parse_shell_entry(entry_token)
     if entry is None:
         return False
@@ -284,616 +309,218 @@ def matches_shell(entry_token: str, command: str) -> bool:
     )
 
 
-def _glob_pattern_variants(pattern: str) -> list[str]:
-    pat = pattern.strip()
-    variants = [pat]
-    if pat.startswith("**/"):
-        variants.append(pat[3:])
-    return variants
+def matches_bash(pattern: str, command: str, *, fold: bool = False) -> bool:
+    """Match one Claude Code Bash pattern against ONE command (already stripped)."""
+    if pattern.endswith(":*"):
+        pattern = pattern[:-2] + " *"
+    if fold:
+        pattern, command = pattern.lower(), command.lower()
+    if pattern.endswith(" *") and pattern.count("*") == 1 and command == pattern[:-2]:
+        return True
+    return _bash_regex(pattern).fullmatch(command) is not None
 
 
-def match_glob(pattern: str, value: str) -> bool:
-    pattern = pattern.strip()
-    if not value and pattern not in ("**", "**/*"):
-        return False
-    normalized = value.replace("\\", "/").lstrip("./")
-    if "**" in pattern or "/" in pattern:
-        for pat in _glob_pattern_variants(pattern):
-            if Path(normalized).match(pat) or Path(value).match(pat):
+@functools.cache
+def _bash_regex(pattern: str) -> re.Pattern[str]:
+    return re.compile(".*".join(re.escape(part) for part in pattern.split("*")), re.DOTALL)
+
+
+_BARE_WRAPPERS = {"time", "nice", "nohup", "command", "builtin", "noglob", "xargs"}
+_DURATION_RE = re.compile(r"^\d+(\.\d+)?[smhd]?$")
+
+
+def claude_forms(command: str) -> list[str]:
+    """The command, then each form after stripping one documented wrapper."""
+    forms = [command]
+    while True:
+        words = forms[-1].split(" ")
+        head, rest = words[0], words[1:]
+        if head == "timeout" and rest and _DURATION_RE.match(rest[0]):
+            rest = rest[1:]
+        elif head == "stdbuf" and rest and rest[0].startswith("-"):
+            rest = list(itertools.dropwhile(lambda w: w.startswith("-"), rest))
+        elif head not in _BARE_WRAPPERS or not rest or rest[0].startswith("-"):
+            return forms
+        if not rest:
+            return forms
+        forms.append(" ".join(rest))
+
+
+# Stand-in roots: real home and workspace paths never enter the corpus.
+_HOME, _WORKSPACE = "/h", "/w"
+
+
+def _read_anchor(client: str, pattern: str) -> str | None:
+    """Absolute glob for one Read pattern."""
+    if client == "claude":
+        if pattern.startswith("//"):
+            return pattern[1:]
+        if pattern.startswith("~/"):
+            return _HOME + pattern[1:]
+        if pattern.startswith("/"):
+            return _WORKSPACE + pattern
+        if "/" not in pattern.rstrip("/"):
+            pattern = "**/" + pattern
+    elif pattern.startswith("/"):
+        return pattern
+    elif pattern.startswith("~"):
+        return None  # Cursor documents workspace and absolute paths only.
+    return f"{_WORKSPACE}/{pattern.removeprefix('./')}"
+
+
+def _glob_regex(glob: str) -> str:
+    out = re.escape(glob).replace(r"\*\*/", "(?:.*/)?").replace(r"/\*\*", "/.+")
+    return out.replace(r"\*", "[^/]*")
+
+
+def read_blocked(client: str, deny: list[str], path: str) -> bool:
+    if path.startswith("~/"):
+        path = _HOME + path[1:]
+    elif not path.startswith("/"):
+        path = f"{_WORKSPACE}/{path}"
+    for token in deny:
+        pattern = parse_read_entry(token)
+        anchored = None if pattern is None else _read_anchor(client, pattern)
+        if anchored and re.fullmatch(_glob_regex(anchored), path):
+            return True
+    return False
+
+
+@functools.cache
+def _commands(line: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return tuple((c, tuple(claude_forms(c))) for c in split_commands(line))
+
+
+def shell_blocked(client: str, deny: list[str], line: str, *, loose: bool = False) -> bool:
+    """Whether a deny entry blocks the line. loose takes the reading that blocks more."""
+    shell = [t for t in deny if parse_shell_entry(t)]
+    for command, forms in _commands(line):
+        if client == "cursor":
+            if any(matches_shell(t, command) for t in shell):
                 return True
-            if fnmatch.fnmatchcase(normalized, pat) or fnmatch.fnmatchcase(value, pat):
+            continue
+        # Strict: blocked whether Claude Code strips one wrapper or all of them.
+        strict = {forms[min(1, len(forms) - 1)], forms[-1]}
+        for token in shell:
+            pattern = parse_shell_entry(token).full_pattern
+            if loose and any(matches_bash(pattern, f, fold=True) for f in forms):
                 return True
-        return False
-    return fnmatch.fnmatchcase(value, pattern)
+            if not loose and all(matches_bash(pattern, f) for f in strict):
+                return True
+    return False
 
 
-def matches_read(entry_token: str, file_path: str) -> bool:
-    pattern = parse_read_entry(entry_token)
-    if pattern is None:
-        return False
-    normalized = file_path.replace("\\", "/").lstrip("./")
-    return match_glob(pattern, normalized) or match_glob(pattern, file_path)
+@dataclass(frozen=True)
+class Row:
+    verdict: str
+    category: str
+    kind: str
+    text: str
+    where: str
 
 
-def load_cli_permissions(path: Path) -> dict[str, list[str]]:
+# A "wrapped" row is the command plus each of these forms of it.
+WRAPPERS: tuple[str, ...] = (
+    "{c}", "true && {c}", "true; {c}", "true | {c}", "echo $({c})", "echo `{c}`",
+    "bash -c '{c}'", "sh -c '{c}'", "env {c}", "timeout 5 {c}", "xargs {c}",
+    "nohup {c}", "nice {c}", "stdbuf -o0 {c}", "sudo {c}", "/usr/bin/{c}",
+)
+_EXPAND_RE = re.compile(r"\{(any|anycase):([^{}]*)\}")
+
+
+def _expand(text: str) -> list[str]:
+    """{any:a,b} gives one row per option; {anycase:word} one per spelling of word."""
+    match = _EXPAND_RE.search(text)
+    if match is None:
+        return [text]
+    if match[1] == "any":
+        options = match[2].split(",")
+    else:
+        options = ["".join(c) for c in itertools.product(*((x.lower(), x.upper()) for x in match[2]))]
+    return [t for o in options for t in _expand(text[: match.start()] + o + text[match.end() :])]
+
+
+def load_corpus(path: Path) -> list[Row]:
+    """verdict, category, kind (shell, wrapped or read), input."""
+    rows: list[Row] = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if (
+            len(parts) != 4
+            or parts[0] not in ("block", "allow")
+            or parts[2] not in ("shell", "wrapped", "read")
+            or not parts[1]
+            or not parts[3]
+        ):
+            raise ValueError(f"{path.name} line {lineno}: want verdict, category, kind, input")
+        verdict, category, kind, text = parts
+        texts = _expand(text)
+        if kind == "wrapped":
+            kind, texts = "shell", [w.format(c=t) for t in texts for w in WRAPPERS]
+        rows.extend(Row(verdict, category, kind, t, f"{path.name}:{lineno}") for t in texts)
+    return rows
+
+
+def load_regression() -> list[Row]:
+    """Main's must-block and must-allow rows, kept while the category corpus proves it covers them."""
+    rows: list[Row] = []
+    for verdict, path in (("block", MAIN_MUST_BLOCK_PATH), ("allow", MAIN_MUST_ALLOW_PATH)):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line:
+                category, _, command = line.rpartition("\t")
+                rows.append(
+                    Row(verdict, category or "regression", "shell", command, f"{path.name}:{lineno}")
+                )
+    return rows
+
+
+def row_blocked(client: str, deny: list[str], row: Row) -> bool:
+    if row.kind == "read":
+        return read_blocked(client, deny, row.text)
+    return shell_blocked(client, deny, row.text, loose=row.verdict == "allow")
+
+
+def load_permissions(path: Path) -> tuple[list[str], list[str]]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError("cli.json root must be an object")
-    permissions = data.get("permissions")
+    permissions = data.get("permissions") if isinstance(data, dict) else None
     if not isinstance(permissions, dict):
-        raise ValueError("cli.json must include a permissions object")
-    allow = permissions.get("allow", [])
-    deny = permissions.get("deny", [])
+        raise ValueError("must include a permissions object")
+    allow, deny = permissions.get("allow", []), permissions.get("deny", [])
     if not isinstance(allow, list) or not isinstance(deny, list):
         raise ValueError("permissions.allow and permissions.deny must be arrays")
-    return {"allow": [str(x) for x in allow], "deny": [str(x) for x in deny]}
+    return [str(x) for x in allow], [str(x) for x in deny]
 
 
-def command_blocked_by_deny(deny: list[str], command_line: str) -> bool:
-    shell_deny = [t for t in deny if parse_shell_entry(t)]
-    return any(
-        matches_shell(token, cmd)
-        for cmd in split_commands(command_line)
-        for token in shell_deny
-    )
-
-
-def read_blocked_by_deny(deny: list[str], file_path: str) -> bool:
-    return any(
-        matches_read(token, file_path) for token in deny if parse_read_entry(token)
-    )
-
-
-def command_allowed(
-    allow: list[str], deny: list[str], command_line: str
-) -> bool:
-    if command_blocked_by_deny(deny, command_line):
-        return False
-    shell_allow = [t for t in allow if parse_shell_entry(t)]
-    if not shell_allow:
-        return True
-    return all(
-        any(matches_shell(token, cmd) for token in shell_allow)
-        for cmd in split_commands(command_line)
-    )
-
-
-def read_allowed(allow: list[str], deny: list[str], file_path: str) -> bool:
-    if read_blocked_by_deny(deny, file_path):
-        return False
-    read_allow = [t for t in allow if parse_read_entry(t)]
-    if not read_allow:
-        return True
-    return any(matches_read(token, file_path) for token in read_allow)
-
-
-
-# Quoted "<env>" / "<name>" stay one word. A bare < is a redirect to this splitter.
-_WRAPPERS: tuple[tuple[str, str], ...] = (
-    ("bare", "{c}"),
-    ("&&", "true && {c}"),
-    (";", "true; {c}"),
-    ("|", "true | {c}"),
-    ("$( )", "echo $({c})"),
-    ("backtick", "echo `{c}`"),
-    ("bash -c", "bash -c '{c}'"),
-    ("sh -c", "sh -c '{c}'"),
-    ("env", "env {c}"),
-    ("timeout", "timeout 5 {c}"),
-    ("xargs", "xargs {c}"),
-    ("nohup", "nohup {c}"),
-    ("sudo", "sudo {c}"),
-    ("absolute", ""),
-)
-
-# One command per guarded form. Wrappers are applied to every entry.
-_GUARDED: tuple[tuple[str, str], ...] = (
-    ("remote shell and copy", 'ssh "<name>"'),
-    ("remote shell and copy", 'scp "<name>" "<name>"'),
-    ("remote shell and copy", 'sftp "<name>"'),
-    ("remote shell and copy", 'ssh-copy-id "<name>"'),
-    # Not a closed remote-path set. Relative, home-based, empty, and daemon-module
-    # forms inside sh -c stay open.
-    ("remote shell and copy", 'rsync "<name>" "dest:<name>"'),
-    ("sops decrypt or edit", 'sops decrypt "envs/<env>/secrets/<name>.sops.yaml"'),
-    ("sops decrypt or edit", 'sops -d "envs/<env>/secrets/<name>.sops.yaml"'),
-    ("sops decrypt or edit", 'sops edit "envs/<env>/secrets/<name>.sops.yaml"'),
-    ("sops decrypt or edit", 'sops --encrypt "envs/<env>/secrets/<name>.sops.yaml"'),
-    ("age decrypt", 'age -d "<name>"'),
-    ("age decrypt", 'age --decrypt "<name>"'),
-    ("age decrypt", 'age -i "<name>" -d "<name>"'),
-    ("age key", 'cat ".config/sops/age/keys.txt"'),
-    ("age key", 'ls ".config/sops/age"'),
-    ("age key", 'cat "<name>.agekey"'),
-    ("kubectl Secret reads", 'kubectl get secret "<name>"'),
-    ("kubectl Secret reads", 'kubectl get SECRET "<name>"'),
-    ("kubectl Secret reads", 'kubectl describe secret "<name>"'),
-    ("kubectl mutations", 'kubectl delete "ns/<name>"'),
-    ("helm mutations", 'helm upgrade "<name>" "<name>"'),
-    ("flux mutations", 'flux delete kustomization "<name>"'),
-)
-
-# Forms the cross product does not spell. Not crossed with wrappers.
-# Main's must-block list is appended from the checked-in fixture.
-_RETAINED_EXTRA: tuple[tuple[str, str], ...] = (
-    ("gh merge", 'gh pr merge "<name>"'),
-    ("gh merge", 'gh api -X PUT "repos/<name>/<name>/pulls/1/merge"'),
-    ("git force-push", 'git push --force origin "<name>"'),
-    ("git force-push", 'git push -f origin "<name>"'),
-    ("git force-push", 'git push origin +"<name>"'),
-    ("kubectl Secret reads", "kubectl proxy --port 8001"),
-    ("kubectl Secret reads", "kubectl get secretstores"),
-    ("kubectl mutations", 'kubectl auth reconcile -f "<name>"'),
-    ("kubectl mutations", 'kubectl rollout restart "deploy/<name>"'),
-    ("kubectl mutations", 'kubectl --context "<name>" delete "ns/<name>"'),
-    ("helm mutations", 'helm --kube-context "<name>" upgrade "<name>" "<name>"'),
-    ("remote shell and copy", "rg ssh ."),
-    ("remote shell and copy", 'echo "a | ssh b"'),
-    ("sops decrypt or edit", "command -v sops"),
-    ("sops decrypt or edit", 'git commit -m "tighten sops rule"'),
-)
-
-def _load_must_allow(path: Path) -> tuple[str, ...]:
-    """Must-allow commands. The fixture is the only copy; a repeated row is an error."""
-    rows: list[str] = []
-    seen: set[str] = set()
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line:
-            continue
-        if line in seen:
-            raise ValueError(f"must-allow fixture line {lineno} duplicates an earlier row")
-        seen.add(line)
-        rows.append(line)
-    return tuple(rows)
-
-
-@dataclass(frozen=True)
-class ShellCase:
-    category: str
-    wrapper: str
-    command: str
-
-
-@dataclass(frozen=True)
-class ReadCase:
-    category: str
-    path: str
-
-
-def _absolute_form(command: str) -> str:
-    tool, _, rest = command.partition(" ")
-    return f"/usr/bin/{tool} {rest}" if rest else f"/usr/bin/{tool}"
-
-
-def corpus_shell_cases() -> tuple[ShellCase, ...]:
-    cases: list[ShellCase] = []
-    seen: set[str] = set()
-    for category, base in _GUARDED:
-        for name, template in _WRAPPERS:
-            command = _absolute_form(base) if name == "absolute" else template.format(c=base)
-            cases.append(ShellCase(category, name, command))
-            seen.add(command)
-    for category, command in _RETAINED:
-        if command in seen:
-            continue
-        seen.add(command)
-        cases.append(ShellCase(category, "retained", command))
-    return tuple(cases)
-
-
-def corpus_read_cases() -> tuple[ReadCase, ...]:
-    return (
-        ReadCase("age key", ".config/sops/age/keys.txt"),
-        ReadCase("age key", ".config/sops/age"),
-        ReadCase("age key", "<name>.agekey"),
-    )
-
-
-def _uniq(lines: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for line in lines:
-        if line not in seen:
-            seen.add(line)
-            out.append(line)
-    return out
-
-
-def corpus_failures(allow: list[str], deny: list[str]) -> list[str]:
-    failures: list[str] = []
-    for case in corpus_shell_cases():
-        if command_allowed(allow, deny, case.command):
-            failures.append(f"expected block: {case.category} ({case.wrapper})")
-    for case in corpus_read_cases():
-        if read_allowed(allow, deny, case.path):
-            failures.append(f"expected block: {case.category} (read)")
-    for command in DRY_RUN_MUST_ALLOW:
-        if not command_allowed(allow, deny, command):
-            failures.append(f"expected allow: {command}")
-    return failures
-
-
-def deny_by_default_failures(allow: list[str]) -> list[str]:
-    """Empty allow is the default. No allow entry may match a must-block case."""
+def policy_failures(client: str, allow: list[str], deny: list[str], rows: list[Row]) -> list[str]:
+    """Names the category and row, never the input: a block row that passes is a bypass."""
+    tool = next(shell for name, _, shell in CLIENTS if name == client)
     failures: list[str] = []
     if any(token.strip() for token in allow):
-        failures.append("deny-by-default: allow list must stay empty")
-    for token in allow:
-        if parse_shell_entry(token):
-            hit: set[str] = set()
-            for case in corpus_shell_cases():
-                if case.category in hit:
-                    continue
-                if any(matches_shell(token, cmd) for cmd in split_commands(case.command)):
-                    hit.add(case.category)
-                    failures.append(
-                        "deny-by-default: allow entry matches must-block category "
-                        f"{case.category}"
-                    )
-        if parse_read_entry(token):
-            for case in corpus_read_cases():
-                if matches_read(token, case.path):
-                    failures.append(
-                        "deny-by-default: allow entry matches must-block category "
-                        f"{case.category}"
-                    )
-                    break
-    return _uniq(failures)
+        failures.append(f"{client}: allow list must stay empty")
+    for token in deny:
+        entry = SHELL_ENTRY_RE.match(token)
+        if not READ_ENTRY_RE.match(token) and (entry is None or entry[1] != tool):
+            failures.append(f"{client}: deny entry is not a {tool}(...) or Read(...) rule")
+    for row in rows:
+        if row_blocked(client, deny, row) != (row.verdict == "block"):
+            failures.append(f"{client}: expected {row.verdict}: {row.category} ({row.where})")
+    return list(dict.fromkeys(failures))
 
 
-def _shell_pattern(token: str) -> str:
-    entry = parse_shell_entry(token)
-    return "" if entry is None else entry.full_pattern
-
-
-def _is_remote(token: str) -> bool:
-    pattern = _shell_pattern(token)
-    return any(part in pattern for part in ("ssh", "scp", "sftp", "rsync"))
-
-
-def _is_sops(token: str) -> bool:
-    pattern = _shell_pattern(token)
-    return "sops" in pattern and "sops/age" not in pattern
-
-
-def _is_age_decrypt(token: str) -> bool:
-    pattern = _shell_pattern(token)
-    return "age" in pattern and ("-d" in pattern or "decrypt" in pattern)
-
-
-def _is_age_key(token: str) -> bool:
-    if parse_read_entry(token) is not None:
-        return "sops/age" in token or "agekey" in token
-    pattern = _shell_pattern(token)
-    return "sops/age" in pattern or "agekey" in pattern
-
-
-def _is_kubectl_secret(token: str) -> bool:
-    pattern = _shell_pattern(token).lower()
-    return "kubectl" in pattern and ("ecret" in pattern or "proxy" in pattern)
-
-
-def _is_kubectl_mutation(token: str) -> bool:
-    pattern = _shell_pattern(token)
-    return "kubectl" in pattern and not _is_kubectl_secret(token)
-
-
-def _is_helm(token: str) -> bool:
-    return "helm" in _shell_pattern(token)
-
-
-def _is_flux(token: str) -> bool:
-    return "flux" in _shell_pattern(token)
-
-
-def _is_gh(token: str) -> bool:
-    return _shell_pattern(token).startswith("gh:")
-
-
-def _is_git(token: str) -> bool:
-    return _shell_pattern(token).startswith("git:")
-
-
-_DENY_CLASS: dict[str, Callable[[str], bool]] = {
-    "remote shell and copy": _is_remote,
-    "sops decrypt or edit": _is_sops,
-    "age decrypt": _is_age_decrypt,
-    "age key": _is_age_key,
-    "kubectl Secret reads": _is_kubectl_secret,
-    "kubectl mutations": _is_kubectl_mutation,
-    "helm mutations": _is_helm,
-    "flux mutations": _is_flux,
-    "gh merge": _is_gh,
-    "git force-push": _is_git,
-}
-
-DENY_CLASS_NAMES: tuple[str, ...] = tuple(_DENY_CLASS)
-
-_CHECKS_DIR = Path(__file__).resolve().parents[1]
-MAIN_MUST_BLOCK_PATH = _CHECKS_DIR / "fixtures" / "must-block-main.tsv"
-MAIN_MUST_ALLOW_PATH = _CHECKS_DIR / "fixtures" / "must-allow-main.txt"
-
-
-def _load_main_must_block(path: Path) -> tuple[tuple[str, str], ...]:
-    """Category and command rows from main's must-block list."""
-    rows: list[tuple[str, str]] = []
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line:
-            continue
-        category, sep, command = line.partition("\t")
-        if not sep or not command or category not in _DENY_CLASS:
-            raise ValueError(f"must-block fixture line {lineno} is missing a known category")
-        rows.append((category, command))
-    if len(rows) != 149 or len({command for _, command in rows}) != 149:
-        raise ValueError(f"must-block fixture has {len(rows)} cases, expected 149")
-    return tuple(rows)
-
-
-_RETAINED: tuple[tuple[str, str], ...] = _RETAINED_EXTRA + _load_main_must_block(
-    MAIN_MUST_BLOCK_PATH
-)
-DRY_RUN_MUST_ALLOW: tuple[str, ...] = _load_must_allow(MAIN_MUST_ALLOW_PATH)
-
-
-def deny_without_class(deny: list[str], category: str) -> list[str]:
-    """Drop one deny class. The corpus must then fail and name that category."""
-    drop = _DENY_CLASS[category]
-    return [token for token in deny if not drop(token)]
-
-
-# Help-visible kubectl 1.36.5 commands (tools/versions.env). Plugins omitted.
-# Used when the pinned binary is not on PATH. Discovery replaces this when it is.
-KUBECTL_VERBS: tuple[str, ...] = (
-    "create", "expose", "run", "set", "explain", "get", "edit", "delete",
-    "rollout", "scale", "autoscale", "certificate", "cluster-info", "top",
-    "cordon", "uncordon", "drain", "taint", "describe", "logs", "attach",
-    "exec", "port-forward", "proxy", "cp", "auth", "debug", "events", "diff",
-    "apply", "patch", "replace", "wait", "kustomize", "label", "annotate",
-    "completion", "api-resources", "api-versions", "config", "kuberc",
-    "plugin", "version",
-)
-
-# Helm 3.16.4 help names, top-level aliases, and the hidden docs command.
-_HELM_VERBS: tuple[str, ...] = (
-    "completion", "create", "dependency", "dep", "dependencies", "env", "get",
-    "help", "history", "hist", "install", "lint", "list", "ls", "package",
-    "plugin", "pull", "fetch", "push", "registry", "repo", "rollback",
-    "search", "show", "inspect", "status", "template", "test", "uninstall",
-    "del", "delete", "un", "upgrade", "verify", "version", "docs",
-)
-
-# flux 2.8.8 root commands (flux_distribution_version), plus cobra help.
-_FLUX_VERBS: tuple[str, ...] = (
-    "bootstrap", "build", "check", "completion", "create", "debug", "delete",
-    "diff", "docgen", "envsubst", "events", "export", "get", "help", "install",
-    "list", "logs", "migrate", "pull", "push", "reconcile", "resume", "stats",
-    "suspend", "tag", "trace", "tree", "uninstall", "version",
-)
-
-_KUBECTL_MUTATIONS = frozenset({
-    "apply", "annotate", "attach", "autoscale", "certificate", "cordon", "cp",
-    "create", "debug", "delete", "drain", "edit", "exec", "expose", "label",
-    "patch", "port-forward", "proxy", "replace", "rollout", "run", "scale",
-    "set", "taint", "uncordon",
-})
-_KUBECTL_READS = frozenset({
-    "api-resources", "api-versions", "auth", "cluster-info", "completion",
-    "config", "describe", "diff", "events", "explain", "get", "kuberc",
-    "kustomize", "logs", "plugin", "top", "version", "wait",
-})
-_HELM_MUTATIONS = frozenset({
-    "del", "delete", "get", "install", "list", "ls", "rollback", "status",
-    "test", "un", "uninstall", "upgrade",
-})
-# helm history (alias hist) is a release-revision read the guard denies on purpose.
-_HELM_DENIED_READS = frozenset({"hist", "history"})
-_HELM_READS = frozenset({
-    "completion", "create", "dependencies", "dependency", "dep", "docs", "env",
-    "fetch", "help", "inspect", "lint", "package", "plugin", "pull", "push",
-    "registry", "repo", "search", "show", "template", "verify", "version",
-})
-_FLUX_MUTATIONS = frozenset({
-    "bootstrap", "create", "debug", "delete", "install", "migrate", "resume",
-    "suspend", "uninstall",
-})
-_FLUX_READS = frozenset({
-    "build", "check", "completion", "diff", "docgen", "envsubst", "events",
-    "export", "get", "help", "list", "logs", "pull", "push", "reconcile",
-    "stats", "tag", "trace", "tree", "version",
-})
-
-_BARE_PROBE = {
-    ("kubectl", "rollout"): 'kubectl rollout restart "deploy/<name>"',
-    ("kubectl", "proxy"): "kubectl proxy --port 8001",
-    # Approve/deny with a mid-flag is not closed.
-    ("kubectl", "certificate"): 'kubectl certificate approve "<name>"',
-    ("kubectl", "get"): "kubectl get pods",
-    ("kubectl", "describe"): "kubectl describe pods",
-    ("kubectl", "logs"): 'kubectl logs "deploy/<name>"',
-    ("kubectl", "auth"): "kubectl auth can-i get pods",
-    ("flux", "reconcile"): 'flux reconcile kustomization "<name>"',
-    ("helm", "template"): 'helm template "<name>" "<name>"',
-}
-
-
-@dataclass(frozen=True)
-class ToolVerbs:
-    name: str
-    verbs: tuple[str, ...]
-    mutations: frozenset[str]
-    reads: frozenset[str]
-    denied_reads: frozenset[str] = frozenset()
-
-
-def _default_tools(kubectl: tuple[str, ...]) -> tuple[ToolVerbs, ...]:
-    return (
-        ToolVerbs("kubectl", kubectl, _KUBECTL_MUTATIONS, _KUBECTL_READS),
-        ToolVerbs(
-            "helm", _HELM_VERBS, _HELM_MUTATIONS, _HELM_READS, _HELM_DENIED_READS
-        ),
-        ToolVerbs("flux", _FLUX_VERBS, _FLUX_MUTATIONS, _FLUX_READS),
-    )
-
-
-def _bare_probe(tool: str, verb: str) -> str:
-    return _BARE_PROBE.get((tool, verb), f'{tool} {verb} "<name>"')
-
-
-def _flag_first(command: str) -> str:
-    """Same command with a global flag before the subcommand."""
-    tool, _, rest = command.partition(" ")
-    flag = "--kube-context" if tool == "helm" else "--context"
-    head = f'{tool} {flag} "<name>"'
-    return f"{head} {rest}" if rest else head
-
-
-def _probes(tool: str, verb: str) -> tuple[str, str]:
-    bare = _bare_probe(tool, verb)
-    return bare, _flag_first(bare)
-
-
-def classification_failures(
-    allow: list[str],
-    deny: list[str],
-    *,
-    tools: tuple[ToolVerbs, ...] | None = None,
-    kubectl: tuple[str, ...] | None = None,
-) -> list[str]:
-    """Every known subcommand is a denied mutation, a denied read, or a named read."""
-    chosen = tools if tools is not None else _default_tools(
-        kubectl if kubectl is not None else KUBECTL_VERBS
-    )
+def check_repo(root: Path) -> list[str]:
+    rows = load_corpus(CORPUS_PATH) + load_regression()
     failures: list[str] = []
-    for tool in chosen:
-        for verb in tool.verbs:
-            classes = [
-                name
-                for name, present in (
-                    ("mutation", verb in tool.mutations),
-                    ("read", verb in tool.reads),
-                    ("denied read", verb in tool.denied_reads),
-                )
-                if present
-            ]
-            if len(classes) > 1:
-                failures.append(f"{tool.name} subcommand {verb} is classed as both")
-                continue
-            if not classes:
-                failures.append(f"unclassified {tool.name} subcommand: {verb}")
-                continue
-            bare, flagged = _probes(tool.name, verb)
-            if classes == ["mutation"]:
-                if command_allowed(allow, deny, bare):
-                    failures.append(f"{tool.name} mutation {verb} is not denied")
-                if command_allowed(allow, deny, flagged):
-                    failures.append(f"{tool.name} mutation {verb} flag-first is not denied")
-            if classes == ["read"]:
-                if not command_allowed(allow, deny, bare):
-                    failures.append(f"{tool.name} read {verb} is denied")
-                if not command_allowed(allow, deny, flagged):
-                    failures.append(f"{tool.name} read {verb} flag-first is denied")
-            if classes == ["denied read"]:
-                if command_allowed(allow, deny, bare):
-                    failures.append(f"{tool.name} denied read {verb} is allowed")
-                if command_allowed(allow, deny, flagged):
-                    failures.append(
-                        f"{tool.name} denied read {verb} flag-first is allowed"
-                    )
+    for client, rel, _ in CLIENTS:
+        path = root / rel
+        if not path.is_file():
+            failures.append(f"missing {rel}")
+            continue
+        try:
+            allow, deny = load_permissions(path)
+        except ValueError as exc:  # json.JSONDecodeError is a ValueError
+            failures.append(f"{rel}: {exc}")
+            continue
+        failures += policy_failures(client, allow, deny, rows)
     return failures
-
-
-_KUBECTL_VERB_RE = re.compile(r"^  ([a-z][a-z0-9-]*)(?:\s{2,}|\t)")
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def parse_kubectl_help(text: str) -> tuple[str, ...]:
-    """Built-in commands from `kubectl --help`. Plugin sections are skipped."""
-    verbs: list[str] = []
-    skip = False
-    for line in text.splitlines():
-        if "provided by plugins" in line.lower():
-            skip = True
-            continue
-        if line.startswith("Other Commands:"):
-            skip = False
-        if skip or not line.startswith("  "):
-            continue
-        match = _KUBECTL_VERB_RE.match(line)
-        if match and match.group(1) not in verbs:
-            verbs.append(match.group(1))
-    return tuple(verbs)
-
-
-def _pinned_kubectl_version() -> str | None:
-    path = _REPO_ROOT / "tools" / "versions.env"
-    if not path.is_file():
-        return None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("kubectl_version="):
-            return line.split("=", 1)[1].strip()
-    return None
-
-
-def _discover_pinned_kubectl_verbs() -> tuple[str, ...] | None:
-    """Offline client help only, and only for the pinned kubectl version."""
-    binary = shutil.which("kubectl")
-    pinned = _pinned_kubectl_version()
-    if binary is None or pinned is None:
-        return None
-    env = os.environ.copy()
-    env["KUBECONFIG"] = os.devnull
-    env.pop("KUBERNETES_SERVICE_HOST", None)
-    env.pop("KUBERNETES_SERVICE_PORT", None)
-    try:
-        version = subprocess.run(
-            [binary, "version", "--client", "-o", "json"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env,
-        )
-        help_proc = subprocess.run(
-            [binary, "--help"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if version.returncode != 0 or help_proc.returncode != 0:
-        return None
-    try:
-        reported = str(json.loads(version.stdout)["clientVersion"]["gitVersion"])
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return None
-    if reported.lstrip("v") != pinned:
-        return None
-    verbs = parse_kubectl_help(help_proc.stdout)
-    return verbs or None
-
-
-def kubectl_verbs() -> tuple[str, ...]:
-    discovered = _discover_pinned_kubectl_verbs()
-    return discovered if discovered is not None else KUBECTL_VERBS
-
-
-def policy_failures(
-    allow: list[str],
-    deny: list[str],
-    *,
-    kubectl: tuple[str, ...] | None = None,
-) -> list[str]:
-    verbs = kubectl if kubectl is not None else kubectl_verbs()
-    return _uniq(
-        corpus_failures(allow, deny)
-        + deny_by_default_failures(allow)
-        + classification_failures(allow, deny, kubectl=verbs)
-    )
-
-
-def check_cli_policy(path: Path) -> list[str]:
-    perms = load_cli_permissions(path)
-    return policy_failures(perms["allow"], perms["deny"])

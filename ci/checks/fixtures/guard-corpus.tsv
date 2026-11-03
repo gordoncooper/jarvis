@@ -1,0 +1,99 @@
+# Guard corpus for ci/checks/cli-deny: verdict, category, kind, input (tab-separated).
+# kind: shell (one shell tool line), wrapped (the line and each of its wrapper forms in
+# _cli_permissions.WRAPPERS), or read (a file-tool path: ~/ home, / absolute, else workspace).
+# {any:a,b} gives one row per option; {anycase:word} gives one per spelling of word.
+#
+# secret-read: Secret objects, and the helm release Secrets behind list, status, get and history.
+block	secret-read	wrapped	kubectl get {anycase:secret} -n flux-system sops-age -o yaml
+block	secret-read	shell	kubectl -n flux-system describe {anycase:secret} sops-age
+block	secret-read	wrapped	kubectl describe secret sops-age
+block	secret-read	shell	kubectl get secret.v1,configmap -A
+block	secret-read	wrapped	kubectl get --raw /api/v1/namespaces
+block	secret-read	wrapped	kubectl get {any:-f,-k,--filename,--kustomize} envs/env-00/secrets
+block	secret-read	shell	{any:,watch }kubectl proxy --port 8001
+block	secret-read	shell	watch kubectl get secret -A
+block	secret-read	shell	helm {any:,--kube-context demo }{any:get values,get manifest,history,hist,list,ls,status} demo
+block	secret-read	shell	bash -c 'helm list'
+# secret-decrypt: sops and age on secret files, and the repo entrypoints that decrypt.
+block	secret-decrypt	wrapped	sops {any:decrypt,-d,edit,encrypt,-e,--encrypt} envs/env-00/secrets/demo.sops.yaml
+block	secret-decrypt	shell	{any:sops,'sops' -d demo.sops.yaml,diff <(sops -d a.yaml) b.yaml}
+block	secret-decrypt	wrapped	age {any:-d,--decrypt,-i key.txt -d,-i key.txt --decrypt} secret.txt
+block	secret-decrypt	shell	age -i key.txt -d
+block	secret-decrypt	wrapped	make {any:age-key-check ENV=env-00 KEY=key.txt,bootstrap-secrets ENV=env-00}
+block	secret-decrypt	shell	make {any:-C . ,ENV=env-00 }{any:age-key-check,bootstrap-secrets}
+block	secret-decrypt	wrapped	{any:,./,python3 ,.venv/bin/python }tools/{any:age-key-check,bootstrap-secrets} --env env-00
+# age-key: the age private key, by shell or file tool.
+block	age-key	wrapped	cat {any:~/,}.config/sops/age/keys.txt
+block	age-key	wrapped	ls ~/.config/sops/age
+block	age-key	wrapped	cat /tmp/host.agekey
+block	age-key	read	{any:~/,,/srv/}.config/sops/age{any:,/keys.txt}
+block	age-key	read	{any:/tmp/,keys/}host.agekey
+# admin-kubeconfig: k3s's own kubeconfig and the per-env controller kubeconfig.
+block	admin-kubeconfig	wrapped	cat {any:~/.kube/jarvis-env-00.yaml,/etc/rancher/k3s/k3s.yaml}
+block	admin-kubeconfig	shell	kubectl --kubeconfig ~/.kube/jarvis-env-00.yaml get nodes
+block	admin-kubeconfig	shell	export KUBECONFIG=$HOME/.kube/jarvis-env-00.yaml
+block	admin-kubeconfig	shell	{any:cd ~/.kube,ls /etc/rancher/k3s,ls /var/lib/rancher/k3s/server}
+block	admin-kubeconfig	wrapped	kubectl config view --raw
+block	admin-kubeconfig	read	{any:~/,}.kube/jarvis-env-00.yaml
+block	admin-kubeconfig	read	/etc/rancher/k3s/k3s.yaml
+# cluster-write: kubectl, helm and flux commands that change cluster state.
+block	cluster-write	wrapped	kubectl {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon} demo
+block	cluster-write	shell	kubectl --context demo {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon} demo
+block	cluster-write	wrapped	kubectl {any:,-n kube-system }{any:rollout restart,rollout undo,rollout pause,rollout resume,certificate approve,certificate deny,auth reconcile -f} demo
+block	cluster-write	shell	cat demo.yaml | kubectl apply -f -
+block	cluster-write	shell	kubectl get pods -o name | xargs kubectl {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon,rollout restart,rollout undo,rollout pause,rollout resume}
+block	cluster-write	wrapped	helm {any:,--kube-context demo }{any:install,upgrade,uninstall,delete,del,un,rollback,test} demo
+block	cluster-write	shell	helm template demo ./chart --validate
+block	cluster-write	wrapped	flux {any:,--context demo }{any:bootstrap,create,debug,delete,install,migrate,resume,suspend,uninstall} demo
+block	cluster-write	shell	{any:time,watch,eval,exec,command,/usr/bin/env,/usr/bin/sudo,/usr/bin/timeout 5} {any:kubectl delete ns demo,helm upgrade demo ./chart,flux delete kustomization demo}
+block	cluster-write	shell	zsh -c 'flux suspend kustomization demo'
+# cluster-entrypoint: repo make targets, tools and playbooks that change cluster or node state.
+block	cluster-entrypoint	wrapped	make {any:drill,drill-cleanup,restore,restore-all} ENV=env-00
+block	cluster-entrypoint	shell	make {any:-C . ,ENV=env-00 }{any:drill,drill-cleanup,restore,restore-all}
+block	cluster-entrypoint	wrapped	{any:,./,python3 ,.venv/bin/python }tools/{any:drill,restore,prep-node} --env env-00
+block	cluster-entrypoint	shell	{any:,./,python3 ,.venv/bin/python }tools/prep-node
+block	cluster-entrypoint	wrapped	{any:,../../.venv/bin/}ansible-playbook site.yml --tags k3s
+block	cluster-entrypoint	wrapped	ansible-playbook -i envs/env-00/inventory/hosts.yml infra/ansible/tasks/preflight.yml
+# remote-exec: SSH, copies and remote commands to nodes.
+block	remote-exec	wrapped	{any:ssh,sftp,ssh-copy-id} user@node.example
+block	remote-exec	wrapped	{any:scp demo.yaml user@node.example:,rsync a user@node.example:/demo}
+block	remote-exec	shell	{any:cd demo && ssh,'ssh' user@node.example,cat hosts | xargs -n1 ssh,rsync -e ssh a user@node.example:/demo}
+block	remote-exec	shell	for h in a b; do ssh $h uptime; done
+block	remote-exec	wrapped	{any:,.venv/bin/}ansible all {any:-m ping,-a uptime}
+block	remote-exec	shell	ansible-console all
+# forge-write: merging PRs and rewriting pushed history.
+block	forge-write	shell	gh {any:,-R owner/repo }pr merge 98
+block	forge-write	shell	gh api -X PUT repos/owner/repo/pulls/98/merge
+block	forge-write	shell	git {any:,-C repo }push {any:--force,-f,--force-with-lease} origin main
+block	forge-write	shell	{any:git push -f,git push origin +main}
+#
+# Everyday work that must stay allowed.
+allow	git	shell	git {any:status --short,diff --stat origin/main,diff -- tools/prep-node tools/drill,log --oneline -5 -- tools/restore,fetch origin,merge --no-edit origin/main}
+allow	git	shell	git {any:switch -c fix/demo origin/main,add tools/restore ci/tests/test_restore.py,worktree add ../demo -b fix/demo origin/main}
+allow	git	shell	git commit -m 'add env check'
+allow	git	shell	git -c user.name=demo -c user.email=demo@example.com commit -m "document the drill target and kubeconfig steps"
+allow	git	shell	git push {any:origin my-branch,-u origin my-feature}
+allow	gh	shell	gh pr {any:view 98,view 98 --json statusCheckRollup,checks 98,list --state open}
+allow	gh	shell	gh pr create --draft --base main --head fix/demo --title "Demo" --body-file /tmp/body.md
+allow	gh	shell	gh {any:api repos/owner/repo/pulls/98/files,run view 123 --log-failed}
+allow	tests-and-checks	shell	{any:bash ci/run-checks,ci/checks/cli-deny,pytest -q,.venv/bin/pytest ci/tests/test_cli_permissions.py -q,make ci-verify}
+allow	tests-and-checks	shell	{any:python3 -m pytest ci/tests/test_drill.py -k restore,nohup python3 -m http.server --directory coverage 8000}
+allow	tests-and-checks	shell	{any:ansible-inventory --graph -i envs/env-00/inventory/hosts.yml,.venv/bin/ansible-lint infra/ansible}
+allow	cluster-read	shell	kubectl get {any:pods -A,nodes --show-labels,statefulsets -A,replicasets -A,pods --field-selector=status.phase=Running,certificate "<name>"}
+allow	cluster-read	shell	kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'
+allow	cluster-read	shell	kubectl {any:describe pod demo -n default,describe certificate "<name>",logs deploy/demo -n default --tail=20}
+allow	cluster-read	shell	kubectl {any:,--context demo }{any:api-resources,api-versions,auth can-i get pods,cluster-info,config get-contexts,diff -f demo.yaml,events,explain pods,kustomize platform,top pods,version,wait --for=condition=Ready pod/demo}
+allow	cluster-read	shell	flux {any:get kustomizations -A,get sources git -A,logs kustomization demo,tree kustomization demo,events --for Kustomization/demo,reconcile kustomization demo --with-source}
+allow	cluster-read	shell	flux {any:,--context demo }{any:build,check,diff,envsubst,export,get,list,logs,pull,push,stats,tag,trace,tree,version} demo
+allow	render	shell	{any:kustomize build platform,helm template demo ./chart,helm --debug template demo ./chart,helm template cm jetstack/cert-manager --set installCRDs=true}
+allow	render	shell	helm {any:,--kube-context demo }{any:lint ./chart,dependency build ./chart,show values jetstack/cert-manager,repo add jetstack https://charts.jetstack.io,pull jetstack/cert-manager,search repo jetstack,package ./chart}
+allow	build	shell	{any:docker build -t demo:dev .,timeout 60 docker image ls,ls | xargs docker image ls,cd x && env A=1 docker image ls,go build ./...,npm run build}
+allow	package-install	shell	{any:make deps,python3 -m venv .venv,.venv/bin/pip install --no-deps -r requirements-dev.txt,npm ci}
+allow	web-lookup	shell	{any:pip index versions pyyaml,curl -fsSL https://kubernetes.io/docs/reference/kubectl/,wget -q https://github.com/getsops/sops/releases}
+allow	local-files	shell	sed -n 1,40p tools/drill
+allow	local-files	shell	{any:rg -n kubeconfig docs,ls envs/env-00/secrets,cd x && timeout 5 du -sh storage,rsync -av ./a/ ./b/}
+allow	local-files	read	{any:README.md,envs/env-00/values/cluster-vars.yaml,tools/drill}
+# near-miss: text close to a blocked form that is not one.
+allow	near-miss	shell	{any:helm delta,flux logs --level debug,docker images -d,python3 manage.py --dry-run,command -v kubectl}
+allow	near-miss	shell	{any:kubectl config view,rg -n rancher/k3s infra,kubectl get pods | grep secret,rg -n 'kubectl apply' docs,rg -n timeout docs,rg -n nohup docs}
+allow	near-miss	shell	bash -c 'rsync -av ./a/ ./b/; echo a:b'
