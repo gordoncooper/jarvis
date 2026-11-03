@@ -59,10 +59,13 @@ class Cluster:
         self.etcd_schedule = "5 */12 * * *"
         self.etcd_zone: str | None = "Etc/UTC"
         self.etcd_sync: str | None = "2026-10-31T05:10:00Z"
+        self.etcd_scheduled: str | None = None
         self.etcd_created = "2026-01-01T00:00:00Z"
         self.hold = False
         self.bad_sources_json = False
         self.node_ready = True
+        self.nodes_rc = 0
+        self.pods_rc = 0
         self.pods: list[dict] = []
 
     def kubectl(
@@ -90,6 +93,8 @@ class Cluster:
                 return _completed(argv, "RESTIC_PASSWORD\n")
             return _completed(argv, {"data": {"RESTIC_PASSWORD": SECRET_VALUE}})
         if argv[:2] == ["get", "nodes"]:
+            if self.nodes_rc:
+                return _completed(argv, "", returncode=self.nodes_rc, stderr="forbidden")
             labels = {
                 f"role.test.example/{role}": "true" for role in self.node_roles
             }
@@ -114,6 +119,8 @@ class Cluster:
                 },
             )
         if argv[:2] == ["get", "pods"]:
+            if self.pods_rc:
+                return _completed(argv, "", returncode=self.pods_rc, stderr="forbidden")
             return _completed(argv, {"items": self.pods})
         if argv[:2] == ["get", "pvc"]:
             return _completed(
@@ -144,6 +151,8 @@ class Cluster:
             status = {}
             if self.etcd_sync is not None:
                 status["lastSuccessfulTime"] = self.etcd_sync
+            if self.etcd_scheduled is not None:
+                status["lastScheduleTime"] = self.etcd_scheduled
             return _completed(
                 argv,
                 {
@@ -484,13 +493,36 @@ def test_disabled_component_checks_do_not_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    registry = sys.modules["verify.registry"]
+    ran = {"extra": False}
+
+    def extra(_ctx: object) -> list[tuple[int, str, object]]:
+        def check() -> None:
+            ran["extra"] = True
+
+        return [(99, "extra check", check)]
+
+    registry.COMPONENTS["extra"] = extra
+    try:
+        cluster = Cluster()
+        assert _run(tmp_path, cluster, monkeypatch) == 0
+        assert ran["extra"] is False
+        cluster_on = Cluster()
+        assert _run(tmp_path, cluster_on, monkeypatch, enabled=("extra",)) == 0
+        assert ran["extra"] is True
+    finally:
+        registry.COMPONENTS.pop("extra", None)
+
+
+def test_explicit_enabled_list_keeps_default_components(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cluster = Cluster()
     assert _run(tmp_path, cluster, monkeypatch, enabled=("platform",)) == 0
     joined = [" ".join(call) for call in cluster.calls]
-    assert not any("backups-restic" in text for text in joined)
-    assert not any("replicationsource" in text.lower() for text in joined)
-    assert not any("etcd-snapshots" in text for text in joined)
-    assert any(call[:2] == ["get", "nodes"] for call in cluster.calls)
+    assert any("backups-restic" in text for text in joined)
+    assert any("etcd-snapshots" in text for text in joined)
 
 
 def test_young_cronjob_without_run_warns_and_exits_0(
@@ -505,6 +537,21 @@ def test_young_cronjob_without_run_warns_and_exits_0(
     output = capsys.readouterr().out
     assert "WARN backup freshness: etcd snapshot copy pending first run" in output
     assert "FAIL backup freshness" not in output
+
+
+def test_scheduled_cronjob_without_success_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster()
+    cluster.etcd_sync = None
+    cluster.etcd_created = "2026-10-31T11:00:00Z"
+    cluster.etcd_scheduled = "2026-10-31T11:05:00Z"
+    assert _run(tmp_path, cluster, monkeypatch) != 0
+    output = capsys.readouterr().out
+    assert "etcd snapshot copy has no successful scheduled run" in output
+    assert "WARN backup freshness" not in output
 
 
 def test_old_cronjob_without_success_fails(
@@ -538,7 +585,11 @@ def test_crashloop_pod_fails(
     cluster = Cluster()
     cluster.pods = [
         {
-            "metadata": {"namespace": "app", "name": "web"},
+            "metadata": {
+                "namespace": "app",
+                "name": "web",
+                "creationTimestamp": "2026-10-31T11:59:50Z",
+            },
             "status": {
                 "phase": "Running",
                 "containerStatuses": [
@@ -574,28 +625,118 @@ def test_pending_pod_past_grace_fails(
     assert "app/web: Pending" in capsys.readouterr().out
 
 
+def test_pending_pod_within_grace_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster()
+    cluster.pods = [
+        {
+            "metadata": {
+                "namespace": "app",
+                "name": "web",
+                "creationTimestamp": "2026-10-31T11:56:00Z",
+            },
+            "status": {"phase": "Pending"},
+        }
+    ]
+    assert _run(tmp_path, cluster, monkeypatch) == 0
+    output = capsys.readouterr().out
+    assert "PASS pod health" in output
+    assert "FAIL pod health" not in output
+
+
+def test_pending_pod_without_creation_timestamp_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster()
+    cluster.pods = [
+        {
+            "metadata": {"namespace": "app", "name": "web"},
+            "status": {"phase": "Pending"},
+        }
+    ]
+    assert _run(tmp_path, cluster, monkeypatch) != 0
+    assert "app/web: Pending" in capsys.readouterr().out
+
+
+def test_get_pods_error_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster()
+    cluster.pods_rc = 1
+    assert _run(tmp_path, cluster, monkeypatch) != 0
+    output = capsys.readouterr().out
+    assert "FAIL pod health" in output
+    assert "PASS pod health" not in output
+
+
+def test_get_nodes_error_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cluster = Cluster()
+    cluster.nodes_rc = 1
+    assert _run(tmp_path, cluster, monkeypatch) != 0
+    output = capsys.readouterr().out
+    assert "FAIL" in output
+    assert "PASS nodes Ready" not in output
+    assert "PASS node roles and enablelb" not in output
+
+
 def test_sleeping_kubectl_times_out_cleanly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     env_mod = sys.modules["lib._env"]
+    monkeypatch.setattr(verify_tool, "KUBECTL_TIMEOUT", 0.05)
 
-    def sleeper(*args: object, **kwargs: object) -> CompletedProcess[str]:
+    def sleeper(argv: object, **kwargs: object) -> CompletedProcess[str]:
         timeout = kwargs.get("timeout")
-        assert timeout is not None
-        time.sleep(0.05)
-        raise env_mod.subprocess.TimeoutExpired(args[0], float(timeout))
+        if timeout is None:
+            return _completed(list(argv) if isinstance(argv, Sequence) else [], {})
+        time.sleep(float(timeout) + 0.05)
+        raise env_mod.subprocess.TimeoutExpired(argv, float(timeout))
 
     monkeypatch.setattr(env_mod.subprocess, "run", sleeper)
-    proc = env_mod.kubectl(
-        ["get", "ns"],
-        repo_root=REPO_ROOT,
-        kubeconfig=tmp_path / "kubeconfig",
-        request_timeout="1s",
-        timeout=0.01,
+
+    def kubectl(
+        args: Sequence[str], input: str | None = None
+    ) -> CompletedProcess[str]:
+        return verify_tool.bound_kubectl(
+            args,
+            input=input,
+            repo_root=tmp_path,
+            kubeconfig=tmp_path / "kubeconfig",
+        )
+
+    _write_env(tmp_path)
+    monkeypatch.setattr(
+        verify_tool,
+        "_inventory",
+        lambda _root, _env: {"n1": {"control_plane", "edge"}},
     )
-    assert proc.returncode == 1
-    assert proc.stderr == "kubectl timed out"
-    assert "--request-timeout=1s" in proc.args
+    rc = verify_tool.run(
+        tmp_path,
+        "env-test",
+        kubectl,
+        lambda host, ca: (0, "testapp\n"),
+        lambda host, ca: (0, "issuer=CN = fixture-ca"),
+        now=NOW,
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "FAIL" in captured.out
+    assert "timed out" in captured.out
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
 
 
 def test_secret_check_asks_for_key_names_only(

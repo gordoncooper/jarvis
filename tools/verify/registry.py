@@ -21,9 +21,9 @@ def register(name: str) -> Callable[[Builder], Builder]:
 
 
 def enabled_components(enabled: Sequence[str] | None) -> tuple[str, ...]:
+    names: list[str] = list(DEFAULT_ENABLED)
     if enabled is None:
-        return DEFAULT_ENABLED
-    names: list[str] = ["platform"]
+        return tuple(names)
     for name in enabled:
         if name not in names:
             names.append(name)

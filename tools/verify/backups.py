@@ -85,9 +85,12 @@ def check_backups(
     if not isinstance(schedule, str) or not isinstance(cron_zone, str):
         raise CheckError("etcd snapshot copy has no successful scheduled run")
     if not isinstance(last, str):
+        scheduled = status.get("lastScheduleTime")
         created = (cronjob.get("metadata") or {}).get("creationTimestamp")
-        if isinstance(created, str) and pending_first_run(
-            created, schedule, cron_zone, now
+        if (
+            not isinstance(scheduled, str)
+            and isinstance(created, str)
+            and pending_first_run(created, schedule, cron_zone, now)
         ):
             raise CheckWarning("etcd snapshot copy pending first run")
         raise CheckError("etcd snapshot copy has no successful scheduled run")
