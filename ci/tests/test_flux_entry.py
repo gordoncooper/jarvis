@@ -35,20 +35,18 @@ from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _STRICT_SUBSTITUTION = "--feature-gates=StrictPostBuildSubstitutions=true"
 
-# datreeio/CRDs-catalog commit. Tags through v0.0.12 omit these Flux CRDs.
-_FLUX_SCHEMA_REF = "3eb90d47aba8d61919d4419dd38301536e32a94b"
-FLUX_SCHEMA = (
-    "https://raw.githubusercontent.com/datreeio/CRDs-catalog/"
-    f"{_FLUX_SCHEMA_REF}/"
-    "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+SCHEMA_ROOT = REPO_ROOT / "ci/tests/fixtures/schemas"
+# Vendored only. kubeconform's "default" and any http(s) location need the network.
+K8S_SCHEMA = (
+    str(SCHEMA_ROOT)
+    + "/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}"
+    + "/{{.ResourceKind}}{{.KindSuffix}}.json"
 )
-# Local schemas, searched before the CRD catalog. helm.cattle.io is not in
-# the catalog. The catalog's VolSync schema predates moverVolumes.
-HELM_CATTLE_SCHEMA = (
-    str(REPO_ROOT / "ci/tests/fixtures/schemas")
-    + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+CRD_SCHEMA = (
+    str(SCHEMA_ROOT) + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
 _KUBECONFORM_SKIPPED = re.compile(r"Skipped:\s*(\d+)")
+_MISSING_SCHEMA = re.compile(r"could not find schema for (\S+)")
 
 
 def _require_tool(name: str) -> str:
@@ -56,6 +54,10 @@ def _require_tool(name: str) -> str:
     if not path:
         pytest.fail(f"{name} not found on PATH (run make deps)")
     return path
+
+
+def _schema_locations() -> tuple[str, str]:
+    return (K8S_SCHEMA, CRD_SCHEMA)
 
 
 def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
@@ -68,11 +70,9 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
             "-kubernetes-version",
             kubernetes_version,
             "-schema-location",
-            "default",
+            K8S_SCHEMA,
             "-schema-location",
-            HELM_CATTLE_SCHEMA,
-            "-schema-location",
-            FLUX_SCHEMA,
+            CRD_SCHEMA,
         ],
         input=manifests,
         capture_output=True,
@@ -80,6 +80,8 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
         check=False,
     )
     output = proc.stdout + proc.stderr
+    missing = _MISSING_SCHEMA.search(output)
+    assert missing is None, f"missing schema for {missing.group(1)}: {output}"
     assert proc.returncode == 0, output
     skipped = _KUBECONFORM_SKIPPED.search(output)
     assert skipped is not None, output
@@ -614,3 +616,64 @@ def test_flux_layer_kustomize_build_and_schema_validate(example_copy: ExampleCop
     """Each full env's Flux paths build and pass kubeconform, including a copy of env-00."""
     for root, env in real_and_copy_envs(example_copy):
         validate_env_flux(root, env)
+
+
+def test_kubeconform_uses_only_vendored_schemas() -> None:
+    """Schema locations are local files. A http(s) or default location would need the network."""
+    for location in _schema_locations():
+        assert location.startswith(str(SCHEMA_ROOT))
+        assert "http" not in location
+        assert location != "default"
+    pin = load_cluster_vars()["k3s_version"]
+    assert isinstance(pin, str)
+    version = kubernetes_version_from_k3s(pin)
+    assert version is not None
+    assert (SCHEMA_ROOT / f"v{version}-standalone-strict").is_dir()
+
+
+def test_missing_schema_names_the_kind() -> None:
+    """A kind with no vendored schema fails and names that kind."""
+    manifest = (
+        "apiVersion: example.invalid/v1\n"
+        "kind: MissingKind\n"
+        "metadata:\n"
+        "  name: demo\n"
+        "spec: {}\n"
+    )
+    with pytest.raises(AssertionError, match="missing schema for MissingKind"):
+        _kubeconform_validate(manifest, "1.36.0")
+
+
+_VALID_REPLICATION_SOURCE = """
+apiVersion: volsync.backube/v1alpha1
+kind: ReplicationSource
+metadata:
+  name: demo
+  namespace: demo
+spec:
+  sourcePVC: demo
+  trigger:
+    schedule: "0 2 * * *"
+  restic:
+    repository: restic-demo
+    copyMethod: Direct
+    cacheCapacity: 1Gi
+    pruneIntervalDays: 7
+    retain:
+      daily: 7
+      weekly: 4
+      monthly: 3
+      within: 7d
+"""
+
+
+def test_replicationsource_unknown_spec_field_fails() -> None:
+    """A typo in a ReplicationSource spec is a schema error."""
+    _kubeconform_validate(_VALID_REPLICATION_SOURCE, "1.36.0")
+    broken = _VALID_REPLICATION_SOURCE.replace(
+        "  sourcePVC: demo\n",
+        "  sourcePVC: demo\n  notARealField: true\n",
+    )
+    with pytest.raises(AssertionError, match="notARealField"):
+        _kubeconform_validate(broken, "1.36.0")
+

@@ -69,17 +69,32 @@
       "matchFileNames": ["requirements-dev.txt"],
       "matchPackageNames": ["ansible-core"],
       "allowedVersions": "<2.22"
+    },
+    {
+      "description": "kubectl stays on the k3s minor. Raise the cap in the same PR that bumps k3s to a new minor.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["kubernetes/kubernetes"],
+      "allowedVersions": "<1.37"
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Pinned CLI versions in tools/versions.env. Renovate bumps the version only. The sha256 lines are bumped by hand in the same PR.",
+      "description": "Pinned CLI versions in tools/versions.env, except kustomize. Renovate bumps the version only. The sha256 lines are bumped by hand in the same PR.",
       "managerFilePatterns": ["/^tools\\/versions\\.env$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)\\s*\\n\\w+_version=(?<currentValue>\\S+)"
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>getsops/sops|FiloSottile/age|gitleaks/gitleaks|yannh/kubeconform|kubernetes/kubernetes)\\s*\\n\\w+_version=(?<currentValue>\\S+)"
       ],
-      "extractVersionTemplate": "^(?:kustomize/)?v?(?<version>.*)$"
+      "extractVersionTemplate": "^v?(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "description": "kustomize pin in tools/versions.env. Only kustomize/v tags; api/v0.x and other module tags are ignored. The sha256 lines are bumped by hand in the same PR.",
+      "managerFilePatterns": ["/^tools\\/versions\\.env$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>kubernetes-sigs/kustomize)\\s*\\n\\w+_version=(?<currentValue>\\S+)"
+      ],
+      "extractVersionTemplate": "^kustomize/v(?<version>.*)$"
     },
     {
       "customType": "regex",

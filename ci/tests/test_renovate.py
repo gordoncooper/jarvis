@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from schema.env import kubernetes_version_from_k3s
 from support import REPO_ROOT as ROOT
 from support import ExampleCopy
 from support import renovate_python_pattern as _js_to_python
@@ -212,6 +213,64 @@ def test_each_env_k3s_version_is_a_renovate_pin() -> None:
         assert [match.group("currentValue") for match in found] == [
             yaml.safe_load(text)["k3s_version"]
         ], rel
+
+
+def _versions_env_managers() -> list[dict]:
+    return [
+        manager
+        for manager in _renovate_config()["customManagers"]
+        if any(
+            re.search(pattern.strip("/"), "tools/versions.env")
+            for pattern in manager["managerFilePatterns"]
+        )
+    ]
+
+
+def test_kustomize_extracts_only_kustomize_v_tags() -> None:
+    """kustomize module tags such as api/v0.x are not offered as updates."""
+    managers = _versions_env_managers()
+    kustomize = next(
+        manager
+        for manager in managers
+        if any("kubernetes-sigs/kustomize" in pattern for pattern in manager["matchStrings"])
+    )
+    others = next(
+        manager
+        for manager in managers
+        if manager is not kustomize
+    )
+    extract = kustomize["extractVersionTemplate"]
+    assert extract.startswith("^kustomize/v")
+    pattern = _js_to_python(extract)
+    assert re.fullmatch(pattern, "kustomize/v5.6.0")
+    assert re.fullmatch(pattern, "api/v0.21.0") is None
+    assert re.fullmatch(pattern, "cmd/config/v0.21.0") is None
+    assert "kustomize/" not in others.get("extractVersionTemplate", "")
+
+
+def test_kubectl_stays_on_the_k3s_minor() -> None:
+    """A kubectl bump to the next minor is held until k3s moves."""
+    pins = {
+        yaml.safe_load(path.read_text(encoding="utf-8"))["k3s_version"]
+        for path in ROOT.glob("envs/*/values/cluster-vars.yaml")
+    }
+    assert len(pins) == 1
+    pin = next(iter(pins))
+    version = kubernetes_version_from_k3s(pin)
+    assert version is not None
+    major, minor, _patch = version.split(".")
+    cap = f"<{major}.{int(minor) + 1}"
+    rule = next(
+        item
+        for item in _renovate_config()["packageRules"]
+        if item.get("matchDepNames") == ["kubernetes/kubernetes"]
+    )
+    assert rule["allowedVersions"] == cap
+    text = (ROOT / "tools/versions.env").read_text(encoding="utf-8")
+    kubectl = dict(re.findall(r"^(\w+_version)=(\S+)$", text, flags=re.MULTILINE))[
+        "kubectl_version"
+    ]
+    assert kubectl.startswith(f"{major}.{minor}.")
 
 
 def test_ansible_core_stays_on_the_2_21_line() -> None:

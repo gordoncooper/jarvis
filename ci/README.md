@@ -8,7 +8,6 @@ Run `bash ci/run-checks` and the tests near your change before pushing. CI at th
 
 These are gaps a maintainer should know about when a change looks green.
 
-- **Manifest schemas need the network.** `test_flux_entry.py` validates rendered manifests with kubeconform, which downloads the Kubernetes schemas and a public CRD catalog. The local VolSync schemas accept any `spec`, so a typo in a ReplicationSource spec is not caught. Vendoring the real schemas is the fix.
 - **The manifest checks read raw files.** `digest-pin`, `loadbalancer`, `manifest-lint` and `pvc-backup` scan YAML as written. A value that only appears after `kustomize build` (a patch, a generator) or inside a rendered HelmRelease is not seen.
 - **`require_roots` is off by default in the library functions.** The four check scripts turn it on, and `test_manifest_roots.py` runs the scripts to prove it. A new caller of `load_documents` has to opt in.
 - **The k3s role's `main.yml` is never run end to end.** It downloads a binary, writes under `/etc` and starts a service, which needs root and a network. Tests cover its parts: the templates, the join URL expression, the refuse guard, the mount drop-in, and the modes of the config files. A change to the order of tasks in `main.yml` is not caught.
