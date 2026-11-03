@@ -10,6 +10,7 @@ metadata:
 spec:
   interval: 30m
   releaseName: flux-operator
+  serviceAccountName: flux-platform
   chartRef:
     kind: OCIRepository
     name: flux-operator

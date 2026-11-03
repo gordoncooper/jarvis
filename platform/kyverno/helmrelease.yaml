@@ -11,6 +11,7 @@ metadata:
 spec:
   interval: 30m
   releaseName: kyverno
+  serviceAccountName: flux-platform
   targetNamespace: kyverno
   chart:
     spec:
