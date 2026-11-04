@@ -36,7 +36,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 
 ### Rotate the CA
 
-`bootstrap-secrets` leaves an existing `envs/<env>/ca.crt` as it is. The private key is never written there. cert-manager v1.21.3 does not reissue a leaf when the issuer CA changes.
+`bootstrap-secrets` keeps an existing `envs/<env>/ca.crt` and does not write a new one over it. Rotation deletes that file first. The private key is never written there. cert-manager v1.21.3 does not reissue a leaf when the issuer CA changes.
 
 1. Delete `envs/<env>/secrets/cert-manager-ca.sops.yaml` and `envs/<env>/ca.crt`.
 2. From the repo root, run `make bootstrap-secrets ENV=<env>`.

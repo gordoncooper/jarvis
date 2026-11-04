@@ -229,6 +229,13 @@ def _volume_pod(name: str, image: str, command: str, env: list[dict] | None = No
     }
 
 
+_PLACEMENT_KEYS = ("nodeSelector", "affinity", "tolerations")
+
+
+def _placement(source: dict) -> dict:
+    return {key: source[key] for key in _PLACEMENT_KEYS if key in source}
+
+
 def _templates(kubectl: Kubectl) -> tuple[dict, dict]:
     cronjob = _body(
         kubectl,
@@ -274,16 +281,22 @@ def _templates(kubectl: Kubectl) -> tuple[dict, dict]:
         data_volume = next(
             volume for volume in restic_pod["volumes"] if volume["name"] == data_mount["name"]
         )
+        etcd_place = _placement(pod)
+        restic_place = _placement(restic_pod)
+        if "nodeSelector" not in etcd_place and "affinity" not in etcd_place:
+            raise DrillError("live backup workload has an unsupported pod template")
+        if "nodeSelector" not in restic_place and "affinity" not in restic_place:
+            raise DrillError("live backup workload has an unsupported pod template")
         etcd = {
             "image": container["image"],
             "env": container["env"],
-            "nodeSelector": pod["nodeSelector"],
             "snapshotHostPath": snapshot_volume["hostPath"],
+            **etcd_place,
         }
         cleanup = {
             "image": container["image"],
-            "nodeSelector": restic_pod["nodeSelector"],
             "dataHostPath": data_volume["hostPath"],
+            **restic_place,
         }
     except (KeyError, IndexError, StopIteration, TypeError) as exc:
         raise DrillError("live backup workload has an unsupported pod template") from exc
@@ -319,7 +332,7 @@ printf 'ETCD %s %s %s\n' "$original" "$restored" "$name"
         "metadata": {"name": ETCD_POD, "namespace": BACKUP_NAMESPACE},
         "spec": {
             "restartPolicy": "Never",
-            "nodeSelector": template["nodeSelector"],
+            **_placement(template),
             "containers": [
                 {
                     "name": "restore",
@@ -353,7 +366,7 @@ def _cleanup_pod(template: dict) -> dict:
         "metadata": {"name": CLEANUP_POD, "namespace": BACKUP_NAMESPACE},
         "spec": {
             "restartPolicy": "Never",
-            "nodeSelector": template["nodeSelector"],
+            **_placement(template),
             "containers": [
                 {
                     "name": "cleanup",
@@ -387,7 +400,7 @@ def _probe_pod(template: dict) -> dict:
         "metadata": {"name": PROBE_POD, "namespace": BACKUP_NAMESPACE},
         "spec": {
             "restartPolicy": "Never",
-            "nodeSelector": template["nodeSelector"],
+            **_placement(template),
             "containers": [
                 {
                     "name": "probe",

@@ -32,7 +32,7 @@ Prove each copy. The owner runs this under their own user, never a coding-agent 
 make age-key-check ENV=<env> KEY=<path-to-that-copy>
 ```
 
-The command test-decrypts one secret of that env and prints `PASS` or `FAIL`. Decrypted secret text is not shown and is not written to a file. `PASS` means that copy opens a secret. `FAIL` means it does not, including when the env has no secrets yet.
+The command test-decrypts one secret of that env and prints `PASS` or `FAIL`. Decrypted secret text is not shown and is not written to a file. `PASS` means that copy opens a secret. `FAIL` is the same line when the key cannot open a secret, when the env has no secrets yet, and when the file is not mode `0600` or not owned by you. Test a mode `0600` copy owned by you.
 
 ### Keep-safe list
 

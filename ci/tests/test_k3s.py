@@ -29,7 +29,7 @@ from ansible_role_proof import (
     roles_inventory_path,
 )
 from conftest import require_cli
-from support import ExampleCopy
+from support import ExampleCopy, _kustomize_build
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
 
@@ -284,6 +284,13 @@ def _listed_play_hosts(section: str) -> set[str]:
     return set(listed)
 
 
+def test_agent_play_restarts_one_host_at_a_time() -> None:
+    """A k3s pin bump restarts one agent before the next."""
+    plays = yaml.safe_load((ANSIBLE_DIR / "site.yml").read_text(encoding="utf-8"))
+    agent = next(play for play in plays if play.get("name") == "Join k3s agents")
+    assert agent["serial"] == 1
+
+
 def test_agent_play_host_pattern(example_copy: ExampleCopy) -> None:
     """The agent play is every host except the control plane."""
     targets = [(REPO_ROOT, env) for env in (env_name(), *non_example_env_names())]
@@ -322,6 +329,18 @@ def _label_inventory(edge_hosts: list[str]) -> str:
     )
 
 
+def _placement_blocked():
+    import importlib.util
+
+    loaded = importlib.util.spec_from_file_location(
+        "k3s_placement", K3S_ROLE_DIR / "filter_plugins" / "placement.py"
+    )
+    assert loaded is not None and loaded.loader is not None
+    module = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(module)
+    return module.placement_blocked
+
+
 def test_label_patch_reconciles_roles_and_enablelb() -> None:
     nodes = [
         {
@@ -345,7 +364,9 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
     hosts = {"cp-1": ["control_plane"], "wk-1": ["workers", "edge"]}
 
     def render(
-        edge_hosts: list[str], node_resources: list[dict[str, object]]
+        edge_hosts: list[str],
+        node_resources: list[dict[str, object]],
+        label_hosts: dict[str, list[str]],
     ) -> list[dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             inventory = Path(tmp) / "hosts.yml"
@@ -354,7 +375,7 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
                 "label-patches.json.j2",
                 {
                     "dns_suffix": "env-00.example",
-                    "k3s_label_hosts": hosts,
+                    "k3s_label_hosts": label_hosts,
                     "k3s_node_resources": node_resources,
                 },
                 templates_dir=K3S_ROLE_TEMPLATES,
@@ -364,13 +385,14 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
         assert isinstance(loaded, list)
         return loaded
 
-    edged = {item["name"]: item["labels"] for item in render(["wk-1"], nodes)}
+    edged = {item["name"]: item["labels"] for item in render(["wk-1"], nodes, hosts)}
+    assert edged["cp-1"]["node-role.jarvis.io/control_plane"] == "true"
+    assert edged["cp-1"]["role.env-00.example/control_plane"] is None
     assert edged["cp-1"]["role.env-00.example/workers"] is None
     assert edged["cp-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
-    assert "role.env-00.example/control_plane" not in edged["cp-1"]
     assert "kubernetes.io/os" not in edged["cp-1"]
-    assert edged["wk-1"]["role.env-00.example/workers"] == "true"
-    assert edged["wk-1"]["role.env-00.example/edge"] == "true"
+    assert edged["wk-1"]["node-role.jarvis.io/workers"] == "true"
+    assert edged["wk-1"]["node-role.jarvis.io/edge"] == "true"
     assert edged["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] == "true"
     assert "kubernetes.io/hostname" not in edged["wk-1"]
 
@@ -388,9 +410,106 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
             }
         },
     ]
-    no_edge = {item["name"]: item["labels"] for item in render([], bare)}
+    no_edge = {item["name"]: item["labels"] for item in render([], bare, hosts)}
     assert "svccontroller.k3s.cattle.io/enablelb" not in no_edge["cp-1"]
     assert no_edge["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
+
+    dedicated = {"key": "node-role.jarvis.io/dedicated", "value": "true", "effect": "NoSchedule"}
+    hold = {"key": "example.com/hold", "value": "true", "effect": "NoSchedule"}
+    roles = {"edge-only": ["edge"], "workers-only": ["workers"], "gpu-only": ["gpu"]}
+    nodes = [
+        {
+            "metadata": {"name": name, "labels": {}},
+            "spec": {"taints": [hold, dedicated] if name == "workers-only" else [hold]},
+        }
+        for name in roles
+    ]
+    first = {item["name"]: item for item in render(["edge-only"], nodes, roles)}
+    assert [first[name]["taint"] for name in roles] == [None, "absent", "present"]
+    assert "example.com/hold" not in json.dumps(first)
+    from ansible_collections.kubernetes.core.plugins.modules.k8s_taint import _get_difference
+
+    task = next(
+        item["kubernetes.core.k8s_taint"]
+        for item in yaml.safe_load((K3S_ROLE_DIR / "tasks" / "labels.yml").read_text())
+        if "kubernetes.core.k8s_taint" in item
+    )
+    assert task["taints"] == [dedicated] and "replace" not in task
+    assert _get_difference([hold, dedicated], task["taints"]) == [hold]
+
+
+def test_placement_gate_stops_on_an_old_live_spec() -> None:
+    """A missing workload passes. A live one without the new term or toleration blocks."""
+    blocked = _placement_blocked()
+
+    def live(kind: str, spec: dict) -> dict:
+        nest = {"spec": spec}
+        body = (
+            {"spec": {"template": nest}}
+            if kind == "Deployment"
+            else {"spec": {"jobTemplate": {"spec": {"template": nest}}}}
+        )
+        return {"item": {"kind": kind, "name": "restic", "role": "backup"}, "resources": [body]}
+
+    term = {"key": "node-role.jarvis.io/backup", "operator": "In", "values": ["true"]}
+    affinity = {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [{"matchExpressions": [term]}]}}}
+    tol = {"key": "node-role.jarvis.io/dedicated", "value": "true", "effect": "NoSchedule"}
+    assert blocked([{"item": live("Deployment", {})["item"], "resources": []}]) == []
+    assert blocked([live("Deployment", {})]) == ["Deployment restic"]
+    assert blocked([live("Deployment", {"affinity": affinity, "tolerations": [tol]})]) == []
+    assert blocked([live("CronJob", {"affinity": affinity})]) == ["CronJob restic"]
+
+
+def test_relabel_precheck_runs_before_the_writes() -> None:
+    """Read and stop come first, and they name the built workloads, including each role."""
+    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "labels.yml").read_text(encoding="utf-8"))
+    found: dict[str, int] = {}
+    for index, task in enumerate(tasks):
+        action = next(key for key in task if key.startswith(("ansible.builtin.", "kubernetes.core.")))
+        if action == "kubernetes.core.k8s_info" and "loop" in task:
+            found["read"] = index
+        elif action == "ansible.builtin.fail":
+            found["stop"] = index
+        elif action == "kubernetes.core.k8s":
+            found["label"] = index
+        elif action == "kubernetes.core.k8s_taint":
+            found["taint"] = index
+    read, stop, label, taint = (found[name] for name in ("read", "stop", "label", "taint"))
+    assert read < stop < label and stop < taint
+    info = tasks[read]["kubernetes.core.k8s_info"]
+    loop = {(item["kind"], item["name"]): item["role"] for item in tasks[read]["loop"]}
+    built: dict[tuple[str, str], dict] = {}
+    for doc in yaml.safe_load_all(_kustomize_build("platform/backups")):
+        if isinstance(doc, dict) and doc.get("kind") in {"Deployment", "CronJob"}:
+            meta = doc["metadata"]
+            assert meta["namespace"] == info["namespace"]
+            built[(doc["kind"], meta["name"])] = doc
+    assert set(loop) == set(built)
+    assert "placement_blocked" in tasks[stop]["vars"]["blocked"]
+    blocked = _placement_blocked()
+    for key, role in loop.items():
+        assert f"node-role.jarvis.io/{role}" in json.dumps(built[key]["spec"])
+        assert blocked([{"item": {"kind": key[0], "name": key[1], "role": role}, "resources": [built[key]]}]) == []
+
+
+def test_converged_node_renders_nothing() -> None:
+    """A second run, once labels and the dedicated taint match, renders nothing."""
+    dedicated = {"key": "node-role.jarvis.io/dedicated", "value": "true", "effect": "NoSchedule"}
+    roles = {"edge-only": ["edge"], "gpu-only": ["gpu"]}
+    nodes = [
+        {"metadata": {"name": "edge-only", "labels": {"node-role.jarvis.io/edge": "true", "svccontroller.k3s.cattle.io/enablelb": "true"}}, "spec": {"taints": []}},
+        {"metadata": {"name": "gpu-only", "labels": {"node-role.jarvis.io/gpu": "true"}}, "spec": {"taints": [dedicated]}},
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        inventory = Path(tmp) / "hosts.yml"
+        inventory.write_text(_label_inventory(["edge-only"]), encoding="utf-8")
+        rendered = ansible_render_template(
+            "label-patches.json.j2",
+            {"dns_suffix": "env-00.example", "k3s_label_hosts": roles, "k3s_node_resources": nodes},
+            templates_dir=K3S_ROLE_TEMPLATES,
+            inventory=inventory,
+        )
+    assert all(item["labels"] == {} and item["taint"] is None for item in json.loads(rendered))
 
 
 def _run_guard(tmp_path: Path, *, marker_text: str | None) -> subprocess.CompletedProcess[str]:

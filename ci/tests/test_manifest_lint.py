@@ -237,6 +237,18 @@ spec:
       tag: v1
 """,
         ),
+        (
+            "platform/blank-chart.yaml",
+            """
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: ""
+""",
+        ),
     ],
 )
 def test_r5_chart_values_need_a_passing_resources_block(tmp_path: Path, rel: str, text: str) -> None:

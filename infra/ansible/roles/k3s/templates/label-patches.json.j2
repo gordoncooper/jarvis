@@ -1,4 +1,6 @@
-{% set prefix = 'role.' ~ dns_suffix ~ '/' %}
+{% set prefix = 'node-role.jarvis.io/' %}
+{% set old_prefix = 'role.' ~ dns_suffix ~ '/' %}
+{% set dedicated = 'node-role.jarvis.io/dedicated' %}
 {% set enablelb = 'svccontroller.k3s.cattle.io/enablelb' %}
 {% set edge_hosts = groups['edge'] %}
 {% set out = namespace(items=[]) %}
@@ -19,10 +21,20 @@
 {% endif %}
 {% endfor %}
 {% for key in current %}
-{% if (key.startswith(prefix) and key not in desired.labels) or (key == enablelb and name not in edge_hosts) %}
+{% if (key.startswith(prefix) and key not in desired.labels) or key.startswith(old_prefix) or (key == enablelb and name not in edge_hosts) %}
 {% set _ = patch.labels.update({key: none}) %}
 {% endif %}
 {% endfor %}
-{% set _ = out.items.append({'name': name, 'labels': patch.labels | combine({})}) %}
+{% set roles = k3s_label_hosts[name] %}
+{% set wants = 'workers' not in roles and 'edge' not in roles %}
+{% set owned = namespace(n=0, exact=0) %}
+{% for taint in node.spec.taints | default([], true) if taint.key | default('') == dedicated %}
+{% set owned.n = owned.n + 1 %}
+{% if (taint.value | default('')) == 'true' and (taint.effect | default('')) == 'NoSchedule' %}
+{% set owned.exact = owned.exact + 1 %}
+{% endif %}
+{% endfor %}
+{% set state = 'present' if wants and owned.exact == 0 else ('absent' if (not wants) and owned.n > 0 else none) %}
+{% set _ = out.items.append({'name': name, 'labels': patch.labels | combine({}), 'taint': state}) %}
 {% endfor %}
 {{ out.items | to_json }}

@@ -18,6 +18,27 @@
     | length == 0
   changed_when: false
 
+- name: Read rest-server and the backup CronJobs
+  kubernetes.core.k8s_info:
+    api_version: "{{ item.api }}"
+    kind: "{{ item.kind }}"
+    name: "{{ item.name }}"
+    namespace: platform-backups
+    kubeconfig: "{{ k3s_kubeconfig_path }}"
+  loop:
+    - {api: apps/v1, kind: Deployment, name: restic, role: backup}
+    - {api: batch/v1, kind: CronJob, name: etcd-snapshots, role: control_plane}
+    - {api: batch/v1, kind: CronJob, name: restic-check, role: backup}
+  register: k3s_placement_live
+  changed_when: false
+
+- name: Stop before removing old labels or setting the dedicated taint
+  ansible.builtin.fail:
+    msg: "Refusing to remove role.{{ dns_suffix }}/ labels or set node-role.jarvis.io/dedicated until Flux rolls the new affinity and toleration onto {{ blocked | join(', ') }}."
+  vars:
+    blocked: "{{ k3s_placement_live.results | placement_blocked }}"
+  when: blocked | length > 0
+
 - name: Build node label patches
   ansible.builtin.set_fact:
     k3s_label_patches: "{{ lookup('ansible.builtin.template', 'label-patches.json.j2') | from_json }}"
@@ -42,5 +63,19 @@
         labels: "{{ item.labels }}"
   loop: "{{ k3s_label_patches }}"
   when: item.labels | length > 0
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Reconcile the dedicated-node taint
+  kubernetes.core.k8s_taint:
+    state: "{{ item.taint }}"
+    name: "{{ item.name }}"
+    kubeconfig: "{{ k3s_kubeconfig_path }}"
+    taints:
+      - key: node-role.jarvis.io/dedicated
+        value: "true"
+        effect: NoSchedule
+  loop: "{{ k3s_label_patches }}"
+  when: item.taint is not none
   loop_control:
     label: "{{ item.name }}"

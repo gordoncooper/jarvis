@@ -100,7 +100,7 @@ class Cluster:
             return _completed(argv, {"data": {"RESTIC_PASSWORD": SECRET_VALUE}})
         if argv[:2] == ["get", "nodes"]:
             labels = {
-                f"role.test.example/{role}": "true" for role in self.node_roles
+                f"node-role.jarvis.io/{role}": "true" for role in self.node_roles
             }
             if self.enablelb:
                 labels[verify_tool.ENABLELB] = "true"

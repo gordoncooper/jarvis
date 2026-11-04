@@ -27,8 +27,8 @@ HTTP_TIMEOUT_SECONDS = 30
 PENDING_GRACE_SECONDS = 300
 
 
-def role_label_prefix(dns_suffix: str) -> str:
-    return f"role.{dns_suffix}/"
+def role_label_prefix() -> str:
+    return "node-role.jarvis.io/"
 
 
 def _run(
@@ -137,9 +137,7 @@ def check_flux(kubectl: Kubectl) -> None:
             raise CheckError(f"{resource}: {reason(proc)}")
 
 
-def check_nodes(
-    kubectl: Kubectl, roles: dict[str, set[str]], dns_suffix: str
-) -> None:
+def check_nodes(kubectl: Kubectl, roles: dict[str, set[str]]) -> None:
     listed = items(kubectl(["get", "nodes", "-o", "json"]), "list nodes")
     try:
         nodes = {
@@ -152,7 +150,7 @@ def check_nodes(
         raise CheckError(
             f"node names: inventory={sorted(roles)} cluster={sorted(nodes)}"
         )
-    prefix = role_label_prefix(dns_suffix)
+    prefix = role_label_prefix()
     for name, expected in sorted(roles.items()):
         labels = nodes[name]
         got = {
@@ -263,13 +261,12 @@ def check_https(
 
 @register("platform")
 def platform_checks(ctx: Context) -> list[tuple[int, str, object]]:
-    dns_suffix = str(ctx.values["dns_suffix"])
     return [
         (10, "Flux Ready", lambda: check_flux(ctx.kubectl)),
         (
             30,
             "node roles and enablelb",
-            lambda: check_nodes(ctx.kubectl, ctx.roles, dns_suffix),
+            lambda: check_nodes(ctx.kubectl, ctx.roles),
         ),
         (40, "nodes Ready", lambda: check_nodes_ready(ctx.kubectl)),
         (50, "pod health", lambda: check_pods(ctx.kubectl, ctx.now)),

@@ -18,6 +18,39 @@ from support import REPO_ROOT as ROOT
 from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 
 _FLAGS = ("--append-only", "--no-auth", "--private-repos")
+_DEDICATED_TOLERATION = {
+    "key": "node-role.jarvis.io/dedicated",
+    "operator": "Equal",
+    "value": "true",
+    "effect": "NoSchedule",
+}
+
+
+def _assert_dedicated_placement(pod: dict, role: str) -> None:
+    """Required affinity matches the new role label or the old prefix, and tolerates one taint."""
+    assert "nodeSelector" not in pod
+    required = pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+    assert required["nodeSelectorTerms"] == [
+        {
+            "matchExpressions": [
+                {
+                    "key": f"node-role.jarvis.io/{role}",
+                    "operator": "In",
+                    "values": ["true"],
+                }
+            ]
+        },
+        {
+            "matchExpressions": [
+                {
+                    "key": f"role.${{dns_suffix}}/{role}",
+                    "operator": "In",
+                    "values": ["true"],
+                }
+            ]
+        },
+    ]
+    assert pod["tolerations"] == [_DEDICATED_TOLERATION]
 
 
 def _docs(path: Path) -> list[dict]:
@@ -48,7 +81,7 @@ def test_rest_server_contract_rules() -> None:
         if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "restic"
     )
     pod = deploy["spec"]["template"]["spec"]
-    assert pod["nodeSelector"]["role.${dns_suffix}/backup"] == "true"
+    _assert_dedicated_placement(pod, "backup")
     container = pod["containers"][0]
     assert re.fullmatch(
         r"restic/rest-server:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"]
@@ -140,6 +173,7 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     assert f"etcd-snapshot-dir: {snapshot_path.replace('${backup_path}', '{{ backup_path }}')}" in k3s_config
 
     spec = job["spec"]
+    assert spec["jobTemplate"]["spec"]["activeDeadlineSeconds"] == 21600
     assert spec["timeZone"] == "${time_zone}"
     schedule = _cron_fields(spec["schedule"])
     assert schedule[1:] == k3s_cron[1:]
@@ -147,7 +181,7 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     assert 1 <= int(schedule[0]) - int(k3s_cron[0]) <= 15
 
     pod = spec["jobTemplate"]["spec"]["template"]["spec"]
-    assert pod["nodeSelector"]["role.${dns_suffix}/control_plane"] == "true"
+    _assert_dedicated_placement(pod, "control_plane")
     container = pod["containers"][0]
     assert re.fullmatch(r"restic/restic:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"])
     volume = next(item for item in pod["volumes"] if item.get("hostPath", {}).get("path") == snapshot_path)
@@ -264,7 +298,7 @@ def test_restic_check_reads_repositories_without_a_lock(example_copy: ExampleCop
         assert re.fullmatch(r"restic/restic:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"])
         assert container["resources"]["requests"]["memory"]
         assert container["resources"]["limits"]["memory"]
-        assert pod["nodeSelector"] == {"role.${dns_suffix}/backup": "true"}
+        _assert_dedicated_placement(pod, "backup")
         # No API token and no capabilities: root may only read files it owns.
         assert pod["automountServiceAccountToken"] is False
         security = container["securityContext"]

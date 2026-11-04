@@ -17,8 +17,9 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - Flux SOPS decryption via `flux-system/sops-age`. The file in Git has no plaintext secret.
 - `envs/<env>/secrets/backups-restic.sops.yaml`. Flux decrypts it.
 - Target path, retention counts, `backup_schedule`, `backup_check_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
-- The backup-role node (`role.<dns_suffix>/backup=true`) for the rest-server hostPath.
-- The control-plane node (`role.<dns_suffix>/control_plane=true`), where k3s writes the snapshot files.
+- The backup-role node (`node-role.jarvis.io/backup=true`) for the rest-server hostPath.
+- The control-plane node (`node-role.jarvis.io/control_plane=true`), where k3s writes the snapshot files.
+- rest-server, CronJob `etcd-snapshots`, and CronJob `restic-check` each match their role with required node affinity: `node-role.jarvis.io/<role>=true`, or, until that term is removed, `role.<dns_suffix>/<role>=true`. Each tolerates `node-role.jarvis.io/dedicated=true:NoSchedule`. Drill pods copy that affinity and toleration.
 - `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
 
 ## Health
@@ -64,7 +65,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - `platform-backups` does not set `volsync.backube/privileged-movers`. No mover in this namespace mounts a hostPath.
 - The rest-server runs as root so it can write its hostPath.
 - The etcd CronJob runs as root so it can read the snapshot files (mode 0600). It is not a mover.
-- CronJob `etcd-snapshots` is pinned to `role.<dns_suffix>/control_plane=true`.
+- CronJob `etcd-snapshots` schedules on `node-role.jarvis.io/control_plane=true`, and still matches `role.<dns_suffix>/control_plane=true` until that affinity term is removed.
 - It mounts `backup_path/etcd-snapshots` read-only (`hostPath` type `Directory`) and runs `restic backup` of that mount into `host-etcd-snapshots`.
 - That repository is the `RESTIC_REPOSITORY` prefix from Secret `backups-restic` plus the path segment `host-etcd-snapshots`.
 - `restic init` runs only when `restic cat config` exits 10 (repository missing). Any other error stops the run.
@@ -101,6 +102,19 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 
 ## Operations
 
+### Role labels and the dedicated taint
+
+Merge first and let Flux roll the new pod spec before Ansible removes `role.<dns_suffix>/` labels. rest-server is `Recreate`, and the new spec still matches the old label. The label play reads rest-server and both CronJobs and stops if one exists without the new affinity term and the dedicated toleration. A missing object does not stop it: this play runs before Flux.
+
+1. Merge. Wait until `platform-configs` is Ready, rest-server is Running, and both CronJob templates show the new affinity and toleration.
+2. `make site ENV=<env> TAGS=k3s CHECK=1`, then the same without `CHECK=1`, then once more (`changed=0`).
+3. That run adds `node-role.jarvis.io/<role>=true`, removes `role.<dns_suffix>/` labels, and sets `node-role.jarvis.io/dedicated=true:NoSchedule` only on nodes with neither `workers` nor `edge`.
+4. `make verify` reads `node-role.jarvis.io/` labels, so run it after that run.
+
+A Job started before this merge has no deadline. Delete one stuck `Pending`: `concurrencyPolicy: Forbid` blocks the next run, and `activeDeadlineSeconds: 21600` ends only a later Job.
+
+After Ansible has run, `kubectl label node <node> role.<dns_suffix>/<role>=true` for each role and `kubectl taint node <node> node-role.jarvis.io/dedicated:NoSchedule-` (`KUBECONFIG=~/.kube/jarvis-<env>.yaml`), then revert. Do not run Ansible, including `make site`, until that revert lands.
+
 Do not merge a change to ClusterPolicy `pvc-backup` during a restore. The policy is annotated `kustomize.toolkit.fluxcd.io/force: Enabled`, so Flux recreates it and Kyverno regenerates every Secret and ReplicationSource.
 
 ### Restore one namespace
@@ -128,7 +142,7 @@ What it changes, for each selected PVC:
 
 `make restore` does not lift the rebuild hold. While the hold exists, a successful `make restore` leaves `backup: paused` in place.
 
-How to tell it worked: a `PASS restore <namespace>/<pvc>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0.
+How to tell it worked: a `PASS restore <namespace>/<pvc> snapshot <id>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0.
 
 ### Restore every enrolled PVC
 

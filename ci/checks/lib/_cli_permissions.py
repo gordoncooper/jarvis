@@ -2,11 +2,10 @@
 
 `.cursor/cli.json` (Cursor) and `.claude/settings.json` (Claude Code) must
 block every `block` row and allow every `allow` row of
-`fixtures/guard-corpus.tsv`, plus the regression rows in
-`fixtures/must-block-main.tsv` and `fixtures/must-allow-main.txt`. The check
-proves the checked-in lists against this model of each client. It does not
-prove the clients. The lists are best-effort defence in depth; the boundary
-is that workers hold no kubeconfig and no age key.
+`fixtures/guard-corpus.tsv`. The check proves the checked-in lists against
+this model of each client. It does not prove the clients. The lists are
+best-effort defence in depth; the boundary is that workers hold no kubeconfig
+and no age key.
 
 Both clients split a line into commands at && || ; | & newlines, $( ),
 backticks and subshells, drop leading FOO=1 assignments, and match each
@@ -14,10 +13,18 @@ command as raw word text (quotes kept, words joined by one space, so corpus
 rows use single spaces). Neither unwraps bash -c, eval, sudo, env, absolute
 paths or interpreters, so the lists name those wrappers one by one.
 
-Entries name a command position rather than a substring of the line, so a
-guarded word inside a commit message, a search pattern, a test selector or a
-path stays allowed. Neither client lets an allow rule carve an exception out
-of a deny rule, so breadth has to come off the deny side.
+Neither client lets an allow rule carve an exception out of a deny rule, so
+breadth has to come off the deny side.
+
+Known limits, left because closing them unblocks a real run or the pattern
+language cannot name them: interpreter, busybox, strace, and git-push entries
+stay wide, so a guarded word later in those arguments stays blocked. A
+leading-wildcard shell wrapper also matches the same text later in a line,
+and dropping the wildcard lets an absolute shell path through. Wrapper
+options and nesting the Claude docs do not describe; a cluster-tool verb
+whose flags sit where no entry looks; admin-kubeconfig readers other than
+the named ones. A force push of the default branch can match both the force
+entry and the branch entry, and patterns cannot subtract.
 
 Cursor, mirroring cursor-agent 2026.10.22-27dcf5f: Shell(cmd:args) or
 Shell(pattern), only * is a wildcard, anchored, case-sensitive, no wrapper
@@ -52,8 +59,6 @@ _HEAD_ONLY_KEYWORDS = {"for", "select", "case", "fi", "done", "esac", "}"}
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 CORPUS_PATH = FIXTURES / "guard-corpus.tsv"
-MAIN_MUST_BLOCK_PATH = FIXTURES / "must-block-main.tsv"
-MAIN_MUST_ALLOW_PATH = FIXTURES / "must-allow-main.txt"
 # Client name, settings file, shell tool name in that file.
 CLIENTS: tuple[tuple[str, str, str], ...] = (
     ("cursor", ".cursor/cli.json", "Shell"),
@@ -468,19 +473,6 @@ def load_corpus(path: Path) -> list[Row]:
     return rows
 
 
-def load_regression() -> list[Row]:
-    """Main's must-block and must-allow rows, kept while the category corpus proves it covers them."""
-    rows: list[Row] = []
-    for verdict, path in (("block", MAIN_MUST_BLOCK_PATH), ("allow", MAIN_MUST_ALLOW_PATH)):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if line:
-                category, _, command = line.rpartition("\t")
-                rows.append(
-                    Row(verdict, category or "regression", "shell", command, f"{path.name}:{lineno}")
-                )
-    return rows
-
-
 def row_blocked(client: str, deny: list[str], row: Row) -> bool:
     if row.kind == "read":
         return read_blocked(client, deny, row.text)
@@ -515,7 +507,7 @@ def policy_failures(client: str, allow: list[str], deny: list[str], rows: list[R
 
 
 def check_repo(root: Path) -> list[str]:
-    rows = load_corpus(CORPUS_PATH) + load_regression()
+    rows = load_corpus(CORPUS_PATH)
     failures: list[str] = []
     for client, rel, _ in CLIENTS:
         path = root / rel

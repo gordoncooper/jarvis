@@ -14,14 +14,30 @@ spec:
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 21600
       template:
         metadata:
           labels:
             app.kubernetes.io/name: etcd-snapshots
         spec:
-          # Flux postBuild on platform-configs fills these from cluster-vars.
-          nodeSelector:
-            "role.${dns_suffix}/control_plane": "true"
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: node-role.jarvis.io/control_plane
+                        operator: In
+                        values: ["true"]
+                  # Transitional: drop this term after role.${dns_suffix} labels are gone.
+                  - matchExpressions:
+                      - key: role.${dns_suffix}/control_plane
+                        operator: In
+                        values: ["true"]
+          tolerations:
+            - key: node-role.jarvis.io/dedicated
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
           restartPolicy: OnFailure
           containers:
             - name: restic

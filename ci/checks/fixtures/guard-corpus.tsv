@@ -33,6 +33,7 @@ block	secret-decrypt	shell	{any:bash -c 'age -d secret.txt',sh -c 'age --decrypt
 block	secret-decrypt	shell	{any:doas,taskset -c 0,nice,/usr/bin/env} sops -d demo.sops.yaml
 block	secret-decrypt	shell	find . -name '*.sops.yaml' -exec sops -d {} \;
 block	secret-decrypt	shell	strace age --decrypt secret.txt
+block	secret-decrypt	shell	strace /opt/age --decrypt secret.txt
 block	secret-decrypt	shell	make {any:,-C . }{any:age-key-check ENV=env-00 KEY=key.txt,bootstrap-secrets ENV=env-00}
 block	secret-decrypt	shell	{any:bash,sh} -c 'make {any:age-key-check ENV=env-00 KEY=key.txt,bootstrap-secrets ENV=env-00}'
 block	secret-decrypt	shell	{any:,./,python3 ,.venv/bin/python }tools/{any:age-key-check,bootstrap-secrets} --env env-00
@@ -71,6 +72,9 @@ block	cluster-entrypoint	shell	{any:,./,python3 ,.venv/bin/python }tools/prep-no
 # A make dry run is blocked with the real run: the dry-run flag sits in the same place as
 # any other flag, and neither client's patterns can exempt one flag without exempting all.
 block	cluster-entrypoint	shell	make {any:-n,--dry-run,--just-print,--recon} {any:drill,restore,restore-all} ENV=env-00
+# tools/make-plan prints the recipe and does not run it. A make dry run stays blocked above.
+allow	make-plan	shell	{any:,./}tools/make-plan {any:restore,drill}
+allow	make-plan	shell	tools/make-plan restore ENV=env-00 APP=demo
 # remote-exec: SSH, copies and remote commands to nodes.
 block	remote-exec	wrapped	ssh user@node.example
 block	remote-exec	wrapped	rsync a user@node.example:/demo
@@ -82,6 +86,9 @@ block	remote-exec	shell	{any:cd demo && ssh,'ssh' user@node.example,"ssh" user@n
 block	remote-exec	shell	for h in a b; do ssh $h uptime; done
 block	remote-exec	shell	{any:eval,exec,command,time,stdbuf -o0,strace -f,setsid,flock /tmp/lock,ionice -c3,parallel} ssh user@node.example
 block	remote-exec	shell	{any:script -qc 'ssh user@node.example',busybox sh -c 'ssh user@node.example',perl -e 'system("ssh user@node.example")',python3 -c 'import os; os.system("ssh user@node.example")'}
+block	remote-exec	shell	python3 -ic 'import os; os.system("ssh user@node.example")'
+block	remote-exec	shell	perl -E 'ssh user@node.example'
+block	remote-exec	shell	busybox timeout 1 ssh user@node.example
 block	remote-exec	shell	{any:,.venv/bin/,/usr/bin/}ansible all {any:-m ping,-a uptime}
 block	remote-exec	shell	{any:,/usr/bin/}ansible-console all
 # forge-write: merging PRs, rewriting pushed history, and pushing to the default branch.
@@ -92,6 +99,8 @@ block	forge-write	shell	{any:git push -f,git push origin +main}
 block	forge-write	shell	git push {any:--force,--force-with-lease}
 block	forge-write	shell	git {any:,-C repo }push {any:origin main,-u origin main,--set-upstream origin main,origin HEAD:main,origin main:main,origin HEAD:refs/heads/main}
 block	forge-write	shell	git push origin main {any:--no-verify,-v}
+block	forge-write	shell	git -p push --force
+block	forge-write	shell	git -c alias.p=push p origin main
 #
 # Everyday work that must stay allowed.
 allow	git	shell	git {any:status --short,diff --stat origin/main,diff -- tools/prep-node tools/drill,log --oneline -5 -- tools/restore,fetch origin,merge --no-edit origin/main}
@@ -99,6 +108,7 @@ allow	git	shell	git {any:switch -c fix/demo origin/main,add tools/restore ci/tes
 allow	git	shell	git commit -m 'add env check'
 allow	git	shell	git -c user.name=demo -c user.email=demo@example.com commit -m "document the drill target and kubeconfig steps"
 allow	git	shell	git push {any:origin my-branch,-u origin my-feature}
+allow	git	shell	git push
 allow	git	shell	git push {any:,-u }origin {any:fix/demo,feat/demo,chore/demo,docs/demo}
 allow	gh	shell	gh pr {any:view 98,view 98 --json statusCheckRollup,checks 98,list --state open}
 allow	gh	shell	gh pr create --draft --base main --head fix/demo --title "Demo" --body-file /tmp/body.md
