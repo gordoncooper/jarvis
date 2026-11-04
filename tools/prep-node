@@ -541,7 +541,9 @@ def settle_ansible_user(repo: Path, env: str, login: str) -> str:
     user = prompt("New user name")
     require_token(user, "user")
     if user != recorded:
-        raise PrepError(f"ssh_user is already {recorded}; per-host users come later")
+        raise PrepError(
+            f"ssh_user is already {recorded}; set ssh_user on that host in inventory/hosts.yml"
+        )
     return recorded
 
 
@@ -817,7 +819,9 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
     if not ssh_user_is_placeholder(repo, env):
         current = effective_ssh_user(repo, env)
         if ssh_user != current:
-            raise PrepError(f"ssh_user is already {current}; per-host users come later")
+            raise PrepError(
+                f"ssh_user is already {current}; set ssh_user on that host in inventory/hosts.yml"
+            )
     cluster_text = cluster.read_text(encoding="utf-8")
     new_inv = rename_inventory_host(inventory.read_text(encoding="utf-8"), old_host, new_host)
     new_cv = set_yaml_scalar(cluster_text, "ssh_user", ssh_user)

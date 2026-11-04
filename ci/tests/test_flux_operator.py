@@ -243,6 +243,7 @@ _PLAY_TAG_LINE = re.compile(r"^  play #\d+ \([^)]*\):.*\tTAGS: \[(.*)\]\s*$")
 _TASK_TAG_LINE = re.compile(r"^      TASK TAGS: \[(.*)\]\s*$")
 _LIST_TAGS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
 _TAGS_MARK = "--tags"
+_MAKE_TAGS_MARK = "TAGS="
 
 
 def _tag_list(body: str) -> set[str]:
@@ -320,7 +321,7 @@ def _parse_tags_argument(text: str, index: int) -> tuple[set[str], int] | None:
 
 
 def _operator_play_tags(readme: str | None = None) -> set[str]:
-    """Every ``--tags`` name the Ansible README documents.
+    """Every ``--tags`` or ``TAGS=`` name the Ansible README documents.
 
     A comma list may wrap across lines or a backslash continuation. ``=`` and
     quotes are part of the command. A backtick after ``--tags`` is not a command.
@@ -330,12 +331,21 @@ def _operator_play_tags(readme: str | None = None) -> set[str]:
     names: set[str] = set()
     index = 0
     while True:
-        found = readme.find(_TAGS_MARK, index)
-        if found < 0:
+        found_flag = readme.find(_TAGS_MARK, index)
+        found_make = readme.find(_MAKE_TAGS_MARK, index)
+        candidates = [pos for pos in (found_flag, found_make) if pos >= 0]
+        if not candidates:
             break
-        parsed = _parse_tags_argument(readme, found + len(_TAGS_MARK))
+        found = min(candidates)
+        if found == found_make:
+            # Point at '=' so _parse_tags_argument accepts TAGS=base-os.
+            parsed = _parse_tags_argument(readme, found + len("TAGS"))
+            skip = found + len(_MAKE_TAGS_MARK)
+        else:
+            parsed = _parse_tags_argument(readme, found + len(_TAGS_MARK))
+            skip = found + len(_TAGS_MARK)
         if parsed is None:
-            index = found + len(_TAGS_MARK)
+            index = skip
             continue
         parsed_names, index = parsed
         names.update(parsed_names)
@@ -577,8 +587,7 @@ def test_unrelated_play_at_the_end_passes() -> None:
 def test_site_yml_ssh_user_default_matches_schema() -> None:
     plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
     expr = plays[0]["vars"]["ansible_user"]
-    literal = expr.split("default(", 1)[1].split(")", 1)[0].strip("\"'")
-    assert literal == DEFAULT_SSH_USER
+    assert f"default('{DEFAULT_SSH_USER}')" in expr or f'default("{DEFAULT_SSH_USER}")' in expr
 
 
 def _task_documents() -> list[dict[str, object]]:

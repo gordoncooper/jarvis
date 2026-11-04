@@ -676,6 +676,58 @@ def test_data_disk_other_than_true_fails(tmp_path: Path, disk_yml: str) -> None:
     assert "data_disk must be true" in "\n".join(excinfo.value.messages)
 
 
+def _one_host(tmp_path: Path, extra: str) -> None:
+    _write_env(
+        tmp_path,
+        hosts_yml=_hosts(
+            f"""
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup, edge]
+                  {extra}
+            """
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "ssh_user: ops",
+        "k3s_kubelet_kube_reserved: cpu=50m",
+        "k3s_kubelet_system_reserved: cpu=50m",
+        "k3s_kubelet_eviction_hard: memory.available<50Mi",
+        "node_ip: 192.0.2.10",
+    ],
+)
+def test_per_host_key_valid_passes(tmp_path: Path, extra: str) -> None:
+    """Each per-host override key is accepted with a valid value."""
+    _one_host(tmp_path, extra)
+    assert "env-test" in validate_env_tree(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("extra", "needle"),
+    [
+        ("ssh_user: 1", "ssh_user must be a non-empty string"),
+        ("k3s_kubelet_kube_reserved: 1", "k3s_kubelet_kube_reserved must be a non-empty string"),
+        ("k3s_kubelet_system_reserved: []", "k3s_kubelet_system_reserved must be a non-empty string"),
+        ("k3s_kubelet_eviction_hard: ''", "k3s_kubelet_eviction_hard must be a non-empty string"),
+        ("node_ip: hostname", "node_ip must be an IP address"),
+        ("gpu_reserved: cpu=1", "unknown key"),
+    ],
+)
+def test_per_host_key_wrong_type_or_unknown_fails(
+    tmp_path: Path, extra: str, needle: str
+) -> None:
+    """A per-host key with the wrong type, or an unknown key, is refused."""
+    _one_host(tmp_path, extra)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert needle in "\n".join(excinfo.value.messages)
+
+
 def test_example_env_must_declare_a_new_known_role(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         env_schema,
@@ -768,6 +820,7 @@ def test_make_targets_require_env() -> None:
         ["make", "verify"],
         ["make", "drill"],
         ["make", "drill-cleanup"],
+        ["make", "site"],
     )
     for cmd in commands:
         proc = subprocess.run(

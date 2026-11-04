@@ -1,13 +1,15 @@
 # Operator tools live in tools/. Build and test live in ci/.
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
+ANSIBLE_PLAYBOOK ?= $(CURDIR)/.venv/bin/ansible-playbook
 
-.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check
+.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check site
 help:
 	@echo "JARVIS Makefile"
 	@echo
 	@echo "Operator commands"
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
+	@echo "  make site               Apply an env (ENV=<env> required; optional TAGS=…)"
 	@echo "  make verify             Read-only standing-state checks (ENV=<env> required)"
 	@echo "  make drill              Scratch volume and etcd restore drill (ENV=<env> required)"
 	@echo "  make drill-cleanup      Retry drill namespace/repository cleanup (ENV=<env> required)"
@@ -73,3 +75,13 @@ seal:
 	else \
 		.venv/bin/python tools/seal --env "$(ENV)" --name "$(NAME)"; \
 	fi
+
+site:
+	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
+	@PYTHONPATH=$(CURDIR) $(CURDIR)/.venv/bin/python -c \
+		"from schema.env import main; raise SystemExit(main(['--env', '$(ENV)']))"
+	@cd infra/ansible && $(ANSIBLE_PLAYBOOK) site.yml \
+		-i ../../envs/$(ENV)/inventory/hosts.yml \
+		-i ../inventory/roles \
+		-e jarvis_cluster_vars=../../envs/$(ENV)/values/cluster-vars.yaml \
+		$(if $(TAGS),--tags "$(TAGS)")

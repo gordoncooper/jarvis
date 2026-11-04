@@ -144,7 +144,7 @@ def test_apply_env_edits_refuses_a_different_recorded_ssh_user(tmp_path: Path) -
     dest = _copy_example_env(tmp_path)
     module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ops")
     before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
-    with pytest.raises(module.PrepError, match="per-host users come later"):
+    with pytest.raises(module.PrepError, match="set ssh_user on that host"):
         module.apply_env_edits(tmp_path, "env-new", "wk-1", "wk-1", "other")
     assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
 
@@ -713,7 +713,7 @@ def test_run_second_node_refuses_a_different_ansible_user(
     monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: "other")
 
-    with pytest.raises(module.PrepError, match="per-host users come later"):
+    with pytest.raises(module.PrepError, match="set ssh_user on that host"):
         module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ubuntu"])
     assert host_calls == []
     assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
@@ -774,7 +774,7 @@ def test_run_missing_ssh_user_refuses_a_different_ansible_user(
     monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: "ops")
 
-    with pytest.raises(module.PrepError, match="per-host users come later"):
+    with pytest.raises(module.PrepError, match="set ssh_user on that host"):
         module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ops"])
     assert host_calls == []
     assert module.recorded_ssh_user(tmp_path, "env-new") is None

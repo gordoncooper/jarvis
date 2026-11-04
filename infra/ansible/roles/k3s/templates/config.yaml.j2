@@ -11,6 +11,9 @@ etcd-snapshot-schedule-cron: "{{ k3s_etcd_snapshot_schedule_cron }}"
 etcd-snapshot-retention: {{ k3s_etcd_snapshot_retention }}
 etcd-snapshot-dir: {{ backup_path }}/etcd-snapshots
 kubelet-arg:
-  - "kube-reserved={{ k3s_kubelet_kube_reserved }}"
-  - "system-reserved={{ k3s_kubelet_system_reserved }}"
-  - "eviction-hard={{ k3s_kubelet_eviction_hard }}"
+  - "kube-reserved={{ jarvis_host_kube_reserved | default('') or k3s_kubelet_kube_reserved }}"
+  - "system-reserved={{ jarvis_host_system_reserved | default('') or k3s_kubelet_system_reserved }}"
+  - "eviction-hard={{ jarvis_host_eviction_hard | default('') or k3s_kubelet_eviction_hard }}"
+{% if node_ip is defined and node_ip %}
+node-ip: {{ node_ip }}
+{% endif %}

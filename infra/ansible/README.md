@@ -2,7 +2,7 @@
 
 `site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, a committed `envs/<env>/flux/flux-instance.yaml`), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent, reconciles node labels, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
 
-`make deps` runs from the repo root. `site.yml` runs from this directory (`infra/ansible`) after that. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
+`make deps` and `make site ENV=<env>` run from the repo root. The env schema runs first and stops before Ansible on any error. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
 
 ## Prepare a node
 
@@ -16,7 +16,7 @@ The host name must already be an inventory key and must resolve with `getent hos
 
 When you are not using the default age key file, set the same `SOPS_AGE_KEY_FILE` for `prep-node`, `bootstrap-secrets`, and `site.yml`.
 
-Next, create secrets and commit, then run `site.yml`. `make bootstrap-secrets` runs from the repo root:
+Next, create secrets and commit, then run `make site`. `make bootstrap-secrets` runs from the repo root:
 
 ```bash
 make bootstrap-secrets ENV=<env>
@@ -29,27 +29,24 @@ The age private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). 
 Every env run passes the env hosts file, then the constructed role groups. The second inventory lives in core and is not copied into an env. `node_roles` become groups of the same name. Hosts with `data_disk: true` are the `data_disk` group. That group is always present, including when no host sets `data_disk`.
 
 ```bash
-../../.venv/bin/ansible-playbook site.yml \
-  -i ../../envs/<env>/inventory/hosts.yml \
-  -i ../inventory/roles.yml \
-  -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml
+make site ENV=<env>
 ```
 
 ## Operator tags
 
-Narrow runs use `--tags` from the playbook controller. `k3s`, `kubeconfig`, and `flux-operator` are play tags. The opening play is tagged `always`, so its asserts run first. The opening play checks every host, so for a narrow run while a node is down, add `--limit` with the control plane or the target hosts. `--tags kubeconfig` then runs only the kubeconfig role. Proof runs are localhost plays with fake binaries.
+Narrow runs use `make site ENV=<env> TAGS=...` from the repo root. `k3s`, `kubeconfig`, and `flux-operator` are play tags. The opening play is tagged `always`, so its asserts run first. The opening play checks every host, so for a narrow run while a node is down, add `--limit` with the control plane or the target hosts. `TAGS=kubeconfig` then runs only the kubeconfig role. Proof runs are localhost plays with fake binaries.
 
 | Tag | Purpose | Example |
 | --- | --- | --- |
-| `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone; edge hosts also turn off the resolved stub) | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags base-os` |
-| `node-disk` | Check a declared data disk. Does not partition, format, wipe, or mount. Prepare the disk with `docs/deploy.md`, then set `data_disk: true` | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags node-disk` |
-| `k3s` | k3s server, agents, and node labels | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags k3s` |
-| `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags flux-operator` |
-| `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags kubeconfig` |
-| `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags time` |
-| `apt-policy` | Apt list refresh and upgrade timers and the security-only unattended-upgrades policy | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags apt-policy` |
-| `journald` | journald drop-in and restart | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags journald` |
-| `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `../../.venv/bin/ansible-playbook site.yml -i ../../envs/<env>/inventory/hosts.yml -i ../inventory/roles.yml -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml --tags resolved` |
+| `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone; edge hosts also turn off the resolved stub) | `make site ENV=<env> TAGS=base-os` |
+| `node-disk` | Check a declared data disk. Does not partition, format, wipe, or mount. Prepare the disk with `docs/deploy.md`, then set `data_disk: true` | `make site ENV=<env> TAGS=node-disk` |
+| `k3s` | k3s server, agents, and node labels | `make site ENV=<env> TAGS=k3s` |
+| `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `make site ENV=<env> TAGS=flux-operator` |
+| `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `make site ENV=<env> TAGS=kubeconfig` |
+| `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `make site ENV=<env> TAGS=time` |
+| `apt-policy` | Apt list refresh and upgrade timers and the security-only unattended-upgrades policy | `make site ENV=<env> TAGS=apt-policy` |
+| `journald` | journald drop-in and restart | `make site ENV=<env> TAGS=journald` |
+| `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `make site ENV=<env> TAGS=resolved` |
 
 The kubeconfig role reads `k3s_kubeconfig_path` on the control-plane node, rewrites the server to that node's inventory hostname, and writes `~/.kube/jarvis-<jarvis_env>.yaml` (mode `0600`) on the playbook runner. `~/.kube` is mode `0700`. The role does not write `~/.kube/config` and does not keep a backup. kubectl on that machine uses `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. A run whose server line does not change fails.
 
@@ -57,9 +54,9 @@ The kubeconfig role reads `k3s_kubeconfig_path` on the control-plane node, rewri
 
 `journald`, `resolved`, and `chrony` restart through handlers; handlers do not appear in `ansible-playbook --list-tasks`. A change to `chrony.conf` restarts chrony. Enabling the service does not.
 
-On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `site.yml`. Leaving `edge` does not turn the stub back on. On an existing cluster, run `site.yml --tags resolved` on the edge hosts before App DNS is applied, and again after a `--tags k3s` run that adds a host to edge.
+On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `make site`. Leaving `edge` does not turn the stub back on. On an existing cluster, run `make site ENV=<env> TAGS=resolved` on the edge hosts before App DNS is applied, and again after a `TAGS=k3s` run that adds a host to edge.
 
-Pass the env inventory and `jarvis_cluster_vars` as you would for a normal run.
+Use `make site ENV=<env>` as for a normal run.
 
 ## Patching and reboots
 
@@ -86,7 +83,7 @@ If node-disk refuses a node because the data path is empty and k3s has already r
 
 The node address changed and k3s fails with an etcd member URL mismatch. Stop k3s (`systemctl stop k3s`), run `/usr/local/bin/k3s server --cluster-reset` once, then start it (`systemctl start k3s`). A later `site.yml` run does not clear this. A stable address prevents it. prep-node prints the address and, when it came from DHCP, warns that it must stay stable (for example, a router DHCP reservation). It does not pin the address.
 
-Flux rollback: while the controllers are up, revert the commit. The root sync that applies `envs/<env>/flux` runs as kustomize-controller itself, so a revert applies even when a Kustomization's own identity is broken. When the FluxInstance or the operator is the broken part, from the controller's reverted checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml` with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. The file is plain YAML with no substitution. The Flux Kustomizations and HelmReleases run as the service accounts in `envs/<env>/flux/identities.yaml`. If those are missing, apply that file the same way. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `--tags flux-operator`.
+Flux rollback: while the controllers are up, revert the commit. The root sync that applies `envs/<env>/flux` runs as kustomize-controller itself, so a revert applies even when a Kustomization's own identity is broken. When the FluxInstance or the operator is the broken part, from the controller's reverted checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml` with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. The file is plain YAML with no substitution. The Flux Kustomizations and HelmReleases run as the service accounts in `envs/<env>/flux/identities.yaml`. If those are missing, apply that file the same way. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `make site ENV=<env> TAGS=flux-operator`.
 
 Age key: keep two copies of the one key (`age_key_file`, default `~/.config/sops/age/keys.txt`). The second copy stays offline. Prove a copy with `make age-key-check ENV=<env> KEY=<path>` as described in `envs/env-00/secrets/README.md`. If the key file is lost and the cluster is up, copy `age.agekey` from Secret `flux-system/sops-age` back to that path at mode `0600`. Do not delete sealed files. If that Secret is gone too and the cluster is still up, reseal the live Secrets to a new key. Do not regenerate. Run `make bootstrap-secrets` only when the cluster is gone as well. A mismatched age key in prep-node changes neither `.sops.yaml` nor the sealed files.
 
