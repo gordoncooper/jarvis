@@ -101,7 +101,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles, policy rules, `backup: paused` sets `spec.paused`).
 - `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails from mover status; `AS_OF` restores a live volume; `restore-all` keeps, retires, or lifts the hold).
 - `ci/tests/test_verify.py` (read-only, fail-closed standing checks, including enrollment freshness and the rebuild hold).
-- `ci/tests/test_restic_rest_server.py` (off-host copy renders only where the env lists it; the copy script initialises a missing destination, copies each repository, and prints only `PASS`/`FAIL`), `ci/tests/test_env_schema.py` (listing it requires the sealed file), `ci/tests/test_verify.py` (its freshness).
+- `ci/tests/test_restic_rest_server.py` (off-host copy renders only where the env lists it; the copy script initialises a missing destination, copies each repository, prints only `PASS`/`FAIL`, and fails every repository at once when the target is down; the source-password key wiring), `ci/tests/test_env_schema.py` (listing it requires the sealed file), `ci/tests/test_verify.py` (its freshness).
 - `ci/tests/test_drill.py` and `make drill ENV=<env>` (real restore target, checksum comparisons, etcd-copy check, and in-cluster cleanup).
 
 ## Operations
@@ -111,7 +111,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 Merge first and let Flux roll the new pod spec before Ansible removes `role.<dns_suffix>/` labels. rest-server is `Recreate`, and the new spec still matches the old label. The label play reads rest-server and both CronJobs and stops if one exists without the new affinity term and the dedicated toleration. A missing object does not stop it: this play runs before Flux.
 
 1. Merge. Wait until `platform-configs` is Ready, rest-server is Running, and both CronJob templates show the new affinity and toleration.
-2. `make site ENV=<env> TAGS=k3s CHECK=1`, then the same without `CHECK=1`, then once more (`changed=0`).
+2. `make site ENV=<env> TAGS=labels CHECK=1`, then the same without `CHECK=1`, then once more (`changed=0`). (`TAGS=labels` runs only the label play and needs no age key; `TAGS=k3s` also runs it but reads the sealed tokens.)
 3. That run adds `node-role.jarvis.io/<role>=true`, removes `role.<dns_suffix>/` labels, and sets `node-role.jarvis.io/dedicated=true:NoSchedule` only on nodes with neither `workers` nor `edge`.
 4. `make verify` reads `node-role.jarvis.io/` labels, so run it after that run.
 
@@ -318,19 +318,20 @@ Delete `old-password`, `new-password`, `new-password.json`, and `repos.txt`.
 
 ### Off-host copy
 
-What it does: CronJob `restic-offsite` runs daily at 04:00 in `time_zone` on the backup-role node. It mounts `backup_path/restic` read-only and, for `host-etcd-snapshots` and every `ns-*/pvc-*`, runs `restic copy --no-lock` from that local repository into the off-host repository `<RESTIC_REPOSITORY><path>`. A missing off-host repository is created first with `restic init --copy-chunker-params`, so the copy deduplicates. It prints only `PASS <path>` or `FAIL <path>: restic exited <n>`. It never forgets or prunes on either side. The local side takes no lock, so a run that overlaps a prune can only fail and retry. A missing `host-etcd-snapshots` fails.
+What it does: CronJob `restic-offsite` runs daily at 04:00 in `time_zone` on the backup-role node. It mounts `backup_path/restic` read-only and, for `host-etcd-snapshots` and every `ns-*/pvc-*`, runs `restic copy --no-lock` from that local repository into the off-host repository `<RESTIC_REPOSITORY><path>`. A missing off-host repository is created first with `restic init --copy-chunker-params`, so the copy deduplicates. It prints only `PASS <path>`, `FAIL <path>: restic exited <n>`, or the unreachable-target line below. It never forgets or prunes on either side. The local side takes no lock, so a run that overlaps a prune can only fail and retry. A missing `host-etcd-snapshots` fails.
 
 Credentials: the local password is `RESTIC_PASSWORD` from `backups-restic`. Everything about the target is in one Secret per env, `platform-backups/backups-offsite`, loaded as environment variables:
 
-- `RESTIC_REPOSITORY`: the off-host prefix, ending in `/`, for example `rest:http://<user>:<password>@<host>:8000/` (`https` also works), `s3:https://<endpoint>/<bucket>/` or `sftp:<ssh-host-alias>:<path>/`.
+- `RESTIC_REPOSITORY`: the off-host prefix, ending in `/`, for example `rest:http://<user>:<password>@<host>:8000/` (`https` also works), or `s3:https://<endpoint>/<bucket>/`. `sftp:` is not supported.
 - rest-server setup: one rest-server per env, run without `--private-repos` (it serves only two path levels, and the user-name level would break `ns-<ns>/pvc-<pvc>`). `RESTIC_REPOSITORY` is the server root ending in `/`. Append-only mode is fine because the copy never forgets or prunes.
 - `RESTIC_PASSWORD`: the off-host restic password. It is not the local one.
 - The backend's own variables: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for `s3:`; `RESTIC_REST_USERNAME` and `RESTIC_REST_PASSWORD` for `rest:` when the login is not in the URL.
-- For `sftp:` only: keys `config`, `id_ed25519` and `known_hosts`. The Secret is also mounted read-only at root's `~/.ssh` (mode `0400`), so `config` names the host alias, `User`, `IdentityFile ~/.ssh/id_ed25519` and `UserKnownHostsFile ~/.ssh/known_hosts`. The image has `openssh-client` and no `rclone`.
+- The Secret is read only as environment variables; nothing is mounted from it.
+- A first `restic cat config` probe of the target, limited to 30 seconds, runs before any repository. When it neither succeeds nor reports a missing repository (exit 10), every repository prints `FAIL <path>: off-host target not reachable (probe exited <n>)` at once and the Job fails.
 
 Turn it on (owner-run, needs the age public key only):
 
-1. Set up the target: an empty bucket, rest-server or sftp directory that only this env writes, and a login for it.
+1. Set up the target: an empty bucket or a rest-server that only this env writes, and a login for it.
 2. Write a mode `0600` Secret manifest outside the repo: `kind: Secret`, `metadata.name: backups-offsite`, `metadata.namespace: platform-backups`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, and the `stringData` keys above. Generate the off-host password new (`openssl rand -base64 32`).
 3. `make seal ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
 4. Add `../../../../platform/backups/offsite` and `../../secrets/backups-offsite.sops.yaml` to `envs/<env>/flux/platform-configs/kustomization.yaml`, commit, and push.
@@ -390,12 +391,9 @@ spec:
               fi
           volumeMounts:
             - {name: repositories, mountPath: /repositories}
-            - {name: offsite, mountPath: /root/.ssh, readOnly: true}
       volumes:
         - name: repositories
           hostPath: {path: <backup_path>/restic, type: Directory}
-        - name: offsite
-          secret: {secretName: backups-offsite, defaultMode: 0400}
 ```
 
 3. When its log says `PASS`, delete the Job and run `make restore ENV=<env> APP=platform-drill NODE=<node>`.

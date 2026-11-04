@@ -3,7 +3,6 @@
 jarvis_env: env-00
 dns_suffix: env-00.example
 time_zone: Etc/UTC
-code_delivery: github
 ssh_user: example
 age_key_file: ~/.config/sops/age/keys.txt
 

@@ -239,15 +239,13 @@ def test_bad_k3s_sha256_fails(tmp_path: Path):
     assert "k3s_sha256" in "\n".join(excinfo.value.messages)
 
 
-def test_bad_code_delivery_fails(tmp_path: Path):
+def test_removed_code_delivery_is_an_unknown_key(tmp_path: Path):
     cv = _valid_cluster_vars()
-    cv["code_delivery"] = "forgejo"
+    cv["code_delivery"] = "github"
     _write_env(tmp_path, cluster_vars=cv)
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "code_delivery" in msg
-    assert "github" in msg
+    assert "code_delivery" in "\n".join(excinfo.value.messages)
 
 
 def test_unknown_cluster_var_fails(tmp_path: Path):
@@ -409,7 +407,6 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
 
 
 _OPTIONAL_CLUSTER_KEYS = (
-    "code_delivery",
     "apps_git_repo_url",
     "llm_provider_host",
 )
@@ -876,12 +873,17 @@ def _run_site(tmp_path, *extra: str):
     log.unlink(missing_ok=True)
     stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"${CALL_LOG}\"\n")
     stub.chmod(0o755)
+    # A throwaway VENV whose python is this interpreter, so the test needs no repo .venv.
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True, exist_ok=True)
+    (venv / "bin" / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    (venv / "bin" / "python").chmod(0o755)
     env = os.environ.copy()
     env["CALL_LOG"] = str(log)
-    for key in ("ENV", "TAGS", "LIMIT", "CHECK"):
+    for key in ("ENV", "TAGS", "LIMIT", "CHECK", "VENV"):
         env.pop(key, None)
     proc = subprocess.run(
-        ["make", "site", f"ANSIBLE_PLAYBOOK={stub}", *extra],
+        ["make", "site", f"ANSIBLE_PLAYBOOK={stub}", f"VENV={venv}", *extra],
         cwd=REPO_ROOT, capture_output=True, text=True, env=env,
     )
     return proc, log.read_text() if log.exists() else ""

@@ -451,3 +451,36 @@ def test_offsite_copy_script_inits_and_copies_every_repository(tmp_path: Path) -
         f"--repo {offsite}/{repo} --no-lock copy --from-repo {data}/{repo}"
         for repo in ("host-etcd-snapshots", "ns-a/pvc-x")
     ]
+
+
+def test_offsite_copy_fails_every_repository_at_once_when_the_target_is_down(tmp_path: Path) -> None:
+    """A target that does not answer the first probe fails each repository with one line and
+    runs no init or copy."""
+    data, bindir = tmp_path / "data", tmp_path / "bin"
+    bindir.mkdir()
+    for repo in ("host-etcd-snapshots", "ns-a/pvc-x"):
+        (data / repo).mkdir(parents=True)
+    (bindir / "restic").write_text('#!/bin/sh\necho "$*" >> "$LOG"\nexit 1\n', encoding="utf-8")
+    (bindir / "restic").chmod(0o755)
+    job = _docs(ROOT / "platform/backups/offsite/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    env.update(
+        PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(tmp_path / "log"), RESTIC_REPOSITORY="rest:http://down/"
+    )
+    script = container["command"][-1].replace("/repositories", str(data))
+    proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
+    assert proc.returncode == 1
+    assert proc.stdout.splitlines() == [
+        "FAIL host-etcd-snapshots: off-host target not reachable (probe exited 1)",
+        "FAIL ns-a/pvc-x: off-host target not reachable (probe exited 1)",
+    ]
+    assert len((tmp_path / "log").read_text().splitlines()) == 1
+
+
+def test_offsite_copy_reads_the_source_password_from_backups_restic() -> None:
+    """The local-side password is key RESTIC_PASSWORD of Secret backups-restic."""
+    job = _docs(ROOT / "platform/backups/offsite/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    source = next(item for item in container["env"] if item["name"] == "RESTIC_FROM_PASSWORD")
+    assert source["valueFrom"]["secretKeyRef"] == {"name": "backups-restic", "key": "RESTIC_PASSWORD"}
