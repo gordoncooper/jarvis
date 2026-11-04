@@ -91,7 +91,7 @@ Each host is a mapping with `node_roles` and the optional keys in the table. No 
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. At least one host includes `workers`. The same host may include more than one role. No role implies another. |
+| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
 | `data_disk` | no | Plain flag `true`, or omit the key. `true` means the admin has mounted a filesystem at `/var/lib/jarvis`. Any other value is rejected. |
 | `ssh_user` | no | SSH user for this host; overrides env `ssh_user`. Non-empty string. |
 | `k3s_kubelet_kube_reserved` | no | Host kubelet `kube-reserved`; overrides the env value. Non-empty string. |

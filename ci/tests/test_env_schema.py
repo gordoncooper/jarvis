@@ -490,14 +490,6 @@ def test_env_without_edge_host_fails(tmp_path: Path):
     assert "at least one edge host" in "\n".join(excinfo.value.messages)
 
 
-def test_env_without_workers_host_fails(tmp_path: Path):
-    hosts = "all:\n  hosts:\n    node.example:\n      node_roles: [control_plane, backup, edge]\n"
-    _write_env(tmp_path, hosts_yml=hosts)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "at least one workers host" in "\n".join(excinfo.value.messages)
-
-
 def test_unknown_role_fails(tmp_path: Path):
     _write_env(
         tmp_path,
@@ -647,7 +639,7 @@ def test_data_disk_true_passes(tmp_path: Path) -> None:
             all:
               hosts:
                 node.example:
-                  node_roles: [control_plane, workers, backup, edge]
+                  node_roles: [control_plane, backup, edge]
                   data_disk: true
             """
         ),

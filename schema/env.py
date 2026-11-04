@@ -887,8 +887,6 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
 
     if "edge" not in declared_roles:
         errors.append(f"{rel_path}: expected at least one edge host")
-    if "workers" not in declared_roles:
-        errors.append(f"{rel_path}: expected at least one workers host")
 
     if is_example_env(env_name):
         for role in sorted(_NODE_ROLES - declared_roles):
