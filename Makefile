@@ -78,9 +78,10 @@ seal:
 
 site:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
+	@if [ -n "$(CHECK)" ] && [ "$(CHECK)" != "1" ]; then echo "CHECK must be empty or 1" >&2; exit 1; fi
 	@PYTHONPATH=$(CURDIR) $(CURDIR)/.venv/bin/python -c \
 		"from schema.env import main; raise SystemExit(main())" \
-		--env "$(ENV)" $(if $(SCHEMA_ROOT),--root "$(SCHEMA_ROOT)")
+		--env "$(ENV)"
 	@cd infra/ansible && $(ANSIBLE_PLAYBOOK) site.yml \
 		-i ../../envs/$(ENV)/inventory/hosts.yml \
 		-i ../inventory/roles \

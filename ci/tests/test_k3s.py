@@ -117,7 +117,7 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
         "all:\n  hosts:\n    over:\n      node_roles: [control_plane, backup, edge]\n"
         "      ssh_user: alice\n      k3s_kubelet_kube_reserved: cpu=50m\n"
         "      k3s_kubelet_system_reserved: cpu=25m\n"
-        "      k3s_kubelet_eviction_hard: memory.available<100Mi\n"
+        "      k3s_kubelet_eviction_hard: memory.available<250Mi\n"
         "    plain:\n      node_roles: [workers]\n"
     )
     dest = tmp_path / "out"
@@ -150,12 +150,13 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
     over = [(dest / f"over{s}").read_text() for s in (".yaml", ".agent.yaml")]
     plain = [(dest / f"plain{s}").read_text() for s in (".yaml", ".agent.yaml")]
+    assert cluster["k3s_kubelet_eviction_hard"] != "memory.available<250Mi"
     assert (dest / "over.user").read_text() == "alice"
     assert (dest / "plain.user").read_text() == cluster["ssh_user"]
     for rendered in over:
         assert "kube-reserved=cpu=50m" in rendered
         assert "system-reserved=cpu=25m" in rendered
-        assert "eviction-hard=memory.available<100Mi" in rendered
+        assert "eviction-hard=memory.available<250Mi" in rendered
     for rendered in plain:
         assert f"kube-reserved={cluster['k3s_kubelet_kube_reserved']}" in rendered
         assert f"system-reserved={cluster['k3s_kubelet_system_reserved']}" in rendered

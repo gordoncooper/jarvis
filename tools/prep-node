@@ -502,6 +502,13 @@ def example_placeholder_ssh_user() -> str:
     return value
 
 
+def _ssh_user_locked(recorded: str, *, change: bool) -> PrepError:
+    verb = "change" if change else "set"
+    return PrepError(
+        f"ssh_user is already {recorded}; {verb} ssh_user on that host in inventory/hosts.yml"
+    )
+
+
 def recorded_ssh_user(repo: Path, env: str) -> str | None:
     """Raw ssh_user from cluster-vars, or None when the key is missing or empty."""
     cluster = repo / "envs" / env / "values" / "cluster-vars.yaml"
@@ -556,11 +563,7 @@ def settle_ansible_user(repo: Path, env: str, login: str, host: str) -> str:
     user = prompt("New user name")
     require_token(user, "user")
     if user != recorded:
-        raise PrepError(
-            f"ssh_user is already {recorded}; set ssh_user on that host in inventory/hosts.yml"
-            if host_user is not None
-            else f"ssh_user is already {recorded}; per-host users come later"
-        )
+        raise _ssh_user_locked(recorded, change=host_user is not None)
     return recorded
 
 
@@ -836,13 +839,11 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
     host_user = host_ssh_user(repo, env, new_host) or host_ssh_user(repo, env, old_host)
     if host_user is not None:
         if ssh_user != host_user:
-            raise PrepError(
-                f"ssh_user is already {host_user}; set ssh_user on that host in inventory/hosts.yml"
-            )
+            raise _ssh_user_locked(host_user, change=True)
     elif not ssh_user_is_placeholder(repo, env):
         current = effective_ssh_user(repo, env)
         if ssh_user != current:
-            raise PrepError(f"ssh_user is already {current}; per-host users come later")
+            raise _ssh_user_locked(current, change=False)
     cluster_text = cluster.read_text(encoding="utf-8")
     new_inv = rename_inventory_host(inventory.read_text(encoding="utf-8"), old_host, new_host)
     new_cv = (

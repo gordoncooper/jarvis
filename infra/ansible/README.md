@@ -54,7 +54,7 @@ The kubeconfig role reads `k3s_kubeconfig_path` on the control-plane node, rewri
 
 `journald`, `resolved`, and `chrony` restart through handlers; handlers do not appear in `ansible-playbook --list-tasks`. A change to `chrony.conf` restarts chrony. Enabling the service does not.
 
-On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `make site`. Leaving `edge` does not turn the stub back on. On an existing cluster, run `make site ENV=<env> TAGS=resolved` on the edge hosts before App DNS is applied, and again after a `TAGS=k3s` run that adds a host to edge.
+On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `make site`. Leaving `edge` does not turn the stub back on. On an existing cluster, run `make site ENV=<env> TAGS=resolved LIMIT=` on the edge hosts before App DNS is applied, and again after a `TAGS=k3s` run that adds a host to edge.
 
 Use `make site ENV=<env>` as for a normal run.
 

@@ -938,10 +938,9 @@ def _looks_like_ip(value: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", required=True)
-    parser.add_argument("--root", default=".")
     ns = parser.parse_args(argv)
     try:
-        validate_one_env(ns.root, ns.env)
+        validate_one_env(".", ns.env)
     except ValidationError as exc:
         print(exc, flush=True)
         return 1
