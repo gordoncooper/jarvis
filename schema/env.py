@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import ipaddress
 import re
 import sys
@@ -85,7 +86,11 @@ _APPS_TOP_LEVEL = frozenset({"app_hosting_enabled", "apps"})
 _NODE_ROLES = frozenset(
     {"control_plane", "workers", "storage", "backup", "gpu", "edge"}
 )
-_HOST_KEYS = frozenset({"node_roles", "data_disk"})
+_ENV_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_HOST_KEYS = frozenset(
+    {"node_roles", "data_disk", "ssh_user", "k3s_kubelet_kube_reserved",
+     "k3s_kubelet_system_reserved", "k3s_kubelet_eviction_hard"}
+)
 _DATA_MOUNT = "/var/lib/jarvis"
 _SINGLETON_ROLES = ("control_plane", "backup")
 
@@ -161,6 +166,28 @@ def validate_env_tree(
     if errors:
         raise ValidationError(errors)
     return resolved_by_env
+
+
+def validate_one_env(repo_root: Path | str, name: str, *, pre_host: bool = False) -> dict[str, Any]:
+    """Validate one env and its .sops.yaml creation rules. make site runs this first."""
+    if not _ENV_NAME.fullmatch(name) or name in {".", ".."}:
+        raise ValidationError([f"invalid env name: {name}"])
+    root = Path(repo_root).resolve()
+    env_dir = root / "envs" / name
+    if not env_dir.is_dir():
+        raise ValidationError([f"unknown env: {name}"])
+    errors, resolved, _owner = _validate_env(env_dir, root, pre_host=pre_host)
+    rules, sops_errors = _load_sops_creation_rules(root)
+    errors.extend(sops_errors)
+    if rules is not None:
+        errors.extend(
+            _validate_sops_creation_rules(rules, [name], require_recipient=not pre_host)
+        )
+        env_names = [p.name for p in sorted((root / "envs").iterdir()) if p.is_dir()]
+        errors.extend(_validate_sops_unknown_env_rules(rules, env_names))
+    if errors or resolved is None:
+        raise ValidationError(errors or [f"{name}: invalid env"])
+    return resolved
 
 
 def _load_sops_creation_rules(
@@ -821,6 +848,15 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
             errors.append(
                 f"{rel_path}: host {hostname}: unknown key '{key}' (allowed: {allowed_keys})"
             )
+        for key in (
+            "ssh_user",
+            "k3s_kubelet_kube_reserved",
+            "k3s_kubelet_system_reserved",
+            "k3s_kubelet_eviction_hard",
+        ):
+            value = host_vars.get(key)
+            if key in host_vars and (not isinstance(value, str) or not value.strip()):
+                errors.append(f"{rel_path}: host {hostname}: {key} must be a non-empty string")
 
         roles = host_vars.get("node_roles")
         if not isinstance(roles, list) or not roles:
@@ -897,3 +933,15 @@ def _looks_like_ip(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--env", required=True)
+    ns = parser.parse_args(argv)
+    try:
+        validate_one_env(".", ns.env)
+    except ValidationError as exc:
+        print(exc, flush=True)
+        return 1
+    return 0

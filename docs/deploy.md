@@ -79,16 +79,13 @@ Commit all of `envs/<env>/`: `flux/`, values, inventory, prep-node's edits, secr
 
 ## Bootstrap the cluster
 
-From `infra/ansible`:
+From the repo root. The env schema runs first and stops before Ansible on any error:
 
 ```bash
-../../.venv/bin/ansible-playbook site.yml \
-  -i ../../envs/<env>/inventory/hosts.yml \
-  -i ../inventory/roles.yml \
-  -e jarvis_cluster_vars=../../envs/<env>/values/cluster-vars.yaml
+make site ENV=<env>
 ```
 
-Produces a k3s cluster, node role labels, kubeconfig `~/.kube/jarvis-<env>.yaml` on the machine that ran the playbook, the Flux Operator, and the env's FluxInstance applied once. Tags, the data-disk check, and recovery are in [infra/ansible/README.md](../infra/ansible/README.md).
+Produces a k3s cluster, node role labels, kubeconfig `~/.kube/jarvis-<env>.yaml` on the machine that ran the playbook, the Flux Operator, and the env's FluxInstance applied once. Tags (`TAGS=…`), the data-disk check, and recovery are in [infra/ansible/README.md](../infra/ansible/README.md).
 
 ## Verify
 
