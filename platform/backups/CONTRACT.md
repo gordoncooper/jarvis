@@ -322,7 +322,8 @@ What it does: CronJob `restic-offsite` runs daily at 04:00 in `time_zone` on the
 
 Credentials: the local password is `RESTIC_PASSWORD` from `backups-restic`. Everything about the target is in one Secret per env, `platform-backups/backups-offsite`, loaded as environment variables:
 
-- `RESTIC_REPOSITORY`: the off-host prefix, ending in `/`, for example `rest:https://<user>:<password>@<host>/`, `s3:https://<endpoint>/<bucket>/` or `sftp:<ssh-host-alias>:<path>/`.
+- `RESTIC_REPOSITORY`: the off-host prefix, ending in `/`, for example `rest:http://<user>:<password>@<host>:8000/` (`https` also works), `s3:https://<endpoint>/<bucket>/` or `sftp:<ssh-host-alias>:<path>/`.
+- rest-server setup: one rest-server per env, run without `--private-repos` (it serves only two path levels, and the user-name level would break `ns-<ns>/pvc-<pvc>`). `RESTIC_REPOSITORY` is the server root ending in `/`. Append-only mode is fine because the copy never forgets or prunes.
 - `RESTIC_PASSWORD`: the off-host restic password. It is not the local one.
 - The backend's own variables: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for `s3:`; `RESTIC_REST_USERNAME` and `RESTIC_REST_PASSWORD` for `rest:` when the login is not in the URL.
 - For `sftp:` only: keys `config`, `id_ed25519` and `known_hosts`. The Secret is also mounted read-only at root's `~/.ssh` (mode `0400`), so `config` names the host alias, `User`, `IdentityFile ~/.ssh/id_ed25519` and `UserKnownHostsFile ~/.ssh/known_hosts`. The image has `openssh-client` and no `rclone`.
