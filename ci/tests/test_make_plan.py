@@ -28,6 +28,14 @@ def test_make_plan_prints_the_restore_recipe():
     assert "tools/restore" in proc.stdout and "--app" in proc.stdout
 
 
+def test_make_plan_ignores_inherited_variables(monkeypatch):
+    """An inherited VENV does not shape the dry-run expansion."""
+    monkeypatch.setenv("VENV", "/inherited-venv")
+    proc = _run("verify", "ENV=env-00")
+    assert proc.returncode == 0
+    assert "/inherited-venv" not in proc.stdout
+
+
 def test_make_plan_rejects_a_target_that_is_not_a_name():
     proc = _run("restore;id")
     assert proc.returncode == 2 and "usage:" in proc.stderr
