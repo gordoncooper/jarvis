@@ -266,7 +266,7 @@ def test_example_env_values_are_not_sources(tmp_path: Path) -> None:
     _write_env(tmp_path, env_name="env-live", cluster_vars=live)
     (tmp_path / "envs" / EXAMPLE_ENV / "inventory" / "hosts.yml").write_text(
         "all:\n  hosts:\n    example-host:\n"
-        "      node_roles: [control_plane, workers, storage, backup, gpu, edge]\n",
+        "      node_roles: [control_plane, workers, backup, gpu, edge]\n",
         encoding="utf-8",
     )
     (tmp_path / "envs/env-live/inventory/hosts.yml").write_text(

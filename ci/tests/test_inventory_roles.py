@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -10,7 +11,6 @@ import yaml
 
 from ansible_role_proof import (
     ANSIBLE_DIR,
-    cluster_vars_playbook_path,
     env_inventory_args,
     inventory_path,
     playbook_recap_field,
@@ -21,7 +21,7 @@ from conftest import require_cli
 
 
 def _expected_role_groups() -> dict[str, set[str]]:
-    """Role groups from the example inventory: node_roles, plus data_disk is defined."""
+    """Role groups from the example inventory: one per node_roles entry."""
     doc = yaml.safe_load(inventory_path().read_text(encoding="utf-8"))
     hosts = doc["all"]["hosts"]
     groups: dict[str, set[str]] = {}
@@ -29,8 +29,6 @@ def _expected_role_groups() -> dict[str, set[str]]:
         host_vars = host_vars or {}
         for role in host_vars.get("node_roles") or []:
             groups.setdefault(role, set()).add(hostname)
-        if "data_disk" in host_vars:
-            groups.setdefault("data_disk", set()).add(hostname)
     return groups
 
 
@@ -100,41 +98,31 @@ def test_env_hosts_file_alone_fails_before_any_change(example_copy: ExampleCopy)
         assert playbook_recap_field(text, "changed") == 0
 
 
-def test_data_disk_group_exists_when_no_host_sets_one(tmp_path: Path) -> None:
+def test_data_disk_is_a_host_var_with_no_group(tmp_path: Path) -> None:
+    """A host with data_disk: true keeps the var for node-disk, and no data_disk group exists."""
     require_cli("ansible-inventory")
     hosts = tmp_path / "hosts.yml"
     hosts.write_text(
-        "all:\n  hosts:\n    n1:\n      node_roles: [control_plane]\n",
+        "all:\n  hosts:\n    n1:\n      node_roles: [control_plane]\n      data_disk: true\n",
         encoding="utf-8",
     )
+    inventory = ["-i", str(hosts), "-i", str(roles_inventory_path())]
     graph = subprocess.run(
-        ["ansible-inventory", "--graph", "-i", str(hosts), "-i", str(roles_inventory_path())],
+        ["ansible-inventory", "--graph", *inventory],
         cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,
         check=False,
     )
     assert graph.returncode == 0, graph.stdout + graph.stderr
-    assert _parse_graph(graph.stdout).get("data_disk") == set()
+    assert "data_disk" not in _parse_graph(graph.stdout)
 
-    require_cli("ansible-playbook")
-    play = subprocess.run(
-        [
-            "ansible-playbook",
-            "--syntax-check",
-            "site.yml",
-            "-i",
-            str(hosts),
-            "-i",
-            str(roles_inventory_path()),
-            "-e",
-            f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
-        ],
+    host = subprocess.run(
+        ["ansible-inventory", "--host", "n1", *inventory],
         cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,
         check=False,
     )
-    text = play.stdout + play.stderr
-    assert play.returncode == 0, text
-    assert "Could not match supplied host pattern, ignoring: data_disk" not in text
+    assert host.returncode == 0, host.stdout + host.stderr
+    assert json.loads(host.stdout)["data_disk"] is True

@@ -105,8 +105,5 @@ def _assert_inventory_graph(copy: ExampleCopy) -> None:
         host_vars = host_vars or {}
         for role in host_vars.get("node_roles") or []:
             expected.setdefault(role, set()).add(hostname)
-        if "data_disk" in host_vars:
-            expected.setdefault("data_disk", set()).add(hostname)
     for name, members in expected.items():
         assert groups.get(name) == members, name
-    assert groups.get("data_disk", set()) == expected.get("data_disk", set())

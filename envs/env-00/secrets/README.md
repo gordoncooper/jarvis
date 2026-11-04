@@ -14,7 +14,7 @@ make bootstrap-secrets ENV=<env>
 
 The command creates missing files only. A second run changes nothing. Commit the generated `*.sops.yaml` files and `ca.crt`. Do not commit the age private key.
 
-Files: k3s server and agent tokens (`k3s-token`, keys `server_token` and `agent_token`; read by `site.yml` on the controller, not applied to the cluster), internal CA (`cert-manager-ca`), VolSync restic credentials (`backups-restic`), Grafana admin password (`grafana-admin`), and per-deploy Hermes API keys and dashboard credentials (`hermes-ops-*`, `hermes-code-factory-*`). Later secrets are added with `make seal`. `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the `rest:` server prefix), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`. A volume repository URL appends `ns-<namespace>/pvc-<pvc>`.
+Files: k3s server and agent tokens (`k3s-token`, keys `server_token` and `agent_token`; read by `site.yml` on the controller, not applied to the cluster), internal CA (`cert-manager-ca`), VolSync restic credentials (`backups-restic`). Nothing else is generated. Later secrets are added with `make seal`. `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the `rest:` server prefix), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`. A volume repository URL appends `ns-<namespace>/pvc-<pvc>`.
 
 A new CA permits only that env's `dns_suffix` and its subdomains. The public certificate is `envs/<env>/ca.crt`. The private key is never written there. If `ca.crt` is present and the sealed CA is not, bootstrap refuses, so a new CA cannot be committed next to a different root. Delete both together, and only as part of the CA rotation in `platform/cert-manager/CONTRACT.md`.
 

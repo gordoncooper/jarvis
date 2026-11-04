@@ -28,9 +28,7 @@ _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 _HOSTNAME = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _SOPS_ENV_SECRETS = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/secrets/")
-_TIER_VALUES = frozenset({"frontier", "mid", "cheap"})
 _CODE_DELIVERY_ALLOWED = ("github",)
-_BUILD_AGENT_ALLOWED = ("cursor",)
 
 _CLUSTER_VARS_REQUIRED = frozenset(
     {
@@ -63,7 +61,6 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "ssh_user",
         "age_key_file",
         "code_delivery",
-        "build_agent",
         "apps_git_repo_url",
         "llm_provider_host",
         "chrony_nts",
@@ -77,15 +74,7 @@ _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 _ENV_GIT_PATH = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/")
 _K3S_VERSION = re.compile(r"^v(\d+\.\d+\.\d+)\+k3s\d+$")
 
-_HERMES_TOP_LEVEL = frozenset(
-    {"bots", "cron", "bot_tier_map", "tier_model_map", "lane_model_map"}
-)
-
-_APPS_TOP_LEVEL = frozenset({"app_hosting_enabled", "apps"})
-
-_NODE_ROLES = frozenset(
-    {"control_plane", "workers", "storage", "backup", "gpu", "edge"}
-)
+_NODE_ROLES = frozenset({"control_plane", "workers", "backup", "gpu", "edge"})
 _ENV_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _HOST_KEYS = frozenset(
     {"node_roles", "data_disk", "ssh_user", "k3s_kubelet_kube_reserved",
@@ -282,13 +271,11 @@ def _validate_env(
     inventory = env_dir / "inventory" / "hosts.yml"
 
     cluster_vars_path = values / "cluster-vars.yaml"
-    hermes_path = values / "hermes.yaml"
-    apps_path = values / "apps.yaml"
 
     secrets = env_dir / "secrets"
     # Once bootstrap-secrets has run, the k3s tokens are sealed too. prep-node checks before that.
     sealed = (secrets / "k3s-token.sops.yaml",) if any(secrets.glob("*.sops.yaml")) else ()
-    for path in (cluster_vars_path, hermes_path, apps_path, inventory, *sealed):
+    for path in (cluster_vars_path, inventory, *sealed):
         if not path.is_file():
             errors.append(
                 f"{env_name}: missing required file {_display_path(path, repo_root)}"
@@ -298,10 +285,8 @@ def _validate_env(
         return errors, None, None
 
     cluster_vars = _load_yaml(cluster_vars_path, errors, repo_root)
-    hermes = _load_yaml(hermes_path, errors, repo_root)
-    apps = _load_yaml(apps_path, errors, repo_root)
     hosts = _load_yaml(inventory, errors, repo_root)
-    if errors or cluster_vars is None or hermes is None or apps is None or hosts is None:
+    if errors or cluster_vars is None or hosts is None:
         return errors, None, None
 
     cluster_errors, owner = _validate_cluster_vars(
@@ -310,8 +295,6 @@ def _validate_env(
         env_name,
     )
     errors.extend(cluster_errors)
-    errors.extend(_validate_hermes(hermes, _display_path(hermes_path, repo_root)))
-    errors.extend(_validate_apps(apps, _display_path(apps_path, repo_root)))
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
     errors.extend(
@@ -392,9 +375,6 @@ def _validate_cluster_vars(
 
     errors.extend(
         _validate_enum(rel_path, "code_delivery", data.get("code_delivery"), _CODE_DELIVERY_ALLOWED)
-    )
-    errors.extend(
-        _validate_enum(rel_path, "build_agent", data.get("build_agent"), _BUILD_AGENT_ALLOWED)
     )
 
     for key in (
@@ -754,64 +734,6 @@ def _validate_enum(rel_path: str, key: str, value: Any, allowed: tuple[str, ...]
         allowed_s = ", ".join(allowed)
         return [f"{rel_path}: {key}: invalid value '{value}' (allowed: {allowed_s})"]
     return []
-
-
-def _validate_hermes(data: dict[str, Any], rel_path: str) -> list[str]:
-    errors: list[str] = []
-    for key in data:
-        if not _SNAKE_CASE.match(key):
-            errors.append(f"{rel_path}: key must be lowercase snake_case: {key}")
-        elif key not in _HERMES_TOP_LEVEL:
-            errors.append(
-                f"{rel_path}: unknown key '{key}' (allowed: {', '.join(sorted(_HERMES_TOP_LEVEL))})"
-            )
-
-    bots = data.get("bots", [])
-    if not isinstance(bots, list):
-        errors.append(f"{rel_path}: bots must be a list")
-
-    cron = data.get("cron", {})
-    if not isinstance(cron, dict):
-        errors.append(f"{rel_path}: cron must be a mapping")
-
-    tier_map = data.get("bot_tier_map", {})
-    if not isinstance(tier_map, dict):
-        errors.append(f"{rel_path}: bot_tier_map must be a mapping")
-    else:
-        for bot, tier in tier_map.items():
-            if not isinstance(tier, str) or tier not in _TIER_VALUES:
-                allowed = ", ".join(sorted(_TIER_VALUES))
-                errors.append(
-                    f"{rel_path}: bot_tier_map[{bot!r}]: invalid tier '{tier}' (allowed: {allowed})"
-                )
-
-    for key in ("tier_model_map", "lane_model_map"):
-        val = data.get(key, {})
-        if val is not None and not isinstance(val, dict):
-            errors.append(f"{rel_path}: {key} must be a mapping")
-
-    return errors
-
-
-def _validate_apps(data: dict[str, Any], rel_path: str) -> list[str]:
-    errors: list[str] = []
-    for key in data:
-        if not _SNAKE_CASE.match(key):
-            errors.append(f"{rel_path}: key must be lowercase snake_case: {key}")
-        elif key not in _APPS_TOP_LEVEL:
-            errors.append(
-                f"{rel_path}: unknown key '{key}' (allowed: {', '.join(sorted(_APPS_TOP_LEVEL))})"
-            )
-
-    enabled = data.get("app_hosting_enabled")
-    if enabled is not None and not isinstance(enabled, bool):
-        errors.append(f"{rel_path}: app_hosting_enabled must be a boolean")
-
-    apps = data.get("apps", [])
-    if not isinstance(apps, list):
-        errors.append(f"{rel_path}: apps must be a list")
-
-    return errors
 
 
 def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[str]:
