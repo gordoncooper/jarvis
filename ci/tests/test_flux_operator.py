@@ -1086,6 +1086,19 @@ def _assert_key_was_not_read(proc: subprocess.CompletedProcess[str], sentinel: s
     assert "Derive the public key of each identity" not in output
 
 
+def test_age_keygen_check_runs_only_when_the_key_file_exists() -> None:
+    """The visible check is skipped when there is no key file to read."""
+    names = {
+        "Check whether age-keygen is on PATH",
+        "Require age-keygen on the controller",
+    }
+    tasks = [task for task in _task_documents() if task.get("name") in names]
+    assert {task["name"] for task in tasks} == names
+    for task in tasks:
+        assert task.get("when") == "sops_age_key_stat.stat.exists | default(false)"
+        assert task.get("no_log") is not True
+
+
 def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
     """A missing age-keygen fails in a visible task that names the binary."""
     playbook = Path(require_cli("ansible-playbook"))

@@ -100,6 +100,8 @@ def test_chrony_nts_string_false_renders_pools_without_nts() -> None:
     )
     assert "pool time.example iburst maxsources 4\n" in chrony
     assert " nts" not in chrony
+    assert "with NTS" not in chrony
+    assert "4460/tcp" not in chrony
 
 
 def test_resolv_conf_link_does_not_touch_its_target(tmp_path: Path) -> None:

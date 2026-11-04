@@ -13,21 +13,18 @@ command as raw word text (quotes kept, words joined by one space, so corpus
 rows use single spaces). Neither unwraps bash -c, eval, sudo, env, absolute
 paths or interpreters, so the lists name those wrappers one by one.
 
-Entries name a command position rather than a substring of the line, so a
-guarded word inside a search pattern, a test selector or a path stays
-allowed when the entry is anchored at the command. Neither client lets an
-allow rule carve an exception out of a deny rule, so breadth has to come off
-the deny side.
+Neither client lets an allow rule carve an exception out of a deny rule, so
+breadth has to come off the deny side.
 
 Known limits, left because closing them unblocks a real run or the pattern
-language cannot name them: a leading-wildcard shell wrapper also matches the
-same text later in a line, and dropping the wildcard lets an absolute shell
-path through; wrapper options and nesting the Claude docs do not describe;
-a cluster-tool verb whose flags sit where no entry looks; admin-kubeconfig
-readers other than the named ones; a tracing wrapper whose later argument is
-the guarded word, while `strace age` and `strace -f age` stay blocked. A
-force push of the default branch matches both the force entry and the branch
-entry, and patterns cannot subtract, so that row cannot be pinned to one.
+language cannot name them: interpreter, busybox, strace, and git-push entries
+stay wide, so a guarded word later in those arguments stays blocked. A
+leading-wildcard shell wrapper also matches the same text later in a line,
+and dropping the wildcard lets an absolute shell path through. Wrapper
+options and nesting the Claude docs do not describe; a cluster-tool verb
+whose flags sit where no entry looks; admin-kubeconfig readers other than
+the named ones. A force push of the default branch can match both the force
+entry and the branch entry, and patterns cannot subtract.
 
 Cursor, mirroring cursor-agent 2026.10.22-27dcf5f: Shell(cmd:args) or
 Shell(pattern), only * is a wildcard, anchored, case-sensitive, no wrapper
