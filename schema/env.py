@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import ipaddress
 import re
 import sys
@@ -85,19 +86,10 @@ _APPS_TOP_LEVEL = frozenset({"app_hosting_enabled", "apps"})
 _NODE_ROLES = frozenset(
     {"control_plane", "workers", "storage", "backup", "gpu", "edge"}
 )
+_ENV_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _HOST_KEYS = frozenset(
-    {
-        "node_roles",
-        "data_disk",
-        "ssh_user",
-        "k3s_kubelet_kube_reserved",
-        "k3s_kubelet_system_reserved",
-        "k3s_kubelet_eviction_hard",
-        "node_ip",
-    }
-)
-_HOST_KUBELET_KEYS = tuple(
-    key for key in sorted(_HOST_KEYS) if key.startswith("k3s_kubelet_")
+    {"node_roles", "data_disk", "ssh_user", "k3s_kubelet_kube_reserved",
+     "k3s_kubelet_system_reserved", "k3s_kubelet_eviction_hard"}
 )
 _DATA_MOUNT = "/var/lib/jarvis"
 _SINGLETON_ROLES = ("control_plane", "backup")
@@ -177,12 +169,22 @@ def validate_env_tree(
 
 
 def validate_one_env(repo_root: Path | str, name: str, *, pre_host: bool = False) -> dict[str, Any]:
-    """Validate one env. make site runs this before Ansible."""
+    """Validate one env and its .sops.yaml creation rules. make site runs this first."""
+    if not _ENV_NAME.fullmatch(name) or name in {".", ".."}:
+        raise ValidationError([f"invalid env name: {name}"])
     root = Path(repo_root).resolve()
     env_dir = root / "envs" / name
     if not env_dir.is_dir():
         raise ValidationError([f"unknown env: {name}"])
     errors, resolved, _owner = _validate_env(env_dir, root, pre_host=pre_host)
+    rules, sops_errors = _load_sops_creation_rules(root)
+    errors.extend(sops_errors)
+    if rules is not None:
+        errors.extend(
+            _validate_sops_creation_rules(rules, [name], require_recipient=not pre_host)
+        )
+        env_names = [p.name for p in sorted((root / "envs").iterdir()) if p.is_dir()]
+        errors.extend(_validate_sops_unknown_env_rules(rules, env_names))
     if errors or resolved is None:
         raise ValidationError(errors or [f"{name}: invalid env"])
     return resolved
@@ -832,6 +834,7 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
 
     role_counts = {role: 0 for role in _SINGLETON_ROLES}
     declared_roles: set[str] = set()
+    allowed_keys = ", ".join(sorted(_HOST_KEYS))
     allowed_roles = ", ".join(sorted(_NODE_ROLES))
 
     for hostname, host_vars in hosts.items():
@@ -841,7 +844,19 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
             errors.append(f"{rel_path}: host {hostname}: node_roles is required")
             continue
 
-        errors.extend(_validate_host_keys(host_vars, rel_path, str(hostname)))
+        for key in sorted(set(host_vars) - _HOST_KEYS):
+            errors.append(
+                f"{rel_path}: host {hostname}: unknown key '{key}' (allowed: {allowed_keys})"
+            )
+        for key in (
+            "ssh_user",
+            "k3s_kubelet_kube_reserved",
+            "k3s_kubelet_system_reserved",
+            "k3s_kubelet_eviction_hard",
+        ):
+            value = host_vars.get(key)
+            if key in host_vars and (not isinstance(value, str) or not value.strip()):
+                errors.append(f"{rel_path}: host {hostname}: {key} must be a non-empty string")
 
         roles = host_vars.get("node_roles")
         if not isinstance(roles, list) or not roles:
@@ -863,6 +878,9 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
                 if role in role_counts:
                     role_counts[role] += 1
 
+        if "data_disk" in host_vars:
+            errors.extend(_validate_data_disk(host_vars["data_disk"], rel_path, str(hostname)))
+
     for role, count in role_counts.items():
         if count != 1:
             errors.append(f"{rel_path}: expected exactly one {role} host, found {count}")
@@ -874,30 +892,6 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
         for role in sorted(_NODE_ROLES - declared_roles):
             errors.append(f"{rel_path}: {EXAMPLE_ENV} must declare every known role: {role}")
 
-    return errors
-
-
-def _validate_host_keys(host_vars: dict[str, Any], rel_path: str, hostname: str) -> list[str]:
-    """Allow-listed host keys only. Unknown keys fail."""
-    errors: list[str] = []
-    prefix = f"{rel_path}: host {hostname}: "
-    allowed = ", ".join(sorted(_HOST_KEYS))
-    for key in sorted(set(host_vars) - _HOST_KEYS):
-        errors.append(f"{prefix}unknown key '{key}' (allowed: {allowed})")
-    if "ssh_user" in host_vars and (
-        not isinstance(host_vars["ssh_user"], str) or not host_vars["ssh_user"]
-    ):
-        errors.append(f"{prefix}ssh_user must be a non-empty string")
-    for key in _HOST_KUBELET_KEYS:
-        value = host_vars.get(key, "")
-        if key in host_vars and (not isinstance(value, str) or not value.strip()):
-            errors.append(f"{prefix}{key} must be a non-empty string")
-    if "node_ip" in host_vars and (
-        not isinstance(host_vars["node_ip"], str) or not _looks_like_ip(host_vars["node_ip"])
-    ):
-        errors.append(f"{prefix}node_ip must be an IP address")
-    if "data_disk" in host_vars:
-        errors.extend(_validate_data_disk(host_vars["data_disk"], rel_path, hostname))
     return errors
 
 
@@ -942,12 +936,12 @@ def _looks_like_ip(value: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2 or args[0] != "--env":
-        print("usage: --env <env>", flush=True)
-        return 2
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--env", required=True)
+    parser.add_argument("--root", default=".")
+    ns = parser.parse_args(argv)
     try:
-        validate_one_env(".", args[1])
+        validate_one_env(ns.root, ns.env)
     except ValidationError as exc:
         print(exc, flush=True)
         return 1

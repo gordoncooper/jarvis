@@ -510,6 +510,17 @@ def recorded_ssh_user(repo: Path, env: str) -> str | None:
     return _ssh_user_from_mapping(_cluster_vars(cluster))
 
 
+def host_ssh_user(repo: Path, env: str, hostname: str) -> str | None:
+    """Per-host ssh_user from inventory, or None when the key is missing."""
+    path = repo / "envs" / env / "inventory" / "hosts.yml"
+    if not path.is_file():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    hosts = data.get("all", {}).get("hosts", {}) if isinstance(data, dict) else {}
+    host_vars = hosts.get(hostname) if isinstance(hosts, dict) else None
+    return _ssh_user_from_mapping(host_vars) if isinstance(host_vars, dict) else None
+
+
 def effective_ssh_user(repo: Path, env: str) -> str:
     """Recorded ssh_user, or the schema default when the key is missing."""
     raw = recorded_ssh_user(repo, env)
@@ -521,7 +532,7 @@ def ssh_user_is_placeholder(repo: Path, env: str) -> bool:
     return raw is not None and raw == example_placeholder_ssh_user()
 
 
-def settle_ansible_user(repo: Path, env: str, login: str) -> str:
+def settle_ansible_user(repo: Path, env: str, login: str, host: str) -> str:
     """Choose the Ansible user before any host step.
 
     A placeholder ssh_user defaults to the login user. A recorded value
@@ -529,13 +540,17 @@ def settle_ansible_user(repo: Path, env: str, login: str) -> str:
     different user is refused.
     """
     require_token(login, "login user")
-    if ssh_user_is_placeholder(repo, env):
+    host_user = host_ssh_user(repo, env, host)
+    if host_user is not None:
+        recorded = host_user
+    elif ssh_user_is_placeholder(repo, env):
         if confirm(f"Use login user {login} as the Ansible user?", default_yes=True):
             return login
         user = prompt("New user name")
         require_token(user, "user")
         return user
-    recorded = effective_ssh_user(repo, env)
+    else:
+        recorded = effective_ssh_user(repo, env)
     if confirm(f"Use {recorded} as the Ansible user?", default_yes=True):
         return recorded
     user = prompt("New user name")
@@ -543,6 +558,8 @@ def settle_ansible_user(repo: Path, env: str, login: str) -> str:
     if user != recorded:
         raise PrepError(
             f"ssh_user is already {recorded}; set ssh_user on that host in inventory/hosts.yml"
+            if host_user is not None
+            else f"ssh_user is already {recorded}; per-host users come later"
         )
     return recorded
 
@@ -816,15 +833,23 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
         if not path.is_file():
             raise PrepError(f"missing env file: {path.name}")
     require_token(ssh_user, "ssh user")
-    if not ssh_user_is_placeholder(repo, env):
+    host_user = host_ssh_user(repo, env, new_host) or host_ssh_user(repo, env, old_host)
+    if host_user is not None:
+        if ssh_user != host_user:
+            raise PrepError(
+                f"ssh_user is already {host_user}; set ssh_user on that host in inventory/hosts.yml"
+            )
+    elif not ssh_user_is_placeholder(repo, env):
         current = effective_ssh_user(repo, env)
         if ssh_user != current:
-            raise PrepError(
-                f"ssh_user is already {current}; set ssh_user on that host in inventory/hosts.yml"
-            )
+            raise PrepError(f"ssh_user is already {current}; per-host users come later")
     cluster_text = cluster.read_text(encoding="utf-8")
     new_inv = rename_inventory_host(inventory.read_text(encoding="utf-8"), old_host, new_host)
-    new_cv = set_yaml_scalar(cluster_text, "ssh_user", ssh_user)
+    new_cv = (
+        cluster_text
+        if host_user is not None
+        else set_yaml_scalar(cluster_text, "ssh_user", ssh_user)
+    )
     if new_inv != inventory.read_text(encoding="utf-8"):
         inventory.write_text(new_inv, encoding="utf-8")
     if new_cv != cluster.read_text(encoding="utf-8"):
@@ -1047,7 +1072,7 @@ def run(argv: list[str] | None = None) -> None:
     require_tools()
     require_env_dir(REPO_ROOT, env)
     run_env_schema(REPO_ROOT, pre_host=True)
-    ansible_user = settle_ansible_user(REPO_ROOT, env, login)
+    ansible_user = settle_ansible_user(REPO_ROOT, env, login, host)
     assert_host_resolves(host, unchanged=True)
     require_inventory_host(REPO_ROOT, env, host)
 

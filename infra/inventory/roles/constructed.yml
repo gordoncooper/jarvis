@@ -1,6 +1,6 @@
 # Core constructed inventory. The second -i is this directory
 # (infra/inventory/roles): this file plus groups.yml.
-# No env copies it. node_roles become groups of the same name (D42).
+# No env copies it. node_roles become groups of the same name.
 plugin: ansible.builtin.constructed
 strict: true
 keyed_groups:

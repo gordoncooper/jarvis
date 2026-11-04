@@ -34,7 +34,7 @@ make site ENV=<env>
 
 ## Operator tags
 
-Narrow runs use `make site ENV=<env> TAGS=...` from the repo root. `k3s`, `kubeconfig`, and `flux-operator` are play tags. The opening play is tagged `always`, so its asserts run first. The opening play checks every host, so for a narrow run while a node is down, add `--limit` with the control plane or the target hosts. `TAGS=kubeconfig` then runs only the kubeconfig role. Proof runs are localhost plays with fake binaries.
+Narrow runs use `make site ENV=<env> TAGS=...` from the repo root. `k3s`, `kubeconfig`, and `flux-operator` are play tags. The opening play is tagged `always`, so its asserts run first. The opening play checks every host, so for a narrow run while a node is down, add `LIMIT=` with the control plane or the target hosts. `TAGS=kubeconfig` then runs only the kubeconfig role. Proof runs are localhost plays with fake binaries.
 
 | Tag | Purpose | Example |
 | --- | --- | --- |
@@ -62,7 +62,7 @@ Use `make site ENV=<env>` as for a normal run.
 
 Every node installs updates from its distro's `-security` origin by itself (`unattended-upgrades` with `apt-daily-upgrade.timer` enabled). No other origin is allowed (Ubuntu Pro ESM included), nothing is auto-removed, and a node never reboots on its own.
 
-When an update needs a reboot, Ubuntu creates `/var/run/reboot-required`. Each `site.yml` run, `--check` included, prints `REBOOT PENDING on <host>` for every host that has the file. The warning does not fail the run, and it appears only when someone runs `site.yml`.
+When an update needs a reboot, Ubuntu creates `/var/run/reboot-required`. Each `make site` run, `CHECK=1` included, prints `REBOOT PENDING on <host>` for every host that has the file. The warning does not fail the run, and it appears only when someone runs `make site`.
 
 Drain and reboot one node at a time, workers before the control plane:
 

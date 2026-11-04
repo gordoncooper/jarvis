@@ -9,7 +9,7 @@ help:
 	@echo
 	@echo "Operator commands"
 	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
-	@echo "  make site               Apply an env (ENV=<env> required; optional TAGS=…)"
+	@echo "  make site               Apply an env (ENV=<env> required; optional TAGS=… LIMIT=… CHECK=1)"
 	@echo "  make verify             Read-only standing-state checks (ENV=<env> required)"
 	@echo "  make drill              Scratch volume and etcd restore drill (ENV=<env> required)"
 	@echo "  make drill-cleanup      Retry drill namespace/repository cleanup (ENV=<env> required)"
@@ -79,9 +79,12 @@ seal:
 site:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@PYTHONPATH=$(CURDIR) $(CURDIR)/.venv/bin/python -c \
-		"from schema.env import main; raise SystemExit(main(['--env', '$(ENV)']))"
+		"from schema.env import main; raise SystemExit(main())" \
+		--env "$(ENV)" $(if $(SCHEMA_ROOT),--root "$(SCHEMA_ROOT)")
 	@cd infra/ansible && $(ANSIBLE_PLAYBOOK) site.yml \
 		-i ../../envs/$(ENV)/inventory/hosts.yml \
 		-i ../inventory/roles \
 		-e jarvis_cluster_vars=../../envs/$(ENV)/values/cluster-vars.yaml \
-		$(if $(TAGS),--tags "$(TAGS)")
+		$(if $(TAGS),--tags "$(TAGS)") \
+		$(if $(LIMIT),--limit "$(LIMIT)") \
+		$(if $(filter 1,$(CHECK)),--check)

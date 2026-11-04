@@ -333,19 +333,13 @@ def _operator_play_tags(readme: str | None = None) -> set[str]:
     while True:
         found_flag = readme.find(_TAGS_MARK, index)
         found_make = readme.find(_MAKE_TAGS_MARK, index)
-        candidates = [pos for pos in (found_flag, found_make) if pos >= 0]
-        if not candidates:
+        found = min((pos for pos in (found_flag, found_make) if pos >= 0), default=-1)
+        if found < 0:
             break
-        found = min(candidates)
-        if found == found_make:
-            # Point at '=' so _parse_tags_argument accepts TAGS=base-os.
-            parsed = _parse_tags_argument(readme, found + len("TAGS"))
-            skip = found + len(_MAKE_TAGS_MARK)
-        else:
-            parsed = _parse_tags_argument(readme, found + len(_TAGS_MARK))
-            skip = found + len(_TAGS_MARK)
+        mark = _MAKE_TAGS_MARK if found == found_make else _TAGS_MARK
+        parsed = _parse_tags_argument(readme, found + len(mark.rstrip("=")))
         if parsed is None:
-            index = skip
+            index = found + len(mark)
             continue
         parsed_names, index = parsed
         names.update(parsed_names)

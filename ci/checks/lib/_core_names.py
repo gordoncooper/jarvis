@@ -130,10 +130,13 @@ def collect_forbidden_names(repo_root: Path | str) -> ForbiddenNames:
                 owner = repo_owner_handle(url)
                 if owner:
                     _add(owner_handles, env_name, owner)
-        for hostname in _inventory_hostnames(
+        for hostname, host_vars in _inventory_hostnames(
             root / "envs" / env_name / "inventory" / "hosts.yml"
-        ):
+        ).items():
             _add(inventory_hostnames, env_name, hostname)
+            user = host_vars.get("ssh_user") if isinstance(host_vars, dict) else None
+            if isinstance(user, str):
+                _add(ssh_users, env_name, user)
 
     return ForbiddenNames(
         env_names=_freeze(env_names),
@@ -193,20 +196,24 @@ def _git_tracked_files(repo_root: Path) -> list[str]:
     return [part for part in out.split("\0") if part]
 
 
-def _inventory_hostnames(hosts_path: Path) -> set[str]:
+def _inventory_hostnames(hosts_path: Path) -> dict[str, object]:
     if not hosts_path.is_file():
-        return set()
+        return {}
     with hosts_path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     if not isinstance(data, dict):
-        return set()
+        return {}
     all_group = data.get("all")
     if not isinstance(all_group, dict):
-        return set()
+        return {}
     hosts = all_group.get("hosts")
     if not isinstance(hosts, dict):
-        return set()
-    return {name for name in hosts if isinstance(name, str) and name.strip()}
+        return {}
+    return {
+        name: host_vars
+        for name, host_vars in hosts.items()
+        if isinstance(name, str) and name.strip()
+    }
 
 
 def _token_re(value: str) -> re.Pattern[str]:

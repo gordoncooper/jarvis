@@ -680,52 +680,44 @@ def _one_host(tmp_path: Path, extra: str) -> None:
     _write_env(
         tmp_path,
         hosts_yml=_hosts(
-            f"""
-            all:
-              hosts:
-                node.example:
-                  node_roles: [control_plane, backup, edge]
-                  {extra}
-            """
+            "all:\n  hosts:\n    node.example:\n"
+            f"      node_roles: [control_plane, backup, edge]\n      {extra}\n"
         ),
     )
 
 
-@pytest.mark.parametrize(
-    "extra",
-    [
-        "ssh_user: ops",
-        "k3s_kubelet_kube_reserved: cpu=50m",
-        "k3s_kubelet_system_reserved: cpu=50m",
-        "k3s_kubelet_eviction_hard: memory.available<50Mi",
-        "node_ip: 192.0.2.10",
-    ],
-)
-def test_per_host_key_valid_passes(tmp_path: Path, extra: str) -> None:
+def test_per_host_keys_valid_pass(tmp_path: Path) -> None:
     """Each per-host override key is accepted with a valid value."""
-    _one_host(tmp_path, extra)
+    _one_host(
+        tmp_path,
+        "ssh_user: ops\n      k3s_kubelet_kube_reserved: cpu=50m\n"
+        "      k3s_kubelet_system_reserved: cpu=50m\n"
+        "      k3s_kubelet_eviction_hard: memory.available<50Mi",
+    )
     assert "env-test" in validate_env_tree(tmp_path)
 
 
-@pytest.mark.parametrize(
-    ("extra", "needle"),
-    [
-        ("ssh_user: 1", "ssh_user must be a non-empty string"),
-        ("k3s_kubelet_kube_reserved: 1", "k3s_kubelet_kube_reserved must be a non-empty string"),
-        ("k3s_kubelet_system_reserved: []", "k3s_kubelet_system_reserved must be a non-empty string"),
-        ("k3s_kubelet_eviction_hard: ''", "k3s_kubelet_eviction_hard must be a non-empty string"),
-        ("node_ip: hostname", "node_ip must be an IP address"),
-        ("gpu_reserved: cpu=1", "unknown key"),
-    ],
-)
-def test_per_host_key_wrong_type_or_unknown_fails(
-    tmp_path: Path, extra: str, needle: str
-) -> None:
+def test_per_host_keys_invalid_fail(tmp_path: Path) -> None:
     """A per-host key with the wrong type, or an unknown key, is refused."""
-    _one_host(tmp_path, extra)
+    _one_host(
+        tmp_path,
+        "ssh_user: 1\n      k3s_kubelet_kube_reserved: 1\n"
+        "      k3s_kubelet_system_reserved: []\n      k3s_kubelet_eviction_hard: ''\n"
+        "      gpu_reserved: cpu=1",
+    )
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    assert needle in "\n".join(excinfo.value.messages)
+    msg = "\n".join(excinfo.value.messages)
+    assert all(
+        needle in msg
+        for needle in (
+            "ssh_user must be a non-empty string",
+            "k3s_kubelet_kube_reserved must be a non-empty string",
+            "k3s_kubelet_system_reserved must be a non-empty string",
+            "k3s_kubelet_eviction_hard must be a non-empty string",
+            "unknown key",
+        )
+    )
 
 
 def test_example_env_must_declare_a_new_known_role(monkeypatch: pytest.MonkeyPatch):
@@ -828,3 +820,52 @@ def test_make_targets_require_env() -> None:
         )
         assert proc.returncode != 0, cmd
         assert "ENV is required" in proc.stderr
+
+
+def _run_site(tmp_path, *extra: str):
+    log, stub = tmp_path / "ap.log", tmp_path / "ansible-playbook"
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"${CALL_LOG}\"\n")
+    stub.chmod(0o755)
+    env = os.environ.copy()
+    env["CALL_LOG"] = str(log)
+    for key in ("ENV", "TAGS", "LIMIT", "CHECK", "SCHEMA_ROOT"):
+        env.pop(key, None)
+    proc = subprocess.run(
+        ["make", "site", f"ANSIBLE_PLAYBOOK={stub}", *extra],
+        cwd=REPO_ROOT, capture_output=True, text=True, env=env,
+    )
+    return proc, log.read_text() if log.exists() else ""
+
+
+def test_make_site_schema_error_skips_playbook(tmp_path) -> None:
+    """A schema error, including an existing env, skips ansible-playbook."""
+    proc, recorded = _run_site(tmp_path, "ENV=missing-env")
+    assert proc.returncode != 0 and recorded == "" and "unknown env" in proc.stdout + proc.stderr
+    proc, recorded = _run_site(tmp_path, "ENV=../etc")
+    assert proc.returncode != 0 and recorded == "" and "invalid env name" in proc.stdout + proc.stderr
+    root = tmp_path / "tree"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", root / "envs" / "env-00")
+    (root / ".sops.yaml").write_text(
+        "creation_rules:\n  - path_regex: envs/env-00/secrets/.*\\.sops\\.yaml$\n    age: age1fixture\n"
+    )
+    proc, recorded = _run_site(tmp_path, "ENV=env-00", f"SCHEMA_ROOT={root}")
+    assert proc.returncode != 0 and recorded == "" and "creation rule" in proc.stdout + proc.stderr
+
+
+def test_make_site_passes_inventories_tags(tmp_path) -> None:
+    """A valid env passes -i, -e, TAGS, LIMIT, and CHECK through to ansible-playbook."""
+    proc, recorded = _run_site(tmp_path, "ENV=env-00")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    args = recorded.splitlines()
+    assert args[1] == "site.yml"
+    assert "../../envs/env-00/inventory/hosts.yml" in args
+    assert "../inventory/roles" in args
+    assert "jarvis_cluster_vars=../../envs/env-00/values/cluster-vars.yaml" in args
+    assert "--tags" not in args and "--limit" not in args and "--check" not in args
+    flagged, recorded = _run_site(
+        tmp_path, "ENV=env-00", "TAGS=base-os,k3s", "LIMIT=cp-1", "CHECK=1"
+    )
+    assert flagged.returncode == 0, flagged.stdout + flagged.stderr
+    args = recorded.splitlines()
+    assert args[args.index("--tags") + 1] == "base-os,k3s"
+    assert args[args.index("--limit") + 1] == "cp-1" and "--check" in args

@@ -8,7 +8,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
-  - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user`, `k3s_kubelet_*`, and `node_ip`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
+  - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
 - Rejection of an unknown `code_delivery` or `build_agent` when that key is set (only built providers are accepted; other named providers are stubs, not valid values). Omitting either key is valid.
 - Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `apps_git_repo_url`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
@@ -97,7 +97,6 @@ Each host is a mapping with `node_roles` and the optional keys in the table. No 
 | `k3s_kubelet_kube_reserved` | no | Host kubelet `kube-reserved`; overrides the env value. Non-empty string. |
 | `k3s_kubelet_system_reserved` | no | Host kubelet `system-reserved`; overrides the env value. Non-empty string. |
 | `k3s_kubelet_eviction_hard` | no | Host kubelet `eviction-hard`; overrides the env value. Non-empty string. |
-| `node_ip` | no | k3s `node-ip` for this host. An IP address. Omit for the host default. |
 
 ### Node roles and labels
 
@@ -129,7 +128,7 @@ The FluxInstance `spec.sync` url, ref, and path match `flux_git_repo_url`, `flux
 
 ### Identity values and product rules
 
-`ci/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user`, `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
+`ci/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user` (env and per-host), `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
 
 Every tracked file is scanned except `.github/CODEOWNERS` and `.mailmap`; that includes root-level files such as `Makefile`, `renovate.json`, `AGENTS.md`, `.sops.yaml`, and the `.cursor/` and `.claude/` folders. Env names may appear under `envs/**` and `docs/**`, and in the `path_regex` field of `.sops.yaml` (the field alone on its line, no comment after it) and nowhere else in that file. Hostnames, `dns_suffix`, the owner handle, and `ssh_user` forms may appear only under the `envs/<env>/` they were read from. The personal name may appear nowhere.
 
