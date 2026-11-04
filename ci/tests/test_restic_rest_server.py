@@ -27,7 +27,7 @@ _DEDICATED_TOLERATION = {
 
 
 def _assert_dedicated_placement(pod: dict, role: str) -> None:
-    """Required affinity matches the new role label or the old prefix, and tolerates one taint."""
+    """Required affinity matches the role label, and tolerates one taint."""
     assert "nodeSelector" not in pod
     required = pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
     assert required["nodeSelectorTerms"] == [
@@ -35,15 +35,6 @@ def _assert_dedicated_placement(pod: dict, role: str) -> None:
             "matchExpressions": [
                 {
                     "key": f"node-role.jarvis.io/{role}",
-                    "operator": "In",
-                    "values": ["true"],
-                }
-            ]
-        },
-        {
-            "matchExpressions": [
-                {
-                    "key": f"role.${{dns_suffix}}/{role}",
                     "operator": "In",
                     "values": ["true"],
                 }

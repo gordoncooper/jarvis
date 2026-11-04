@@ -867,6 +867,13 @@ def _run_site(tmp_path, *extra: str):
     return proc, log.read_text() if log.exists() else ""
 
 
+def test_make_site_names_a_missing_venv(tmp_path) -> None:
+    """A VENV without bin/python fails with the make deps hint and runs nothing."""
+    proc, recorded = _run_site(tmp_path, "ENV=env-00", f"VENV={tmp_path / 'nope'}")
+    assert proc.returncode != 0 and recorded == ""
+    assert "make deps" in proc.stderr and "VENV=" in proc.stderr
+
+
 def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
     """An existing env with a .sops.yaml creation-rule error fails validate_one_env."""
     shutil.copytree(REPO_ROOT / "envs" / "env-00", tmp_path / "envs" / "env-00")
@@ -897,6 +904,7 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     assert args[dash_i[1] + 1] == "../inventory/roles"
     assert "jarvis_cluster_vars=../../envs/env-00/values/cluster-vars.yaml" in args
     assert "--tags" not in args and "--limit" not in args and "--check" not in args
+    assert "--diff" not in args
     flagged, recorded = _run_site(
         tmp_path, "ENV=env-00", "TAGS=base-os,k3s", "LIMIT=cp-1", "CHECK=1"
     )
@@ -904,5 +912,6 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     args = recorded.splitlines()
     assert args[args.index("--tags") + 1] == "base-os,k3s"
     assert args[args.index("--limit") + 1] == "cp-1" and "--check" in args
+    assert "--diff" in args
     bad, recorded = _run_site(tmp_path, "ENV=env-00", "CHECK=true")
     assert bad.returncode != 0 and recorded == "" and "CHECK must be empty or 1" in bad.stderr

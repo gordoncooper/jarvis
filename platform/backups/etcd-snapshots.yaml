@@ -28,11 +28,6 @@ spec:
                       - key: node-role.jarvis.io/control_plane
                         operator: In
                         values: ["true"]
-                  # Transitional: drop this term after role.${dns_suffix} labels are gone.
-                  - matchExpressions:
-                      - key: role.${dns_suffix}/control_plane
-                        operator: In
-                        values: ["true"]
           tolerations:
             - key: node-role.jarvis.io/dedicated
               operator: Equal
