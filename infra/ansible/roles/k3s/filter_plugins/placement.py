@@ -1,6 +1,3 @@
-"""Live workloads missing the new affinity term or dedicated toleration."""
-from __future__ import annotations
-
 def _spec(root: dict, kind: str) -> dict:
     node = root.get("template") if kind == "Deployment" else ((root.get("jobTemplate") or {}).get("spec") or {}).get("template")
     return (node or {}).get("spec") or {}
