@@ -1,0 +1,6 @@
+# Opt-in: an env lists this directory and its own backups-offsite.sops.yaml
+# in envs/<env>/flux/platform-configs/kustomization.yaml (platform-backups CONTRACT).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - restic-offsite.yaml

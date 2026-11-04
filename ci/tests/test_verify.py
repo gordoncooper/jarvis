@@ -67,6 +67,7 @@ class Cluster:
         self.check_scheduled: str | None = None
         self.etcd_active = False
         self.check_active = False
+        self.offsite_sync = "2026-10-31T04:20:00Z"
         self.hold = False
         self.bad_sources_json = False
         self.node_ready = True
@@ -188,6 +189,15 @@ class Cluster:
                     "metadata": {"creationTimestamp": self.check_created},
                     "spec": {"schedule": "30 6 * * 3", "timeZone": "Etc/UTC"},
                     "status": check_status,
+                },
+            )
+        if argv[:3] == ["get", "cronjob", "restic-offsite"]:
+            return _completed(
+                argv,
+                {
+                    "metadata": {"creationTimestamp": "2026-01-01T00:00:00Z"},
+                    "spec": {"schedule": "0 4 * * *", "timeZone": "Etc/UTC"},
+                    "status": {"lastSuccessfulTime": self.offsite_sync},
                 },
             )
         if argv[:3] == ["get", "configmap", verify_tool.HOLD_NAME]:
@@ -675,6 +685,33 @@ def test_repository_check_freshness_allows_one_interval_plus_grace(
     """The weekly check is Wednesday 06:30, so one interval plus grace is 7d12h before NOW."""
     cluster = Cluster()
     cluster.check_sync = last
+    assert _run(tmp_path, cluster, monkeypatch) == code
+    assert line in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("last", "code", "line"),
+    [
+        ("2026-10-31T04:20:00Z", 0, "PASS off-host copy"),
+        ("2026-10-29T04:20:00Z", 1, "FAIL off-host copy: off-host copy is stale"),
+    ],
+)
+def test_offsite_copy_freshness_is_checked_when_the_env_lists_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    last: str,
+    code: int,
+    line: str,
+) -> None:
+    """An env that lists the off-host copy gets its last success checked like restic-check."""
+    configs = tmp_path / "envs" / "env-test" / "flux" / "platform-configs"
+    configs.mkdir(parents=True)
+    (configs / "kustomization.yaml").write_text(
+        "resources:\n  - ../../../../platform/backups/offsite\n", encoding="utf-8"
+    )
+    cluster = Cluster()
+    cluster.offsite_sync = last
     assert _run(tmp_path, cluster, monkeypatch) == code
     assert line in capsys.readouterr().out
 

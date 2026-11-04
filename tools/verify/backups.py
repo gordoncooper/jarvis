@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from lib._env import json_object, not_found, reason
+from schema.env import offsite_copy_listed
 
 from verify.common import (
     CheckError,
@@ -107,30 +108,39 @@ def _cronjob(kubectl: Kubectl, name: str = "etcd-snapshots") -> dict:
     )
 
 
-def check_repository_integrity(kubectl: Kubectl, *, now: datetime) -> None:
-    """The last restic-check success is at most one interval plus CHECK_GRACE old."""
-    cronjob = _cronjob(kubectl, "restic-check")
+def _last_success_fresh(kubectl: Kubectl, name: str, what: str, now: datetime) -> None:
+    """CronJob name's last success is at most one interval plus CHECK_GRACE old."""
+    cronjob = _cronjob(kubectl, name)
     spec, status = cronjob.get("spec") or {}, cronjob.get("status") or {}
     schedule, zone = spec.get("schedule"), spec.get("timeZone")
     last = status.get("lastSuccessfulTime")
     if not isinstance(schedule, str) or not isinstance(zone, str):
-        raise CheckError("repository check has no schedule or time zone")
+        raise CheckError(f"{what} has no schedule or time zone")
     if not isinstance(last, str):
-        no_success_yet(cronjob, schedule, zone, now, "repository check", CHECK_GRACE)
+        no_success_yet(cronjob, schedule, zone, now, what, CHECK_GRACE)
     try:
         completed = datetime.fromisoformat(last.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise CheckError("invalid repository check timestamp") from exc
+        raise CheckError(f"invalid {what} timestamp") from exc
     if completed.tzinfo is None:
-        raise CheckError("repository check timestamp has no timezone")
+        raise CheckError(f"{what} timestamp has no timezone")
     previous = scheduled_instants(schedule, zone, now, 2)
     if now.astimezone(timezone.utc) - completed > previous[0] - previous[1] + CHECK_GRACE:
-        raise CheckError("repository check is stale; read the restic-check Job logs")
+        raise CheckError(f"{what} is stale; read the {name} Job logs")
+
+
+def check_repository_integrity(kubectl: Kubectl, *, now: datetime) -> None:
+    _last_success_fresh(kubectl, "restic-check", "repository check", now)
+
+
+def check_offsite_copy(kubectl: Kubectl, *, now: datetime) -> None:
+    """Only for an env whose platform-configs list includes the off-host copy."""
+    _last_success_fresh(kubectl, "restic-offsite", "off-host copy", now)
 
 
 @register("backups")
 def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
-    return [
+    checks: list[tuple[int, str, object]] = [
         (20, "backups-restic present", lambda: check_secret(ctx.kubectl)),
         (
             60,
@@ -147,3 +157,8 @@ def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
             lambda: check_repository_integrity(ctx.kubectl, now=ctx.now),
         ),
     ]
+    if offsite_copy_listed(ctx.repo_root / "envs" / ctx.env, ctx.repo_root):
+        checks.append(
+            (66, "off-host copy", lambda: check_offsite_copy(ctx.kubectl, now=ctx.now))
+        )
+    return checks

@@ -204,7 +204,7 @@ def bootstrap_example_copy(
     3. Set jarvis_env to <name> and rewrite every envs/env-00/ path.
     4. Replace inventory/hosts.yml when hosts_text is set.
     5. Write a .sops.yaml age rule from a throwaway age-keygen key.
-    6. Run bootstrap-secrets' bootstrap() against the tmp repo.
+    6. Run bootstrap-secrets' bootstrap() against the tmp repo, then seal a placeholder backups-offsite.
     7. Render the cluster-vars ConfigMap over the copied file.
     """
     from schema.env import EXAMPLE_ENV
@@ -223,8 +223,32 @@ def bootstrap_example_copy(
         (dest / "inventory" / "hosts.yml").write_text(hosts_text, encoding="utf-8")
     _write_copy_sops_rule(root, name, _throwaway_age_public(tmp_path))
     _bootstrap_copy(root, name)
+    _seal_copy_offsite(root, name)
     _render_copy(dest)
     return ExampleCopy(root, name)
+
+
+def _seal_copy_offsite(root: Path, name: str) -> None:
+    """The owner seals backups-offsite with make seal; the copy gets a placeholder to the same key."""
+    from _sops import encrypt_secret_to_file
+
+    document = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": "backups-offsite",
+            "namespace": "platform-backups",
+            "annotations": {"kustomize.toolkit.fluxcd.io/prune": "disabled"},
+        },
+        "type": "Opaque",
+        "stringData": {
+            "RESTIC_REPOSITORY": "rest:https://offsite.example.invalid/",
+            "RESTIC_PASSWORD": "placeholder",
+        },
+    }
+    encrypt_secret_to_file(
+        repo_root=root, env=name, name="backups-offsite", document=document, sops_bin=shutil.which("sops")
+    )
 
 
 def _rename_copied_env(env_dir: Path, old: str, new: str) -> None:
