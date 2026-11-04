@@ -14,9 +14,11 @@ make bootstrap-secrets ENV=<env>
 
 The command creates missing files only. A second run changes nothing. Commit the generated `*.sops.yaml` files and `ca.crt`. Do not commit the age private key.
 
-Files: internal CA (`cert-manager-ca`), VolSync restic credentials (`backups-restic`), Grafana admin password (`grafana-admin`), and per-deploy Hermes API keys and dashboard credentials (`hermes-ops-*`, `hermes-code-factory-*`). Later secrets are added with `make seal`. `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the `rest:` server prefix), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`. A volume repository URL appends `ns-<namespace>/pvc-<pvc>`.
+Files: k3s server and agent tokens (`k3s-token`, keys `server_token` and `agent_token`; read by `site.yml` on the controller, not applied to the cluster), internal CA (`cert-manager-ca`), VolSync restic credentials (`backups-restic`), Grafana admin password (`grafana-admin`), and per-deploy Hermes API keys and dashboard credentials (`hermes-ops-*`, `hermes-code-factory-*`). Later secrets are added with `make seal`. `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the `rest:` server prefix), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`. A volume repository URL appends `ns-<namespace>/pvc-<pvc>`.
 
 A new CA permits only that env's `dns_suffix` and its subdomains. The public certificate is `envs/<env>/ca.crt`. The private key is never written there. If `ca.crt` is present and the sealed CA is not, bootstrap refuses, so a new CA cannot be committed next to a different root. Delete both together, and only as part of the CA rotation in `platform/cert-manager/CONTRACT.md`.
+
+If `k3s-token` is missing and any other file above is present, bootstrap refuses: that env's cluster already has a token, and the owner seals it (`platform/backups/CONTRACT.md`, Rebuild a dead node). Keep the sealed token as long as any etcd snapshot it encrypts.
 
 If git already records `backups-restic`, bootstrap refuses to recreate it. `make bootstrap-secrets ENV=<env> ROTATE_RESTIC=1` mints a new password anyway. That flag does not add the password to existing repositories. Rotating a live password is in `platform/backups/CONTRACT.md`.
 

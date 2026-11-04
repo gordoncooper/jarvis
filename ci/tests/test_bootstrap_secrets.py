@@ -96,7 +96,7 @@ def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
     secrets_dir = tmp_path / "envs" / env_name / "secrets"
     files = sorted(secrets_dir.glob("*.sops.yaml"))
     root = tmp_path / "envs" / env_name / "ca.crt"
-    assert len(files) == 7
+    assert len(files) == 8
     cert = root.read_text(encoding="utf-8")
     assert "BEGIN CERTIFICATE" in cert
     assert "PRIVATE KEY" not in cert
@@ -521,6 +521,30 @@ def test_git_location_env_does_not_hide_a_recorded_restic(tmp_path, monkeypatch)
     with pytest.raises(SystemExit, match="refusing to recreate backups-restic"):
         mod.bootstrap("env-test", sops_bin=sops_bin)
     assert not (tmp_path / rel).exists()
+
+
+def test_k3s_tokens_are_minted_only_for_a_new_env(tmp_path, monkeypatch):
+    """A new env gets distinct server and agent tokens. An env with secrets is never minted over."""
+    mod = _load_module()
+    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
+    _write_test_sops_yaml(tmp_path, public)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    sops_bin = _require_tool("sops")
+    _prepare_env(tmp_path)
+    mod.bootstrap("env-test", sops_bin=sops_bin)
+    token = tmp_path / "envs" / "env-test" / "secrets" / "k3s-token.sops.yaml"
+    child = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
+    data = yaml.safe_load(subprocess.check_output([sops_bin, "-d", str(token)], env=child, text=True))
+    server, agent = data["stringData"]["server_token"], data["stringData"]["agent_token"]
+    assert len(server) >= 32 and len(agent) >= 32 and server != agent
+    sealed = token.read_bytes()
+    mod.bootstrap("env-test", sops_bin=sops_bin)
+    assert token.read_bytes() == sealed
+    token.unlink()
+    with pytest.raises(SystemExit, match="refusing to mint k3s tokens"):
+        mod.bootstrap("env-test", sops_bin=sops_bin)
+    assert not token.exists()
 
 
 def test_make_rotate_restic_maps_only_one() -> None:

@@ -9,6 +9,7 @@
   # A missing name exits non-zero. The next assert fails the run, so this is not read as success.
   failed_when: false
   register: k3s_control_plane_lookup
+  when: k3s_mode == 'agent'
 
 - name: Fail when the control-plane name does not resolve on this agent
   ansible.builtin.assert:
@@ -17,20 +18,80 @@
     fail_msg: >-
       {{ groups['control_plane'] | first }} does not resolve on {{ inventory_hostname }}.
       Every inventory hostname must resolve on this node before the agent starts.
+  when: k3s_mode == 'agent'
 
-- name: Read the server node token
-  ansible.builtin.slurp:
-    src: /var/lib/rancher/k3s/server/node-token
-  register: k3s_node_token_slurp
-  delegate_to: "{{ groups['control_plane'] | first }}"
-  run_once: true
-  no_log: true
-  changed_when: false
-
-- name: Share the node token
+- name: Set the join URL
   ansible.builtin.set_fact:
-    k3s_token: >-
-      {{ hostvars[ansible_play_hosts | first].k3s_node_token_slurp.content | b64decode | trim }}
     k3s_server_url: "https://{{ groups['control_plane'] | first }}:6443"
+  when: k3s_mode == 'agent'
+
+- name: Resolve and stat the SOPS key file
+  ansible.builtin.import_tasks: ../../flux-operator/tasks/sops_age_key_file.yml
   no_log: true
-  changed_when: false
+
+- name: Require the age private key on the controller
+  ansible.builtin.assert:
+    that:
+      - sops_age_key_stat.stat.exists | default(false)
+    fail_msg: >-
+      Every k3s run, check mode included, decrypts the sealed k3s tokens. Set SOPS_AGE_KEY_FILE
+      or age_key_file to the age private key on the controller.
+
+- name: Refuse an age key file with the wrong mode or owner
+  ansible.builtin.import_tasks: ../../flux-operator/tasks/sops_age_key_mode.yml
+
+# SOPS leaves key names readable, so this check needs no decrypt and stays visible.
+- name: Require the sealed token file and its key names
+  ansible.builtin.assert:
+    that:
+      - "'agent_token' in _sealed_keys"
+      - k3s_mode != 'server' or 'server_token' in _sealed_keys
+    fail_msg: >-
+      {{ k3s_token_file | basename }} for {{ jarvis_env }} is missing or lacks stringData.agent_token
+      (and stringData.server_token on the server). See platform/backups/CONTRACT.md, Rebuild a dead node.
+  vars:
+    _sealed_keys: "{{ (((lookup('file', k3s_token_file, errors='ignore') or '{}') | from_yaml).stringData | default({})) | list }}"
+
+# Decrypted on the controller. An agent gets the agent token only.
+- name: Read the sealed k3s tokens
+  ansible.builtin.set_fact:
+    k3s_agent_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"agent_token\"]', age_keyfile=sops_age_key_file) }}"
+    k3s_server_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"server_token\"]', age_keyfile=sops_age_key_file) if k3s_mode == 'server' else '' }}"
+  no_log: true
+
+- name: Stat the server token on this node
+  ansible.builtin.stat:
+    path: "{{ k3s_data_dir }}/server/token"
+  register: k3s_node_token_stat
+  when: k3s_mode == 'server'
+
+- name: Read the server token on this node
+  ansible.builtin.slurp:
+    src: "{{ k3s_data_dir }}/server/token"
+  register: k3s_node_token
+  when: k3s_mode == 'server' and k3s_node_token_stat.stat.exists
+  no_log: true
+
+# k3s writes the secure form K10<ca-hash>::server:<passphrase>. A sealed secure token must
+# match it whole. A sealed short token must match its passphrase.
+- name: Compare the node's server token with the sealed one
+  ansible.builtin.set_fact:
+    k3s_token_matches: >-
+      {{ not k3s_node_token_stat.stat.exists
+         or (_node if k3s_server_token is match('K10') else _node | regex_replace('^K10[0-9a-f]*::server:', ''))
+            == k3s_server_token }}
+  vars:
+    _node: "{{ k3s_node_token.content | b64decode | trim if k3s_node_token_stat.stat.exists else '' }}"
+  when: k3s_mode == 'server'
+  no_log: true
+
+- name: Refuse a sealed server token that differs from this node's
+  ansible.builtin.assert:
+    that:
+      - k3s_token_matches | bool
+    fail_msg: >-
+      The k3s server token on {{ inventory_hostname }} differs from the sealed token in
+      {{ k3s_token_file | basename }}. Nothing was changed. Seal this node's token, or follow
+      the rebuild steps in platform/backups/CONTRACT.md.
+    quiet: true
+  when: k3s_mode == 'server'

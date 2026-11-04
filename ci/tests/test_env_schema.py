@@ -796,6 +796,19 @@ def test_missing_hermes_yaml_fails(tmp_path: Path) -> None:
     assert "values/hermes.yaml" in msg
 
 
+def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None:
+    """Once an env has sealed files, k3s-token.sops.yaml is required. Before that it is not."""
+    secrets = _write_env(tmp_path) / "secrets"
+    secrets.mkdir(exist_ok=True)
+    validate_env_tree(tmp_path)
+    (secrets / "grafana-admin.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "missing required file envs/env-test/secrets/k3s-token.sops.yaml" in excinfo.value.messages[0]
+    (secrets / "k3s-token.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    validate_env_tree(tmp_path)
+
+
 def test_cli_requires_env() -> None:
     commands = (
         [sys.executable, "tools/bootstrap-secrets"],

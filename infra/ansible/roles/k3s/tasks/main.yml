@@ -12,9 +12,18 @@
 - name: Write the jarvis env marker
   ansible.builtin.import_tasks: guard.yml
 
-- name: Read the server node token
+- name: Read the sealed tokens and refuse a mismatch
   ansible.builtin.import_tasks: token.yml
-  when: k3s_mode == 'agent'
+
+# A first install starts k3s once. Restart k3s only if it was already running.
+# LSB is-active: 0 active, 3 not active, 4 no such unit. Any other exit is an error.
+- name: Record whether k3s was running before this run
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ k3s_service_name }}"]
+  register: k3s_was_active
+  changed_when: false
+  check_mode: false
+  failed_when: k3s_was_active.rc not in [0, 3, 4]
 
 - name: Ensure jarvis state directories exist
   ansible.builtin.file:
@@ -37,6 +46,7 @@
     group: root
     mode: "0600"
   when: k3s_mode == 'server'
+  no_log: true
   notify: Restart k3s
 
 - name: Install k3s agent config

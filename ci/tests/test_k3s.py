@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -64,8 +65,12 @@ def test_k3s_config_template_encodes_p0a12_rules() -> None:
         "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
         "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
         "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
+        "k3s_server_token": "fixture-server",
+        "k3s_agent_token": "fixture-agent",
     }
     rendered = render_k3s_config(variables)
+    assert 'token: "fixture-server"' in rendered.splitlines()
+    assert 'agent-token: "fixture-agent"' in rendered.splitlines()
     assert "cluster-init: true" in rendered
     assert "secrets-encryption: true" in rendered
     assert f"cluster-cidr: {cluster['pod_cidr']}" in rendered
@@ -87,7 +92,8 @@ def test_agent_config_template_encodes_join_rules() -> None:
         "agent-config.yaml.j2",
         {
             "k3s_server_url": "https://cp-1:6443",
-            "k3s_token": "fixture-token",
+            "k3s_agent_token": "fixture-agent",
+            "k3s_server_token": "fixture-server",
             "inventory_hostname": "wk-1",
             "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
             "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
@@ -96,7 +102,8 @@ def test_agent_config_template_encodes_join_rules() -> None:
         templates_dir=K3S_ROLE_TEMPLATES,
     )
     assert "server: https://cp-1:6443" in rendered
-    assert "token: fixture-token" in rendered
+    assert 'token: "fixture-agent"' in rendered.splitlines()
+    assert "fixture-server" not in rendered and "agent-token" not in rendered
     assert "node-name: wk-1" in rendered
     assert f"kube-reserved={cluster['k3s_kubelet_kube_reserved']}" in rendered
     assert f"system-reserved={cluster['k3s_kubelet_system_reserved']}" in rendered
@@ -129,7 +136,8 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
         f"    ansible_user: \"{expr}\"\n    ansible_connection: local\n"
         f"    k3s_etcd_snapshot_schedule_cron: {defaults['k3s_etcd_snapshot_schedule_cron']!r}\n"
         f"    k3s_etcd_snapshot_retention: {defaults['k3s_etcd_snapshot_retention']}\n"
-        "    k3s_server_url: https://cp-1:6443\n    k3s_token: fixture-token\n"
+        "    k3s_server_url: https://cp-1:6443\n    k3s_agent_token: fixture-agent\n"
+        "    k3s_server_token: fixture-server\n"
         f"  vars_files: [{cluster_vars}]\n  tasks:\n"
         f"    - ansible.builtin.template:\n        src: {K3S_ROLE_TEMPLATES / K3S_CONFIG_TEMPLATE}\n"
         f"        dest: {dest}/{{{{ inventory_hostname }}}}.yaml\n"
@@ -201,7 +209,7 @@ def test_agent_fails_when_control_plane_name_does_not_resolve(tmp_path: Path) ->
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     proc = subprocess.run(
-        ["ansible-playbook", str(play), "-i", str(inventory)],
+        ["ansible-playbook", str(play), "-i", str(inventory), "-e", "k3s_mode=agent"],
         cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,
@@ -616,8 +624,20 @@ def test_agent_joins_the_first_control_plane_over_6443(tmp_path: Path) -> None:
     assert rendered.strip() == "https://cp-1:6443"
 
 
+def test_every_task_that_touches_a_token_is_no_log() -> None:
+    """A task that reads, compares or writes a k3s token hides its result."""
+    touches = re.compile(r"k3s_(server|agent)_token|\bk3s_node_token\b|config\.yaml\.j2")
+    seen = 0
+    for name in ("main.yml", "token.yml"):
+        for task in yaml.safe_load((K3S_ROLE_DIR / "tasks" / name).read_text(encoding="utf-8")):
+            if touches.search(yaml.safe_dump(task)):
+                seen += 1
+                assert task.get("no_log") is True, task.get("name")
+    assert seen >= 5
+
+
 def test_files_that_can_hold_the_join_token_are_root_only() -> None:
-    """The server and agent config files are written 0600 as root, and the agent's is not logged."""
+    """The server and agent config files are written 0600 as root."""
     tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
     configs = {
         task["ansible.builtin.template"]["src"]: task
@@ -630,7 +650,6 @@ def test_files_that_can_hold_the_join_token_are_root_only() -> None:
     for src, task in configs.items():
         template = task["ansible.builtin.template"]
         assert (template["mode"], template["owner"], template["group"]) == ("0600", "root", "root"), src
-    assert configs["agent-config.yaml.j2"]["no_log"] is True
 
 
 _PRIVATE_DATA_DIRS = (
@@ -754,9 +773,9 @@ def test_private_data_directories_are_mode_0700(tmp_path: Path) -> None:
     assert output.count('"mode": "0700"') + output.count("mode: '0700'") >= 3, output
 
 
-def _systemctl(bin_dir: Path, *, fail: str = "") -> None:
+def _systemctl(bin_dir: Path, *, fail: str = "", state: str = "active enabled") -> None:
     bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "state").write_text("active enabled\n", encoding="utf-8")
+    (bin_dir / "state").write_text(state + "\n", encoding="utf-8")
     (bin_dir / "fail").write_text(fail, encoding="utf-8")
     (bin_dir / "systemctl.log").write_text("", encoding="utf-8")
     (bin_dir / "systemctl").write_text(
@@ -794,6 +813,10 @@ def _systemctl(bin_dir: Path, *, fail: str = "") -> None:
                 active, _enabled = read_state()
                 sys.stdout.write(f"LoadState=loaded\\nActiveState={active}\\n")
                 sys.exit(0)
+            if command == "is-active":
+                active, _enabled = read_state()
+                sys.stdout.write(active + "\\n")
+                sys.exit(0 if active == "active" else 3)
             if command == "is-enabled":
                 _active, enabled = read_state()
                 sys.stdout.write(enabled + "\\n")
@@ -955,3 +978,227 @@ def test_k3s_opposite_unit_error_fails(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode != 0, output
     assert "Unable to disable" in output
+
+
+_SERVER_TOKEN = "fixture-server-passphrase"
+_AGENT_TOKEN = "fixture-agent-passphrase"
+_CONFIG_KEYS = ("pod_cidr", "service_cidr", "k3s_kubelet_kube_reserved",
+                "k3s_kubelet_system_reserved", "k3s_kubelet_eviction_hard")
+
+
+def _sealed_tokens(tmp_path: Path, server: str = _SERVER_TOKEN) -> tuple[Path, Path]:
+    """A k3s-token file sealed to a throwaway age key, and that key. Made once per tmp_path."""
+    sops = require_cli("sops")
+    keyfile = tmp_path / "age.txt"
+    path = tmp_path / "k3s-token.sops.yaml"
+    if keyfile.exists() or path.exists():
+        return path, keyfile
+    subprocess.run([require_cli("age-keygen"), "-o", str(keyfile)], check=True, capture_output=True)
+    public = next(
+        line.split(":", 1)[1].strip()
+        for line in keyfile.read_text(encoding="utf-8").splitlines()
+        if line.startswith("# public key:")
+    )
+    doc = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "k3s-token"},
+           "stringData": {"server_token": server, "agent_token": _AGENT_TOKEN}}
+    (tmp_path / ".sops.yaml").write_text(
+        f"creation_rules:\n  - encrypted_regex: ^(data|stringData)$\n    age: {public}\n",
+        encoding="utf-8",
+    )
+    sealed = subprocess.run(
+        [sops, "encrypt", f"--filename-override={path.name}", "/dev/stdin"],
+        input=yaml.safe_dump(doc), capture_output=True, text=True, check=True, cwd=tmp_path,
+    )
+    path.write_text(sealed.stdout, encoding="utf-8")
+    return path, keyfile
+
+
+def _play_env(keyfile: Path) -> dict[str, str]:
+    return {**os.environ, "ANSIBLE_BECOME": "false", "SOPS_AGE_KEY_FILE": str(keyfile),
+            "ANSIBLE_CONFIG": str(ANSIBLE_DIR / "ansible.cfg")}
+
+
+def _run_token_read(
+    tmp_path: Path, *, mode: str, node_token: str | None = None
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    require_cli("ansible-playbook")
+    token_file, keyfile = _sealed_tokens(tmp_path)
+    data_dir = tmp_path / "k3s"
+    if node_token is not None:
+        (data_dir / "server").mkdir(parents=True, exist_ok=True)
+        (data_dir / "server" / "token").write_text(node_token + "\n", encoding="utf-8")
+    facts = tmp_path / "facts.json"
+    cluster = load_cluster_vars()
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text(
+        "all:\n  children:\n    control_plane:\n      hosts:\n        localhost:\n"
+        "          ansible_connection: local\n",
+        encoding="utf-8",
+    )
+    play = tmp_path / "play.yml"
+    play.write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            - hosts: localhost
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_tasks: {K3S_ROLE_DIR / "tasks" / "token.yml"}
+                - ansible.builtin.copy:
+                    dest: {facts}
+                    content: "{{{{ {{'server': k3s_server_token, 'agent': k3s_agent_token}} | to_json }}}}"
+                  no_log: true
+                - ansible.builtin.template:
+                    src: {K3S_ROLE_TEMPLATES / K3S_CONFIG_TEMPLATE}
+                    dest: {tmp_path / "config.yaml"}
+                  no_log: true
+                  when: k3s_mode == 'server'
+            """
+        ),
+        encoding="utf-8",
+    )
+    extra = {**load_role_defaults(K3S_ROLE_DIR), **{key: cluster[key] for key in _CONFIG_KEYS},
+             "local_path_data": "/fixture/local", "backup_path": "/fixture/backup", "jarvis_env": "fixture",
+             "k3s_mode": mode, "k3s_token_file": str(token_file), "k3s_data_dir": str(data_dir)}
+    proc = subprocess.run(
+        ["ansible-playbook", str(play), "-i", str(inventory), "-e", json.dumps(extra)],
+        cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False, env=_play_env(keyfile),
+    )
+    return proc, facts
+
+
+@pytest.mark.parametrize("mode", ["server", "agent"])
+def test_tokens_come_from_the_sealed_file(tmp_path: Path, mode: str) -> None:
+    """The controller decrypts the sealed file. An agent gets the agent token only. Nothing prints."""
+    proc, facts = _run_token_read(tmp_path, mode=mode)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    want = {"server": _SERVER_TOKEN if mode == "server" else "", "agent": _AGENT_TOKEN}
+    assert json.loads(facts.read_text(encoding="utf-8")) == want
+    assert _SERVER_TOKEN not in output and _AGENT_TOKEN not in output
+
+
+def test_token_and_config_tasks_converge(tmp_path: Path) -> None:
+    """A second run with the same sealed file and node token changes nothing."""
+    first, _facts = _run_token_read(tmp_path, mode="server", node_token=f"K10ab::server:{_SERVER_TOKEN}")
+    again, _facts = _run_token_read(tmp_path, mode="server", node_token=f"K10ab::server:{_SERVER_TOKEN}")
+    assert first.returncode == 0 and again.returncode == 0, first.stdout + again.stdout
+    assert playbook_recap_field(first.stdout, "changed") == 2
+    assert playbook_recap_field(again.stdout, "changed") == 0
+
+
+_STOPS = {
+    "no-key": "Set SOPS_AGE_KEY_FILE or age_key_file",
+    "key-mode": "Refuse an age private key",
+    "missing": "is missing or lacks stringData.agent_token",
+    "key-names": "is missing or lacks stringData.agent_token",
+}
+
+
+@pytest.mark.parametrize("broken", sorted(_STOPS))
+def test_token_read_stops_visibly_before_any_decrypt(tmp_path: Path, broken: str) -> None:
+    """A missing or loose key file, or a sealed file that is missing or lacks the key names, stops before the lookup."""
+    token_file, keyfile = _sealed_tokens(tmp_path)
+    if broken == "no-key":
+        keyfile.rename(tmp_path / "moved-key")
+    elif broken == "key-mode":
+        keyfile.chmod(0o644)
+    elif broken == "missing":
+        token_file.unlink()
+    else:
+        token_file.write_text("stringData:\n  token: ENC[fixture]\n", encoding="utf-8")
+    proc, facts = _run_token_read(tmp_path, mode="server")
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert _STOPS[broken] in output, output
+    assert "TASK [Read the sealed k3s tokens]" not in output and not facts.exists()
+
+
+@pytest.mark.parametrize(
+    ("sealed", "node_token", "refused"),
+    [
+        (_SERVER_TOKEN, f"K10abc123::server:{_SERVER_TOKEN}", False),
+        (_SERVER_TOKEN, _SERVER_TOKEN, False),
+        (_SERVER_TOKEN, "K10abc123::server:fixture-node-passphrase", True),
+        (f"K10abc123::server:{_SERVER_TOKEN}", f"K10abc123::server:{_SERVER_TOKEN}", False),
+        (f"K10abc123::server:{_SERVER_TOKEN}", f"K10def456::server:{_SERVER_TOKEN}", True),
+    ],
+)
+def test_server_refuses_a_sealed_token_that_differs_from_the_node(
+    tmp_path: Path, sealed: str, node_token: str, refused: bool
+) -> None:
+    """A mismatch stops before any later task and prints neither value. A sealed K10 token must match whole."""
+    _sealed_tokens(tmp_path, server=sealed)
+    proc, facts = _run_token_read(tmp_path, mode="server", node_token=node_token)
+    output = proc.stdout + proc.stderr
+    assert (proc.returncode != 0) is refused, output
+    assert ("differs from the sealed token" in output) is refused, output
+    assert facts.exists() is not refused
+    for value in ("fixture-node-passphrase", _SERVER_TOKEN, _AGENT_TOKEN):
+        assert value not in output
+
+
+def _role_play(tmp_path: Path, bin_dir: Path) -> Path:
+    play = tmp_path / "role.yml"
+    play.write_text(
+        "---\n- hosts: localhost\n  gather_facts: false\n  become: false\n"
+        f"  environment:\n    PATH: \"{bin_dir}:/usr/bin:/bin\"\n"
+        "  roles:\n    - role: k3s\n      vars:\n        k3s_mode: server\n",
+        encoding="utf-8",
+    )
+    return play
+
+
+def _run_role(
+    tmp_path: Path, *, running: bool, node_token: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Check mode of the whole server role against tmp paths and a stub systemctl."""
+    require_cli("ansible-playbook")
+    token_file, keyfile = _sealed_tokens(tmp_path)
+    if node_token is not None:
+        (tmp_path / "data" / "server").mkdir(parents=True)
+        (tmp_path / "data" / "server" / "token").write_text(node_token + "\n", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    _systemctl(bin_dir, state="active enabled" if running else "inactive disabled")
+    binary = tmp_path / "k3s-binary"
+    binary.write_bytes(b"fixture k3s\n")
+    units = tmp_path / "systemd"
+    (units / "k3s.service.d").mkdir(parents=True)
+    config = tmp_path / "config.yaml"
+    if running:
+        config.write_text("# an older config\n", encoding="utf-8")
+    cluster = load_cluster_vars()
+    extra = {
+        "jarvis_env": "fixture", "jarvis_marker_path": str(tmp_path / "env"),
+        "k3s_token_file": str(token_file), "k3s_data_dir": str(tmp_path / "data"),
+        "k3s_config_path": str(config), "k3s_unit_dir": str(units),
+        "k3s_binary_path": str(binary), "k3s_version": "v0.0.0+k3s1",
+        "k3s_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        "local_path_data": str(tmp_path / "local"), "backup_path": str(tmp_path / "backup"),
+        **{key: cluster[key] for key in _CONFIG_KEYS},
+    }
+    return subprocess.run(
+        ["ansible-playbook", str(_role_play(tmp_path, bin_dir)), "-i", "localhost,",
+         "-e", "ansible_connection=local", "-e", json.dumps(extra), "--check"],
+        cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False, env=_play_env(keyfile),
+    )
+
+
+def test_a_token_mismatch_stops_the_role_before_its_config(tmp_path: Path) -> None:
+    """On a running server whose token differs, the role fails and never reaches the config task."""
+    proc = _run_role(tmp_path, running=True, node_token="K10ab::server:fixture-node-passphrase")
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0 and "differs from the sealed token" in output, output
+    assert "Install k3s server config" not in output and "fixture-node-passphrase" not in output
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_first_install_does_not_restart_and_a_config_change_does(tmp_path: Path, running: bool) -> None:
+    """Restart k3s only if it was running before this run."""
+    proc = _run_role(tmp_path, running=running)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    handler = output.split("RUNNING HANDLER [k3s : Restart k3s]")[1].split("PLAY RECAP")[0]
+    assert ("changed: [localhost]" in handler) is running, handler
+    assert ("skipping: [localhost]" in handler) is not running, handler

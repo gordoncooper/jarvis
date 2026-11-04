@@ -39,7 +39,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 ## Config
 
 - VolSync 0.17, restic mover, `copyMethod: Direct`. The controller installs the VolumeSnapshot CRD and no snapshot controller.
-- k3s keeps writing etcd snapshots to `backup_path/etcd-snapshots`. The k3s config does not change. Those files are the same-node rollback copy.
+- k3s keeps writing etcd snapshots to `backup_path/etcd-snapshots`. The snapshot settings in the k3s config do not change. Those files are the same-node rollback copy.
 - rest-server data is the hostPath `backup_path/restic`, pinned to the backup-role node.
 - One repository per PVC is the directory `backup_path/restic/ns-<namespace>/pvc-<pvc>`.
 - A volume's repository URL is `rest:http://restic.platform-backups.svc.cluster.local:8000/ns-<namespace>/pvc-<pvc>`.
@@ -196,7 +196,23 @@ What it changes: the node's k3s datastore is replaced by that snapshot.
 
 How to tell it worked: k3s starts and serves the restored datastore.
 
-k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the original k3s server token. Same-node restore is the scope. The drill only checks that the newest restic copy matches the k3s file's sha256.
+k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the original k3s server token (Rebuild a dead node, below). The steps above are for the same node. The drill only checks that the newest restic copy matches the k3s file's sha256.
+
+### Rebuild a dead node
+
+Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make seal ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` (the contents of `/var/lib/rancher/k3s/server/token` on the server) and `stringData.agent_token`. The agent token is a new random value, never the server token.
+
+**Server.**
+
+1. Reinstall the node, mount a surviving data disk at `/var/lib/jarvis`, and run `tools/prep-node` (`docs/deploy.md`). If the data disk is lost too, prepare a new one and, before step 2, `restic restore` a snapshot file from repository `host-etcd-snapshots` on the backup host (password: `RESTIC_PASSWORD` in `backups-restic`) into `<backup_path>/etcd-snapshots`. When the server is also the backup host, that disk held the only copy.
+2. `make site ENV=<env>`. The server starts with the sealed token, and agents join with the agent token. When the backup host still has restic repositories and there is no FluxInstance yet, `site.yml` creates the rebuild hold.
+3. Once Flux has reconciled, run `make restore-all ENV=<env>` (above).
+
+With the same token, the etcd cluster reset above can also restore a snapshot onto the rebuilt server.
+
+**Agents.** While the server is down, agents keep their pods running but cannot reach the API. They reconnect when it is back. An agent reinstalled under the same hostname is refused by the server's stored node password. Delete its Node (`kubectl delete node <host>`) or Secret `kube-system/<host>.node-password.k3s` first, then run `make site ENV=<env> LIMIT=<host>`.
+
+How to tell it worked: `make site` exits 0, `restore-all` prints `HOLD lifted` and `SUMMARY` and exits 0, and then `make verify ENV=<env>` passes. A planned bench rehearsal with the data disk kept proves OS loss only, not disk loss.
 
 ### Rotate the restic password
 
