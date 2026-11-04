@@ -20,22 +20,8 @@
   ansible.builtin.set_fact:
     flux_sops_age_present: "{{ flux_sops_age_lookup.rc == 0 }}"
 
-- name: Record the age private key path
-  ansible.builtin.set_fact:
-    sops_age_key_file: "{{ _sops_age_from_env | default(_sops_age_from_vars, true) | regex_replace('^~/', lookup('env', 'HOME') ~ '/') }}"
-  vars:
-    _sops_age_from_env: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
-    _sops_age_from_vars: "{{ age_key_file | default('~/.config/sops/age/keys.txt', true) }}"
-  no_log: true
-  changed_when: false
-
-- name: Stat the age private key file
-  ansible.builtin.stat:
-    path: "{{ sops_age_key_file }}"
-  register: sops_age_key_stat
-  delegate_to: localhost
-  become: false
-  run_once: true
+- name: Resolve and stat the SOPS key file
+  ansible.builtin.import_tasks: sops_age_key_file.yml
   no_log: true
 
 - name: Require an age private key when the sops-age secret is absent

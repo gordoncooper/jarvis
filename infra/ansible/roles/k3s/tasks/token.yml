@@ -25,13 +25,38 @@
     k3s_server_url: "https://{{ groups['control_plane'] | first }}:6443"
   when: k3s_mode == 'agent'
 
+- name: Resolve and stat the SOPS key file
+  ansible.builtin.import_tasks: ../../flux-operator/tasks/sops_age_key_file.yml
+  no_log: true
+
+- name: Require the age private key on the controller
+  ansible.builtin.assert:
+    that:
+      - sops_age_key_stat.stat.exists | default(false)
+    fail_msg: >-
+      Every k3s run, check mode included, decrypts the sealed k3s tokens. Set SOPS_AGE_KEY_FILE
+      or age_key_file to the age private key on the controller.
+
+- name: Refuse an age key file with the wrong mode or owner
+  ansible.builtin.import_tasks: ../../flux-operator/tasks/sops_age_key_mode.yml
+
+# SOPS leaves key names readable, so this check needs no decrypt and stays visible.
+- name: Require the sealed token file and its key names
+  ansible.builtin.assert:
+    that:
+      - "'agent_token' in _sealed_keys"
+      - k3s_mode != 'server' or 'server_token' in _sealed_keys
+    fail_msg: >-
+      {{ k3s_token_file | basename }} for {{ jarvis_env }} is missing or lacks stringData.agent_token
+      (and stringData.server_token on the server). See platform/backups/CONTRACT.md, Rebuild a dead node.
+  vars:
+    _sealed_keys: "{{ (((lookup('file', k3s_token_file, errors='ignore') or '{}') | from_yaml).stringData | default({})) | list }}"
+
 # Decrypted on the controller. An agent gets the agent token only.
 - name: Read the sealed k3s tokens
   ansible.builtin.set_fact:
-    k3s_agent_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"agent_token\"]', age_keyfile=_age_keyfile) }}"
-    k3s_server_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"server_token\"]', age_keyfile=_age_keyfile) if k3s_mode == 'server' else '' }}"
-  vars:
-    _age_keyfile: "{{ (lookup('env', 'SOPS_AGE_KEY_FILE') or age_key_file | default('~/.config/sops/age/keys.txt', true)) | expanduser }}"
+    k3s_agent_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"agent_token\"]', age_keyfile=sops_age_key_file) }}"
+    k3s_server_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"server_token\"]', age_keyfile=sops_age_key_file) if k3s_mode == 'server' else '' }}"
   no_log: true
 
 - name: Stat the server token on this node
@@ -47,16 +72,16 @@
   when: k3s_mode == 'server' and k3s_node_token_stat.stat.exists
   no_log: true
 
-# k3s writes the secure form K10<ca-hash>::server:<passphrase>. The passphrase is what
-# opens the datastore, so a sealed short or secure token is compared on that part.
+# k3s writes the secure form K10<ca-hash>::server:<passphrase>. A sealed secure token must
+# match it whole. A sealed short token must match its passphrase.
 - name: Compare the node's server token with the sealed one
   ansible.builtin.set_fact:
     k3s_token_matches: >-
       {{ not k3s_node_token_stat.stat.exists
-         or (k3s_node_token.content | b64decode | trim | regex_replace(_secure, ''))
-            == (k3s_server_token | regex_replace(_secure, '')) }}
+         or (_node if k3s_server_token is match('K10') else _node | regex_replace('^K10[0-9a-f]*::server:', ''))
+            == k3s_server_token }}
   vars:
-    _secure: '^K10[0-9a-f]*::server:'
+    _node: "{{ k3s_node_token.content | b64decode | trim if k3s_node_token_stat.stat.exists else '' }}"
   when: k3s_mode == 'server'
   no_log: true
 
