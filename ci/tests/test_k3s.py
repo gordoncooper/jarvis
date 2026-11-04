@@ -103,6 +103,64 @@ def test_agent_config_template_encodes_join_rules() -> None:
     assert f"eviction-hard={cluster['k3s_kubelet_eviction_hard']}" in rendered
     assert "cluster-init" not in rendered
     assert "node-label" not in rendered
+    assert "node-ip" not in rendered
+
+
+def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
+    """A per-host ssh_user and kubelet reserves apply on that host only."""
+    require_cli("ansible-playbook")
+    cluster = load_cluster_vars()
+    defaults = load_role_defaults(K3S_ROLE_DIR)
+    expr = yaml.safe_load((ANSIBLE_DIR / "site.yml").read_text())[0]["vars"]["ansible_user"]
+    hosts = tmp_path / "hosts.yml"
+    hosts.write_text(
+        "all:\n  hosts:\n    over:\n      node_roles: [control_plane, backup, edge]\n"
+        "      ssh_user: alice\n      k3s_kubelet_kube_reserved: cpu=50m\n"
+        "      k3s_kubelet_system_reserved: cpu=25m\n"
+        "      k3s_kubelet_eviction_hard: memory.available<250Mi\n"
+        "    plain:\n      node_roles: [workers]\n"
+    )
+    dest = tmp_path / "out"
+    dest.mkdir()
+    cluster_vars = REPO_ROOT / "envs" / env_name() / "values" / "cluster-vars.yaml"
+    play = tmp_path / "play.yml"
+    play.write_text(
+        "---\n- hosts: all\n  gather_facts: false\n  become: false\n  vars:\n"
+        f"    ansible_user: \"{expr}\"\n    ansible_connection: local\n"
+        f"    k3s_etcd_snapshot_schedule_cron: {defaults['k3s_etcd_snapshot_schedule_cron']!r}\n"
+        f"    k3s_etcd_snapshot_retention: {defaults['k3s_etcd_snapshot_retention']}\n"
+        "    k3s_server_url: https://cp-1:6443\n    k3s_token: fixture-token\n"
+        f"  vars_files: [{cluster_vars}]\n  tasks:\n"
+        f"    - ansible.builtin.template:\n        src: {K3S_ROLE_TEMPLATES / K3S_CONFIG_TEMPLATE}\n"
+        f"        dest: {dest}/{{{{ inventory_hostname }}}}.yaml\n"
+        f"    - ansible.builtin.template:\n        src: {K3S_ROLE_TEMPLATES / 'agent-config.yaml.j2'}\n"
+        f"        dest: {dest}/{{{{ inventory_hostname }}}}.agent.yaml\n"
+        f"    - ansible.builtin.copy:\n        dest: {dest}/{{{{ inventory_hostname }}}}.user\n"
+        "        content: '{{ ansible_user }}'\n"
+    )
+    env = os.environ.copy()
+    env["ANSIBLE_BECOME"] = "false"
+    proc = subprocess.run(
+        ["ansible-playbook", str(play), "-i", str(hosts), "-i", str(roles_inventory_path())],
+        cwd=ANSIBLE_DIR,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    over = [(dest / f"over{s}").read_text() for s in (".yaml", ".agent.yaml")]
+    plain = [(dest / f"plain{s}").read_text() for s in (".yaml", ".agent.yaml")]
+    assert cluster["k3s_kubelet_eviction_hard"] != "memory.available<250Mi"
+    assert (dest / "over.user").read_text() == "alice"
+    assert (dest / "plain.user").read_text() == cluster["ssh_user"]
+    for rendered in over:
+        assert "kube-reserved=cpu=50m" in rendered
+        assert "system-reserved=cpu=25m" in rendered
+        assert "eviction-hard=memory.available<250Mi" in rendered
+    for rendered in plain:
+        assert f"kube-reserved={cluster['k3s_kubelet_kube_reserved']}" in rendered
+        assert f"system-reserved={cluster['k3s_kubelet_system_reserved']}" in rendered
+        assert f"eviction-hard={cluster['k3s_kubelet_eviction_hard']}" in rendered
 
 
 def test_agent_fails_when_control_plane_name_does_not_resolve(tmp_path: Path) -> None:

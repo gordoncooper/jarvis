@@ -8,7 +8,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
   - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
-  - `inventory/hosts.yml` — one block per host: `node_roles` and an optional `data_disk`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
+  - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
 - Rejection of an unknown `code_delivery` or `build_agent` when that key is set (only built providers are accepted; other named providers are stubs, not valid values). Omitting either key is valid.
 - Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `apps_git_repo_url`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
@@ -85,18 +85,22 @@ A required key that is present but null counts as unset and fails.
 
 ### `inventory/hosts.yml`
 
-Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. `ci/checks/env-schema` rejects an IP used as a host name and any host key other than `node_roles` and `data_disk`.
+Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. `ci/checks/env-schema` rejects an IP used as a host name and any host key other than the rows below.
 
-Each host is a mapping with `node_roles` and, when that host has a data disk, `data_disk`. No other host keys.
+Each host is a mapping with `node_roles` and the optional keys in the table. No other host keys.
 
 | Field | Required | Notes |
 | --- | --- | --- |
 | `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
 | `data_disk` | no | Plain flag `true`, or omit the key. `true` means the admin has mounted a filesystem at `/var/lib/jarvis`. Any other value is rejected. |
+| `ssh_user` | no | SSH user for this host; overrides env `ssh_user`. Non-empty string. |
+| `k3s_kubelet_kube_reserved` | no | Host kubelet `kube-reserved`; overrides the env value. Non-empty string. |
+| `k3s_kubelet_system_reserved` | no | Host kubelet `system-reserved`; overrides the env value. Non-empty string. |
+| `k3s_kubelet_eviction_hard` | no | Host kubelet `eviction-hard`; overrides the env value. Non-empty string. |
 
 ### Node roles and labels
 
-`infra/inventory/roles.yml` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk: true` are the `data_disk` group. The constructed rule is `data_disk is defined`, which matches that flag and nothing else the schema allows. That group is always present, including when no host sets `data_disk`. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
+`infra/inventory/roles` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk: true` are the `data_disk` group. The constructed rule is `data_disk is defined`, which matches that flag and nothing else the schema allows. That group is always present, including when no host sets `data_disk`. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
 
 Kubernetes labels are `role.<dns_suffix>/<role>=true` for each role on the node. The `role.<dns_suffix>/` prefix is reserved for them. The k3s role sets and removes them. This schema does not apply labels.
 
@@ -124,7 +128,7 @@ The FluxInstance `spec.sync` url, ref, and path match `flux_git_repo_url`, `flux
 
 ### Identity values and product rules
 
-`ci/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user`, `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
+`ci/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user` (env and per-host), `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
 
 Every tracked file is scanned except `.github/CODEOWNERS` and `.mailmap`; that includes root-level files such as `Makefile`, `renovate.json`, `AGENTS.md`, `.sops.yaml`, and the `.cursor/` and `.claude/` folders. Env names may appear under `envs/**` and `docs/**`, and in the `path_regex` field of `.sops.yaml` (the field alone on its line, no comment after it) and nowhere else in that file. Hostnames, `dns_suffix`, the owner handle, and `ssh_user` forms may appear only under the `envs/<env>/` they were read from. The personal name may appear nowhere.
 
@@ -160,5 +164,5 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A drift test fails when the known-key set gains a key the example env does not set.
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, and an unknown host key.
 - A drift test fails when the known role set gains a role the example env does not declare.
-- `ansible-inventory --graph` on the example env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles.yml`.
+- `ansible-inventory --graph` on the example env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles`.
 - `ci/checks/core-names` rejects identity values on the scanned paths and fails when `OWNER_NAME` is unset.

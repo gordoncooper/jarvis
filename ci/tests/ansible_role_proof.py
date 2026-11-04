@@ -44,7 +44,7 @@ def inventory_path(repo_root: Path = REPO_ROOT) -> Path:
 
 
 def roles_inventory_path(repo_root: Path = REPO_ROOT) -> Path:
-    return repo_root / "infra" / "inventory" / "roles.yml"
+    return repo_root / "infra" / "inventory" / "roles"
 
 
 def env_inventory_args(repo_root: Path = REPO_ROOT) -> list[str]:

@@ -1,0 +1,17 @@
+# Core constructed inventory. The second -i is this directory
+# (infra/inventory/roles): this file plus groups.yml.
+# No env copies it. node_roles become groups of the same name.
+plugin: ansible.builtin.constructed
+strict: true
+keyed_groups:
+  - key: node_roles
+    prefix: ""
+    separator: ""
+    leading_separator: false
+groups:
+  data_disk: data_disk is defined
+compose:
+  jarvis_host_ssh_user: "ssh_user | default('')"
+  jarvis_host_kube_reserved: "k3s_kubelet_kube_reserved | default('')"
+  jarvis_host_system_reserved: "k3s_kubelet_system_reserved | default('')"
+  jarvis_host_eviction_hard: "k3s_kubelet_eviction_hard | default('')"
