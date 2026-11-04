@@ -513,6 +513,23 @@ def test_live_volume_uses_as_of(capsys) -> None:
     assert "as-of 2026-10-29T12:00:00Z" in capsys.readouterr().out
 
 
+def test_node_line_stays_silent_when_a_pvc_needs_the_node(capsys) -> None:
+    """An unbound selected PVC still needs the node, so the unused line stays absent."""
+    cluster = _Cluster([_pvc("demo", "one", volume="")], will_pause=True)
+    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
+    assert "no PVC needed it" not in capsys.readouterr().out
+
+
+def test_node_is_unused_when_every_selected_pvc_is_bound(capsys) -> None:
+    """--node is validated, then one line says no PVC needed it."""
+    cluster = _Cluster([_pvc("demo", "bound")], will_pause=True)
+    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
+    out = capsys.readouterr().out
+    assert "node node-a: no PVC needed it" in out
+    assert cluster.binders == []
+    assert ["get", "node", "node-a", "-o", "name"] in cluster.calls
+
+
 def test_restore_all_node_pins_every_unbound_pvc(capsys) -> None:
     """A restore-all run with one NODE pins every unbound PVC's bind pod to that node."""
     cluster = _Cluster(

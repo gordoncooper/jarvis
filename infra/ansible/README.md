@@ -60,7 +60,7 @@ Use `make site ENV=<env>` as for a normal run.
 
 ## Patching and reboots
 
-Every node installs updates from its distro's `-security` origin by itself (`unattended-upgrades` with `apt-daily-upgrade.timer` enabled). No other origin is allowed (Ubuntu Pro ESM included), nothing is auto-removed, and a node never reboots on its own.
+Every node installs updates from its distro's `-security` origin by itself (`unattended-upgrades` with `apt-daily-upgrade.timer` enabled). No other origin is allowed (Ubuntu Pro ESM included), nothing is auto-removed, and a node never reboots on its own. Old kernels stay in `/boot` because nothing removes them. The owner deletes the ones that node is not running.
 
 When an update needs a reboot, Ubuntu creates `/var/run/reboot-required`. Each `make site` run, `CHECK=1` included, prints `REBOOT PENDING on <host>` for every host that has the file. The warning does not fail the run, and it appears only when someone runs `make site`.
 

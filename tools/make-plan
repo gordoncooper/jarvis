@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Print one make target's recipe. make -n does not run it.
+
+Only documented variable names are forwarded. A value make would expand
+is refused, because dry-run still expands it.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+# Names the Makefile help and recipes document, plus TAGS, LIMIT, and CHECK.
+_NAMES = frozenset(
+    {
+        "ACCEPT_EMPTY",
+        "APP",
+        "AS_OF",
+        "CHECK",
+        "ENV",
+        "FILE",
+        "KEY",
+        "LIMIT",
+        "NAME",
+        "NODE",
+        "OWNER_NAME",
+        "RETIRE",
+        "ROTATE_RESTIC",
+        "TAGS",
+    }
+)
+_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_EXPAND = re.compile(r"[$`]")
+_USAGE = "usage: make-plan TARGET [NAME=value ...]"
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2 or not _TARGET.fullmatch(argv[1]):
+        print(_USAGE, file=sys.stderr)
+        return 2
+    for item in argv[2:]:
+        name, sep, value = item.partition("=")
+        if not sep or name not in _NAMES or _EXPAND.search(value) or "\n" in value:
+            print(_USAGE, file=sys.stderr)
+            return 2
+    return subprocess.run(["make", "-n", "--", *argv[1:]], cwd=ROOT).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

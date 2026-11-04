@@ -142,7 +142,7 @@ What it changes, for each selected PVC:
 
 `make restore` does not lift the rebuild hold. While the hold exists, a successful `make restore` leaves `backup: paused` in place.
 
-How to tell it worked: a `PASS restore <namespace>/<pvc>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0.
+How to tell it worked: a `PASS restore <namespace>/<pvc> snapshot <id>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0.
 
 ### Restore every enrolled PVC
 

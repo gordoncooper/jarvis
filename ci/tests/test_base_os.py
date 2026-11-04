@@ -57,7 +57,7 @@ def test_base_os_templates_encode_security_only_upgrade_policy() -> None:
     unattended = ansible_render_template(
         "50unattended-upgrades.j2", {}, templates_dir=ROLE_TEMPLATES
     )
-    assert 'Automatic-Reboot "false"' in unattended
+    assert unattended.count('Automatic-Reboot "false"') == 1
     origins = re.search(r"Allowed-Origins \{(.*?)\};\n", unattended, re.DOTALL)
     assert origins is not None
     assert re.findall(r'"([^"]+)";', origins.group(1)) == ["${distro_id}:${distro_codename}-security"]
@@ -89,6 +89,19 @@ def test_chrony_nts_off_renders_pools_without_nts() -> None:
     assert "pool time.example iburst maxsources 4\n" in chrony
     assert "pool lan.example iburst maxsources 4\n" in chrony
     assert "nts" not in chrony.replace("ntsdumpdir", "")
+
+
+def test_chrony_nts_string_false_renders_pools_without_nts() -> None:
+    """-e chrony_nts=false is the string false, and it must turn NTS off."""
+    chrony = ansible_render_template(
+        "chrony.conf.j2",
+        {"ntp_pools": ["time.example"], "chrony_nts": "false"},
+        templates_dir=ROLE_TEMPLATES,
+    )
+    assert "pool time.example iburst maxsources 4\n" in chrony
+    assert " nts" not in chrony
+    assert "with NTS" not in chrony
+    assert "4460/tcp" not in chrony
 
 
 def test_resolv_conf_link_does_not_touch_its_target(tmp_path: Path) -> None:
@@ -201,6 +214,13 @@ def test_edge_hosts_do_not_use_the_resolved_stub() -> None:
         isinstance(handler, dict)
         and handler.get("name") == "Restart systemd-resolved"
         and handler["ansible.builtin.systemd"]["name"] == "systemd-resolved"
+        for handler in handlers
+    )
+    assert any(
+        isinstance(handler, dict)
+        and handler.get("name") == "Restart systemd-journald"
+        and handler["ansible.builtin.systemd"]["name"] == "systemd-journald"
+        and handler["ansible.builtin.systemd"]["state"] == "restarted"
         for handler in handlers
     )
 
