@@ -25,9 +25,24 @@ spec:
           labels:
             app.kubernetes.io/name: restic-check
         spec:
-          # Flux postBuild on platform-configs fills these from cluster-vars.
-          nodeSelector:
-            "role.${dns_suffix}/backup": "true"
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: node-role.jarvis.io/backup
+                        operator: In
+                        values: ["true"]
+                  # Transitional: drop this term after role.${dns_suffix} labels are gone.
+                  - matchExpressions:
+                      - key: role.${dns_suffix}/backup
+                        operator: In
+                        values: ["true"]
+          tolerations:
+            - key: node-role.jarvis.io/dedicated
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
           restartPolicy: Never
           automountServiceAccountToken: false
           containers:

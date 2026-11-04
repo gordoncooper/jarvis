@@ -1,4 +1,7 @@
-{% set prefix = 'role.' ~ dns_suffix ~ '/' %}
+{% set prefix = 'node-role.jarvis.io/' %}
+{% set old_prefix = 'role.' ~ dns_suffix ~ '/' %}
+{% set dedicated = 'node-role.jarvis.io/dedicated' %}
+{% set dedicated_taint = {'key': dedicated, 'value': 'true', 'effect': 'NoSchedule'} %}
 {% set enablelb = 'svccontroller.k3s.cattle.io/enablelb' %}
 {% set edge_hosts = groups['edge'] %}
 {% set out = namespace(items=[]) %}
@@ -19,10 +22,27 @@
 {% endif %}
 {% endfor %}
 {% for key in current %}
-{% if (key.startswith(prefix) and key not in desired.labels) or (key == enablelb and name not in edge_hosts) %}
+{% if (key.startswith(prefix) and key not in desired.labels) or key.startswith(old_prefix) or (key == enablelb and name not in edge_hosts) %}
 {% set _ = patch.labels.update({key: none}) %}
 {% endif %}
 {% endfor %}
-{% set _ = out.items.append({'name': name, 'labels': patch.labels | combine({})}) %}
+{% set current_taints = node.spec.taints | default([], true) %}
+{% set others = namespace(items=[]) %}
+{% set owned = namespace(sigs=[]) %}
+{% for taint in current_taints %}
+{% if taint.key | default('') == dedicated %}
+{% set _ = owned.sigs.append((taint.value | default('')) ~ ':' ~ (taint.effect | default(''))) %}
+{% else %}
+{% set _ = others.items.append({'key': taint.key, 'value': taint.value | default(''), 'effect': taint.effect}) %}
+{% endif %}
+{% endfor %}
+{% set wants = 'workers' not in k3s_label_hosts[name] %}
+{% set decision = namespace(taints=none) %}
+{% if wants and owned.sigs != ['true:NoSchedule'] %}
+{% set decision.taints = others.items + [dedicated_taint] %}
+{% elif (not wants) and (owned.sigs | length > 0) %}
+{% set decision.taints = others.items %}
+{% endif %}
+{% set _ = out.items.append({'name': name, 'labels': patch.labels | combine({}), 'taints': decision.taints}) %}
 {% endfor %}
 {{ out.items | to_json }}

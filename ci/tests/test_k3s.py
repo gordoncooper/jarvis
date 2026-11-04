@@ -218,6 +218,13 @@ def _listed_play_hosts(section: str) -> set[str]:
     return set(listed)
 
 
+def test_agent_play_restarts_one_host_at_a_time() -> None:
+    """A k3s pin bump restarts one agent before the next."""
+    plays = yaml.safe_load((ANSIBLE_DIR / "site.yml").read_text(encoding="utf-8"))
+    agent = next(play for play in plays if play.get("name") == "Join k3s agents")
+    assert agent["serial"] == 1
+
+
 def test_agent_play_host_pattern(example_copy: ExampleCopy) -> None:
     """The agent play is every host except the control plane."""
     targets = [(REPO_ROOT, env) for env in (env_name(), *non_example_env_names())]
@@ -299,12 +306,13 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
         return loaded
 
     edged = {item["name"]: item["labels"] for item in render(["wk-1"], nodes)}
+    assert edged["cp-1"]["node-role.jarvis.io/control_plane"] == "true"
+    assert edged["cp-1"]["role.env-00.example/control_plane"] is None
     assert edged["cp-1"]["role.env-00.example/workers"] is None
     assert edged["cp-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
-    assert "role.env-00.example/control_plane" not in edged["cp-1"]
     assert "kubernetes.io/os" not in edged["cp-1"]
-    assert edged["wk-1"]["role.env-00.example/workers"] == "true"
-    assert edged["wk-1"]["role.env-00.example/edge"] == "true"
+    assert edged["wk-1"]["node-role.jarvis.io/workers"] == "true"
+    assert edged["wk-1"]["node-role.jarvis.io/edge"] == "true"
     assert edged["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] == "true"
     assert "kubernetes.io/hostname" not in edged["wk-1"]
 
@@ -325,6 +333,104 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
     no_edge = {item["name"]: item["labels"] for item in render([], bare)}
     assert "svccontroller.k3s.cattle.io/enablelb" not in no_edge["cp-1"]
     assert no_edge["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
+
+
+_DEDICATED_TAINT = {
+    "key": "node-role.jarvis.io/dedicated",
+    "value": "true",
+    "effect": "NoSchedule",
+}
+
+
+def _render_label_patches(
+    hosts: dict[str, list[str]],
+    nodes: list[dict[str, object]],
+    edge_hosts: list[str],
+) -> list[dict[str, object]]:
+    with tempfile.TemporaryDirectory() as tmp:
+        inventory = Path(tmp) / "hosts.yml"
+        inventory.write_text(_label_inventory(edge_hosts), encoding="utf-8")
+        rendered = ansible_render_template(
+            "label-patches.json.j2",
+            {
+                "dns_suffix": "env-00.example",
+                "k3s_label_hosts": hosts,
+                "k3s_node_resources": nodes,
+            },
+            templates_dir=K3S_ROLE_TEMPLATES,
+            inventory=inventory,
+        )
+    loaded = json.loads(rendered)
+    assert isinstance(loaded, list)
+    return loaded
+
+
+def test_dedicated_taint_and_old_prefix_converge() -> None:
+    """A node without workers gets one dedicated taint; the next render changes nothing."""
+    roles = {
+        "all-roles": ["control_plane", "workers", "storage", "backup", "gpu", "edge"],
+        "gpu-only": ["gpu"],
+        "backup-only": ["backup"],
+        "two-role": ["backup", "gpu"],
+    }
+    hold = {"key": "example.com/hold", "value": "true", "effect": "NoSchedule"}
+
+    def labels_for(name: str) -> dict[str, str]:
+        labels = {f"role.env-00.example/{role}": "true" for role in roles[name]}
+        labels["kubernetes.io/os"] = "linux"
+        return labels
+
+    nodes: list[dict[str, object]] = [
+        {
+            "metadata": {"name": "all-roles", "labels": labels_for("all-roles")},
+            "spec": {"taints": [_DEDICATED_TAINT]},
+        },
+        {
+            "metadata": {"name": "gpu-only", "labels": labels_for("gpu-only")},
+            "spec": {"taints": [hold]},
+        },
+        {
+            "metadata": {
+                "name": "backup-only",
+                "labels": {**labels_for("backup-only"), "role.env-00.example/stale": "true"},
+            }
+        },
+        {"metadata": {"name": "two-role", "labels": labels_for("two-role")}},
+    ]
+    first = {
+        item["name"]: item
+        for item in _render_label_patches(roles, nodes, ["all-roles"])
+    }
+    assert first["all-roles"]["taints"] == []
+    assert first["gpu-only"]["taints"] == [hold, _DEDICATED_TAINT]
+    assert first["backup-only"]["taints"] == [_DEDICATED_TAINT]
+    assert first["two-role"]["taints"] == [_DEDICATED_TAINT]
+    assert first["backup-only"]["labels"]["role.env-00.example/stale"] is None
+    assert first["all-roles"]["labels"]["svccontroller.k3s.cattle.io/enablelb"] == "true"
+    for name, assigned in roles.items():
+        labels = first[name]["labels"]
+        for role in assigned:
+            assert labels[f"node-role.jarvis.io/{role}"] == "true"
+            assert labels[f"role.env-00.example/{role}"] is None
+        assert "kubernetes.io/os" not in labels
+
+    updated = []
+    for node in nodes:
+        patch = first[node["metadata"]["name"]]
+        labels = dict(node["metadata"]["labels"])
+        for key, value in patch["labels"].items():
+            if value is None:
+                labels.pop(key)
+            else:
+                labels[key] = value
+        node = {**node, "metadata": {**node["metadata"], "labels": labels}}
+        if patch["taints"] is not None:
+            spec = dict(node.get("spec") or {})
+            spec["taints"] = patch["taints"]
+            node = {**node, "spec": spec}
+        updated.append(node)
+    again = _render_label_patches(roles, updated, ["all-roles"])
+    assert all(item["labels"] == {} and item["taints"] is None for item in again)
 
 
 def _run_guard(tmp_path: Path, *, marker_text: str | None) -> subprocess.CompletedProcess[str]:

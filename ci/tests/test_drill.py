@@ -23,6 +23,27 @@ OTHER = "b" * 64
 
 drill_tool = load_tool("drill_tool", REPO_ROOT / "tools" / "drill")
 
+_DEDICATED_TOLERATION = {
+    "key": "node-role.jarvis.io/dedicated",
+    "operator": "Equal",
+    "value": "true",
+    "effect": "NoSchedule",
+}
+
+
+def _role_affinity(role: str) -> dict:
+    expr = {"key": f"node-role.jarvis.io/{role}", "operator": "In", "values": ["true"]}
+    terms = {"nodeSelectorTerms": [{"matchExpressions": [expr]}]}
+    return {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": terms}}
+
+
+def _placement(role: str) -> dict:
+    return {
+        "nodeSelector": {f"role.test/{role}": "true"},
+        "affinity": _role_affinity(role),
+        "tolerations": [_DEDICATED_TOLERATION],
+    }
+
 
 def _completed(
     args: Sequence[str], value: object = "", *, returncode: int = 0, stderr: str = ""
@@ -113,7 +134,7 @@ class Cluster:
                             "spec": {
                                 "template": {
                                     "spec": {
-                                        "nodeSelector": {"role.test/control_plane": "true"},
+                                        **_placement("control_plane"),
                                         "containers": [
                                             {
                                                 "image": self.etcd_image,
@@ -153,7 +174,7 @@ class Cluster:
                     "spec": {
                         "template": {
                             "spec": {
-                                "nodeSelector": {"role.test/backup": "true"},
+                                **_placement("backup"),
                                 "containers": [
                                     {
                                         "volumeMounts": [
@@ -351,6 +372,9 @@ def _assert_cleanup(cluster: Cluster) -> None:
         and body["metadata"]["name"] == drill_tool.CLEANUP_POD
     )
     assert cleanup["metadata"]["namespace"] == drill_tool.BACKUP_NAMESPACE
+    assert cleanup["spec"]["affinity"] == _role_affinity("backup")
+    assert cleanup["spec"]["tolerations"] == [_DEDICATED_TOLERATION]
+    assert cleanup["spec"]["nodeSelector"] == {"role.test/backup": "true"}
     assert cleanup["spec"]["volumes"][0]["hostPath"]["path"] == "/fixture/restic"
     assert "ns-platform-drill/pvc-drill" in cleanup["spec"]["containers"][0]["command"][2]
 
@@ -373,6 +397,16 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
         and body["metadata"]["name"] == drill_tool.ETCD_POD
     )
     assert etcd_pod["metadata"]["namespace"] == drill_tool.BACKUP_NAMESPACE
+    assert etcd_pod["spec"]["affinity"] == _role_affinity("control_plane")
+    assert etcd_pod["spec"]["tolerations"] == [_DEDICATED_TOLERATION]
+    assert etcd_pod["spec"]["nodeSelector"] == {"role.test/control_plane": "true"}
+    probe = next(
+        body
+        for body in cluster.applied
+        if body.get("kind") == "Pod" and body["metadata"]["name"] == drill_tool.PROBE_POD
+    )
+    assert probe["spec"]["tolerations"] == [_DEDICATED_TOLERATION]
+    assert probe["spec"]["affinity"] == _role_affinity("backup")
     assert not any(call[:2] == ["get", "secret"] for call in cluster.calls)
     _assert_cleanup(cluster)
     output = capsys.readouterr().out
@@ -472,6 +506,29 @@ def test_wrong_cluster_marker_refuses_before_drill_reads(
         ["get", "configmap", "cluster-vars", "-n", "flux-system", "-o", "json"]
     ]
     assert "environment marker is not ENV=env-test" in capsys.readouterr().out
+
+
+def test_drill_refuses_a_workload_with_no_placement() -> None:
+    """A backup pod with neither nodeSelector nor affinity is not a template drill can copy."""
+
+    def kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+        assert input is None
+        if args[:3] == ["get", "cronjob", "etcd-snapshots"]:
+            body: dict = {"spec": {"jobTemplate": {"spec": {"template": {"spec": {
+                "containers": [{"image": "x", "env": []}],
+                "volumes": [{"hostPath": {"path": "/fixture/etcd-snapshots"}}],
+            }}}}}}
+        elif args[:3] == ["get", "deployment", "restic"]:
+            body = {"spec": {"template": {"spec": {
+                "containers": [{"volumeMounts": [{"name": "data", "mountPath": "/data"}]}],
+                "volumes": [{"name": "data", "hostPath": {"path": "/fixture/restic"}}],
+            }}}}
+        else:
+            raise AssertionError(args)
+        return _completed(args, body)
+
+    with pytest.raises(drill_tool.DrillError, match="unsupported pod template"):
+        drill_tool._templates(kubectl)
 
 
 def test_namespaced_secret_error_fails_fast() -> None:

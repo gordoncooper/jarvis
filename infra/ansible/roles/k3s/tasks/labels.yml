@@ -44,3 +44,20 @@
   when: item.labels | length > 0
   loop_control:
     label: "{{ item.name }}"
+
+- name: Reconcile the dedicated-node taint
+  kubernetes.core.k8s:
+    state: patched
+    merge_type:
+      - merge
+    api_version: v1
+    kind: Node
+    name: "{{ item.name }}"
+    kubeconfig: "{{ k3s_kubeconfig_path }}"
+    definition:
+      spec:
+        taints: "{{ item.taints }}"
+  loop: "{{ k3s_label_patches }}"
+  when: item.taints is not none
+  loop_control:
+    label: "{{ item.name }}"
