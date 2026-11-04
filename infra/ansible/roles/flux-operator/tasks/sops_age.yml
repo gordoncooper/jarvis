@@ -53,6 +53,31 @@
   ansible.builtin.include_tasks: sops_age_key_mode.yml
   when: sops_age_key_stat.stat.exists | default(false)
 
+# Outside the no_log block: a missing age-keygen must name itself.
+- name: Check whether age-keygen is on PATH
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -c
+      - command -v age-keygen
+  register: flux_age_keygen_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: sops_age_key_stat.stat.exists | default(false)
+
+- name: Require age-keygen on the controller
+  ansible.builtin.assert:
+    that:
+      - flux_age_keygen_check.rc | default(1) == 0
+    fail_msg: >-
+      age-keygen is not on PATH. Install age-keygen before flux-operator.
+      A missing binary would otherwise fail inside a no_log task.
+  when: sops_age_key_stat.stat.exists | default(false)
+
 - name: Use the age private key when the file exists
   when: sops_age_key_stat.stat.exists | default(false)
   no_log: true

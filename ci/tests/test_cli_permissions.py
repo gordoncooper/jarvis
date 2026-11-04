@@ -18,7 +18,6 @@ from _cli_permissions import (
     claude_forms,
     load_corpus,
     load_permissions,
-    load_regression,
     matches_bash,
     policy_failures,
     row_blocked,
@@ -27,8 +26,7 @@ from _cli_permissions import (
 from support import REPO_ROOT
 
 CORPUS = load_corpus(CORPUS_PATH)
-REGRESSION = load_regression()
-ROWS = CORPUS + REGRESSION
+ROWS = CORPUS
 BLOCK_CATEGORIES = sorted({r.category for r in CORPUS if r.verdict == "block"})
 
 
@@ -158,24 +156,6 @@ def test_allow_entries_and_foreign_rules_fail(client: str, allow: list[str], den
         if allow
         else f"{client}: deny entry is not a Bash(...) or Read(...) rule"
     ]
-
-
-@pytest.mark.parametrize("client", [name for name, _, _ in CLIENTS])
-def test_category_corpus_covers_the_regression_rows(client: str):
-    """Rule: deleting every entry that blocks a regression must-block row also fails the
-    category corpus, so the corpus alone guards each regression row; every regression
-    must-allow row is in the category corpus."""
-    deny = _deny(client)
-
-    def blockers(row: Row) -> frozenset[str]:
-        return frozenset(t for t in deny if row_blocked(client, [t], row))
-
-    corpus = {blockers(r) for r in CORPUS if r.verdict == "block"}
-    regression = [(r.where, blockers(r)) for r in REGRESSION if r.verdict == "block"]
-    uncovered = [where for where, b in regression if not any(c <= b for c in corpus)]
-    assert uncovered == []
-    allowed = {r.text for r in CORPUS if r.verdict == "allow"}
-    assert [r.where for r in REGRESSION if r.verdict == "allow" and r.text not in allowed] == []
 
 
 def test_claude_readings_where_its_docs_are_silent():

@@ -46,9 +46,10 @@ FLUX_SCHEMA = (
     f"{_FLUX_SCHEMA_REF}/"
     "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
-# Local schemas, searched before the CRD catalog. helm.cattle.io is not in
-# the catalog.
-HELM_CATTLE_SCHEMA = (
+# Local schemas searched before the catalogs. This directory holds the
+# CustomResourceDefinition schema. HelmChartConfig is not here, so the pinned
+# catalog validates that kind.
+FIXTURE_SCHEMA = (
     str(REPO_ROOT / "ci/tests/fixtures/schemas")
     + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 )
@@ -117,7 +118,7 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
             "-schema-location",
             "default",
             "-schema-location",
-            HELM_CATTLE_SCHEMA,
+            FIXTURE_SCHEMA,
             "-schema-location",
             _volsync_schema_location(),
             "-schema-location",
@@ -631,6 +632,48 @@ def _record_object_identities(
         owner = seen.get(ident)
         assert owner is None, f"{ident} rendered by both {owner} and {layer}"
         seen[ident] = layer
+
+
+def test_helmchartconfig_schema_accepts_upstream_fields_only() -> None:
+    """The pinned catalog accepts upstream spec fields. A misspelled spec key fails."""
+    kubeconform = _require_tool("kubeconform")
+    version = kubernetes_version_from_k3s(load_cluster_vars()["k3s_version"])
+    good = """\
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+  labels:
+    app: traefik
+  annotations:
+    example: "1"
+spec:
+  valuesContent: "a: b\\n"
+  failurePolicy: abort
+"""
+
+    def run(text: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                kubeconform,
+                "-strict",
+                "-kubernetes-version",
+                version,
+                "-schema-location",
+                FLUX_SCHEMA,
+                "-",
+            ],
+            input=text,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    passed = run(good)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    failed = run(good.replace("failurePolicy", "failurePollicy"))
+    assert failed.returncode != 0, failed.stdout + failed.stderr
 
 
 def test_kubernetes_version_matches_k3s_pin() -> None:
