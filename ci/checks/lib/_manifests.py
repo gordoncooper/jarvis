@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from schema.env import EXAMPLE_ENV
+from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV
 
 SCAN_ROOTS = ("apps/", "platform/", "services/", "envs/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
@@ -57,8 +57,22 @@ def load_documents(
     return found
 
 
+def source_rel(root: Path, rel: str) -> str:
+    """A Flux path in the root artifact, as a path under root.
+
+    The root source includes core at core/. An instance checkout holds the product
+    there; in the product checkout, core is the checkout itself.
+    """
+    rel = rel.strip().removeprefix("./")
+    prefix = f"{CORE_SOURCE_DIR}/"
+    if rel.startswith(prefix) and not (root / CORE_SOURCE_DIR).is_dir():
+        return rel.removeprefix(prefix)
+    return rel
+
+
 def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
     """The documents `kustomize build` renders for rel, or an error."""
+    rel = source_rel(root, rel)
     kustomize = shutil.which("kustomize")
     if kustomize is None:
         return [], "kustomize not found on PATH (run make deps)"

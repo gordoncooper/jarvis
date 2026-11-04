@@ -4,6 +4,10 @@ SHELL := /bin/bash
 VENV ?= $(CURDIR)/.venv
 ANSIBLE_PLAYBOOK ?= $(VENV)/bin/ansible-playbook
 NEED_VENV = test -x "$(VENV)/bin/python" || { echo "no venv at $(VENV): run 'make deps', or set VENV=<path>" >&2; exit 1; }
+# INSTANCE=<path> points every env command at <path>/envs/<env> and <path>/.sops.yaml.
+# Unset, the env lives in this checkout. The Python tools resolve it in tools/lib/_env.py.
+export INSTANCE
+INSTANCE_ROOT = $(abspath $(or $(INSTANCE),$(CURDIR)))
 
 .PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check site
 help:
@@ -20,6 +24,7 @@ help:
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
 	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
+	@echo "  INSTANCE=<path>         Instance checkout that holds envs/<env> and its .sops.yaml (default: this checkout)"
 	@echo
 	@echo "Developer commands"
 	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
@@ -96,9 +101,10 @@ site:
 		"from schema.env import main; raise SystemExit(main())" \
 		--env "$(ENV)"
 	@cd infra/ansible && $(ANSIBLE_PLAYBOOK) site.yml \
-		-i ../../envs/$(ENV)/inventory/hosts.yml \
+		-i $(INSTANCE_ROOT)/envs/$(ENV)/inventory/hosts.yml \
 		-i ../inventory/roles \
-		-e jarvis_cluster_vars=../../envs/$(ENV)/values/cluster-vars.yaml \
+		-e jarvis_instance_root=$(INSTANCE_ROOT) \
+		-e jarvis_cluster_vars=$(INSTANCE_ROOT)/envs/$(ENV)/values/cluster-vars.yaml \
 		$(if $(TAGS),--tags "$(TAGS)") \
 		$(if $(LIMIT),--limit "$(LIMIT)") \
 		$(if $(filter 1,$(CHECK)),--check --diff)

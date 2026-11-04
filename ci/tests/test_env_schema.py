@@ -331,61 +331,29 @@ def test_dns_suffix_must_be_a_lowercase_dns_name(tmp_path: Path) -> None:
     assert "dns_suffix must be a lowercase DNS name" in "\n".join(excinfo.value.messages)
 
 
-def test_flux_instance_example_sync_fails_when_cluster_vars_differ(tmp_path: Path) -> None:
-    """FluxInstance url and ref must match cluster-vars, not leftover example values."""
+def test_env_00_source_pair_matches_cluster_vars_and_drift_fails(tmp_path: Path) -> None:
+    """sync.yaml's root and core GitRepositories take url and ref from cluster-vars."""
+    shutil.copytree(REPO_ROOT / "envs" / EXAMPLE_ENV, tmp_path / "envs" / EXAMPLE_ENV)
+    env_schema.validate_one_env(tmp_path, EXAMPLE_ENV)
+    sync = tmp_path / "envs" / EXAMPLE_ENV / "flux" / "sync.yaml"
+    sync.write_text(sync.read_text(encoding="utf-8").replace("example-core", "other-core"), encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        env_schema.validate_one_env(tmp_path, EXAMPLE_ENV)
+    assert "core_git_repo_url" in str(excinfo.value)
+
+
+def test_ssh_root_requires_the_sealed_deploy_key(tmp_path: Path) -> None:
+    """An ssh:// root reads with the deploy key, so its sealed file is required."""
     cv = _valid_cluster_vars()
-    cv["flux_git_repo_url"] = "https://github.com/other-owner/other-cluster"
-    cv["apps_git_repo_url"] = "https://github.com/other-owner/other-apps"
-    cv["flux_git_ref"] = "refs/heads/main"
+    cv["flux_git_repo_url"] = "ssh://git@github.com/example-owner/example-cluster"
     env = _write_env(tmp_path, cluster_vars=cv)
-    flux = env / "flux"
-    flux.mkdir()
-    (flux / "flux-instance.yaml").write_text(
-        textwrap.dedent(
-            """
-            spec:
-              sync:
-                url: "https://github.com/example-owner/example-cluster"
-                ref: "refs/heads/example"
-                path: "envs/env-test/flux"
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "flux-instance.yaml" in msg
-    assert "flux_git_repo_url" in msg
-    assert "flux_git_ref" in msg
-
-
-def test_flux_instance_path_must_match_this_env(tmp_path: Path) -> None:
-    """FluxInstance spec.sync.path must be envs/<env>/flux."""
-    env = _write_env(tmp_path)
-    cv = yaml.safe_load((env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    flux = env / "flux"
-    flux.mkdir()
-    (flux / "flux-instance.yaml").write_text(
-        textwrap.dedent(
-            f"""
-            spec:
-              sync:
-                url: "{cv["flux_git_repo_url"]}"
-                ref: "{cv["flux_git_ref"]}"
-                path: "envs/env-other/flux"
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "flux-instance.yaml" in msg
-    assert "spec.sync.path" in msg
-    assert "envs/env-test/flux" in msg
+    assert "missing required file envs/env-test/secrets/flux-deploy-key.sops.yaml" in str(excinfo.value)
+    (env / "secrets").mkdir()
+    (env / "secrets" / "flux-deploy-key.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    (env / "secrets" / "k3s-token.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    validate_env_tree(tmp_path)
 
 
 def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -> None:
@@ -823,7 +791,7 @@ def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Pa
     configs = env / "flux" / "platform-configs"
     configs.mkdir(parents=True)
     (configs / "kustomization.yaml").write_text(
-        "resources:\n  - ../../../../platform/backups/offsite\n", encoding="utf-8"
+        "resources:\n  - ../../../../core/platform/backups/offsite\n", encoding="utf-8"
     )
     validate_env_tree(tmp_path)
     (env / "secrets").mkdir(exist_ok=True)
@@ -880,7 +848,7 @@ def _run_site(tmp_path, *extra: str):
     (venv / "bin" / "python").chmod(0o755)
     env = os.environ.copy()
     env["CALL_LOG"] = str(log)
-    for key in ("ENV", "TAGS", "LIMIT", "CHECK", "VENV"):
+    for key in ("ENV", "TAGS", "LIMIT", "CHECK", "VENV", "INSTANCE"):
         env.pop(key, None)
     proc = subprocess.run(
         ["make", "site", f"ANSIBLE_PLAYBOOK={stub}", f"VENV={venv}", *extra],
@@ -922,9 +890,10 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     args = recorded.splitlines()
     assert args[1] == "site.yml"
     dash_i = [i for i, a in enumerate(args) if a == "-i"]
-    assert args[dash_i[0] + 1] == "../../envs/env-00/inventory/hosts.yml"
+    assert args[dash_i[0] + 1] == f"{REPO_ROOT}/envs/env-00/inventory/hosts.yml"
     assert args[dash_i[1] + 1] == "../inventory/roles"
-    assert "jarvis_cluster_vars=../../envs/env-00/values/cluster-vars.yaml" in args
+    assert f"jarvis_cluster_vars={REPO_ROOT}/envs/env-00/values/cluster-vars.yaml" in args
+    assert f"jarvis_instance_root={REPO_ROOT}" in args
     assert "--tags" not in args and "--limit" not in args and "--check" not in args
     assert "--diff" not in args
     flagged, recorded = _run_site(

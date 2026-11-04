@@ -189,7 +189,7 @@ def bootstrap_example_copy(
     6. Run bootstrap-secrets' bootstrap() against the tmp repo, then seal a placeholder backups-offsite.
     7. Render the cluster-vars ConfigMap over the copied file.
     """
-    from schema.env import EXAMPLE_ENV
+    from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV
 
     root = (tmp_path / "repo").resolve()
     repo = REPO_ROOT.resolve()
@@ -198,6 +198,8 @@ def bootstrap_example_copy(
     root.mkdir()
     for dirname in ("platform", "services", "apps"):
         (root / dirname).symlink_to(repo / dirname)
+    # The root source includes core here, as an instance checkout does.
+    (root / CORE_SOURCE_DIR).symlink_to(repo)
     dest = root / "envs" / name
     shutil.copytree(repo / "envs" / EXAMPLE_ENV, dest)
     _rename_copied_env(dest, EXAMPLE_ENV, name)

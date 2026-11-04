@@ -726,8 +726,8 @@ def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
                 echo "deployment.apps/flux-operator"
                 exit 0
                 ;;
-              *"get fluxinstance flux"*)
-                echo "fluxinstance.fluxcd.controlplane.io/flux"
+              *"get gitrepositories.source.toolkit.fluxcd.io flux-system"*)
+                echo "gitrepository.source.toolkit.fluxcd.io/flux-system"
                 exit 0
                 ;;
               *"get secret sops-age"*)
@@ -1293,7 +1293,7 @@ def test_sops_age_refuses_wrong_owner_from_stat(tmp_path: Path) -> None:
     _assert_key_was_not_read(proc, sentinel)
 
 
-def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Path) -> None:
+def test_rerun_with_root_source_present_does_not_set_rebuild_hold(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     binary = tmp_path / "k3s"
@@ -1305,8 +1305,8 @@ def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Pat
             set -euo pipefail
             printf '%s\\n' "$*" >> {log}
             joined="$*"
-            if [[ "$joined" == *"get fluxinstance"* ]]; then
-              echo "fluxinstance.fluxcd.controlplane.io/flux"
+            if [[ "$joined" == *"get gitrepositories"* ]]; then
+              echo "gitrepository.source.toolkit.fluxcd.io/flux-system"
               exit 0
             fi
             echo "unexpected k3s invocation: $*" >&2
@@ -1317,7 +1317,7 @@ def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Pat
     play = textwrap.dedent(
         """\
         ---
-        - name: FluxInstance already present
+        - name: Root GitRepository already present
           hosts: localhost
           gather_facts: false
           become: false
@@ -1335,7 +1335,7 @@ def test_rerun_with_fluxinstance_present_does_not_set_rebuild_hold(tmp_path: Pat
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
     invocations = log.read_text(encoding="utf-8")
-    assert invocations.count("get fluxinstance") == 2
+    assert invocations.count("get gitrepositories") == 2
     assert "apply" not in invocations
     assert "backup-rebuild-hold" not in invocations
     assert "configmap" not in invocations.lower()
@@ -1369,11 +1369,16 @@ def _become_exe(tmp_path: Path) -> Path:
     return path
 
 
-def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path: Path) -> None:
+def test_fresh_cluster_sets_the_hold_then_applies_the_flux_instance_and_root_source(
+    tmp_path: Path,
+) -> None:
+    """On a new cluster: the hold, then the FluxInstance, then sync.yaml with the root source."""
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     stdin_path = tmp_path / "apply.stdin"
     flux_stdin_path = tmp_path / "flux-apply.stdin"
+    sync_stdin_path = tmp_path / "sync-apply.stdin"
+    sync_file = REPO_ROOT / "envs" / env_name() / "flux" / "sync.yaml"
     env_file = example_flux_entry(tmp_path).instance_file
     binary = tmp_path / "k3s"
     restic = tmp_path / "backup" / "restic"
@@ -1389,9 +1394,12 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path
             set -euo pipefail
             printf '%s\\n' "$*" >> {log}
             joined="$*"
-            if [[ "$joined" == *"get fluxinstance"* ]]; then
-              echo 'Error from server (NotFound): fluxinstances.fluxcd.controlplane.io "flux" not found' >&2
+            if [[ "$joined" == *"get gitrepositories"* ]]; then
+              echo 'Error from server (NotFound): gitrepositories.source.toolkit.fluxcd.io "flux-system" not found' >&2
               exit 1
+            fi
+            if [[ "$joined" == *" wait "* ]]; then
+              exit 0
             fi
             if [[ "$joined" == *"kubectl apply -f -"* ]]; then
               body="$(cat)"
@@ -1399,6 +1407,9 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path
                 printf '%s\\n' "$body" > {flux_stdin_path}
                 echo "applied fluxinstance" >> {log}
                 echo "fluxinstance.fluxcd.controlplane.io/flux created"
+              elif [[ "$body" == *"kind: GitRepository"* ]]; then
+                printf '%s\\n' "$body" > {sync_stdin_path}
+                echo "applied sync" >> {log}
               else
                 printf '%s\\n' "$body" > {stdin_path}
                 echo "applied hold" >> {log}
@@ -1433,6 +1444,8 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path
         f"ansible_become_exe={_become_exe(tmp_path)}",
         "-e",
         f"flux_instance_file={env_file}",
+        "-e",
+        f"flux_sync_file={sync_file}",
     ]
     proc = _run_localhost_role(
         play,
@@ -1450,12 +1463,17 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_env_flux_instance(tmp_path
     assert "ns-decoy" not in rendered
     assert proc.returncode == 0, output
     invocations = log.read_text(encoding="utf-8").splitlines()
-    assert invocations.index("applied hold") < invocations.index("applied fluxinstance")
+    assert (
+        invocations.index("applied hold")
+        < invocations.index("applied fluxinstance")
+        < invocations.index("applied sync")
+    )
     applied = flux_stdin_path.read_text(encoding="utf-8")
     assert applied.strip() == env_file.read_text(encoding="utf-8").strip()
+    assert sync_stdin_path.read_text(encoding="utf-8").strip() == sync_file.read_text(encoding="utf-8").strip()
 
 
-def test_fluxinstance_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None:
+def test_root_source_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     log = tmp_path / "k3s.log"
     binary = tmp_path / "k3s"
@@ -1494,11 +1512,90 @@ def test_fluxinstance_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None
     )
     assert proc.returncode != 0
     output = proc.stdout + proc.stderr
-    assert "Check whether FluxInstance exists" in output
+    assert "Check whether the root GitRepository exists" in output
     assert "Stat restic data on the backup host" not in output
     invocations = log.read_text(encoding="utf-8")
     assert "backup-rebuild-hold" not in invocations
     assert "apply" not in invocations
+
+
+_DEPLOY_KEY_PLAY = textwrap.dedent(
+    """\
+    ---
+    - name: Deploy key
+      hosts: localhost
+      gather_facts: false
+      become: false
+      tasks:
+        - ansible.builtin.import_role:
+            name: flux-operator
+            tasks_from: sops_age_key_file.yml
+        - ansible.builtin.import_role:
+            name: flux-operator
+            tasks_from: deploy_key.yml
+    """
+)
+
+
+def test_fresh_cluster_creates_the_deploy_key_secret_once(tmp_path: Path) -> None:
+    """An ssh:// root's sealed deploy key becomes flux-system/flux-deploy-key once, with GitHub's host key."""
+    require_cli("ansible-playbook")
+    require_cli("sops")
+    from _sops import encrypt_secret_to_file
+
+    identity, public = _age_identity(tmp_path, "env")
+    keyfile = _key_file(tmp_path, (identity, public))
+    instance = tmp_path / "instance"
+    (instance / "envs" / _SOPS_ENV).mkdir(parents=True)
+    _sops_config(tmp_path, _SOPS_ENV, public).rename(instance / ".sops.yaml")
+    private = "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----"
+    encrypt_secret_to_file(
+        repo_root=instance, env=_SOPS_ENV, name="flux-deploy-key", sops_bin="sops",
+        document={"apiVersion": "v1", "kind": "Secret",
+                  "metadata": {"name": "flux-deploy-key", "namespace": "flux-system"},
+                  "stringData": {"identity": private}},
+    )
+    sealed = instance / "envs" / _SOPS_ENV / "secrets" / "flux-deploy-key.sops.yaml"
+    log, created, present = tmp_path / "k3s.log", tmp_path / "created.yaml", tmp_path / "present"
+    binary = tmp_path / "k3s"
+    _write_executable(
+        binary,
+        "#!/bin/bash\n"
+        f"printf '%s\\n' \"$*\" >> {log}\n"
+        'joined="$*"\n'
+        'if [[ "$joined" == *"get secret flux-deploy-key -o name"* ]]; then\n'
+        f"  if [[ -e {present} ]]; then echo secret/flux-deploy-key; exit 0; fi\n"
+        "  echo 'Error from server (NotFound): secrets \"flux-deploy-key\" not found' >&2; exit 1\n"
+        "fi\n"
+        f'if [[ "$joined" == *"kubectl create -f -"* ]]; then cat > {created}; touch {present}; exit 0; fi\n'
+        'echo "unexpected k3s invocation: $*" >&2\nexit 1\n',
+    )
+    env = _ansible_env()
+    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+    extra = ["-e", f"k3s_binary_path={binary}", "-e", f"flux_deploy_key_file={sealed}"]
+    for _ in range(2):
+        proc = _run_localhost_role(_DEPLOY_KEY_PLAY, tmp_path, extra, env=env)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert private not in proc.stdout + proc.stderr
+    assert log.read_text(encoding="utf-8").count("kubectl create -f -") == 1
+    secret = yaml.safe_load(created.read_text(encoding="utf-8"))
+    assert (secret["metadata"]["namespace"], secret["metadata"]["name"]) == ("flux-system", "flux-deploy-key")
+    assert secret["metadata"]["annotations"] == {"kustomize.toolkit.fluxcd.io/reconcile": "disabled"}
+    assert secret["stringData"] == {
+        "identity": private,
+        "known_hosts": load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"],
+    }
+
+
+def test_known_hosts_is_a_github_published_host_key() -> None:
+    """flux_known_hosts pins a key GitHub publishes (api.github.com/meta), so Flux trusts github.com only."""
+    import urllib.request
+
+    with urllib.request.urlopen("https://api.github.com/meta", timeout=30) as response:
+        published = json.load(response)["ssh_keys"]
+    host, key = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"].split(" ", 1)
+    assert host == "github.com"
+    assert key in published
 
 
 def _pinned_helm_version() -> str:

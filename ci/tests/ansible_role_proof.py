@@ -74,12 +74,15 @@ def load_cluster_vars(
 
 
 def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
-    """The four Flux Kustomizations every env entry applies, in dependsOn order."""
+    """The four Flux Kustomizations every env entry applies, in dependsOn order.
+
+    Core paths are under core/, where the root source includes the core source.
+    """
     return {
-        "platform-controllers": "./platform",
+        "platform-controllers": "./core/platform",
         "platform-configs": f"./envs/{env}/flux/platform-configs",
-        "services": "./services",
-        "apps": "./apps",
+        "services": "./core/services",
+        "apps": "./core/apps",
     }
 
 
@@ -120,11 +123,10 @@ class ExampleFluxEntry(NamedTuple):
 def example_flux_entry(tmp_path: Path) -> ExampleFluxEntry:
     """An in-memory FluxInstance and four Kustomizations for drift tests.
 
-    Built from the example env's cluster-vars and the health-check contract.
-    The committed env-00 flux tree is what a copy starts from.
+    Built from the health-check contract. The FluxInstance has no sync; the env's
+    sync.yaml declares the sources. The committed env-00 flux tree is what a copy starts from.
     """
     env = env_name()
-    cluster = load_cluster_vars()
     role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
     instance = {
         "apiVersion": "fluxcd.controlplane.io/v1",
@@ -134,12 +136,6 @@ def example_flux_entry(tmp_path: Path) -> ExampleFluxEntry:
             "namespace": role["flux_system_namespace"],
         },
         "spec": {
-            "sync": {
-                "kind": "GitRepository",
-                "url": cluster["flux_git_repo_url"],
-                "ref": cluster["flux_git_ref"],
-                "path": f"envs/{env}/flux",
-            },
             "kustomize": {
                 "patches": [
                     {

@@ -10,12 +10,16 @@
       - flux_operator_chart_version | length > 0
       - flux_git_repo_url is defined
       - flux_git_repo_url | length > 0
-      - flux_git_repo_url is match('^https://')
+      - >-
+        flux_git_repo_url is match('^https://')
+        or (flux_git_repo_url is match('^ssh://') and flux_deploy_key_file is file)
       - flux_git_ref is defined
       - flux_git_ref | length > 0
     fail_msg: >-
       flux-operator role requires jarvis_env, flux_git_repo_url, and flux_git_ref
       in cluster-vars, and the chart pin in platform/flux-operator/oci-repository.yaml.
+      flux_git_repo_url is https://, or ssh:// with the sealed deploy key
+      secrets/flux-deploy-key.sops.yaml in the env.
 
 - name: Check the age key and flux-system sops-age before any change
   ansible.builtin.import_tasks: sops_age.yml
@@ -26,5 +30,9 @@
 - name: Bootstrap flux-system sops-age secret once
   ansible.builtin.import_tasks: sops_age_secret.yml
 
-- name: Apply FluxInstance once
+- name: Bootstrap the flux-system deploy-key secret once
+  when: flux_git_repo_url is match('^ssh://')
+  ansible.builtin.import_tasks: deploy_key.yml
+
+- name: Apply FluxInstance, the Flux sources, and the root Kustomization once
   ansible.builtin.import_tasks: instance.yml

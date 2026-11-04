@@ -26,5 +26,5 @@ def test_checks_job_fetches_full_history() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert _shallow_checkouts(workflow) == []
     shallow = copy.deepcopy(workflow)
-    del shallow["jobs"]["fast"]["steps"][0]["with"]["fetch-depth"]
-    assert _shallow_checkouts(shallow) == ["fast"]
+    del shallow["jobs"]["ci"]["steps"][0]["with"]["fetch-depth"]
+    assert _shallow_checkouts(shallow) == ["ci"]

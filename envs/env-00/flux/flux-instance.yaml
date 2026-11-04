@@ -20,11 +20,7 @@ spec:
     multitenant: true
     networkPolicy: true
     domain: cluster.local
-  sync:
-    kind: GitRepository
-    url: "https://github.com/example-owner/example-cluster"
-    ref: "refs/heads/example"
-    path: "envs/env-00/flux"
+  # No sync: sync.yaml declares the sources and the root Kustomization.
   kustomize:
     patches:
       - patch: |

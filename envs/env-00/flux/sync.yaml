@@ -1,0 +1,53 @@
+# Ansible (flux-operator role) applies this file once on a new cluster; the
+# flux-system Kustomization below then reconciles it from Git with the rest of
+# this directory. The root source is the env repo. It includes the core source
+# at core/, so every Flux path here reads env files and core files from one
+# artifact, with one decryptor.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 1m
+  # flux_git_repo_url and flux_git_ref in values/cluster-vars.yaml.
+  url: https://github.com/example-owner/example-cluster
+  ref:
+    name: refs/heads/example
+  # An ssh:// URL reads with the sealed read-only deploy key
+  # (secrets/flux-deploy-key.sops.yaml), which Ansible applies once:
+  # secretRef:
+  #   name: flux-deploy-key
+  include:
+    - repository:
+        name: core
+      toPath: core
+---
+# Public core, read with no credential.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: core
+  namespace: flux-system
+spec:
+  interval: 1m
+  # core_git_repo_url and core_git_ref in values/cluster-vars.yaml.
+  url: https://github.com/example-owner/example-core
+  ref:
+    name: refs/heads/example
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./envs/env-00/flux
+  prune: true
+  # The controller's own identity, as the operator's sync used. This path
+  # declares the accounts every other Flux object runs as.
+  serviceAccountName: kustomize-controller
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 from lib._env import (
     EnvError,
+    instance_root,
     kubectl as run_kubectl,
     not_found,
     reason,
@@ -912,7 +913,7 @@ def _names(values: Sequence[str] | None) -> set[str]:
 
 def _validate_environment(kubectl: Kubectl, env: str) -> None:
     try:
-        repository_values(REPO_ROOT, env)
+        repository_values(instance_root(REPO_ROOT), env)
         validate_cluster(kubectl, env)
     except EnvError as exc:
         raise Fail(str(exc)) from exc

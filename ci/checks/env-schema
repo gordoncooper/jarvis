@@ -10,10 +10,10 @@ export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 python3 - <<'PY'
 from pathlib import Path
 
-from schema.env import ValidationError, validate_env_tree
+from schema.env import ValidationError, instance_root, validate_env_tree
 
 try:
-    validate_env_tree(Path("."))
+    validate_env_tree(instance_root(Path(".")))
 except ValidationError as exc:
     for line in exc.messages:
         print(line, flush=True)

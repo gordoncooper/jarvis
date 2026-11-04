@@ -1,0 +1,36 @@
+---
+# The root GitRepository reads an ssh:// env repo with this read-only deploy key.
+# Created once from the env's sealed file, like sops-age, and never reconciled from
+# Git. Decrypting it needs the age key, so only an owner run creates it.
+- name: Check whether the flux-system deploy-key secret exists
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
+      get secret {{ flux_deploy_key_secret_name }} -o name
+  register: flux_deploy_key_lookup
+  changed_when: false
+  failed_when: >-
+    flux_deploy_key_lookup.rc != 0
+    and 'NotFound' not in (
+      (flux_deploy_key_lookup.stderr | default(''))
+      ~ (flux_deploy_key_lookup.stdout | default(''))
+    )
+  check_mode: false
+
+- name: Require the age private key to decrypt the deploy key
+  ansible.builtin.assert:
+    that:
+      - sops_age_key_stat.stat.exists | default(false)
+    fail_msg: >-
+      flux-system/{{ flux_deploy_key_secret_name }} is absent and decrypting
+      {{ flux_deploy_key_file | basename }} needs the age key. Set SOPS_AGE_KEY_FILE
+      or age_key_file.
+  when: flux_deploy_key_lookup.rc != 0
+  no_log: true
+
+- name: Create the flux-system deploy-key secret once
+  ansible.builtin.command:
+    cmd: "{{ k3s_binary_path }} kubectl create -f -"
+    stdin: "{{ lookup('template', 'flux-deploy-key-secret.yaml.j2') }}"
+  when: flux_deploy_key_lookup.rc != 0
+  no_log: true

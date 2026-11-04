@@ -11,8 +11,11 @@ python3 - <<'PY'
 from pathlib import Path
 
 from _manifest_lint import format_violations, scan_manifest_lint
+from schema.env import instance_root
 
-violations = scan_manifest_lint(Path("."), require_roots=True)
+# An instance checkout holds only envs/, so the core roots are not required there.
+root = instance_root(Path("."))
+violations = scan_manifest_lint(root, require_roots=root == Path("."))
 if violations:
     for line in format_violations(violations):
         print(line, flush=True)

@@ -6,21 +6,23 @@ Flux Operator Helm release in `flux-system`, reconciled by Flux after the one-ti
 
 ## Expects
 
-- `flux-system` namespace and Flux controllers from `FluxInstance`.
+- `flux-system` namespace and Flux controllers from `FluxInstance`. The FluxInstance has no `sync`; it installs the controllers only.
 - OCI chart `ghcr.io/controlplaneio-fluxcd/charts/flux-operator` at the pinned tag.
-- Each env's FluxInstance sets `cluster.multitenant: true`. kustomize-controller and helm-controller then refuse a reference into another namespace and run an object that names no service account as its namespace's `default` account. The root sync the FluxInstance generates runs as kustomize-controller.
-- Every Flux Kustomization and HelmRelease names `spec.serviceAccountName`. The accounts live in `envs/<env>/flux/identities.yaml`, which the root sync applies, so no Kustomization creates the account it runs as. `flux-platform` (bound to `cluster-admin`) runs `platform-controllers`, `platform-configs` and the HelmReleases on their paths, this release included. `flux-services` and `flux-apps` may each write only their own placeholder ConfigMap in `default`, and no ClusterRoleBinding names them. `ci/checks/flux-identity` enforces the lockdown flag, the named accounts, the platform allow-list and in-namespace references.
+- Each env's `flux/sync.yaml` declares the root `GitRepository` `flux-system` (the env repository, `flux_git_repo_url` at `flux_git_ref`), the core `GitRepository` `core` (`core_git_repo_url` at `core_git_ref`, public, no secret), and the root Kustomization `flux-system`, which applies `./envs/<env>/flux`. The root source includes `core` at `core/`, so core paths are `./core/...` and one decryptor serves env and core files. An `ssh://` root names `secretRef: flux-deploy-key`. Ansible applies `sync.yaml` once on a new cluster; the root Kustomization then reconciles it.
+- Each env's FluxInstance sets `cluster.multitenant: true`. kustomize-controller and helm-controller then refuse a reference into another namespace and run an object that names no service account as its namespace's `default` account. The root Kustomization names `kustomize-controller`, the controller's own identity, as the operator's own sync does under that flag.
+- Every other Flux Kustomization and HelmRelease names `spec.serviceAccountName`. The accounts live in `envs/<env>/flux/identities.yaml`, which the root Kustomization applies, so no Kustomization creates the account it runs as. `flux-platform` (bound to `cluster-admin`) runs `platform-controllers`, `platform-configs` and the HelmReleases on their paths, this release included. `flux-services` and `flux-apps` may each write only their own placeholder ConfigMap in `default`, and no ClusterRoleBinding names them. `ci/checks/flux-identity` enforces the lockdown flag, the named accounts, the root's controller identity, the platform allow-list and in-namespace references.
+- `flux-system/flux-deploy-key` for an `ssh://` root: `identity` from the env's sealed `secrets/flux-deploy-key.sops.yaml`, and `known_hosts` with GitHub's published SSH host key (role default `flux_known_hosts`). Ansible creates it once, with reconcile disabled. A compromised pod with that secret can read the env repository and nothing else.
 
 ## Health
 
-`HelmRelease/flux-operator` reports Ready; deployment `flux-operator` is Available in `flux-system`.
+`HelmRelease/flux-operator` reports Ready; deployment `flux-operator` is Available in `flux-system`. Both `GitRepository` objects report Ready.
 
 ## Config
 
 Chart tag in `oci-repository.yaml` (`spec.ref.tag`) is the one pin. The flux-operator Ansible role reads it. Renovate manages that tag (`renovate.json`). Helm values use upstream defaults unless overridden here.
 
-The bootstrap Helm CLI is pinned by version and archive sha256 in the role defaults. The bootstrap install runs only when the operator Deployment is absent, and just before it a binary at `helm_binary_path` that is missing or reports another version is replaced. Once the operator exists, Helm is neither used nor checked. Every run waits for the FluxInstance CRD and the operator rollout before it applies the FluxInstance.
+The bootstrap Helm CLI is pinned by version and archive sha256 in the role defaults. The bootstrap install runs only when the operator Deployment is absent, and just before it a binary at `helm_binary_path` that is missing or reports another version is replaced. Once the operator exists, Helm is neither used nor checked. Every run waits for the FluxInstance CRD and the operator rollout. While the root `GitRepository` is absent, the role sets the rebuild hold, applies the FluxInstance, waits for the source and kustomize CRDs, then applies `sync.yaml`. Once it exists, the role applies neither.
 
 ## Proven by
 
-`ci/tests/test_flux_operator_install.py` (Ansible/Git pin alignment, helm CLI argv), `ci/tests/test_flux_operator.py` (Helm version replacement, waits on a re-run, the sops-age identity and refusals), `ci/tests/test_flux_entry.py` (substitute disabled, kustomize render + schema validation), `ci/tests/test_flux_identity.py` (the identity check's failing cases).
+`ci/tests/test_flux_operator_install.py` (Ansible/Git pin alignment, helm CLI argv), `ci/tests/test_flux_operator.py` (Helm version replacement, waits on a re-run, the sops-age identity and refusals, the fresh-cluster hold, FluxInstance and `sync.yaml` order, the deploy-key secret created once, the pinned GitHub host key), `ci/tests/test_flux_entry.py` (substitute disabled, kustomize render + schema validation), `ci/tests/test_flux_identity.py` (the identity check's failing cases), `ci/tests/test_env_schema.py` (the source pair and the deploy-key rule).

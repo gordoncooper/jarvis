@@ -1,7 +1,13 @@
 # Product paths. One definition each.
 # k3s_binary_path: k3s and flux-operator. k3s_kubeconfig_path: k3s, kubeconfig, and flux-operator.
-# k3s_data_dir: k3s and node-disk. flux_instance_file (on the controller): preflight and flux-operator.
+# k3s_data_dir: k3s and node-disk.
+# jarvis_instance_root (on the controller): the checkout that holds envs/<env> and .sops.yaml.
+# make site passes it from INSTANCE; the default is this product checkout.
+# jarvis_env_dir, flux_instance_file, flux_sync_file: preflight, k3s, and flux-operator.
 k3s_binary_path: /usr/local/bin/k3s
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 k3s_data_dir: /var/lib/rancher/k3s
-flux_instance_file: "{{ playbook_dir }}/../../envs/{{ jarvis_env }}/flux/flux-instance.yaml"
+jarvis_instance_root: "{{ playbook_dir }}/../.."
+jarvis_env_dir: "{{ jarvis_instance_root }}/envs/{{ jarvis_env }}"
+flux_instance_file: "{{ jarvis_env_dir }}/flux/flux-instance.yaml"
+flux_sync_file: "{{ jarvis_env_dir }}/flux/sync.yaml"

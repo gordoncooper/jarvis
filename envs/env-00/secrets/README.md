@@ -10,7 +10,7 @@ Shared rules for every env. A copy of this env keeps this file. Secret files are
 make bootstrap-secrets ENV=<env>
 ```
 
-`SOPS_AGE_KEY_FILE` overrides `age_key_file` when it is set. When it is unset, bootstrap uses `age_key_file` from `envs/<env>/values/cluster-vars.yaml` (default `~/.config/sops/age/keys.txt`). Encryption uses the public recipient in `.sops.yaml` and does not need the private key. Decryption, including restoring a missing `ca.crt` from the sealed CA, uses that private key.
+`SOPS_AGE_KEY_FILE` overrides `age_key_file` when it is set. When it is unset, bootstrap uses `age_key_file` from `envs/<env>/values/cluster-vars.yaml` (default `~/.config/sops/age/keys.txt`). Encryption uses the public recipient in the instance checkout's `.sops.yaml` (`INSTANCE=<path>`) and does not need the private key. Decryption, including restoring a missing `ca.crt` from the sealed CA, uses that private key.
 
 The command creates missing files only. A second run changes nothing. Commit the generated `*.sops.yaml` files and `ca.crt`. Do not commit the age private key.
 
@@ -42,6 +42,8 @@ In the owner's password manager, keep what must survive a lost controller:
 
 - The age private key, and where the offline copy is stored.
 - When the env has the off-host copy: the off-host restic password in `backups-offsite`, and the target's login. Recovering from the off-host copy needs them, and the sealed file needs the age key.
+
+Not a custody item: the read-only deploy key in `flux-deploy-key`, when the env's root is `ssh://`. The forge holds the public half. If the private half is lost, regenerate it ([docs/deploy.md](../../../docs/deploy.md#deploy-key)) and replace the deploy key on the forge.
 
 Add a line here when a later change creates something else that must survive that loss.
 

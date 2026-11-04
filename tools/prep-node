@@ -31,6 +31,7 @@ _TOOLS_LIB = REPO_ROOT / "tools" / "lib"
 if str(_TOOLS_LIB) not in sys.path:
     sys.path.insert(0, str(_TOOLS_LIB))
 
+from _env import instance_root  # noqa: E402
 from render_cluster_vars_configmap import render_document  # noqa: E402
 from schema.env import (  # noqa: E402
     DEFAULT_SSH_USER,
@@ -1071,11 +1072,12 @@ def run(argv: list[str] | None = None) -> None:
     env, host, login = _fill_args(parser.parse_args(argv))
 
     require_tools()
-    require_env_dir(REPO_ROOT, env)
-    run_env_schema(REPO_ROOT, pre_host=True)
-    ansible_user = settle_ansible_user(REPO_ROOT, env, login, host)
+    repo = instance_root(REPO_ROOT)
+    require_env_dir(repo, env)
+    run_env_schema(repo, pre_host=True)
+    ansible_user = settle_ansible_user(repo, env, login, host)
     assert_host_resolves(host, unchanged=True)
-    require_inventory_host(REPO_ROOT, env, host)
+    require_inventory_host(repo, env, host)
 
     public = ensure_public_key()
     pubkey = public_key_text(public)
@@ -1094,15 +1096,15 @@ def run(argv: list[str] | None = None) -> None:
     proof(ansible_user, inventory_host, public)
     offer_ssh_passwords_off(ansible_user, inventory_host, public)
     check_clock(ansible_user, inventory_host, public)
-    apply_env_edits(REPO_ROOT, env, host, inventory_host, ansible_user)
-    sync_age_key(REPO_ROOT, env)
+    apply_env_edits(repo, env, host, inventory_host, ansible_user)
+    sync_age_key(repo, env)
     schema_error: PrepError | None = None
     try:
-        run_env_schema(REPO_ROOT)
+        run_env_schema(repo)
     except PrepError as exc:
         schema_error = exc
     print("git diff:")
-    show_git_diff(REPO_ROOT, env)
+    show_git_diff(repo, env)
     if schema_error is not None:
         raise schema_error
     print("Recorded the host in the env. Not committed.")

@@ -84,9 +84,9 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - VolSync 0.17 still creates the mover Job and sets its parallelism to 0, so no mover pod runs and restic does not backup or forget.
 - `trigger.manual` is not the pause. Setting it starts a sync. `backup: none` is not the pause. That annotation means the volume is never enrolled.
 - The rebuild hold is cluster state, not Git.
-- `site.yml` creates ConfigMap `kube-system/backup-rebuild-hold` only when FluxInstance `flux` is absent and the inventory `backup` host already has restic repositories under `backup_path/restic/ns-*/pvc-*`. Any other lookup error fails the play.
+- `site.yml` creates ConfigMap `kube-system/backup-rebuild-hold` only when the root `GitRepository` `flux-system/flux-system` is absent (the cluster is new and Flux syncs nothing yet) and the inventory `backup` host already has restic repositories under `backup_path/restic/ns-*/pvc-*`. Any other lookup error fails the play.
 - The ConfigMap's `data.repos` is that list. While it exists, new ReplicationSources are generated paused, so a cluster rebuilt on a disk that still has restic data cannot snapshot empty volumes over the last good backup.
-- A later `site.yml`, once the FluxInstance exists, does not create or change the hold.
+- A later `site.yml`, once the root `GitRepository` exists, does not create or change the hold.
 - Deleting the ConfigMap does not re-run generate on sources that already exist.
 - The destination uses the restic mover, `copyMethod: Direct`, `enableFileDeletion: true`, and `restoreAsOf` as in Operations.
 - There is no VolumeSnapshot, volume populator, or snapshot class.
@@ -209,10 +209,20 @@ Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yam
 **Server.**
 
 1. Reinstall the node, mount a surviving data disk at `/var/lib/jarvis`, and run `tools/prep-node` (`docs/deploy.md`). If the data disk is lost too, prepare a new one and, before step 2, `restic restore` a snapshot file from repository `host-etcd-snapshots` on the backup host (password: `RESTIC_PASSWORD` in `backups-restic`) into `<backup_path>/etcd-snapshots`. When the server is also the backup host, that disk held the only copy.
-2. `make site ENV=<env>`. The server starts with the sealed token, and agents join with the agent token. When the backup host still has restic repositories and there is no FluxInstance yet, `site.yml` creates the rebuild hold.
+2. `make site ENV=<env>`. The server starts with the sealed token, and agents join with the agent token. When the backup host still has restic repositories and there is no root `GitRepository` (`flux-system/flux-system`) yet, `site.yml` creates the rebuild hold.
 3. Once Flux has reconciled, run `make restore-all ENV=<env>` (above).
 
 With the same token, the etcd cluster reset above can also restore a snapshot onto the rebuilt server.
+
+**Rebuild in place (OS kept).** For a single-node env whose backups share the OS disk: remove k3s and keep the OS and `/var/lib/jarvis`, then rebuild the cluster on the same node. As root on the node:
+
+1. Record `restic snapshots` counts for the local repositories (and the off-host copy, when the env lists it), to compare after step 4.
+2. The k3s role installs the pinned binary and its own unit, not upstream `install.sh`, so the node has no `k3s-uninstall.sh`. Fetch `install.sh` at the pinned tag (`https://raw.githubusercontent.com/k3s-io/k3s/<k3s_version>/install.sh`, `+` as `%2B`) and let it write only the scripts: `INSTALL_K3S_SKIP_DOWNLOAD=true INSTALL_K3S_SKIP_ENABLE=true INSTALL_K3S_SKIP_START=true INSTALL_K3S_BIN_DIR=/usr/local/bin sh install.sh`. It finds the existing binary, rewrites the unit, and writes `/usr/local/bin/k3s-uninstall.sh` and `k3s-killall.sh`. It does not start k3s.
+3. Run `/usr/local/bin/k3s-uninstall.sh`. At the current pin it stops k3s and its pods, unmounts and removes `/run/k3s`, `/var/lib/kubelet/pods` and `/var/lib/kubelet/plugins`, removes `/var/lib/rancher/k3s` (the k3s data dir), `/etc/rancher/k3s`, `/var/lib/kubelet`, `/var/lib/cni` and `/run/flannel`, the binary, and the unit. It touches nothing under `/var/lib/jarvis`, which holds local volume data (`local_path_data`). `backup_path`, with the restic repositories and the etcd snapshot files, stays too unless it sits inside one of the removed directories. It skips the removal when another `k3s*.service` unit exists.
+4. Check that the restic repositories under `<backup_path>/restic` and the snapshot files in `<backup_path>/etcd-snapshots` are intact, and that `restic snapshots` counts match step 1.
+5. `make site ENV=<env>`, then `make restore-all ENV=<env>` as above.
+
+The new cluster starts from an empty datastore with the sealed tokens. An older etcd snapshot stays restorable as long as `server_token` is unchanged.
 
 **Agents.** While the server is down, agents keep their pods running but cannot reach the API. They reconnect when it is back. An agent reinstalled under the same hostname is refused by the server's stored node password. Delete its Node (`kubectl delete node <host>`) or Secret `kube-system/<host>.node-password.k3s` first, then run `make site ENV=<env> LIMIT=<host>`.
 

@@ -23,6 +23,7 @@ _NAMES = frozenset(
         "CHECK",
         "ENV",
         "FILE",
+        "INSTANCE",
         "KEY",
         "LIMIT",
         "NAME",

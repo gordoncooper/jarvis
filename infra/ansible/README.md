@@ -42,7 +42,7 @@ Narrow runs use `make site ENV=<env> TAGS=...` from the repo root. `k3s`, `kubec
 | `node-disk` | Check a declared data disk. Does not partition, format, wipe, or mount. Prepare the disk with `docs/deploy.md`, then set `data_disk: true` | `make site ENV=<env> TAGS=node-disk` |
 | `k3s` | k3s server, agents, node role labels, and the dedicated taint | `make site ENV=<env> TAGS=k3s` |
 | `labels` | Only the node role labels and the dedicated taint. Reads no sealed token, so it needs no age key | `make site ENV=<env> TAGS=labels` |
-| `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `make site ENV=<env> TAGS=flux-operator` |
+| `flux-operator` | One-time Flux Operator, sops-age and deploy-key bootstrap, FluxInstance and `sync.yaml` | `make site ENV=<env> TAGS=flux-operator` |
 | `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `make site ENV=<env> TAGS=kubeconfig` |
 | `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `make site ENV=<env> TAGS=time` |
 | `apt-policy` | Apt list refresh and upgrade timers and the security-only unattended-upgrades policy | `make site ENV=<env> TAGS=apt-policy` |
@@ -76,7 +76,7 @@ The single control plane has no peer, so the API is down while it reboots; plan 
 
 ## Rebuild hold
 
-See `platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before the first FluxInstance.
+See `platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before it first applies the root `GitRepository`.
 
 ## Recovery
 
@@ -84,7 +84,7 @@ If node-disk refuses a node because the data path is empty and k3s has already r
 
 The node address changed and k3s fails with an etcd member URL mismatch. Stop k3s (`systemctl stop k3s`), run `/usr/local/bin/k3s server --cluster-reset` once, then start it (`systemctl start k3s`). A later `site.yml` run does not clear this. A stable address prevents it. prep-node prints the address and, when it came from DHCP, warns that it must stay stable (for example, a router DHCP reservation). It does not pin the address.
 
-Flux rollback: while the controllers are up, revert the commit. The root sync that applies `envs/<env>/flux` runs as kustomize-controller itself, so a revert applies even when a Kustomization's own identity is broken. When the FluxInstance or the operator is the broken part, from the controller's reverted checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml` with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. The file is plain YAML with no substitution. The Flux Kustomizations and HelmReleases run as the service accounts in `envs/<env>/flux/identities.yaml`. If those are missing, apply that file the same way. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `make site ENV=<env> TAGS=flux-operator`.
+Flux rollback: while the controllers are up, revert the commit. The root Kustomization (`flux/sync.yaml`) that applies `envs/<env>/flux` runs as kustomize-controller itself, so a revert applies even when a Kustomization's own identity is broken. When the FluxInstance, the sources or the operator is the broken part, from the controller's reverted instance checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml`, then the same for `sync.yaml`, with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. The file is plain YAML with no substitution. The Flux Kustomizations and HelmReleases run as the service accounts in `envs/<env>/flux/identities.yaml`. If those are missing, apply that file the same way. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `make site ENV=<env> TAGS=flux-operator`.
 
 Age key: keep two copies of the one key (`age_key_file`, default `~/.config/sops/age/keys.txt`). The second copy stays offline. Prove a copy with `make age-key-check ENV=<env> KEY=<path>` as described in `envs/env-00/secrets/README.md`. If the key file is lost and the cluster is up, copy `age.agekey` from Secret `flux-system/sops-age` back to that path at mode `0600`. Do not delete sealed files. If that Secret is gone too and the cluster is still up, reseal the live Secrets to a new key. Do not regenerate. Run `make bootstrap-secrets` only when the cluster is gone as well. A mismatched age key in prep-node changes neither `.sops.yaml` nor the sealed files.
 
