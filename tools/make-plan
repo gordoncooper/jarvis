@@ -7,6 +7,7 @@ is refused, because dry-run still expands it.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -46,7 +47,8 @@ def main(argv: list[str]) -> int:
         if not sep or name not in _NAMES or _EXPAND.search(value) or "\n" in value:
             print(_USAGE, file=sys.stderr)
             return 2
-    return subprocess.run(["make", "-n", "--", *argv[1:]], cwd=ROOT).returncode
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")}
+    return subprocess.run(["make", "-n", "--", *argv[1:]], cwd=ROOT, env=env).returncode
 
 
 if __name__ == "__main__":

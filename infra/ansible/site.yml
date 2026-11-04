@@ -87,5 +87,12 @@
   tags: [flux-operator]
   vars: *jarvis_play_vars
   vars_files: *jarvis_vars_files
+  pre_tasks:
+    - name: Say the flux-operator play is skipped in check mode
+      ansible.builtin.debug:
+        msg: "check mode: skipping the Flux Operator play; run with TAGS=flux-operator to include it"
+      when: ansible_check_mode and 'flux-operator' not in ansible_run_tags
+      tags: [always]
   roles:
-    - flux-operator
+    - role: flux-operator
+      when: not ansible_check_mode or 'flux-operator' in ansible_run_tags
