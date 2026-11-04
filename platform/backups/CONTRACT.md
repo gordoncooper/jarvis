@@ -104,12 +104,14 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 
 ### Role labels and the dedicated taint
 
-On a cluster that already has `role.<dns_suffix>/` labels, merge first and let Flux roll the new pod spec before Ansible removes those labels. rest-server uses `strategy: Recreate`, and the new spec still matches the old label, so that rollout can schedule. Ansible before Flux removes the label the running spec selects.
+Merge first and let Flux roll the new pod spec before Ansible removes `role.<dns_suffix>/` labels. rest-server is `Recreate`, and the new spec still matches the old label. The label play reads rest-server and both CronJobs and stops if one exists without the new affinity term and the dedicated toleration. A missing object does not stop it: this play runs before Flux.
 
-1. Merge. Wait until Kustomization `platform-configs` is Ready, the rest-server pod is Running, and the etcd-snapshots and restic-check pod templates show the new affinity and toleration. Those two are CronJobs, so this does not wait for a Job pod to be Running.
-2. From `infra/ansible`, check mode, then the real run, then a second run. Pass the env inventory, `infra/inventory/roles.yml`, and `jarvis_cluster_vars` as in `infra/ansible/README.md`, with `--tags k3s`. The second run reports `changed=0`.
-3. The first real run adds `node-role.jarvis.io/<role>=true`, removes `role.<dns_suffix>/` labels, and sets `node-role.jarvis.io/dedicated=true:NoSchedule` on every node whose roles do not include `workers`. A node that includes `workers` gets none.
-4. `make verify` reads `node-role.jarvis.io/` labels, so run it after that first real run.
+1. Merge. Wait until `platform-configs` is Ready, rest-server is Running, and both CronJob templates show the new affinity and toleration.
+2. From `infra/ansible`, check mode, then the real run, then a second run (`changed=0`). Pass the env inventory, `infra/inventory/roles.yml`, and `jarvis_cluster_vars` as in `infra/ansible/README.md`, with `--tags k3s`.
+3. That run adds `node-role.jarvis.io/<role>=true`, removes `role.<dns_suffix>/` labels, and sets `node-role.jarvis.io/dedicated=true:NoSchedule` only on nodes with neither `workers` nor `edge`.
+4. `make verify` reads `node-role.jarvis.io/` labels, so run it after that run.
+
+Delete a snapshot Job stuck `Pending`. `concurrencyPolicy: Forbid` will not start the next one, and `activeDeadlineSeconds: 21600` ends a later Job. After Ansible has run, roll back by restoring `role.<dns_suffix>/<role>=true` and removing `node-role.jarvis.io/dedicated`, then revert.
 
 Do not merge a change to ClusterPolicy `pvc-backup` during a restore. The policy is annotated `kustomize.toolkit.fluxcd.io/force: Enabled`, so Flux recreates it and Kyverno regenerates every Secret and ReplicationSource.
 

@@ -91,16 +91,14 @@ Each host is a mapping with `node_roles` and, when that host has a data disk, `d
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
+| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. At least one host includes `workers`. The same host may include more than one role. No role implies another. |
 | `data_disk` | no | Plain flag `true`, or omit the key. `true` means the admin has mounted a filesystem at `/var/lib/jarvis`. Any other value is rejected. |
 
 ### Node roles and labels
 
 `infra/inventory/roles.yml` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk: true` are the `data_disk` group. The constructed rule is `data_disk is defined`, which matches that flag and nothing else the schema allows. That group is always present, including when no host sets `data_disk`. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
 
-Kubernetes labels are `node-role.jarvis.io/<role>=true` for each role on the node. That prefix is reserved for them. The k3s role sets and removes them, and it removes leftover labels under `role.<dns_suffix>/`. This schema does not apply labels.
-
-A node whose roles do not include `workers` gets one taint, `node-role.jarvis.io/dedicated=true:NoSchedule`. A node that includes `workers` gets none, so a single node that includes `workers` stays schedulable for pods that tolerate nothing. Role labels choose the node. The taint only keeps other pods off a dedicated node.
+Kubernetes labels are `node-role.jarvis.io/<role>=true` for each role on the node. That prefix is reserved for them. The k3s role sets and removes them, and it removes leftover labels under `role.<dns_suffix>/`. This schema does not apply labels. A node whose roles include neither `workers` nor `edge` gets one taint, `node-role.jarvis.io/dedicated=true:NoSchedule`. A node that includes `workers` or `edge` gets none, so a single node that includes `workers` stays schedulable for pods that tolerate nothing, and k3s service load-balancer pods can still land on an edge node. Role labels choose the node. The taint only keeps other pods off a dedicated node.
 
 The example env declares every known role. A new known role is declared on that env in the same PR. A role is added only in the same PR as the first service that schedules by it. `workers` is the general role for app nodes, and a role does not depend on another.
 

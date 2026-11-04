@@ -74,7 +74,7 @@ def _default_hosts() -> str:
             all:
               hosts:
                 node.example:
-                  node_roles: [control_plane, backup, edge]
+                  node_roles: [control_plane, workers, backup, edge]
             """
         ).strip()
         + "\n"

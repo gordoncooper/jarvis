@@ -173,6 +173,7 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     assert f"etcd-snapshot-dir: {snapshot_path.replace('${backup_path}', '{{ backup_path }}')}" in k3s_config
 
     spec = job["spec"]
+    assert spec["jobTemplate"]["spec"]["activeDeadlineSeconds"] == 21600
     assert spec["timeZone"] == "${time_zone}"
     schedule = _cron_fields(spec["schedule"])
     assert schedule[1:] == k3s_cron[1:]

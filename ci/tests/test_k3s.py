@@ -286,7 +286,9 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
     hosts = {"cp-1": ["control_plane"], "wk-1": ["workers", "edge"]}
 
     def render(
-        edge_hosts: list[str], node_resources: list[dict[str, object]]
+        edge_hosts: list[str],
+        node_resources: list[dict[str, object]],
+        label_hosts: dict[str, list[str]],
     ) -> list[dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             inventory = Path(tmp) / "hosts.yml"
@@ -295,7 +297,7 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
                 "label-patches.json.j2",
                 {
                     "dns_suffix": "env-00.example",
-                    "k3s_label_hosts": hosts,
+                    "k3s_label_hosts": label_hosts,
                     "k3s_node_resources": node_resources,
                 },
                 templates_dir=K3S_ROLE_TEMPLATES,
@@ -305,7 +307,7 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
         assert isinstance(loaded, list)
         return loaded
 
-    edged = {item["name"]: item["labels"] for item in render(["wk-1"], nodes)}
+    edged = {item["name"]: item["labels"] for item in render(["wk-1"], nodes, hosts)}
     assert edged["cp-1"]["node-role.jarvis.io/control_plane"] == "true"
     assert edged["cp-1"]["role.env-00.example/control_plane"] is None
     assert edged["cp-1"]["role.env-00.example/workers"] is None
@@ -330,107 +332,62 @@ def test_label_patch_reconciles_roles_and_enablelb() -> None:
             }
         },
     ]
-    no_edge = {item["name"]: item["labels"] for item in render([], bare)}
+    no_edge = {item["name"]: item["labels"] for item in render([], bare, hosts)}
     assert "svccontroller.k3s.cattle.io/enablelb" not in no_edge["cp-1"]
     assert no_edge["wk-1"]["svccontroller.k3s.cattle.io/enablelb"] is None
 
-
-_DEDICATED_TAINT = {
-    "key": "node-role.jarvis.io/dedicated",
-    "value": "true",
-    "effect": "NoSchedule",
-}
-
-
-def _render_label_patches(
-    hosts: dict[str, list[str]],
-    nodes: list[dict[str, object]],
-    edge_hosts: list[str],
-) -> list[dict[str, object]]:
-    with tempfile.TemporaryDirectory() as tmp:
-        inventory = Path(tmp) / "hosts.yml"
-        inventory.write_text(_label_inventory(edge_hosts), encoding="utf-8")
-        rendered = ansible_render_template(
-            "label-patches.json.j2",
-            {
-                "dns_suffix": "env-00.example",
-                "k3s_label_hosts": hosts,
-                "k3s_node_resources": nodes,
-            },
-            templates_dir=K3S_ROLE_TEMPLATES,
-            inventory=inventory,
-        )
-    loaded = json.loads(rendered)
-    assert isinstance(loaded, list)
-    return loaded
-
-
-def test_dedicated_taint_and_old_prefix_converge() -> None:
-    """A node without workers gets one dedicated taint; the next render changes nothing."""
-    roles = {
-        "all-roles": ["control_plane", "workers", "storage", "backup", "gpu", "edge"],
-        "gpu-only": ["gpu"],
-        "backup-only": ["backup"],
-        "two-role": ["backup", "gpu"],
-    }
+    dedicated = {"key": "node-role.jarvis.io/dedicated", "value": "true", "effect": "NoSchedule"}
     hold = {"key": "example.com/hold", "value": "true", "effect": "NoSchedule"}
-
-    def labels_for(name: str) -> dict[str, str]:
-        labels = {f"role.env-00.example/{role}": "true" for role in roles[name]}
-        labels["kubernetes.io/os"] = "linux"
-        return labels
-
-    nodes: list[dict[str, object]] = [
+    roles = {"edge-only": ["edge"], "workers-only": ["workers"], "gpu-only": ["gpu"]}
+    nodes = [
         {
-            "metadata": {"name": "all-roles", "labels": labels_for("all-roles")},
-            "spec": {"taints": [_DEDICATED_TAINT]},
-        },
-        {
-            "metadata": {"name": "gpu-only", "labels": labels_for("gpu-only")},
-            "spec": {"taints": [hold]},
-        },
-        {
-            "metadata": {
-                "name": "backup-only",
-                "labels": {**labels_for("backup-only"), "role.env-00.example/stale": "true"},
-            }
-        },
-        {"metadata": {"name": "two-role", "labels": labels_for("two-role")}},
+            "metadata": {"name": name, "labels": {}},
+            "spec": {"taints": [hold, dedicated] if name == "workers-only" else [hold]},
+        }
+        for name in roles
     ]
-    first = {
-        item["name"]: item
-        for item in _render_label_patches(roles, nodes, ["all-roles"])
-    }
-    assert first["all-roles"]["taints"] == []
-    assert first["gpu-only"]["taints"] == [hold, _DEDICATED_TAINT]
-    assert first["backup-only"]["taints"] == [_DEDICATED_TAINT]
-    assert first["two-role"]["taints"] == [_DEDICATED_TAINT]
-    assert first["backup-only"]["labels"]["role.env-00.example/stale"] is None
-    assert first["all-roles"]["labels"]["svccontroller.k3s.cattle.io/enablelb"] == "true"
-    for name, assigned in roles.items():
-        labels = first[name]["labels"]
-        for role in assigned:
-            assert labels[f"node-role.jarvis.io/{role}"] == "true"
-            assert labels[f"role.env-00.example/{role}"] is None
-        assert "kubernetes.io/os" not in labels
+    first = {item["name"]: item for item in render(["edge-only"], nodes, roles)}
+    assert [first[name]["taint"] for name in roles] == [None, "absent", "present"]
+    assert "example.com/hold" not in json.dumps(first)
+    from ansible_collections.kubernetes.core.plugins.modules.k8s_taint import _get_difference
 
-    updated = []
-    for node in nodes:
-        patch = first[node["metadata"]["name"]]
-        labels = dict(node["metadata"]["labels"])
-        for key, value in patch["labels"].items():
-            if value is None:
-                labels.pop(key)
-            else:
-                labels[key] = value
-        node = {**node, "metadata": {**node["metadata"], "labels": labels}}
-        if patch["taints"] is not None:
-            spec = dict(node.get("spec") or {})
-            spec["taints"] = patch["taints"]
-            node = {**node, "spec": spec}
-        updated.append(node)
-    again = _render_label_patches(roles, updated, ["all-roles"])
-    assert all(item["labels"] == {} and item["taints"] is None for item in again)
+    task = next(
+        item["kubernetes.core.k8s_taint"]
+        for item in yaml.safe_load((K3S_ROLE_DIR / "tasks" / "labels.yml").read_text())
+        if "kubernetes.core.k8s_taint" in item
+    )
+    assert task["taints"] == [dedicated] and "replace" not in task
+    assert _get_difference([hold, dedicated], task["taints"]) == [hold]
+
+
+def test_placement_gate_stops_on_an_old_live_spec() -> None:
+    """A missing workload passes. A live one without the new term or toleration blocks."""
+    import importlib.util
+
+    loaded = importlib.util.spec_from_file_location(
+        "k3s_placement", K3S_ROLE_DIR / "filter_plugins" / "placement.py"
+    )
+    assert loaded is not None and loaded.loader is not None
+    module = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(module)
+
+    def live(kind: str, spec: dict) -> dict:
+        nest = {"spec": spec}
+        body = (
+            {"spec": {"template": nest}}
+            if kind == "Deployment"
+            else {"spec": {"jobTemplate": {"spec": {"template": nest}}}}
+        )
+        return {"item": {"kind": kind, "name": "restic", "role": "backup"}, "resources": [body]}
+
+    term = {"key": "node-role.jarvis.io/backup", "operator": "In", "values": ["true"]}
+    affinity = {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [{"matchExpressions": [term]}]}}}
+    tol = {"key": "node-role.jarvis.io/dedicated", "value": "true", "effect": "NoSchedule"}
+    blocked = module.placement_blocked
+    assert blocked([{"item": live("Deployment", {})["item"], "resources": []}]) == []
+    assert blocked([live("Deployment", {})]) == ["Deployment restic"]
+    assert blocked([live("Deployment", {"affinity": affinity, "tolerations": [tol]})]) == []
+    assert blocked([live("CronJob", {"affinity": affinity})]) == ["CronJob restic"]
 
 
 def _run_guard(tmp_path: Path, *, marker_text: str | None) -> subprocess.CompletedProcess[str]:
