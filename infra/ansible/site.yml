@@ -1,7 +1,7 @@
 ---
 # Fact asserts run before any change. One bad host stops the run. Tags for k3s,
 # kubeconfig, and flux-operator are on the plays.
-# ansible_user uses ssh_user, or the schema default when cluster-vars omits it (D34).
+# ansible_user prefers a per-host ssh_user, then env ssh_user, then ubuntu.
 - name: Assert facts before any change
   hosts: all
   become: true
@@ -9,7 +9,7 @@
   any_errors_fatal: true
   tags: [always]
   vars: &jarvis_play_vars
-    ansible_user: "{{ ssh_user | default('ubuntu') }}"
+    ansible_user: "{{ jarvis_host_ssh_user | default('') or ssh_user | default('ubuntu') }}"
   vars_files: &jarvis_vars_files
     - "{{ jarvis_cluster_vars }}"
   tasks:

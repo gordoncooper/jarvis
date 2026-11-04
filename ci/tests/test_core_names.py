@@ -123,6 +123,22 @@ def test_ssh_user_at_outside_envs_fails(tmp_path: Path) -> None:
     assert any(v.kind == "ssh_user_at" and v.value == f"{user}@" for v in violations)
 
 
+def test_per_host_ssh_user_outside_envs_fails(tmp_path: Path) -> None:
+    """A per-host ssh_user is an identity source like the env value."""
+    _init_git_repo(tmp_path)
+    _write_env(
+        tmp_path,
+        hosts_yml=(
+            "all:\n  hosts:\n    node.example:\n"
+            "      node_roles: [control_plane, backup, edge]\n      ssh_user: hostops\n"
+        ),
+    )
+    (tmp_path / "platform").mkdir()
+    (tmp_path / "platform/bad.txt").write_text("ssh hostops@node.example\n")
+    _git_add_all(tmp_path)
+    assert any(v.kind == "ssh_user_at" and v.value == "hostops@" for v in scan_core_names(tmp_path))
+
+
 def test_ssh_user_tilde_outside_envs_fails(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _write_env(tmp_path, env_name="env-test")
