@@ -1112,6 +1112,8 @@ def run(
             for namespace, pvc, _created in chosen
             if (namespace, pvc) in unbound
         }
+        if node is not None and not placements:
+            _line(f"node {node}: no PVC needed it")
         done: list[tuple[str, str]] = []
         for namespace, pvc, created in chosen:
             try:

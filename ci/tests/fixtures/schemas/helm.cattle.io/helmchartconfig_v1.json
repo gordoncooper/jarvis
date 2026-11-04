@@ -1,5 +1,5 @@
 {
-  "description": "HelmChartConfig customizes a k3s HelmChart. Schema covers the fields this repo sets.",
+  "description": "HelmChartConfig customizes a k3s HelmChart. spec and metadata accept every upstream field; kind and apiVersion stay closed. The filename is lowercase because kubeconform looks the kind up that way.",
   "type": "object",
   "required": ["apiVersion", "kind", "metadata", "spec"],
   "properties": {
@@ -18,7 +18,7 @@
         "name": { "type": "string" },
         "namespace": { "type": "string" }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "spec": {
       "type": "object",
@@ -26,7 +26,7 @@
       "properties": {
         "valuesContent": { "type": "string", "minLength": 1 }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   "additionalProperties": false

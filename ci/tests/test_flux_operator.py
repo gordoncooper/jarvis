@@ -1086,6 +1086,60 @@ def _assert_key_was_not_read(proc: subprocess.CompletedProcess[str], sentinel: s
     assert "Derive the public key of each identity" not in output
 
 
+def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
+    """A missing age-keygen fails in a visible task that names the binary."""
+    require_cli("ansible-playbook")
+    keyfile = tmp_path / "age.key"
+    keyfile.write_text("not-read\n", encoding="utf-8")
+    keyfile.chmod(0o600)
+    log = tmp_path / "k3s.log"
+    binary = tmp_path / "k3s"
+    _write_executable(
+        binary,
+        "#!/bin/bash\n"
+        f"printf '%s\\n' \"$*\" >> {log}\n"
+        'if [[ "$*" == *"get secret sops-age -o name"* ]]; then\n'
+        "  echo 'Error from server (NotFound): secrets \"sops-age\" not found' >&2\n"
+        "  exit 1\nfi\n"
+        'echo "unexpected k3s: $*" >&2\nexit 1\n',
+    )
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for directory in (Path("/bin"), Path("/usr/bin")):
+        for entry in directory.iterdir():
+            dest = bindir / entry.name
+            if entry.name == "age-keygen" or dest.exists():
+                continue
+            dest.symlink_to(entry)
+    env = _ansible_env()
+    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+    env["PATH"] = str(bindir)
+    proc = _run_localhost_role(
+        textwrap.dedent(
+            """\
+            ---
+            - name: Missing age-keygen
+              hosts: localhost
+              gather_facts: false
+              become: false
+              tasks:
+                - ansible.builtin.import_role:
+                    name: flux-operator
+                    tasks_from: sops_age.yml
+            """
+        ),
+        tmp_path,
+        ["-e", f"k3s_binary_path={binary}"],
+        env=env,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert _failed_task(output) == "Require age-keygen on the controller", output
+    assert "age-keygen is not on PATH" in output
+    assert "not-read" not in output
+    assert "Derive the public key" not in output
+
+
 def test_sops_age_refuses_mode_0644_without_reading_the_key(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     sentinel = "SENTINEL-AGE-KEY-NOT-READ"

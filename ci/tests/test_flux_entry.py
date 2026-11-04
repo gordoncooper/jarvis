@@ -633,6 +633,51 @@ def _record_object_identities(
         seen[ident] = layer
 
 
+def test_helmchartconfig_schema_accepts_upstream_fields_only() -> None:
+    """Labels, annotations, and other upstream spec fields pass. A wrong kind or apiVersion fails."""
+    kubeconform = _require_tool("kubeconform")
+    version = kubernetes_version_from_k3s(load_cluster_vars()["k3s_version"])
+    good = """\
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+  labels:
+    app: traefik
+  annotations:
+    example: "1"
+spec:
+  valuesContent: "a: b\\n"
+  failurePolicy: abort
+"""
+    wrong_kind = good.replace("kind: HelmChartConfig", "kind: HelmChart")
+    wrong_api = good.replace("apiVersion: helm.cattle.io/v1", "apiVersion: v1")
+
+    def run(text: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                kubeconform,
+                "-strict",
+                "-kubernetes-version",
+                version,
+                "-schema-location",
+                HELM_CATTLE_SCHEMA,
+                "-",
+            ],
+            input=text,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    passed = run(good)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    for bad in (wrong_kind, wrong_api):
+        failed = run(bad)
+        assert failed.returncode != 0, failed.stdout + failed.stderr
+
+
 def test_kubernetes_version_matches_k3s_pin() -> None:
     assert kubernetes_version_from_k3s("v9.8.7+k3s2") == "9.8.0"
     assert kubernetes_version_from_k3s("v9.8.7") is None

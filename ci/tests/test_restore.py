@@ -410,7 +410,7 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     [["restore", "ENV=env-00", "APP=demo"], ["restore-all", "ENV=env-00"]],
 )
 def test_make_forwards_node_only_when_set(target: list[str]) -> None:
-    """NODE=<node> reaches tools/restore as --node; make restore passes AS_OF as --as-of."""
+    """NODE=<node> reaches tools/restore as --node, and only then."""
     env = {key: value for key, value in os.environ.items() if key not in {"NODE", "AS_OF"}}
 
     def recipe(*extra: str) -> str:
@@ -428,9 +428,27 @@ def test_make_forwards_node_only_when_set(target: list[str]) -> None:
 
     assert '--node "node-a"' in recipe("NODE=node-a")
     assert "--node" not in recipe()
-    if target[0] == "restore":
-        assert '--as-of "2026-10-29T12:00:00Z"' in recipe("AS_OF=2026-10-29T12:00:00Z")
-        assert "--as-of" not in recipe()
+
+
+def test_make_restore_forwards_as_of_only_when_set() -> None:
+    """make restore passes AS_OF as --as-of, and only then. restore-all stays a separate case."""
+    env = {key: value for key, value in os.environ.items() if key not in {"NODE", "AS_OF"}}
+    target = ["restore", "ENV=env-00", "APP=demo"]
+
+    def recipe(*extra: str) -> str:
+        proc = subprocess.run(
+            ["make", "-n", *target, *extra],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
+        assert "tools/restore" in proc.stdout
+        return proc.stdout
+
+    assert '--as-of "2026-10-29T12:00:00Z"' in recipe("AS_OF=2026-10-29T12:00:00Z")
+    assert "--as-of" not in recipe()
 
 
 def _run(cluster: _Cluster, **kwargs: object) -> int:
@@ -511,6 +529,16 @@ def test_live_volume_uses_as_of(capsys) -> None:
     )
     assert cluster.applied[0]["spec"]["restic"]["restoreAsOf"] == "2026-10-29T12:00:00Z"
     assert "as-of 2026-10-29T12:00:00Z" in capsys.readouterr().out
+
+
+def test_node_is_unused_when_every_selected_pvc_is_bound(capsys) -> None:
+    """--node is validated, then one line says no PVC needed it."""
+    cluster = _Cluster([_pvc("demo", "bound")], will_pause=True)
+    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
+    out = capsys.readouterr().out
+    assert "node node-a: no PVC needed it" in out
+    assert cluster.binders == []
+    assert ["get", "node", "node-a", "-o", "name"] in cluster.calls
 
 
 def test_restore_all_node_pins_every_unbound_pvc(capsys) -> None:

@@ -33,5 +33,5 @@
 | --- | --- |
 | [../envs/env-00/README.md](../envs/env-00/README.md) | Example env to copy; never copy a real env |
 | [../envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md) | Shared secrets and bootstrap rules a copy keeps |
-| [../envs/env-01/README.md](../envs/env-01/README.md) | env-01 |
-| [../envs/env-01/secrets/README.md](../envs/env-01/secrets/README.md) | env-01 bootstrap secrets |
+| [../envs/env-01/README.md](../envs/env-01/README.md) | Baseline single-node env: what runs there and how a change is promoted |
+| [../envs/env-01/secrets/README.md](../envs/env-01/secrets/README.md) | This env's sealed secrets; bootstrap and recovery rules stay in the example |

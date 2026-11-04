@@ -1,6 +1,6 @@
 # Deploy
 
-From a fresh copy of this repo to a running cluster, then `make verify` and `make drill`. Commands run from the repo root unless a step says otherwise. Detail lives in [infra/ansible/README.md](../infra/ansible/README.md) and the contracts indexed in [docs/README.md](README.md).
+From a fresh copy of this repo to a running cluster, then `make verify`, `make drill`, and `make restore` to put a volume back. Commands run from the repo root unless a step says otherwise. Detail lives in [infra/ansible/README.md](../infra/ansible/README.md) and the contracts indexed in [docs/README.md](README.md).
 
 ## Prerequisites
 
@@ -114,7 +114,7 @@ One namespace:
 make restore ENV=<env> APP=<namespace>
 ```
 
-Optional `AS_OF=<RFC3339>` and `NODE=<node>`. A volume that was not recreated needs `AS_OF`, or the run fails. Produces a restore of that namespace's PVCs. Success is a `PASS restore <namespace>/<pvc>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0. `make restore` does not lift the rebuild hold, so `backup: paused` stays until `make restore-all` lifts it.
+Optional `AS_OF=<RFC3339>` and `NODE=<node>`. A volume that was not recreated needs `AS_OF`, or the run fails. Produces a restore of that namespace's PVCs. Success is a `PASS restore <namespace>/<pvc> snapshot <id>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0. `make restore` does not lift the rebuild hold. `backup: paused` stays until `make restore-all` lifts it, and that lift happens only when every listed repository is restored, accepted empty, or retired.
 
 Every enrolled PVC:
 
@@ -122,7 +122,7 @@ Every enrolled PVC:
 make restore-all ENV=<env>
 ```
 
-Optional `RETIRE`, `ACCEPT_EMPTY`, and `NODE=<node>`. Produces a restore of every enrolled PVC. Success is `HOLD lifted` when a hold was set, the same `SUMMARY` line, and exit 0.
+Optional `RETIRE`, `ACCEPT_EMPTY`, and `NODE=<node>`. Produces a restore of every enrolled PVC. The hold is lifted only when every listed repository is restored, accepted empty, or retired. Otherwise the hold stays and the PVCs stay `backup: paused`. Success is `HOLD lifted` when a hold was set and then lifted, the same `SUMMARY` line, and exit 0.
 
 The etcd cluster reset is owner-run and is not a make target. Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss. Detail is in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md).
 
@@ -134,7 +134,7 @@ Keep two copies of the one age private key. The second copy stays offline, off t
 make age-key-check ENV=<env> KEY=<path>
 ```
 
-Prints `PASS` or `FAIL` only. Keep the key, and where the offline copy is stored, in the owner's password manager. If a copy is lost, follow [Recovery](../envs/env-00/secrets/README.md#recovery). Custody is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md#age-key-custody).
+Prints `PASS` or `FAIL` only. `FAIL` is the same line for a key that cannot open a secret and for a file that is not mode `0600` or not owned by you. Test a mode `0600` copy owned by you. Keep the key, and where the offline copy is stored, in the owner's password manager. If a copy is lost, follow [Recovery](../envs/env-00/secrets/README.md#recovery). Custody is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md#age-key-custody).
 
 ## Dependency updates
 

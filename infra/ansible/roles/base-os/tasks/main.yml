@@ -43,7 +43,7 @@
     - base-os
     - journald
 
-- name: Install chrony configuration with NTS
+- name: Install chrony configuration
   ansible.builtin.import_tasks: chrony.yml
 
 - name: Enable and start chrony

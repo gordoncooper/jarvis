@@ -1,6 +1,6 @@
 ---
 # AppArmor usr.sbin.chronyd only allows chronyd to read /etc/chrony/**; validate must copy there.
-- name: Install chrony configuration with NTS
+- name: Install chrony configuration
   ansible.builtin.template:
     src: chrony.conf.j2
     dest: "{{ chrony_config_dir }}/chrony.conf"
