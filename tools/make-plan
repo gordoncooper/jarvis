@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Print one make target's recipe. make -n does not run it."""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_VAR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_USAGE = "usage: make-plan TARGET [VAR=value ...]"
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2 or not _TARGET.fullmatch(argv[1]) or any(not _VAR.fullmatch(item) for item in argv[2:]):
+        print(_USAGE, file=sys.stderr)
+        return 2
+    return subprocess.run(["make", "-n", "--", *argv[1:]], cwd=ROOT).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
