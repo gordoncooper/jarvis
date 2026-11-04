@@ -9,6 +9,7 @@
   # A missing name exits non-zero. The next assert fails the run, so this is not read as success.
   failed_when: false
   register: k3s_control_plane_lookup
+  when: k3s_mode == 'agent'
 
 - name: Fail when the control-plane name does not resolve on this agent
   ansible.builtin.assert:
@@ -17,20 +18,55 @@
     fail_msg: >-
       {{ groups['control_plane'] | first }} does not resolve on {{ inventory_hostname }}.
       Every inventory hostname must resolve on this node before the agent starts.
+  when: k3s_mode == 'agent'
 
-- name: Read the server node token
-  ansible.builtin.slurp:
-    src: /var/lib/rancher/k3s/server/node-token
-  register: k3s_node_token_slurp
-  delegate_to: "{{ groups['control_plane'] | first }}"
-  run_once: true
-  no_log: true
-  changed_when: false
-
-- name: Share the node token
+- name: Set the join URL
   ansible.builtin.set_fact:
-    k3s_token: >-
-      {{ hostvars[ansible_play_hosts | first].k3s_node_token_slurp.content | b64decode | trim }}
     k3s_server_url: "https://{{ groups['control_plane'] | first }}:6443"
+  when: k3s_mode == 'agent'
+
+# Decrypted on the controller. An agent gets the agent token only.
+- name: Read the sealed k3s tokens
+  ansible.builtin.set_fact:
+    k3s_agent_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"agent_token\"]', age_keyfile=_age_keyfile) }}"
+    k3s_server_token: "{{ lookup('community.sops.sops', k3s_token_file, extract='[\"stringData\"][\"server_token\"]', age_keyfile=_age_keyfile) if k3s_mode == 'server' else '' }}"
+  vars:
+    _age_keyfile: "{{ (lookup('env', 'SOPS_AGE_KEY_FILE') or age_key_file | default('~/.config/sops/age/keys.txt', true)) | expanduser }}"
   no_log: true
-  changed_when: false
+
+- name: Stat the server token on this node
+  ansible.builtin.stat:
+    path: "{{ k3s_data_dir }}/server/token"
+  register: k3s_node_token_stat
+  when: k3s_mode == 'server'
+
+- name: Read the server token on this node
+  ansible.builtin.slurp:
+    src: "{{ k3s_data_dir }}/server/token"
+  register: k3s_node_token
+  when: k3s_mode == 'server' and k3s_node_token_stat.stat.exists
+  no_log: true
+
+# k3s writes the secure form K10<ca-hash>::server:<passphrase>. The passphrase is what
+# opens the datastore, so a sealed short or secure token is compared on that part.
+- name: Compare the node's server token with the sealed one
+  ansible.builtin.set_fact:
+    k3s_token_matches: >-
+      {{ not k3s_node_token_stat.stat.exists
+         or (k3s_node_token.content | b64decode | trim | regex_replace(_secure, ''))
+            == (k3s_server_token | regex_replace(_secure, '')) }}
+  vars:
+    _secure: '^K10[0-9a-f]*::server:'
+  when: k3s_mode == 'server'
+  no_log: true
+
+- name: Refuse a sealed server token that differs from this node's
+  ansible.builtin.assert:
+    that:
+      - k3s_token_matches | bool
+    fail_msg: >-
+      The k3s server token on {{ inventory_hostname }} differs from the sealed token in
+      {{ k3s_token_file | basename }}. Nothing was changed. Seal this node's token, or follow
+      the rebuild steps in platform/backups/CONTRACT.md.
+    quiet: true
+  when: k3s_mode == 'server'

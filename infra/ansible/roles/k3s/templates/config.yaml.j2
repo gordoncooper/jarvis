@@ -2,6 +2,8 @@
 node-name: {{ inventory_hostname }}
 cluster-init: true
 secrets-encryption: true
+token: {{ k3s_server_token | to_json }}
+agent-token: {{ k3s_agent_token | to_json }}
 cluster-cidr: {{ pod_cidr }}
 service-cidr: {{ service_cidr }}
 tls-san:

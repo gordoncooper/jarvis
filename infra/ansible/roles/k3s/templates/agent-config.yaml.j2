@@ -1,6 +1,6 @@
 # Managed by Ansible (k3s role): agent config.
 server: {{ k3s_server_url }}
-token: {{ k3s_token }}
+token: {{ k3s_agent_token | to_json }}
 node-name: {{ inventory_hostname }}
 kubelet-arg:
   - "kube-reserved={{ jarvis_host_kube_reserved | default('') or k3s_kubelet_kube_reserved }}"

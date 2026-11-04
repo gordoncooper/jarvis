@@ -285,7 +285,10 @@ def _validate_env(
     hermes_path = values / "hermes.yaml"
     apps_path = values / "apps.yaml"
 
-    for path in (cluster_vars_path, hermes_path, apps_path, inventory):
+    secrets = env_dir / "secrets"
+    # Once bootstrap-secrets has run, the k3s tokens are sealed too. prep-node checks before that.
+    sealed = (secrets / "k3s-token.sops.yaml",) if any(secrets.glob("*.sops.yaml")) else ()
+    for path in (cluster_vars_path, hermes_path, apps_path, inventory, *sealed):
         if not path.is_file():
             errors.append(
                 f"{env_name}: missing required file {_display_path(path, repo_root)}"

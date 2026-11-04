@@ -21,6 +21,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 ## Expects
 
 - One folder per env: `envs/<env>/` with the four files above present when that env is active.
+- Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file. A missing postBuild variable fails the Flux reconcile.
 
 ## Health
@@ -40,7 +41,7 @@ A required key that is present but null counts as unset and fails.
 | `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). A lowercase DNS name. Never hardcoded in core (`ci/checks/core-names`). |
 | `time_zone` | yes | IANA time zone name for the node, VolSync schedules, and Hermes cron (e.g. `<time_zone>`). Unknown names fail validation. |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`). |
-| `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
+| `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap and the k3s token read. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
 | `code_delivery` | no | When set, `github` only. `forgejo` is the planned second provider. Any other value fails validation. |
 | `build_agent` | no | When set, `cursor` only. `grok-build` and `opencode-local` are named stubs, not valid values. Any other value fails validation. |
 | `backup_path` | yes | Absolute path. Parent of `backup_path/etcd-snapshots` and of one restic repository per PVC (`backup_path/restic/ns-<namespace>/pvc-<pvc>`). The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names. |
