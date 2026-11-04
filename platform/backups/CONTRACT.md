@@ -21,7 +21,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - The backup-role node (`node-role.jarvis.io/backup=true`) for the rest-server hostPath.
 - The control-plane node (`node-role.jarvis.io/control_plane=true`), where k3s writes the snapshot files.
 - rest-server, CronJob `etcd-snapshots`, and CronJob `restic-check` each match their role with required node affinity: `node-role.jarvis.io/<role>=true`, or, until that term is removed, `role.<dns_suffix>/<role>=true`. Each tolerates `node-role.jarvis.io/dedicated=true:NoSchedule`. Drill pods copy that affinity and toleration.
-- An env that lists `platform/backups/offsite` in its platform-configs list also lists and holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`, without the transitional term.
+- An env that lists `platform/backups/offsite` in its platform-configs list also lists and holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`, without the transitional term.
 - `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
 
 ## Health

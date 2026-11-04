@@ -22,7 +22,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 
 - One folder per env: `envs/<env>/` with the four files above present when that env is active.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
-- When a non-example env's `flux/platform-configs/kustomization.yaml` lists `platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. An env that does not list it needs nothing new.
+- Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's `flux/platform-configs/kustomization.yaml` lists `platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same prep-node reason. An env that does not list it needs nothing new.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file. A missing postBuild variable fails the Flux reconcile.
 
 ## Health
@@ -157,7 +157,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A behavior test accepts two non-example envs whose `flux_git_repo_url` owners differ.
 - A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
 - A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
-- A behavior test rejects an env that lists the off-host copy without `backups-offsite.sops.yaml`, and accepts it once the file is there.
+- A behavior test accepts a new env that lists the off-host copy before bootstrap, rejects it once bootstrapped without `backups-offsite.sops.yaml`, and accepts it once the file is there.
 - A behavior test rejects a repo URL that includes userinfo, a query, or a fragment.
 - A behavior test rejects a FluxInstance whose sync url or ref does not match cluster-vars.
 - A behavior test rejects a generated ConfigMap that does not match the cluster-vars render, and accepts that tree in pre-host mode.

@@ -609,10 +609,12 @@ def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
 
 
 def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> list[str]:
-    """An env that lists the off-host copy holds its sealed target secret. The example env holds none."""
-    if is_example_env(env_name) or not offsite_copy_listed(env_dir, repo_root):
+    """A bootstrapped env that lists the off-host copy holds its sealed target secret. Like the
+    k3s tokens, it is not required before bootstrap-secrets, when prep-node checks a new env."""
+    secrets = env_dir / "secrets"
+    if not any(secrets.glob("*.sops.yaml")) or not offsite_copy_listed(env_dir, repo_root):
         return []
-    secret = env_dir / "secrets" / OFFSITE_SECRET_FILE
+    secret = secrets / OFFSITE_SECRET_FILE
     if secret.is_file():
         return []
     return [
