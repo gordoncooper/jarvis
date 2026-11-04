@@ -95,15 +95,13 @@ def test_sops_creation_rule_rejects_example_env(tmp_path: Path):
     )
 
 
-def test_bad_build_agent_fails(tmp_path: Path):
+def test_build_agent_is_an_unknown_key(tmp_path: Path):
     cv = _valid_cluster_vars()
-    cv["build_agent"] = "grok-build"
+    cv["build_agent"] = "cursor"
     _write_env(tmp_path, cluster_vars=cv)
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "build_agent" in msg
-    assert "cursor" in msg
+    assert "unknown key 'build_agent'" in "\n".join(excinfo.value.messages)
 
 
 def test_ssh_user_defaults_to_ubuntu_when_omitted(tmp_path: Path):
@@ -412,7 +410,6 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
 
 _OPTIONAL_CLUSTER_KEYS = (
     "code_delivery",
-    "build_agent",
     "apps_git_repo_url",
     "llm_provider_host",
 )
@@ -785,15 +782,29 @@ def test_required_key_set_to_null_counts_as_unset(tmp_path: Path, key: str) -> N
     assert any(f"missing required key: {key}" in message for message in null_messages)
 
 
-def test_missing_hermes_yaml_fails(tmp_path: Path) -> None:
-    """A tmp env without values/hermes.yaml fails env-schema and names the file."""
+def test_env_needs_only_cluster_vars_and_inventory(tmp_path: Path) -> None:
+    """An env with no hermes.yaml or apps.yaml validates."""
     env = _write_env(tmp_path)
-    (env / "values" / "hermes.yaml").unlink()
+    assert sorted(p.name for p in (env / "values").iterdir()) == ["cluster-vars.yaml"]
+    validate_env_tree(tmp_path)
+
+
+def test_storage_is_not_a_node_role(tmp_path: Path) -> None:
+    """A role no manifest schedules on is not accepted."""
+    _write_env(
+        tmp_path,
+        hosts_yml=_hosts(
+            """
+            all:
+              hosts:
+                node.example:
+                  node_roles: [control_plane, backup, edge, storage]
+            """
+        ),
+    )
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "missing required file" in msg
-    assert "values/hermes.yaml" in msg
+    assert "unknown role 'storage'" in "\n".join(excinfo.value.messages)
 
 
 def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None:
@@ -876,6 +887,13 @@ def _run_site(tmp_path, *extra: str):
     return proc, log.read_text() if log.exists() else ""
 
 
+def test_make_site_names_a_missing_venv(tmp_path) -> None:
+    """A VENV without bin/python fails with the make deps hint and runs nothing."""
+    proc, recorded = _run_site(tmp_path, "ENV=env-00", f"VENV={tmp_path / 'nope'}")
+    assert proc.returncode != 0 and recorded == ""
+    assert "make deps" in proc.stderr and "VENV=" in proc.stderr
+
+
 def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
     """An existing env with a .sops.yaml creation-rule error fails validate_one_env."""
     shutil.copytree(REPO_ROOT / "envs" / "env-00", tmp_path / "envs" / "env-00")
@@ -906,6 +924,7 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     assert args[dash_i[1] + 1] == "../inventory/roles"
     assert "jarvis_cluster_vars=../../envs/env-00/values/cluster-vars.yaml" in args
     assert "--tags" not in args and "--limit" not in args and "--check" not in args
+    assert "--diff" not in args
     flagged, recorded = _run_site(
         tmp_path, "ENV=env-00", "TAGS=base-os,k3s", "LIMIT=cp-1", "CHECK=1"
     )
@@ -913,5 +932,6 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     args = recorded.splitlines()
     assert args[args.index("--tags") + 1] == "base-os,k3s"
     assert args[args.index("--limit") + 1] == "cp-1" and "--check" in args
+    assert "--diff" in args
     bad, recorded = _run_site(tmp_path, "ENV=env-00", "CHECK=true")
     assert bad.returncode != 0 and recorded == "" and "CHECK must be empty or 1" in bad.stderr

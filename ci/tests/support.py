@@ -142,24 +142,6 @@ def _write_env(
     (env / "values" / "cluster-vars.yaml").write_text(
         yaml.safe_dump(cv, sort_keys=False), encoding="utf-8"
     )
-    (env / "values" / "hermes.yaml").write_text(
-        textwrap.dedent(
-            """
-            bots: []
-            cron: {}
-            bot_tier_map:
-              concierge: mid
-            tier_model_map: {}
-            lane_model_map: {}
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    (env / "values" / "apps.yaml").write_text(
-        "app_hosting_enabled: false\napps: []\n",
-        encoding="utf-8",
-    )
     (env / "inventory" / "hosts.yml").write_text(
         hosts_yml if hosts_yml is not None else _default_hosts(),
         encoding="utf-8",

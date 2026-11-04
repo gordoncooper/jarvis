@@ -1,16 +1,14 @@
 # CONTRACT: Env schema
 
-Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic (`ci/checks/core-names`); env specifics live only under `envs/`. Bot tiers and model names live only in env values. The Hermes profile schema contract is planned at `services/hermes/core/schema/CONTRACT.md`. It is not in this repo yet.
+Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic (`ci/checks/core-names`); env specifics live only under `envs/`. Config with no consumer is not in the schema; each piece arrives with the code that uses it.
 
 ## Offers
 
-- A single validation contract for four files per env:
+- A single validation contract for two files per env:
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
-  - `values/hermes.yaml` — bots, enabled cron, bot tier map, tier-to-model map, and code-factory lane models (with family).
-  - `values/apps.yaml` — app hosting on or off and enabled apps with sizes.
   - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
-- Rejection of an unknown `code_delivery` or `build_agent` when that key is set (only built providers are accepted; other named providers are stubs, not valid values). Omitting either key is valid.
-- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `build_agent`, `apps_git_repo_url`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
+- Rejection of an unknown `code_delivery` when that key is set (only built providers are accepted; other named providers are stubs, not valid values). Omitting it is valid.
+- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `apps_git_repo_url`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
 - Default `backup_check_schedule: 30 6 * * 3` when omitted. The example env still sets `backup_check_schedule`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
@@ -20,7 +18,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 
 ## Expects
 
-- One folder per env: `envs/<env>/` with the four files above present when that env is active.
+- One folder per env: `envs/<env>/` with the two files above present when that env is active.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's `flux/platform-configs/kustomization.yaml` lists `platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same prep-node reason. An env that does not list it needs nothing new.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file. A missing postBuild variable fails the Flux reconcile.
@@ -31,7 +29,7 @@ Not a runtime component. Health is “validation passes”: `ci/checks/env-schem
 
 ## Config
 
-All keys in env value files use **lowercase snake_case** (including `cluster-vars.yaml`, `hermes.yaml`, and `apps.yaml`). Validation applies to the fields below. Types are descriptive; the validator in `schema/env.py` is authoritative.
+All keys in env value files use **lowercase snake_case** (including `cluster-vars.yaml`). Validation applies to the fields below. Types are descriptive; the validator in `schema/env.py` is authoritative.
 
 ### `values/cluster-vars.yaml`
 
@@ -44,7 +42,6 @@ A required key that is present but null counts as unset and fails.
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`). |
 | `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap and the k3s token read. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
 | `code_delivery` | no | When set, `github` only. `forgejo` is the planned second provider. Any other value fails validation. |
-| `build_agent` | no | When set, `cursor` only. `grok-build` and `opencode-local` are named stubs, not valid values. Any other value fails validation. |
 | `backup_path` | yes | Absolute path. Parent of `backup_path/etcd-snapshots` and of one restic repository per PVC (`backup_path/restic/ns-<namespace>/pvc-<pvc>`). The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names. |
 | `backup_retention_daily` | yes | Restic keep count for daily snapshots. |
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots. |
@@ -68,23 +65,6 @@ A required key that is present but null counts as unset and fails.
 | `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
 | `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. |
 
-### `values/hermes.yaml`
-
-| Area | Notes |
-| --- | --- |
-| `bots` | Which Hermes profiles run in ops and code-factory deploys. |
-| `cron` | Which scheduled jobs are enabled; times use `time_zone` from cluster-vars. |
-| `bot_tier_map` | Maps each bot to `frontier`, `mid`, or `cheap`. Model names stay in this file. |
-| `tier_model_map` | Maps tiers to provider model names for that env only. |
-| `lane_model_map` | Builder, checker, and `code-factory:hard` models and families for the code-factory workflow. |
-
-### `values/apps.yaml`
-
-| Field | Notes |
-| --- | --- |
-| `app_hosting_enabled` | App hosting on or off for the env. |
-| `apps` | Enabled hosted apps and size quota when on. |
-
 ### `inventory/hosts.yml`
 
 Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. `ci/checks/env-schema` rejects an IP used as a host name and any host key other than the rows below.
@@ -93,7 +73,7 @@ Each host is a mapping with `node_roles` and the optional keys in the table. No 
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `storage`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
+| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
 | `data_disk` | no | Plain flag `true`, or omit the key. `true` means the admin has mounted a filesystem at `/var/lib/jarvis`. Any other value is rejected. |
 | `ssh_user` | no | SSH user for this host; overrides env `ssh_user`. Non-empty string. |
 | `k3s_kubelet_kube_reserved` | no | Host kubelet `kube-reserved`; overrides the env value. Non-empty string. |
@@ -102,7 +82,7 @@ Each host is a mapping with `node_roles` and the optional keys in the table. No 
 
 ### Node roles and labels
 
-`infra/inventory/roles` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. Hosts with `data_disk: true` are the `data_disk` group. The constructed rule is `data_disk is defined`, which matches that flag and nothing else the schema allows. That group is always present, including when no host sets `data_disk`. That group is not a role. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` and `storage` are labels only, and etcd snapshots stay on the control plane.
+`infra/inventory/roles` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. `data_disk` is a host var read by the `node-disk` role; it makes no group. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` is a label only, and etcd snapshots stay on the control plane.
 
 Kubernetes labels are `node-role.jarvis.io/<role>=true` for each role on the node. That prefix is reserved for them. The k3s role sets and removes them, and it removes leftover labels under `role.<dns_suffix>/`. This schema does not apply labels. A node whose roles include neither `workers` nor `edge` gets one taint, `node-role.jarvis.io/dedicated=true:NoSchedule`. A node that includes `workers` or `edge` gets none, so a single node that includes `workers` stays schedulable for pods that tolerate nothing, and k3s service load-balancer pods can still land on an edge node. Role labels choose the node. The taint only keeps other pods off a dedicated node.
 
@@ -110,7 +90,7 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and it sets the Hermes model maps. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
+`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
 The example's platform-configs list also turns on the off-host copy: `platform/backups/offsite` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
 
@@ -146,14 +126,14 @@ Product rules in the same check: the word `bastion`, and any hardcoded `/home/` 
 
 ### Reference shape (documentation)
 
-Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`, `time_zone`, `code_delivery`, `build_agent`, optional `ssh_user` (default `ubuntu` when omitted), and optional `age_key_file` (default `~/.config/sops/age/keys.txt` when omitted).
+Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`, `time_zone`, `code_delivery`, optional `ssh_user` (default `ubuntu` when omitted), and optional `age_key_file` (default `~/.config/sops/age/keys.txt` when omitted).
 
 ## Proven by
 
 - `ci/checks/env-schema` in the required `ci` workflow.
-- A seeded change that sets `code_delivery` or `build_agent` to a value other than `github` / `cursor` fails `ci`.
-- `ci/tests/test_env_schema.py`: valid env tree, bad `build_agent`, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
-- A behavior test accepts an env that omits any one of `code_delivery`, `build_agent`, `apps_git_repo_url`, and `llm_provider_host`, and an env that omits all four. A value that is set still has to be allowed.
+- A seeded change that sets `code_delivery` to a value other than `github` fails `ci`.
+- `ci/tests/test_env_schema.py`: valid env tree, an env without `hermes.yaml` or `apps.yaml`, `build_agent` as an unknown key, `storage` as an unknown role, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
+- A behavior test accepts an env that omits any one of `code_delivery`, `apps_git_repo_url`, and `llm_provider_host`, and an env that omits all three. A value that is set still has to be allowed.
 - A behavior test accepts two non-example envs whose `flux_git_repo_url` owners differ.
 - A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
 - A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.

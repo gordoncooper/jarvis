@@ -1,5 +1,0 @@
-# Hosts with data_disk set. Always present, including when no host sets it.
-# site.yml does not target this group; node-disk reads the host var.
-all:
-  children:
-    data_disk:

@@ -96,7 +96,11 @@ def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
     secrets_dir = tmp_path / "envs" / env_name / "secrets"
     files = sorted(secrets_dir.glob("*.sops.yaml"))
     root = tmp_path / "envs" / env_name / "ca.crt"
-    assert len(files) == 8
+    assert [f.name for f in files] == [
+        "backups-restic.sops.yaml",
+        "cert-manager-ca.sops.yaml",
+        "k3s-token.sops.yaml",
+    ]
     cert = root.read_text(encoding="utf-8")
     assert "BEGIN CERTIFICATE" in cert
     assert "PRIVATE KEY" not in cert

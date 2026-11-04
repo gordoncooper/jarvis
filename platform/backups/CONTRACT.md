@@ -204,7 +204,7 @@ k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the or
 
 ### Rebuild a dead node
 
-Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make seal ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` (the contents of `/var/lib/rancher/k3s/server/token` on the server) and `stringData.agent_token`. The agent token is a new random value, never the server token.
+Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make seal ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` (the contents of `/var/lib/rancher/k3s/server/token` on the server) and `stringData.agent_token`. A new env gets an agent token that is a separate random value. A cluster sealed from its node may have an agent token equal to its server token until the agent token is rotated at its next rebuild.
 
 **Server.**
 
