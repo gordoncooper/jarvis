@@ -50,6 +50,7 @@
 - name: Join k3s agents
   hosts: all:!control_plane
   become: true
+  serial: 1
   tags: [k3s]
   vars: *jarvis_play_vars
   vars_files: *jarvis_vars_files

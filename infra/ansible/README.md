@@ -1,6 +1,6 @@
 # Ansible (node bootstrap)
 
-`site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, a committed `envs/<env>/flux/flux-instance.yaml`), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent, reconciles node labels, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
+`site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, a committed `envs/<env>/flux/flux-instance.yaml`), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent one at a time, reconciles node role labels and the dedicated taint, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
 
 `make deps` and `make site ENV=<env>` run from the repo root. The env schema runs first and stops before Ansible on any error. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
 
@@ -40,7 +40,7 @@ Narrow runs use `make site ENV=<env> TAGS=...` from the repo root. `k3s`, `kubec
 | --- | --- | --- |
 | `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone; edge hosts also turn off the resolved stub) | `make site ENV=<env> TAGS=base-os` |
 | `node-disk` | Check a declared data disk. Does not partition, format, wipe, or mount. Prepare the disk with `docs/deploy.md`, then set `data_disk: true` | `make site ENV=<env> TAGS=node-disk` |
-| `k3s` | k3s server, agents, and node labels | `make site ENV=<env> TAGS=k3s` |
+| `k3s` | k3s server, agents, node role labels, and the dedicated taint | `make site ENV=<env> TAGS=k3s` |
 | `flux-operator` | One-time Flux Operator, sops-age bootstrap, FluxInstance | `make site ENV=<env> TAGS=flux-operator` |
 | `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `make site ENV=<env> TAGS=kubeconfig` |
 | `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `make site ENV=<env> TAGS=time` |
