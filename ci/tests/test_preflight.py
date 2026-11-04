@@ -450,7 +450,7 @@ def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> N
     )
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
-    assert "Require the env FluxInstance in Git" in output
-    assert "flux-instance.yaml is missing" not in output
+    assert "Require the env FluxInstance and Flux sources in Git" in output
+    assert "flux-instance.yaml or sync.yaml is missing" not in output
     assert "PLAY [Base OS]" not in output
     assert playbook_recap_field(output, "changed") == 0

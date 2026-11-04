@@ -167,11 +167,17 @@ def test_undefined_var_in_platform_configs_fails_without_a_real_env(tmp_path: Pa
 
 
 def _seed_unknown_platform_config(root: Path) -> None:
-    platform = root / "platform"
-    if platform.is_symlink():
-        platform.unlink()
-        shutil.copytree(REPO_ROOT / "platform", platform, symlinks=True)
-    configs = platform / "configs"
+    # The env's platform-configs builds core/platform/configs. core links to the
+    # real repo, so swap in a core dir that links everything but a copied platform.
+    core = root / "core"
+    if core.is_symlink():
+        core.unlink()
+        core.mkdir()
+        for entry in REPO_ROOT.iterdir():
+            if entry.name not in {"platform", ".git"}:
+                (core / entry.name).symlink_to(entry)
+        shutil.copytree(REPO_ROOT / "platform", core / "platform", symlinks=True)
+    configs = core / "platform" / "configs"
     (configs / "seed.yaml").write_text(
         "apiVersion: v1\n"
         "kind: ConfigMap\n"
