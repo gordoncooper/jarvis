@@ -820,6 +820,26 @@ def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None
     validate_env_tree(tmp_path)
 
 
+def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Path) -> None:
+    """Once bootstrapped, an env listing platform/backups/offsite requires backups-offsite.sops.yaml."""
+    env = _write_env(tmp_path)
+    configs = env / "flux" / "platform-configs"
+    configs.mkdir(parents=True)
+    (configs / "kustomization.yaml").write_text(
+        "resources:\n  - ../../../../platform/backups/offsite\n", encoding="utf-8"
+    )
+    validate_env_tree(tmp_path)
+    (env / "secrets").mkdir(exist_ok=True)
+    (env / "secrets" / "k3s-token.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "missing required file envs/env-test/secrets/backups-offsite.sops.yaml" in "\n".join(
+        excinfo.value.messages
+    )
+    (env / "secrets" / "backups-offsite.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    validate_env_tree(tmp_path)
+
+
 def test_cli_requires_env() -> None:
     commands = (
         [sys.executable, "tools/bootstrap-secrets"],

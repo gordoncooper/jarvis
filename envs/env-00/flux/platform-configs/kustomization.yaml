@@ -4,3 +4,5 @@ resources:
   - ../../../../platform/configs
   - ../../secrets/backups-restic.sops.yaml
   - ../../secrets/cert-manager-ca.sops.yaml
+  - ../../../../platform/backups/offsite
+  - ../../secrets/backups-offsite.sops.yaml

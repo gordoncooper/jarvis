@@ -20,6 +20,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 
 - One folder per env: `envs/<env>/` with the two files above present when that env is active.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
+- Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's `flux/platform-configs/kustomization.yaml` lists `platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same prep-node reason. An env that does not list it needs nothing new.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file. A missing postBuild variable fails the Flux reconcile.
 
 ## Health
@@ -91,6 +92,8 @@ The example env declares every known role. A new known role is declared on that 
 
 `envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
+The example's platform-configs list also turns on the off-host copy: `platform/backups/offsite` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
+
 ### Explicit env
 
 `bootstrap-secrets`, `seal`, and the cluster-vars renderer require `--env`. The Makefile targets `bootstrap-secrets` and `seal` require `ENV=`. Each fails when the env is omitted.
@@ -134,6 +137,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A behavior test accepts two non-example envs whose `flux_git_repo_url` owners differ.
 - A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
 - A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
+- A behavior test accepts a new env that lists the off-host copy before bootstrap, rejects it once bootstrapped without `backups-offsite.sops.yaml`, and accepts it once the file is there.
 - A behavior test rejects a repo URL that includes userinfo, a query, or a fragment.
 - A behavior test rejects a FluxInstance whose sync url or ref does not match cluster-vars.
 - A behavior test rejects a generated ConfigMap that does not match the cluster-vars render, and accepts that tree in pre-host mode.

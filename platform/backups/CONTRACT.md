@@ -10,6 +10,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - CronJob `etcd-snapshots`: a read-only copy of the k3s snapshot directory into repository `host-etcd-snapshots`.
 - ClusterPolicy `pvc-backup` enrolls every PVC: one restic Secret and one VolSync `ReplicationSource` in that PVC's namespace.
 - A StatefulSet volume gets one `ReplicationSource` per PVC Kubernetes creates (`<template>-<statefulset>-<ordinal>`). Git does not list the ordinals.
+- Opt-in CronJob `restic-offsite` (`platform/backups/offsite`): a nightly `restic copy` of every local repository to the env's off-host restic backend (Operations, Off-host copy).
 - Opt-out for rebuildable observability data: the unprefixed annotation `backup: none` on a PVC, or on a `volumeClaimTemplate`'s `metadata`. Allowed only under `services/observability/victoria-metrics/` and `services/observability/victoria-logs/`.
 
 ## Expects
@@ -20,6 +21,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - The backup-role node (`node-role.jarvis.io/backup=true`) for the rest-server hostPath.
 - The control-plane node (`node-role.jarvis.io/control_plane=true`), where k3s writes the snapshot files.
 - rest-server, CronJob `etcd-snapshots`, and CronJob `restic-check` each match their role with required node affinity: `node-role.jarvis.io/<role>=true`, or, until that term is removed, `role.<dns_suffix>/<role>=true`. Each tolerates `node-role.jarvis.io/dedicated=true:NoSchedule`. Drill pods copy that affinity and toleration.
+- An env that lists `platform/backups/offsite` in its platform-configs list also lists and holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`, without the transitional term.
 - `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
 
 ## Health
@@ -35,6 +37,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - `make drill` deletes a scratch volume, restores it, and compares checksums.
 - A Job from CronJob `etcd-snapshots` completes, and `restic snapshots` on `host-etcd-snapshots` lists a snapshot that holds the newest k3s snapshot file.
 - A Job from CronJob `restic-check` (on `backup_check_schedule` in `time_zone`, default Wednesday 06:30, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `make verify` fails when its last success is older than one schedule interval plus 12 hours. With no success yet, `make verify` warns while the first run is pending or running inside the first interval plus 12 hours, and fails once a run finished without success or that time has passed. The `etcd-snapshots` check uses the same first-run rule without the 12 hours.
+- Where the env lists the off-host copy: a Job from CronJob `restic-offsite` (daily 04:00 in `time_zone`) completes and prints `PASS` for every repository. `make verify` checks its last success with the `restic-check` rule (one interval plus 12 hours, same first-run warning).
 
 ## Config
 
@@ -98,6 +101,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles, policy rules, `backup: paused` sets `spec.paused`).
 - `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails from mover status; `AS_OF` restores a live volume; `restore-all` keeps, retires, or lifts the hold).
 - `ci/tests/test_verify.py` (read-only, fail-closed standing checks, including enrollment freshness and the rebuild hold).
+- `ci/tests/test_restic_rest_server.py` (off-host copy renders only where the env lists it; the copy script initialises a missing destination, copies each repository, and prints only `PASS`/`FAIL`), `ci/tests/test_env_schema.py` (listing it requires the sealed file), `ci/tests/test_verify.py` (its freshness).
 - `ci/tests/test_drill.py` and `make drill ENV=<env>` (real restore target, checksum comparisons, etcd-copy check, and in-cluster cleanup).
 
 ## Operations
@@ -312,9 +316,98 @@ RESTIC_PASSWORD_FILE=new-password restic -r <repo> key remove <old-id>
 
 Delete `old-password`, `new-password`, `new-password.json`, and `repos.txt`.
 
+### Off-host copy
+
+What it does: CronJob `restic-offsite` runs daily at 04:00 in `time_zone` on the backup-role node. It mounts `backup_path/restic` read-only and, for `host-etcd-snapshots` and every `ns-*/pvc-*`, runs `restic copy --no-lock` from that local repository into the off-host repository `<RESTIC_REPOSITORY><path>`. A missing off-host repository is created first with `restic init --copy-chunker-params`, so the copy deduplicates. It prints only `PASS <path>` or `FAIL <path>: restic exited <n>`. It never forgets or prunes on either side. The local side takes no lock, so a run that overlaps a prune can only fail and retry. A missing `host-etcd-snapshots` fails.
+
+Credentials: the local password is `RESTIC_PASSWORD` from `backups-restic`. Everything about the target is in one Secret per env, `platform-backups/backups-offsite`, loaded as environment variables:
+
+- `RESTIC_REPOSITORY`: the off-host prefix, ending in `/`, for example `rest:http://<user>:<password>@<host>:8000/` (`https` also works), `s3:https://<endpoint>/<bucket>/` or `sftp:<ssh-host-alias>:<path>/`.
+- rest-server setup: one rest-server per env, run without `--private-repos` (it serves only two path levels, and the user-name level would break `ns-<ns>/pvc-<pvc>`). `RESTIC_REPOSITORY` is the server root ending in `/`. Append-only mode is fine because the copy never forgets or prunes.
+- `RESTIC_PASSWORD`: the off-host restic password. It is not the local one.
+- The backend's own variables: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for `s3:`; `RESTIC_REST_USERNAME` and `RESTIC_REST_PASSWORD` for `rest:` when the login is not in the URL.
+- For `sftp:` only: keys `config`, `id_ed25519` and `known_hosts`. The Secret is also mounted read-only at root's `~/.ssh` (mode `0400`), so `config` names the host alias, `User`, `IdentityFile ~/.ssh/id_ed25519` and `UserKnownHostsFile ~/.ssh/known_hosts`. The image has `openssh-client` and no `rclone`.
+
+Turn it on (owner-run, needs the age public key only):
+
+1. Set up the target: an empty bucket, rest-server or sftp directory that only this env writes, and a login for it.
+2. Write a mode `0600` Secret manifest outside the repo: `kind: Secret`, `metadata.name: backups-offsite`, `metadata.namespace: platform-backups`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, and the `stringData` keys above. Generate the off-host password new (`openssl rand -base64 32`).
+3. `make seal ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
+4. Add `../../../../platform/backups/offsite` and `../../secrets/backups-offsite.sops.yaml` to `envs/<env>/flux/platform-configs/kustomization.yaml`, commit, and push.
+5. After Flux applies it: `kubectl -n platform-backups create job --from=cronjob/restic-offsite restic-offsite-first`, wait for it to complete, and read its log: one `PASS` line per repository. `restic snapshots` against the target lists each repository.
+
+Keep-safe: the off-host restic password goes on the owner's offline keep-safe list (`envs/<env>/secrets/README.md`). The sealed copy needs the age key, so a lost controller and a lost age key otherwise lose the off-host copy too.
+
+#### Restore from the off-host copy into the drill namespace
+
+Owner-run. It copies one off-host repository back to the local drill repository `ns-platform-drill/pvc-drill`, then restores it with `make restore`. Run it only when `make drill` is not running and `platform-drill` does not exist.
+
+1. Create namespace `platform-drill` and PVC `drill` in it, annotated `backup: paused`, with the size and storage class of the PVC being restored.
+2. Apply this Job with `<image>` from CronJob `restic-offsite`, `<backup_path>` from the env, and `<source>` the repository path such as `ns-<namespace>/pvc-<pvc>`:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restic-offsite-restore
+  namespace: platform-backups
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {key: node-role.jarvis.io/backup, operator: In, values: ["true"]}
+      tolerations:
+        - {key: node-role.jarvis.io/dedicated, operator: Equal, value: "true", effect: NoSchedule}
+      containers:
+        - name: restic
+          image: <image>
+          securityContext: {runAsUser: 0}
+          envFrom:
+            - secretRef: {name: backups-offsite}
+          env:
+            - name: RESTIC_FROM_PASSWORD
+              valueFrom: {secretKeyRef: {name: backups-offsite, key: RESTIC_PASSWORD}}
+            - name: RESTIC_PASSWORD
+              valueFrom: {secretKeyRef: {name: backups-restic, key: RESTIC_PASSWORD}}
+            - {name: SOURCE, value: <source>}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              dest=/repositories/ns-platform-drill/pvc-drill
+              if restic --repo "$dest" init --from-repo "$RESTIC_REPOSITORY$SOURCE" --copy-chunker-params >/dev/null 2>&1 &&
+                restic --repo "$dest" copy --from-repo "$RESTIC_REPOSITORY$SOURCE" >/dev/null 2>&1; then
+                echo "PASS $SOURCE"
+              else
+                echo "FAIL $SOURCE"; exit 1
+              fi
+          volumeMounts:
+            - {name: repositories, mountPath: /repositories}
+            - {name: offsite, mountPath: /root/.ssh, readOnly: true}
+      volumes:
+        - name: repositories
+          hostPath: {path: <backup_path>/restic, type: Directory}
+        - name: offsite
+          secret: {secretName: backups-offsite, defaultMode: 0400}
+```
+
+3. When its log says `PASS`, delete the Job and run `make restore ENV=<env> APP=platform-drill NODE=<node>`.
+4. Mount PVC `drill` in a short-lived pod and compare its files with the source volume.
+5. `make drill-cleanup ENV=<env>` removes the namespace and `ns-platform-drill/pvc-drill`.
+
+How to tell it worked: `PASS <source>` from the Job, then `PASS restore platform-drill/drill snapshot <id>` and exit 0 from `make restore`, and the files match.
+
 ## Limits
 
-- Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss.
+- Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss, unless the env turns on the off-host copy.
+- The off-host copy only adds snapshots. Nothing forgets or prunes off-host, so that side grows until the owner prunes it.
 - While the rest-server's data sits on the same disk as the k3s snapshot files, the etcd restic copy adds retention and dedup, not disk-failure protection.
 - There is no on-demand backup. The policy does not set `trigger.manual`. VolSync ignores the schedule while `trigger.manual` is set.
 - Restore uses no VolumeSnapshot, volume populator, or snapshot class.

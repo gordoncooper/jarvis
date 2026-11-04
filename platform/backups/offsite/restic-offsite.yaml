@@ -1,0 +1,132 @@
+# restic 0.19.1. Version and digest pin; Renovate updates both (renovate.json).
+# Nightly copy of every local repository to the env's off-host restic backend.
+# It reads the local repositories and only adds snapshots off-host; it never forgets or prunes.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restic-offsite
+  namespace: platform-backups
+  labels:
+    app.kubernetes.io/name: restic-offsite
+spec:
+  # 04:00: three hours after a nightly backup_schedule at 00:00 or 01:00, away from the
+  # etcd copy (00:05 and 12:05) and from restic-check (default Wednesday 06:30).
+  # --no-lock on the local side takes no lock there, so an overlap blocks nothing; it can only fail and retry.
+  schedule: "0 4 * * *"
+  timeZone: ${time_zone}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # make verify allows this plus a margin after the scheduled time (tools/verify/backups.py).
+      activeDeadlineSeconds: 21600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: restic-offsite
+        spec:
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: node-role.jarvis.io/backup
+                        operator: In
+                        values: ["true"]
+          tolerations:
+            - key: node-role.jarvis.io/dedicated
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+            - name: restic
+              # renovate: datasource=docker depName=restic/restic
+              image: restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+              imagePullPolicy: IfNotPresent
+              # restic copy holds the index of both repositories in memory.
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+              # Repository files are owned by root (rest-server runs as root); owner reads need no capability.
+              securityContext:
+                runAsUser: 0
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              # Off-host side: RESTIC_REPOSITORY (prefix; each repository path is appended),
+              # RESTIC_PASSWORD, and the backend's own variables. Everything about the target is here.
+              envFrom:
+                - secretRef:
+                    name: backups-offsite
+              env:
+                # Local side: the one core password. An explicit env entry wins over envFrom.
+                - name: RESTIC_FROM_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: backups-restic
+                      key: RESTIC_PASSWORD
+                # Repository list: paths under the rest-server data directory; globs expand there.
+                - name: REPOSITORIES
+                  value: "host-etcd-snapshots ns-*/pvc-*"
+                - name: RESTIC_CACHE_DIR
+                  value: /cache
+              # restic output can name files inside a repository, so only PASS or FAIL per repository is printed.
+              # cat config exit 10 means the off-host repository is missing; init copies the local chunker
+              # parameters so the copy deduplicates.
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  failed=0
+                  cd /repositories
+                  for repo in $REPOSITORIES; do
+                    # A glob that matched nothing; a plain name that is missing still fails below.
+                    case "$repo" in *'*'*) continue ;; esac
+                    dest="$RESTIC_REPOSITORY$repo"
+                    status=0
+                    restic --repo "$dest" cat config >/dev/null 2>&1 || status=$?
+                    if [ "$status" -eq 10 ]; then
+                      status=0
+                      restic --repo "$dest" init --from-repo "/repositories/$repo" \
+                        --copy-chunker-params >/dev/null 2>&1 || status=$?
+                    fi
+                    if [ "$status" -eq 0 ]; then
+                      restic --repo "$dest" --no-lock copy --from-repo "/repositories/$repo" \
+                        >/dev/null 2>&1 || status=$?
+                    fi
+                    if [ "$status" -eq 0 ]; then
+                      echo "PASS $repo"
+                    else
+                      echo "FAIL $repo: restic exited $status"
+                      failed=1
+                    fi
+                  done
+                  exit "$failed"
+              volumeMounts:
+                - name: repositories
+                  mountPath: /repositories
+                  readOnly: true
+                # sftp: keys config, a private key and known_hosts in backups-offsite are root's ssh files.
+                - name: offsite
+                  mountPath: /root/.ssh
+                  readOnly: true
+                - name: cache
+                  mountPath: /cache
+          volumes:
+            - name: repositories
+              hostPath:
+                path: "${backup_path}/restic"
+                type: Directory
+            - name: offsite
+              secret:
+                secretName: backups-offsite
+                defaultMode: 0400
+            - name: cache
+              emptyDir:
+                sizeLimit: 2Gi

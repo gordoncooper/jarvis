@@ -382,3 +382,72 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
         for other in (values["backup_schedule"], etcd_schedule):
             for instant in scheduled_instants(other, "Etc/UTC", run + timedelta(days=2), 8):
                 assert abs(instant - run) >= timedelta(hours=3), (env, other)
+
+
+def test_offsite_copy_renders_only_where_the_env_lists_it(example_copy: ExampleCopy) -> None:
+    """The example copy turns the off-host copy on with its own backups-offsite secret; an env
+    that does not list it renders no off-host CronJob or secret."""
+    from schema.env import offsite_copy_listed
+
+    for root, env in real_and_copy_envs(example_copy):
+        docs = [
+            doc
+            for doc in yaml.safe_load_all(
+                _kustomize_build(f"envs/{env}/flux/platform-configs", root=root)
+            )
+            if isinstance(doc, dict)
+        ]
+        names = {(doc["kind"], doc["metadata"]["name"]) for doc in docs}
+        listed = offsite_copy_listed(root / "envs" / env, root)
+        assert listed or env != example_copy.name
+        assert (("CronJob", "restic-offsite") in names) is listed
+        assert (("Secret", "backups-offsite") in names) is listed
+        if listed:
+            cronjob = next(doc for doc in docs if doc["metadata"]["name"] == "restic-offsite")
+            container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+            assert container["envFrom"] == [{"secretRef": {"name": "backups-offsite"}}]
+
+
+# Exits 10 for a missing destination; prints a file name it must not leak.
+_FAKE_COPY = """#!/bin/sh
+echo "$*" >> "$LOG"
+echo "tree 1: file private-file-name"
+dest=$2
+case "$3" in
+  cat) [ -e "$dest/config" ] || exit 10 ;;
+  init) [ -d "$5" ] || exit 1; mkdir -p "$dest"; touch "$dest/config" ;;
+  --no-lock) [ "$4" = copy ] && [ -d "$6" ] && [ -e "$dest/config" ] || exit 1; touch "$dest/copied" ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+def test_offsite_copy_script_inits_and_copies_every_repository(tmp_path: Path) -> None:
+    """Each local repository is copied into prefix + its path, a missing destination is
+    initialised first, the local side takes no lock, and only PASS lines reach the log."""
+    data, bindir, offsite = tmp_path / "data", tmp_path / "bin", tmp_path / "offsite"
+    bindir.mkdir()
+    for repo in ("host-etcd-snapshots", "ns-a/pvc-x"):
+        (data / repo).mkdir(parents=True)
+    (bindir / "restic").write_text(_FAKE_COPY, encoding="utf-8")
+    (bindir / "restic").chmod(0o755)
+    job = _docs(ROOT / "platform/backups/offsite/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    env.update(
+        PATH=f"{bindir}:{os.environ['PATH']}",
+        LOG=str(tmp_path / "log"),
+        RESTIC_REPOSITORY=f"{offsite}/",
+    )
+    script = container["command"][-1].replace("/repositories", str(data))
+    proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stdout
+    assert proc.stdout.splitlines() == ["PASS host-etcd-snapshots", "PASS ns-a/pvc-x"]
+    assert "private-file-name" not in proc.stdout + proc.stderr
+    for repo in ("host-etcd-snapshots", "ns-a/pvc-x"):
+        assert (offsite / repo / "copied").is_file()
+    copies = [line for line in (tmp_path / "log").read_text().splitlines() if " copy " in line]
+    assert copies == [
+        f"--repo {offsite}/{repo} --no-lock copy --from-repo {data}/{repo}"
+        for repo in ("host-etcd-snapshots", "ns-a/pvc-x")
+    ]

@@ -18,6 +18,9 @@ DEFAULT_SSH_USER = "ubuntu"
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 # Weekly repository check, hours away from midnight-to-01:00 backups and the 00:05/12:05 etcd copy.
 DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
+# An env turns the off-host copy on by listing this directory and its sealed secret in platform-configs.
+OFFSITE_COPY_DIR = "platform/backups/offsite"
+OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
 
 
 def is_example_env(name: str) -> bool:
@@ -297,6 +300,7 @@ def _validate_env(
     errors.extend(cluster_errors)
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
+    errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
     errors.extend(
         _validate_flux_instance_sync(
             env_dir,
@@ -568,6 +572,35 @@ def _validate_flux_env_paths(env_dir: Path, repo_root: Path, env_name: str) -> l
                 seen.add(message)
                 errors.append(message)
     return errors
+
+
+def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
+    """True when the env's platform-configs list includes the off-host copy directory."""
+    path = env_dir / "flux" / "platform-configs" / "kustomization.yaml"
+    if not path.is_file():
+        return False
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    resources = doc.get("resources") if isinstance(doc, dict) else None
+    target = (Path(repo_root) / OFFSITE_COPY_DIR).resolve()
+    return any(
+        isinstance(item, str) and (path.parent / item).resolve() == target
+        for item in resources or []
+    )
+
+
+def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> list[str]:
+    """A bootstrapped env that lists the off-host copy holds its sealed target secret. Like the
+    k3s tokens, it is not required before bootstrap-secrets, when prep-node checks a new env."""
+    secrets = env_dir / "secrets"
+    if not any(secrets.glob("*.sops.yaml")) or not offsite_copy_listed(env_dir, repo_root):
+        return []
+    secret = secrets / OFFSITE_SECRET_FILE
+    if secret.is_file():
+        return []
+    return [
+        f"{env_name}: platform-configs lists {OFFSITE_COPY_DIR}, "
+        f"missing required file {_display_path(secret, repo_root)}"
+    ]
 
 
 def _validate_flux_instance_sync(

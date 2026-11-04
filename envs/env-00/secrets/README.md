@@ -22,6 +22,8 @@ If `k3s-token` is missing and any other file above is present, bootstrap refuses
 
 If git already records `backups-restic`, bootstrap refuses to recreate it. `make bootstrap-secrets ENV=<env> ROTATE_RESTIC=1` mints a new password anyway. That flag does not add the password to existing repositories. Rotating a live password is in `platform/backups/CONTRACT.md`.
 
+`backups-offsite` is not generated: the owner sets up the off-host target and seals it with `make seal` (`platform/backups/CONTRACT.md`, Off-host copy). This example env lists it in `flux/platform-configs/kustomization.yaml` to show the copy turned on; a copy that does not want it removes those two lines.
+
 ## Age-key custody
 
 Keep two copies of the one age private key. The second copy stays offline, off the controller. A second recipient in `.sops.yaml` is optional and is not required.
@@ -39,6 +41,7 @@ The command test-decrypts one secret of that env and prints `PASS` or `FAIL`. De
 In the owner's password manager, keep what must survive a lost controller:
 
 - The age private key, and where the offline copy is stored.
+- When the env has the off-host copy: the off-host restic password in `backups-offsite`, and the target's login. Recovering from the off-host copy needs them, and the sealed file needs the age key.
 
 Add a line here when a later change creates something else that must survive that loss.
 

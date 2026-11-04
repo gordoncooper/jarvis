@@ -179,8 +179,18 @@ def test_platform_configs_hold_the_issuer_wildcard_and_store(example_copy: Examp
 
 
 def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
+    from schema.env import offsite_copy_listed
+
+    offsite = (
+        {
+            ("CronJob", "platform-backups", "restic-offsite"),
+            ("Secret", "platform-backups", "backups-offsite"),
+        }
+        if offsite_copy_listed(root / "envs" / env, root)
+        else set()
+    )
     assert _idents(f"envs/{env}/flux/platform-configs", root=root) == (
-        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP
+        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | offsite
     )
     suffix = str(load_cluster_vars(root, env=env)["dns_suffix"])
     for path in (REPO_ROOT / "platform/cert-manager").rglob("*"):

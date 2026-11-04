@@ -250,7 +250,10 @@ def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list
 
 
 def _platform_configs_errors(doc: dict, env: str) -> list[str]:
-    """The env's platform-configs path is platform/configs plus that env's SOPS secrets."""
+    """The env's platform-configs path is platform/configs plus that env's SOPS secrets,
+    and the opt-in off-host copy."""
+    from schema.env import OFFSITE_COPY_DIR
+
     base = f"envs/{env}/flux/platform-configs"
     resources = [posixpath.normpath(posixpath.join(base, item)) for item in doc.get("resources") or []]
     errors = []
@@ -262,7 +265,7 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     others = [
         item
         for item in resources
-        if item != "platform/configs"
+        if item not in ("platform/configs", OFFSITE_COPY_DIR)
         and not (posixpath.dirname(item) == f"envs/{env}/secrets" and item.endswith(".sops.yaml"))
     ]
     if others:
