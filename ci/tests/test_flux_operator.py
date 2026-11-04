@@ -1088,7 +1088,7 @@ def _assert_key_was_not_read(proc: subprocess.CompletedProcess[str], sentinel: s
 
 def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
     """A missing age-keygen fails in a visible task that names the binary."""
-    require_cli("ansible-playbook")
+    playbook = Path(require_cli("ansible-playbook"))
     keyfile = tmp_path / "age.key"
     keyfile.write_text("not-read\n", encoding="utf-8")
     keyfile.chmod(0o600)
@@ -1105,12 +1105,18 @@ def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
     )
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for directory in (Path("/bin"), Path("/usr/bin")):
+    # Hide age-keygen only. ansible-playbook stays, including when it lives
+    # outside /bin and /usr/bin, which is where CI's venv puts it.
+    for directory in (Path("/bin"), Path("/usr/bin"), playbook.parent):
+        if not directory.is_dir():
+            continue
         for entry in directory.iterdir():
             dest = bindir / entry.name
             if entry.name == "age-keygen" or dest.exists():
                 continue
             dest.symlink_to(entry)
+    if not (bindir / "ansible-playbook").exists():
+        (bindir / "ansible-playbook").symlink_to(playbook)
     env = _ansible_env()
     env["SOPS_AGE_KEY_FILE"] = str(keyfile)
     env["PATH"] = str(bindir)
