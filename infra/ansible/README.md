@@ -26,7 +26,7 @@ make bootstrap-secrets ENV=<env>
 
 The age private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides that path. The file must hold the private half of the env's recipient in `.sops.yaml` (`age-keygen -y` prints the public half). It may hold other identities and comment lines. When the file exists, `flux-operator` checks it before any cluster change and refuses a file with no identity for that recipient. A new `flux-system/sops-age` holds only the matching identities. An existing secret whose identities include them passes and is left as it is. Any other existing secret refuses the run (see Recovery). When `flux-system/sops-age` already exists and the key file is absent, the flux-operator step leaves the secret alone. Every k3s run, including `CHECK=1` and adding a node, decrypts `envs/<env>/secrets/k3s-token.sops.yaml`, so it needs the key file on the controller and refuses one that is not mode `0600` and owned by the runner. The check runs `age-keygen` on the controller (`make deps`).
 
-Every env run passes the env hosts file, then the constructed role groups. The second inventory lives in core and is not copied into an env. `node_roles` become groups of the same name. Hosts with `data_disk: true` are the `data_disk` group. That group is always present, including when no host sets `data_disk`.
+Every env run passes the env hosts file, then the constructed role groups. The second inventory lives in core and is not copied into an env. `node_roles` become groups of the same name. `data_disk` is a host var the `node-disk` role reads; it makes no group.
 
 ```bash
 make site ENV=<env>

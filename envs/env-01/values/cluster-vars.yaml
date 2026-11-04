@@ -3,7 +3,6 @@ jarvis_env: env-01
 dns_suffix: alpha.lan
 time_zone: America/Los_Angeles
 code_delivery: github
-build_agent: cursor
 ssh_user: agent
 
 backup_path: /var/lib/jarvis/backup
