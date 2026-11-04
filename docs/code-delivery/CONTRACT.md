@@ -1,8 +1,8 @@
 # CONTRACT: Code delivery provider
 
-One contract for six capabilities so core, the code-factory, and app hosting depend on this file, not on a vendor name. An env may select a provider in `envs/<env>/values/cluster-vars.yaml`; only built providers pass env-schema validation. Manifests do not branch on `code_delivery` until a second provider is built.
+One contract for six capabilities so core, the code-factory, and app hosting depend on this file, not on a vendor name. No env setting selects the provider until a second one is built.
 
-**Built provider:** `github` (per `<env>` in `cluster-vars.yaml`). **Planned second provider:** Forgejo. There is no Forgejo implementation in this repo.
+**Built provider:** `github`. **Planned second provider:** Forgejo. There is no Forgejo implementation in this repo.
 
 ## Offers
 
@@ -30,7 +30,6 @@ Callers may rely on these six capabilities from the active provider. Rows marked
 
 ## Expects
 
-- When set, `code_delivery` is `github` in `values/cluster-vars.yaml`, validated by the env schema (`schema/CONTRACT.md`). Omitting it is valid.
 - Both repos exist on the provider before env values reference them.
 - Flux reconciles cluster state from Git only. Agents do not write to the cluster directly (`ci/checks/cli-deny`).
 - Credentials for the planned code-factory jobs stay outside CI: the lane job holds a Cursor key and a read-only GitHub token; the publish job holds a short-lived App token; the builder has no push credentials. Git holds no plaintext secret.
@@ -45,17 +44,10 @@ Not a single daemon. Health means:
 
 ## Config
 
-Env selection uses **lowercase snake_case** in `envs/<env>/values/cluster-vars.yaml`:
-
-| Field | Required | Notes |
-| --- | --- | --- |
-| `code_delivery` | no | When set, `github` only. `forgejo` is the planned second provider. Any other value fails env-schema validation. |
-
-No core manifest reads `code_delivery` until a second provider is built. Provider-specific URLs, org, and tokens are bootstrap or workflow secrets, not duplicated in core.
+There is no env setting. No core manifest branches on the provider until a second one is built. Provider-specific URLs, org, and tokens are bootstrap or workflow secrets, not duplicated in core.
 
 ## Proven by
 
-- `ci/checks/env-schema` rejects a `code_delivery` value other than `github`.
 - `.github/workflows/ci.yml`: the `fast` job runs every `ci/checks/` rule and pytest. The `ci` job requires `fast`. The required check name is `ci`.
 - Planned: `admin-gate` fails a protected-path PR without `admin-approved` from the human admin account, passes after that label, and fails for a bot, an App, or the coding-agent account.
 - Planned: `build.yml` publishes the demo app as a public package, and the cluster pulls it by digest.

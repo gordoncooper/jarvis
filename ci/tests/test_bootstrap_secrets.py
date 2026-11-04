@@ -514,6 +514,16 @@ def test_git_error_does_not_mint_a_new_restic_password(tmp_path, monkeypatch):
     assert not (tmp_path / rel).exists()
 
 
+def test_repo_with_no_commits_mints_restic(tmp_path, monkeypatch):
+    """A fresh `git init` with nothing committed records nothing, so bootstrap mints instead of refusing."""
+    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
+    (tmp_path / rel).unlink()
+    shutil.rmtree(tmp_path / ".git")
+    _git(tmp_path, "init", "-q")
+    mod.bootstrap("env-test", sops_bin=sops_bin)
+    assert (tmp_path / rel).is_file()
+
+
 def test_git_location_env_does_not_hide_a_recorded_restic(tmp_path, monkeypatch):
     """A git-location variable pointing at another repository does not let bootstrap mint."""
     mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
@@ -616,6 +626,8 @@ def test_new_ca_permits_only_the_dns_suffix(tmp_path: Path) -> None:
         ("192.0.2.10", "ip", False, "IP:192.0.2.10"),
         ("ip6", "ip6", False, "IP:2001:db8::1"),
         ("user@app.example", "mail", False, "email:user@app.example"),
+        ("uri-in", "uriin", True, "URI:https://app.example/x"),
+        ("uri-out", "uriout", False, "URI:https://outside.example/x"),
     ):
         leaf = _sign_leaf(tmp_path, ca_cert, ca_key, dns_name, stem, san=san)
         verified = subprocess.run(

@@ -42,3 +42,10 @@ def test_kubeconfig_tag_runs_only_the_kubeconfig_role() -> None:
     assert all("Download pinned k3s" not in line for line in task_lines), listed
     assert "base-os :" not in listed
     assert "flux-operator :" not in listed
+
+
+def test_labels_tag_reads_no_sealed_token() -> None:
+    """A label-only run never reaches the task that decrypts the k3s tokens, so it needs no age key."""
+    listed = list_tasks_for_tag("labels")
+    assert "Reconcile role and enablelb labels" in listed, listed
+    assert "sealed k3s tokens" not in listed and "age private key" not in listed, listed

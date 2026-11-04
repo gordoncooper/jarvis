@@ -6,7 +6,7 @@ Baseline single-node production for JARVIS AlphaCut: one CPU-only node (`bench.l
 
 ## What deploys here
 
-Platform (Flux, Traefik, cert-manager, App DNS, VolSync backups), observability (metrics, logs, Gatus, Grafana), Hermes ops and code-factory deploys, then hosted apps from `jarvis-apps` when enabled.
+Platform only: Flux, Traefik, cert-manager, App DNS, Kyverno, and VolSync backups with the off-host copy. The services and apps layers are empty placeholders. Observability, Grafana, Hermes and hosted apps are not deployed. `secrets/` still holds sealed Grafana and Hermes files for when they return; nothing reads them now.
 
 env-01 values live only under `envs/env-01/`; core stays env-agnostic (`ci/checks/core-names`).
 
@@ -14,7 +14,7 @@ env-01 values live only under `envs/env-01/`; core stays env-agnostic (`ci/check
 
 - Routine jarvis changes: agent PRs merge on green `ci`. The planned `admin-gate` check applies to protected paths.
 - Infra Ansible (`infra/`): the admin re-runs `site.yml` on the controller node after merge (`infra/ansible/README.md`).
-- Hermes image bumps: the admin merges; soak between code-factory and ops deploys. Images the repo adds are digest-pinned (`ci/checks/digest-pin`).
+- Images the repo adds are digest-pinned (`ci/checks/digest-pin`).
 
 ## New env
 

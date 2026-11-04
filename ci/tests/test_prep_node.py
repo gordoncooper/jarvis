@@ -40,7 +40,7 @@ all:
 
 _CLUSTER = """\
 # cluster header
-code_delivery: github
+time_zone: Etc/UTC
 ssh_user: example # the login
 backup_path: /var/lib/jarvis/backup
 """
@@ -548,14 +548,14 @@ def test_env_schema_rejects_a_seeded_bad_copy(tmp_path: Path) -> None:
     shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
     cluster = dest / "values" / "cluster-vars.yaml"
     original = cluster.read_text(encoding="utf-8")
-    seeded = original.replace("code_delivery: github", "code_delivery: not-a-provider", 1)
+    seeded = original.replace("time_zone: Etc/UTC", "time_zone: Not/A_Zone", 1)
     assert seeded != original
     cluster.write_text(seeded, encoding="utf-8")
 
     with pytest.raises(module.PrepError) as excinfo:
         module.run_env_schema(tmp_path)
     message = str(excinfo.value)
-    assert "code_delivery" in message
+    assert "time_zone" in message
     assert "Traceback" not in message
     assert "FileNotFoundError" not in message
 

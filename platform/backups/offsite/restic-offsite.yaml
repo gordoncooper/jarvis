@@ -59,7 +59,7 @@ spec:
                 capabilities:
                   drop: ["ALL"]
               # Off-host side: RESTIC_REPOSITORY (prefix; each repository path is appended),
-              # RESTIC_PASSWORD, and the backend's own variables. Everything about the target is here.
+              # RESTIC_PASSWORD, and the backend's own variables (rest or s3). Everything about the target is here.
               envFrom:
                 - secretRef:
                     name: backups-offsite
@@ -78,6 +78,8 @@ spec:
               # restic output can name files inside a repository, so only PASS or FAIL per repository is printed.
               # cat config exit 10 means the off-host repository is missing; init copies the local chunker
               # parameters so the copy deduplicates.
+              # A first 30 s probe of the target (exit 0 or 10 means it answered) makes a down target fail
+              # every repository at once instead of waiting out restic's retries per repository.
               command:
                 - /bin/sh
                 - -c
@@ -85,9 +87,16 @@ spec:
                   set -eu
                   failed=0
                   cd /repositories
+                  probe=0
+                  timeout 30 restic --repo "$RESTIC_REPOSITORY"probe cat config >/dev/null 2>&1 || probe=$?
                   for repo in $REPOSITORIES; do
                     # A glob that matched nothing; a plain name that is missing still fails below.
                     case "$repo" in *'*'*) continue ;; esac
+                    if [ "$probe" -ne 0 ] && [ "$probe" -ne 10 ]; then
+                      echo "FAIL $repo: off-host target not reachable (probe exited $probe)"
+                      failed=1
+                      continue
+                    fi
                     dest="$RESTIC_REPOSITORY$repo"
                     status=0
                     restic --repo "$dest" cat config >/dev/null 2>&1 || status=$?
@@ -112,10 +121,6 @@ spec:
                 - name: repositories
                   mountPath: /repositories
                   readOnly: true
-                # sftp: keys config, a private key and known_hosts in backups-offsite are root's ssh files.
-                - name: offsite
-                  mountPath: /root/.ssh
-                  readOnly: true
                 - name: cache
                   mountPath: /cache
           volumes:
@@ -123,10 +128,6 @@ spec:
               hostPath:
                 path: "${backup_path}/restic"
                 type: Directory
-            - name: offsite
-              secret:
-                secretName: backups-offsite
-                defaultMode: 0400
             - name: cache
               emptyDir:
                 sizeLimit: 2Gi

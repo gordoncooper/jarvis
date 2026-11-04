@@ -442,6 +442,8 @@ def _assert_play_order(
         if tag == "k3s":
             found.update(server)
             found.update(agent)
+        if tag == "labels":
+            found.update(index for index in k3s if plays[index].get("tasks"))
         assert found, tag
         for index in sorted(found):
             tags = plays[index].get("tags")
@@ -463,6 +465,19 @@ def _site_plays() -> list[dict[str, object]]:
     plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
     assert isinstance(plays, list)
     return plays
+
+
+def test_untagged_check_run_skips_the_flux_operator_play() -> None:
+    """The flux-operator role's condition is false for an untagged --check run (run tags
+    ['all']) and true once TAGS=flux-operator is named or the run is not a check."""
+    import jinja2
+
+    play = next(p for p in _site_plays() if "flux-operator" in _role_names(p))
+    role = next(r for r in play["roles"] if r["role"] == "flux-operator")
+    applies = jinja2.Environment().compile_expression(role["when"])
+    assert not applies(ansible_check_mode=True, ansible_run_tags=["all"])
+    assert applies(ansible_check_mode=True, ansible_run_tags=["flux-operator"])
+    assert applies(ansible_check_mode=False, ansible_run_tags=["all"])
 
 
 def test_site_play_order_is_the_safety_fact() -> None:

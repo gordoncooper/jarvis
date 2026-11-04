@@ -31,7 +31,6 @@ _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 _HOSTNAME = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _SOPS_ENV_SECRETS = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/secrets/")
-_CODE_DELIVERY_ALLOWED = ("github",)
 
 _CLUSTER_VARS_REQUIRED = frozenset(
     {
@@ -63,7 +62,6 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
     {
         "ssh_user",
         "age_key_file",
-        "code_delivery",
         "apps_git_repo_url",
         "llm_provider_host",
         "chrony_nts",
@@ -376,10 +374,6 @@ def _validate_cluster_vars(
         errors.append(f"{rel_path}: age_key_file must be a string")
     elif "age_key_file" in data and not data["age_key_file"].strip():
         errors.append(f"{rel_path}: age_key_file must not be empty")
-
-    errors.extend(
-        _validate_enum(rel_path, "code_delivery", data.get("code_delivery"), _CODE_DELIVERY_ALLOWED)
-    )
 
     for key in (
         "jarvis_env",
@@ -755,17 +749,6 @@ def _validate_https_url(rel_path: str, key: str, value: Any) -> list[str]:
         return [f"{rel_path}: {key} must not include a query"]
     if "#" in value:
         return [f"{rel_path}: {key} must not include a fragment"]
-    return []
-
-
-def _validate_enum(rel_path: str, key: str, value: Any, allowed: tuple[str, ...]) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, str):
-        return [f"{rel_path}: {key} must be a string"]
-    if value not in allowed:
-        allowed_s = ", ".join(allowed)
-        return [f"{rel_path}: {key}: invalid value '{value}' (allowed: {allowed_s})"]
     return []
 
 

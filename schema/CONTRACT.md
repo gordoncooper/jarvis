@@ -7,8 +7,7 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 - A single validation contract for two files per env:
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
-- Rejection of an unknown `code_delivery` when that key is set (only built providers are accepted; other named providers are stubs, not valid values). Omitting it is valid.
-- Rejection of unknown `cluster-vars.yaml` keys. The known set is the required keys plus optional `ssh_user`, `age_key_file`, `code_delivery`, `apps_git_repo_url`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
+- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
 - Default `backup_check_schedule: 30 6 * * 3` when omitted. The example env still sets `backup_check_schedule`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
@@ -38,10 +37,9 @@ A required key that is present but null counts as unset and fails.
 | Field | Required | Notes |
 | --- | --- | --- |
 | `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). A lowercase DNS name. Never hardcoded in core (`ci/checks/core-names`). |
-| `time_zone` | yes | IANA time zone name for the node, VolSync schedules, and Hermes cron (e.g. `<time_zone>`). Unknown names fail validation. |
+| `time_zone` | yes | IANA time zone name for the node, and VolSync schedules (e.g. `<time_zone>`). Unknown names fail validation. |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`). |
 | `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap and the k3s token read. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
-| `code_delivery` | no | When set, `github` only. `forgejo` is the planned second provider. Any other value fails validation. |
 | `backup_path` | yes | Absolute path. Parent of `backup_path/etcd-snapshots` and of one restic repository per PVC (`backup_path/restic/ns-<namespace>/pvc-<pvc>`). The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names. |
 | `backup_retention_daily` | yes | Restic keep count for daily snapshots. |
 | `backup_retention_weekly` | yes | Restic keep count for weekly snapshots. |
@@ -126,14 +124,13 @@ Product rules in the same check: the word `bastion`, and any hardcoded `/home/` 
 
 ### Reference shape (documentation)
 
-Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`, `time_zone`, `code_delivery`, optional `ssh_user` (default `ubuntu` when omitted), and optional `age_key_file` (default `~/.config/sops/age/keys.txt` when omitted).
+Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`, `time_zone`, optional `ssh_user` (default `ubuntu` when omitted), and optional `age_key_file` (default `~/.config/sops/age/keys.txt` when omitted).
 
 ## Proven by
 
 - `ci/checks/env-schema` in the required `ci` workflow.
-- A seeded change that sets `code_delivery` to a value other than `github` fails `ci`.
-- `ci/tests/test_env_schema.py`: valid env tree, an env without `hermes.yaml` or `apps.yaml`, `build_agent` as an unknown key, `storage` as an unknown role, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
-- A behavior test accepts an env that omits any one of `code_delivery`, `apps_git_repo_url`, and `llm_provider_host`, and an env that omits all three. A value that is set still has to be allowed.
+- `ci/tests/test_env_schema.py`: valid env tree, an env without `hermes.yaml` or `apps.yaml`, `build_agent` and `code_delivery` as unknown keys, `storage` as an unknown role, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
+- A behavior test accepts an env that omits any one of `apps_git_repo_url` and `llm_provider_host`, and an env that omits both. A value that is set still has to be allowed.
 - A behavior test accepts two non-example envs whose `flux_git_repo_url` owners differ.
 - A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
 - A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
