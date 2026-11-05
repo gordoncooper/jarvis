@@ -9,6 +9,16 @@ spec:
     requests:
       storage: 1Gi
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notes
+data:
+  # Copied onto the volume by the init container on first start only.
+  welcome.txt: |
+    Welcome to notes. This file was seeded onto the volume by an init container.
+    Anything you add here survives pod restarts and is backed up.
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,6 +35,7 @@ spec:
       labels:
         app: notes
     spec:
+      priorityClassName: hosted-app
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -32,6 +43,33 @@ spec:
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: seed
+          # nginxinc/nginx-unprivileged 1.31.7-alpine-slim, used only for its shell.
+          image: docker.io/nginxinc/nginx-unprivileged@sha256:a8cb0f33d51fa107c96fd2bd3a71aaf564ec131e9d2bdf8700944f0ed8b170d7
+          # Seed once: never overwrite what the user has since edited or deleted.
+          command:
+            - sh
+            - -c
+            - |
+              test -e /data/.seeded || { cp /seed/welcome.txt /data/welcome.txt && touch /data/.seeded; }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 16Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: seed
+              mountPath: /seed
+              readOnly: true
       containers:
         - name: notes
           # sigoden/dufs v0.47.0: a small file server; drop and edit text notes in /data.
@@ -45,6 +83,12 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /__dufs__/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 15
           readinessProbe:
             httpGet:
               path: /__dufs__/health
@@ -68,6 +112,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: data
+        - name: seed
+          configMap:
+            name: notes
 ---
 apiVersion: v1
 kind: Service

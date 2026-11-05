@@ -8,6 +8,8 @@ spec:
       port: 5000
       # The path the uptime check requests; the same one the probes in deploy/ use.
       healthPath: /__dufs__/health
+    # hello-web may call notes (hello-web lists notes under egress.apps).
+    callers: [hello-web]
   # One volume, backed up. The env registers this app's own backup credential; until it
   # does, the volume gets no backup and the env's verify fails it.
   volumes:

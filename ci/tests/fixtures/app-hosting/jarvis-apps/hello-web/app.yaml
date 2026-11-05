@@ -3,9 +3,13 @@ kind: App
 metadata:
   name: hello-web
 spec:
-  # Plain defaults: a web address (health path /), no volumes, no egress beyond DNS, no
-  # caller, 500m CPU and 512Mi for the whole app.
   network:
     web:
       port: 8080
+    egress:
+      # Granted pair: hello-web calls notes (notes lists hello-web under callers).
+      apps: [notes]
+      # Any port to a public address, never the LAN or the cluster.
+      internet: true
+  # No volumes, no risky item, 500m CPU and 512Mi memory for the whole app (the default).
   volumes: []

@@ -7,8 +7,60 @@ data:
     <!doctype html>
     <html lang="en">
       <head><meta charset="utf-8"><title>hello-web</title></head>
-      <body><h1>Hello from a hosted app</h1></body>
+      <body>
+        <h1>Hello from a hosted app</h1>
+        <ul>
+          <li><a href="/notes/__dufs__/health">/notes/</a>: calls the notes app (granted: egress.apps and callers)</li>
+          <li><a href="/blocked/">/blocked/</a>: calls lan-demo, which is not granted, so it times out (504)</li>
+          <li><a href="/internet/">/internet/</a>: fetches a public page (granted: egress.internet)</li>
+        </ul>
+      </body>
     </html>
+  # The nginx site. An init container fills in the cluster DNS address (__NS__) and
+  # writes the result where nginx reads it, so the root filesystem can stay read-only.
+  default.conf.template: |
+    server {
+      listen 8080;
+      root /usr/share/nginx/html;
+      resolver __NS__ valid=10s;
+
+      location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+      }
+
+      location / {
+        try_files $uri /index.html;
+      }
+
+      # Granted both ways: hello-web lists notes under egress.apps, notes lists hello-web
+      # under callers.
+      location /notes/ {
+        rewrite ^/notes/(.*)$ /$1 break;
+        set $upstream http://notes.app-notes.svc.cluster.local;
+        proxy_pass $upstream;
+        proxy_connect_timeout 3s;
+      }
+
+      # Not granted: lan-demo is not under egress.apps, so the default-deny egress drops
+      # the connection and nginx answers 504.
+      location /blocked/ {
+        rewrite ^/blocked/(.*)$ /$1 break;
+        set $upstream http://lan-demo.app-lan-demo.svc.cluster.local:8080;
+        proxy_pass $upstream;
+        proxy_connect_timeout 3s;
+      }
+
+      # Granted by network.egress.internet: any port to a public address.
+      location /internet/ {
+        rewrite ^/internet/(.*)$ /$1 break;
+        set $upstream http://example.com;
+        proxy_pass $upstream;
+        proxy_set_header Host example.com;
+        proxy_connect_timeout 3s;
+      }
+    }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -24,12 +76,41 @@ spec:
       labels:
         app: hello-web
     spec:
+      priorityClassName: hosted-app
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
         runAsGroup: 101
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: render-config
+          # Same image as the web container (it has a shell).
+          image: docker.io/nginxinc/nginx-unprivileged@sha256:a8cb0f33d51fa107c96fd2bd3a71aaf564ec131e9d2bdf8700944f0ed8b170d7
+          command:
+            - sh
+            - -c
+            - |
+              ns=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf)
+              case "$ns" in *:*) ns="[$ns]" ;; esac
+              sed "s/__NS__/$ns/" /template/default.conf.template > /conf/default.conf
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 16Mi
+          volumeMounts:
+            - name: template
+              mountPath: /template
+              readOnly: true
+            - name: conf
+              mountPath: /conf
       containers:
         - name: web
           # nginxinc/nginx-unprivileged 1.31.7-alpine-slim: listens on 8080 as a non-root user.
@@ -39,16 +120,23 @@ spec:
               containerPort: 8080
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 15
           readinessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: http
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: http
             periodSeconds: 30
           resources:
@@ -61,10 +149,32 @@ spec:
             - name: html
               mountPath: /usr/share/nginx/html
               readOnly: true
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            # nginx's pid file and temp paths.
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: html
           configMap:
             name: hello-web
+            items:
+              - key: index.html
+                path: index.html
+        - name: template
+          configMap:
+            name: hello-web
+            items:
+              - key: default.conf.template
+                path: default.conf.template
+        - name: conf
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
 ---
 apiVersion: v1
 kind: Service
