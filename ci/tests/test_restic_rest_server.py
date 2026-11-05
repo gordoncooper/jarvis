@@ -358,6 +358,59 @@ def test_restic_check_script_checks_every_repository_and_prints_only_results(
     assert 1 <= int(slice_) <= int(total) == int(env["READ_DATA_SLICES"])
 
 
+_FAKE_KEYED = """#!/bin/sh
+echo "$* core=${RESTIC_PASSWORD-unset} from=${RESTIC_FROM_PASSWORD-unset}" >> "$LOG"
+case "$3" in cat) [ -e "$2/config" ] || exit 10 ;; init) mkdir -p "$2"; touch "$2/config" ;; esac
+"""
+
+
+def _run_keyed(tmp_path: Path, manifest: str, extra_env: dict[str, str]) -> tuple[CompletedProcess[str], list[str]]:
+    """Runs a CronJob script over one core and two app repositories; only app-shop is registered."""
+    data, bindir, creds = tmp_path / "data", tmp_path / "bin", tmp_path / "credentials"
+    bindir.mkdir()
+    for repo in ("host-etcd-snapshots", "ns-a/pvc-x", "ns-app-shop/pvc-db", "ns-app-gone/pvc-db"):
+        (data / repo).mkdir(parents=True)
+    (creds / "app-shop").mkdir(parents=True)
+    (creds / "app-shop" / "RESTIC_PASSWORD").write_text("throwaway", encoding="utf-8")
+    (bindir / "restic").write_text(_FAKE_KEYED, encoding="utf-8")
+    (bindir / "restic").chmod(0o755)
+    container = _docs(ROOT / manifest)[0]["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    env.update(PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(tmp_path / "log"), RESTIC_PASSWORD="core", **extra_env)
+    script = container["command"][-1].replace("/repositories", str(data)).replace("/credentials", str(creds))
+    proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
+    return proc, (tmp_path / "log").read_text().splitlines()
+
+
+@pytest.mark.parametrize(
+    ("manifest", "extra_env"),
+    [
+        ("platform/backups/restic-check.yaml", {}),
+        ("platform/backups/offsite/restic-offsite.yaml", {"RESTIC_FROM_PASSWORD": "core-local"}),
+    ],
+)
+def test_app_repository_opens_only_with_its_own_password(
+    tmp_path: Path, manifest: str, extra_env: dict[str, str]
+) -> None:
+    """An app repository gets that app's password file and never core's password; core
+    repositories keep core's; an app repository with no registered credential fails alone."""
+    if "offsite" in manifest:
+        extra_env = {**extra_env, "RESTIC_REPOSITORY": f"{tmp_path / 'offsite'}/"}
+    proc, calls = _run_keyed(tmp_path, manifest, extra_env)
+    assert proc.returncode == 1
+    assert proc.stdout.splitlines() == [
+        "PASS host-etcd-snapshots",
+        "PASS ns-a/pvc-x",
+        "FAIL ns-app-gone/pvc-db: no backup credential registered for its app",
+        "PASS ns-app-shop/pvc-db",
+    ]
+    key = f"--password-file {tmp_path / 'credentials' / 'app-shop' / 'RESTIC_PASSWORD'}"
+    app_calls = [call for call in calls if "ns-app-shop" in call]
+    assert app_calls and all(key in call and "core=unset from=unset" in call for call in app_calls)
+    assert not any("ns-app-gone" in call for call in calls)
+    assert all("--password-file" not in call for call in calls if "ns-app-" not in call)
+
+
 def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
     example_copy: ExampleCopy,
 ) -> None:

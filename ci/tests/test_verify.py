@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import time
@@ -75,6 +76,9 @@ class Cluster:
         self.pods_rc = 0
         self.pods: list[dict] = []
         self.hello = False
+        self.core_users = ["restic"]
+        self.apps_command = ["/bin/sh", "-c", "exec rest-server --private-repos"]
+        self.pvcs = [("app", "data")]
 
     def kubectl(
         self, args: Sequence[str], input: str | None = None
@@ -97,6 +101,9 @@ class Cluster:
             if self.secret_rc:
                 return _completed(argv, "", returncode=1, stderr="forbidden")
             output = " ".join(argv)
+            if 'index .data "htpasswd"' in output:
+                lines = "".join(f"{user}:$2y$12${SECRET_VALUE}\n" for user in self.core_users)
+                return _completed(argv, base64.b64encode(lines.encode()).decode())
             if "go-template" in output or "jsonpath" in output:
                 return _completed(argv, "RESTIC_PASSWORD\n")
             return _completed(argv, {"data": {"RESTIC_PASSWORD": SECRET_VALUE}})
@@ -138,12 +145,16 @@ class Cluster:
                 {
                     "items": [
                         {
-                            "metadata": {"namespace": "app", "name": "data"},
-                            "spec": {"volumeName": "pv-data"},
+                            "metadata": {"namespace": namespace, "name": name},
+                            "spec": {"volumeName": f"pv-{name}"},
                         }
+                        for namespace, name in self.pvcs
                     ]
                 },
             )
+        if argv[:3] == ["get", "deployment", "restic-apps"]:
+            pod = {"containers": [{"command": self.apps_command}], "volumes": []}
+            return _completed(argv, {"spec": {"template": {"spec": pod}}})
         if argv[:2] == ["get", "replicationsource"]:
             if self.bad_sources_json:
                 return _completed(argv, {"items": "unreadable"})
@@ -743,6 +754,66 @@ def test_offsite_copy_freshness_is_checked_when_the_env_lists_it(
     cluster.offsite_sync = last
     assert _run(tmp_path, cluster, monkeypatch) == code
     assert line in capsys.readouterr().out
+
+
+def _list_apps_server(root: Path, *registered: str) -> None:
+    configs = root / "envs" / "env-test" / "flux" / "platform-configs"
+    configs.mkdir(parents=True, exist_ok=True)
+    text = "resources:\n  - ../../../../core/platform/backups/apps\n"
+    if registered:
+        text += "components:\n" + "".join(f"  - backups/{name}\n" for name in registered)
+    (configs / "kustomization.yaml").write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("core_users", "apps_command", "line"),
+    [
+        (["restic"], ["/bin/sh", "-c", "exec rest-server --private-repos"], "PASS app backup isolation"),
+        (
+            ["restic", "ns-app-shop"],
+            ["/bin/sh", "-c", "exec rest-server --private-repos"],
+            "FAIL app backup isolation: core's rest-server has an app user",
+        ),
+        (
+            ["restic"],
+            ["/bin/sh", "-c", "exec rest-server"],
+            "FAIL app backup isolation: restic-apps runs without --private-repos",
+        ),
+    ],
+)
+def test_app_isolation_static_half(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    core_users: list[str],
+    apps_command: list[str],
+    line: str,
+) -> None:
+    """No app user in core's htpasswd, and the apps server confines each user; nothing of the
+    htpasswd is printed."""
+    _list_apps_server(tmp_path)
+    cluster = Cluster()
+    cluster.core_users, cluster.apps_command = core_users, apps_command
+    assert _run(tmp_path, cluster, monkeypatch) == (0 if line.startswith("PASS") else 1)
+    output = capsys.readouterr().out
+    assert line in output
+    assert SECRET_VALUE not in output
+
+
+def test_app_pvc_without_a_registered_credential_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An app- PVC is never backed up with core's credential, so without its own it fails verify."""
+    _list_apps_server(tmp_path, "app-other")
+    cluster = Cluster()
+    cluster.pvcs = [("app", "data"), ("app-shop", "db")]
+    assert _run(tmp_path, cluster, monkeypatch) == 1
+    assert (
+        "FAIL backup freshness: app-shop/db: not backed up; app-shop has no registered backup credential"
+        in capsys.readouterr().out
+    )
 
 
 def test_repository_check_deadline_fits_inside_verify_grace() -> None:

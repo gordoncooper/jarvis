@@ -193,7 +193,7 @@
       "customType": "regex",
       "description": "restic rest-server image version tag and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/backups\\/rest-server\\.yaml$/"],
+      "managerFilePatterns": ["/^platform\\/backups\\/(rest-server|apps\\/rest-server-apps)\\.yaml$/"],
       "matchStrings": [
         "image: (?<depName>restic/rest-server):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]

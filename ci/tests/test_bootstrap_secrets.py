@@ -472,6 +472,42 @@ def test_tracked_restic_is_not_recreated_without_rotate(tmp_path, monkeypatch):
     assert (tmp_path / rel).read_bytes() != recorded
 
 
+def test_app_credential_is_its_own_and_never_minted_twice(tmp_path, monkeypatch):
+    """--app seals the app's own password and an apps-server login named for its namespace in
+    its own folder; a recorded credential, or an edited registration, refuses before any write."""
+    mod = _load_module()
+    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
+    _write_test_sops_yaml(tmp_path, public)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    sops_bin = _require_tool("sops")
+    _prepare_env(tmp_path)
+    rel = "envs/env-test/secrets/app-shop/backups-restic-app-shop.sops.yaml"
+    component = tmp_path / "envs/env-test/flux/platform-configs/backups/app-shop/kustomization.yaml"
+    assert mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin) == [rel, str(component.relative_to(tmp_path))]
+    child = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
+    doc = yaml.safe_load(subprocess.check_output([sops_bin, "-d", str(tmp_path / rel)], env=child, text=True))
+    assert doc["metadata"]["name"] == "backups-restic-app-shop"
+    assert doc["metadata"]["namespace"] == "platform-backups"
+    data = doc["stringData"]
+    assert data["RESTIC_REST_USERNAME"] == "ns-app-shop"
+    assert data["RESTIC_REPOSITORY"] == "rest:http://restic-apps.platform-backups.svc.cluster.local:8000/"
+    assert mod._htpasswd_accepts(data["htpasswd"], "ns-app-shop", data["RESTIC_REST_PASSWORD"])
+    assert len(data["RESTIC_PASSWORD"]) >= 32
+    wanted = component.read_text(encoding="utf-8")
+    component.write_text(wanted + "# edited\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="refusing to overwrite"):
+        mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin)
+    component.write_text(wanted, encoding="utf-8")
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "--", rel)
+    _git(tmp_path, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-q", "-m", "app")
+    (tmp_path / rel).unlink()
+    with pytest.raises(SystemExit, match="refusing to recreate .*app-shop.* because git already records it"):
+        mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin)
+    assert not (tmp_path / rel).exists()
+
+
 def _record_restic(tmp_path, monkeypatch):
     mod = _load_module()
     public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
@@ -576,6 +612,8 @@ def test_make_rotate_restic_maps_only_one() -> None:
     assert "--rotate-restic" in dry("ENV=env-test", "ROTATE_RESTIC=1")
     assert "--rotate-restic" not in dry("ENV=env-test")
     assert "--rotate-restic" not in dry("ENV=env-test", "ROTATE_RESTIC=0")
+    assert '--app "app-shop"' in dry("ENV=env-test", "APP=app-shop")
+    assert "--app" not in dry("ENV=env-test")
 
 
 def test_ca_regeneration_refuses_a_mismatched_root(tmp_path, monkeypatch):

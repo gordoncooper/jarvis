@@ -11,7 +11,7 @@ cd "$repo_root"
 export PATH="${HOME}/.local/bin:${repo_root}/.venv/bin:${PATH}"
 
 # The checks that read envs/<env> through instance_root, in ci/checks/.
-env_checks=(env-schema addons flux-identity flux-prune flux-substitute manifest-lint secret-scan)
+env_checks=(env-schema addons backup-isolation flux-identity flux-prune flux-substitute manifest-lint secret-scan)
 
 failed=()
 for name in "${env_checks[@]}"; do

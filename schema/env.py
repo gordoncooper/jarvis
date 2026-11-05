@@ -19,6 +19,7 @@ if str(_TOOLS_LIB) not in sys.path:
     sys.path.insert(0, str(_TOOLS_LIB))
 
 from _env import instance_root  # noqa: E402,F401  (the one INSTANCE resolver)
+import _app_backups  # noqa: E402
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
@@ -346,6 +347,7 @@ def _validate_env(
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
+    errors.extend(_validate_app_backups(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_addons(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_entry_files(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))
@@ -616,18 +618,90 @@ def _validate_flux_env_paths(env_dir: Path, repo_root: Path, env_name: str) -> l
     return errors
 
 
-def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
-    """True when the env's platform-configs list includes the off-host copy directory."""
+def _platform_configs(env_dir: Path) -> tuple[Path, dict]:
     path = env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     if not path.is_file():
-        return False
+        return path, {}
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    resources = doc.get("resources") if isinstance(doc, dict) else None
-    target = (Path(repo_root) / CORE_SOURCE_DIR / OFFSITE_COPY_DIR).resolve()
+    return path, doc if isinstance(doc, dict) else {}
+
+
+def _core_dir_listed(env_dir: Path, repo_root: Path, rel: str) -> bool:
+    """True when the env's platform-configs list includes core directory rel."""
+    path, doc = _platform_configs(env_dir)
+    target = (Path(repo_root) / CORE_SOURCE_DIR / rel).resolve()
     return any(
         isinstance(item, str) and (path.parent / item).resolve() == target
-        for item in resources or []
+        for item in doc.get("resources") or []
     )
+
+
+def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
+    """True when the env's platform-configs list includes the off-host copy directory."""
+    return _core_dir_listed(env_dir, repo_root, OFFSITE_COPY_DIR)
+
+
+def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
+    """True when the env runs the apps rest-server (its platform-configs list the directory)."""
+    return _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR)
+
+
+def app_registrations(env_dir: Path) -> list[object]:
+    """The app credentials an env registers: its platform-configs components, as
+    <registration dir>/<namespace>. An entry of another shape is returned as is for the check."""
+    _path, doc = _platform_configs(env_dir)
+    components = doc.get("components")
+    if not isinstance(components, list):
+        return []
+    prefix = f"{_app_backups.REGISTRATION_DIR}/"
+    return [
+        item.strip().removeprefix("./").removeprefix(prefix)
+        if isinstance(item, str) and item.strip().removeprefix("./").startswith(prefix)
+        else item
+        for item in components
+    ]
+
+
+def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
+    """Each registered app credential is an app- namespace's, in its exact registration Component,
+    with the apps server on and, once bootstrapped, its sealed file present. An app credential is
+    sealed only in its own namespace's folder."""
+    rel = _display_path(env_dir / "flux" / "platform-configs" / "kustomization.yaml", repo_root)
+    errors: list[str] = []
+    registered = app_registrations(env_dir)
+    for item in registered:
+        if not isinstance(item, str) or not _app_backups.APP_NAMESPACE.fullmatch(item):
+            errors.append(
+                f"{rel}: component {item!r} is not an app credential registration "
+                f"({_app_backups.REGISTRATION_DIR}/app-<name>); only hosted apps register one"
+            )
+            continue
+        component = repo_root / _app_backups.registration_rel(env_name, item)
+        if not component.is_file() or component.read_text(encoding="utf-8") != _app_backups.registration_component(item):
+            errors.append(
+                f"{env_name}: {_display_path(component, repo_root)} is missing or differs from "
+                f"the registration make bootstrap-secrets APP={item} writes"
+            )
+        sealed = repo_root / _app_backups.sealed_rel(env_name, item)
+        if bootstrapped and not sealed.is_file():
+            errors.append(
+                f"{env_name}: {rel} registers {item}, missing required file "
+                f"{_display_path(sealed, repo_root)}; run make bootstrap-secrets APP={item}"
+            )
+    if registered and not apps_server_listed(env_dir, repo_root):
+        errors.append(
+            f"{rel}: registers app credentials but does not list "
+            f"{_app_backups.APPS_SERVER_DIR}; an app's backups need the apps server"
+        )
+    secrets = env_dir / "secrets"
+    for path in sorted(secrets.rglob(f"{_app_backups.secret_name('app-')}*.sops.yaml")):
+        namespace = path.name.removeprefix(_app_backups.secret_name("")).removesuffix(".sops.yaml")
+        if path.parent != secrets / namespace:
+            errors.append(
+                f"{_display_path(path, repo_root)}: an app credential is sealed only in its own "
+                f"folder, {_display_path(secrets / namespace, repo_root)}/"
+            )
+    return errors
 
 
 def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> list[str]:

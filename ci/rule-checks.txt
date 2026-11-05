@@ -1,4 +1,5 @@
 addons
+backup-isolation
 cli-deny
 contract-md
 core-names
