@@ -59,7 +59,9 @@ spec:
                 capabilities:
                   drop: ["ALL"]
               env:
-                # Credential source: one password for every repository.
+                # Credential source: core's one password for core repositories. A hosted app's
+                # repository (ns-app-*) opens only with that app's own password, which an env's
+                # app registration mounts at /credentials/<namespace>/RESTIC_PASSWORD.
                 - name: RESTIC_PASSWORD
                   valueFrom:
                     secretKeyRef:
@@ -85,8 +87,23 @@ spec:
                   for repo in $REPOSITORIES; do
                     # A glob that matched nothing; a plain name that is missing still fails below.
                     case "$repo" in *'*'*) continue ;; esac
-                    if restic --repo "/repositories/$repo" --no-lock check \
-                      --read-data-subset="$slice/$READ_DATA_SLICES" >/dev/null 2>&1; then
+                    # Core's password never reaches an app repository command.
+                    run=
+                    key=
+                    case "$repo" in
+                      ns-app-*/*)
+                        key=/credentials/$(dirname "$repo" | cut -c4-)/RESTIC_PASSWORD
+                        if [ ! -f "$key" ]; then
+                          echo "FAIL $repo: no backup credential registered for its app"
+                          failed=1
+                          continue
+                        fi
+                        run="env -u RESTIC_PASSWORD"
+                        key="--password-file $key"
+                        ;;
+                    esac
+                    if $run restic --repo "/repositories/$repo" --no-lock check \
+                      --read-data-subset="$slice/$READ_DATA_SLICES" $key >/dev/null 2>&1; then
                       echo "PASS $repo"
                     else
                       echo "FAIL $repo: restic check exited $?"

@@ -2,13 +2,17 @@
 
 Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. One CronJob copies k3s etcd snapshots into their own rest-server repository. ClusterPolicy `pvc-backup` enrolls every PVC, or the PVC is annotated `backup: none`. `ci/checks/pvc-backup` checks that this policy and its `backup: none` allow-list are present.
 
+Core is one trusted zone with one restic credential: core namespaces, add-ons and `host-etcd-snapshots` all use `backups-restic`. A hosted app (`app-<name>` namespace) is not trusted: its PVCs use only that app's own credential, on a separate rest-server that confines each app to its own folder (App credentials, below). `ci/checks/backup-isolation` checks both directions.
+
 ## Offers
 
 - Namespace `platform-backups`.
 - rest-server 0.14: one Deployment and ClusterIP Service `restic` on port 8000. No Ingress.
 - Bootstrap restic credentials (Secret `backups-restic`). Add-ons are in core's trusted zone, so their PVCs use this credential through the same policy ([services/CONTRACT.md](../../services/CONTRACT.md)).
 - CronJob `etcd-snapshots`: a read-only copy of the k3s snapshot directory into repository `host-etcd-snapshots`.
-- ClusterPolicy `pvc-backup` enrolls every PVC: one restic Secret and one VolSync `ReplicationSource` in that PVC's namespace.
+- ClusterPolicy `pvc-backup` enrolls every PVC: one restic Secret and one VolSync `ReplicationSource` in that PVC's namespace. A PVC in an `app-` namespace gets them only from that app's own registered credential, never from `backups-restic`; with no registered credential it gets neither.
+- Opt-in apps rest-server (`platform/backups/apps`): Deployment and ClusterIP Service `restic-apps` on port 8000, with `--private-repos`. Off by default; nothing for apps runs until an env lists it.
+- One credential per hosted app that keeps data (Secret `platform-backups/backups-restic-app-<name>`), minted by `make bootstrap-secrets APP=app-<name>`. It opens only `ns-app-<name>/` on the apps server.
 - A StatefulSet volume gets one `ReplicationSource` per PVC Kubernetes creates (`<template>-<statefulset>-<ordinal>`). Git does not list the ordinals.
 - Opt-in CronJob `restic-offsite` (`platform/backups/offsite`): a nightly `restic copy` of every local repository to the env's off-host restic backend (Operations, Off-host copy).
 - Opt-out for rebuildable observability data: the unprefixed annotation `backup: none` on a PVC, or on a `volumeClaimTemplate`'s `metadata`. Allowed only under `services/observability/victoria-metrics/` and `services/observability/victoria-logs/`.
@@ -22,6 +26,8 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - The control-plane node (`node-role.jarvis.io/control_plane=true`), where k3s writes the snapshot files.
 - rest-server, CronJob `etcd-snapshots`, and CronJob `restic-check` each match their role with required node affinity: `node-role.jarvis.io/<role>=true`, or, until that term is removed, `role.<dns_suffix>/<role>=true`. Each tolerates `node-role.jarvis.io/dedicated=true:NoSchedule`. Drill pods copy that affinity and toleration.
 - An env that lists `platform/backups/offsite` in its platform-configs list also lists and holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`, without the transitional term.
+- An env that registers an app credential lists `../../../../core/platform/backups/apps` under `resources:` and `backups/app-<name>` under `components:` in `envs/<env>/flux/platform-configs/kustomization.yaml`, and holds `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` (`ci/checks/env-schema`, App credentials below). `restic-apps` has the rest-server's backup-role affinity and dedicated toleration.
+- A mover needs egress to the server its volume uses, TCP 8000, plus cluster DNS: a core or add-on namespace to Service `restic.platform-backups.svc.cluster.local`, an `app-<name>` namespace to Service `restic-apps.platform-backups.svc.cluster.local` only. A network policy that blocks this fails that namespace's backups.
 - `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
 
 ## Health
@@ -33,10 +39,13 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - Kyverno admission is Ready.
 - A PVC without `backup: none` has Secret `restic-<pvc>` and ReplicationSource `<pvc>`, and that source completes a sync.
 - A PVC annotated `backup: none` has neither.
+- A PVC in an `app-` namespace whose app has no registered credential has neither, and `make verify` fails it (`<namespace>/<pvc>: not backed up; <namespace> has no registered backup credential`).
+- `make verify` checks the static half of app isolation: no user in `backups-restic`'s htpasswd is an app user (`ns-app-*`; only user names are read, nothing is printed), and, where the env lists the apps server, Deployment `restic-apps` runs `--private-repos` and mounts no `backups-restic`.
+- Where the env lists the apps server: Service `restic-apps` has a ready endpoint. Its log line `app users: <n>` counts the registered apps.
 - During `make restore`, that PVC's ReplicationSource stays paused until the destination finishes. It stays paused longer while the rebuild hold exists.
 - `make drill` deletes a scratch volume, restores it, and compares checksums.
 - A Job from CronJob `etcd-snapshots` completes, and `restic snapshots` on `host-etcd-snapshots` lists a snapshot that holds the newest k3s snapshot file.
-- A Job from CronJob `restic-check` (on `backup_check_schedule` in `time_zone`, default Wednesday 06:30, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `make verify` fails when its last success is older than one schedule interval plus 12 hours. With no success yet, `make verify` warns while the first run is pending or running inside the first interval plus 12 hours, and fails once a run finished without success or that time has passed. The `etcd-snapshots` check uses the same first-run rule without the 12 hours.
+- A Job from CronJob `restic-check` (on `backup_check_schedule` in `time_zone`, default Wednesday 06:30, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories, app repositories included, and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. An app repository whose app has no registered credential prints `FAIL <path>: no backup credential registered for its app`. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `make verify` fails when its last success is older than one schedule interval plus 12 hours. With no success yet, `make verify` warns while the first run is pending or running inside the first interval plus 12 hours, and fails once a run finished without success or that time has passed. The `etcd-snapshots` check uses the same first-run rule without the 12 hours.
 - Where the env lists the off-host copy: a Job from CronJob `restic-offsite` (daily 04:00 in `time_zone`) completes and prints `PASS` for every repository. `make verify` checks its last success with the `restic-check` rule (one interval plus 12 hours, same first-run warning).
 
 ## Config
@@ -49,7 +58,13 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names (`data`, `index`, `keys`, `locks`, `snapshots`, `config`). The password stays out of the URL.
 - Secret `backups-restic` holds `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (the server prefix `rest:http://restic.platform-backups.svc.cluster.local:8000/`), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`.
 - A volume secret sets `RESTIC_REPOSITORY` to that volume's URL and copies the password and `RESTIC_REST_*` keys. VolSync 0.17 passes those two keys into the mover.
-- The process runs with htpasswd auth and without `--append-only` or `--private-repos`. The mover forgets on every backup and prunes with the same credentials.
+- The process runs with htpasswd auth and without `--append-only` or `--private-repos`. The mover forgets on every backup and prunes with the same credentials. Its htpasswd is only `backups-restic`'s, so it has core's one user and no app user.
+- The apps server `restic-apps` runs the same pinned image on the same hostPath `backup_path/restic`, as root, with `--private-repos` and without `--append-only`: user `ns-app-<name>` can init, back up, forget and prune under `ns-app-<name>/` and nothing else. It never mounts `backups-restic`.
+- Its htpasswd is built at start, in a memory-backed `emptyDir`, from the `htpasswd` key of each registered credential, mounted at `/credentials/app-<name>/htpasswd`. The user name is `ns-` plus that folder name; the name in the sealed line is ignored, so a credential can only ever be its own app's user. Only folders named `app-[a-z0-9-]*` count.
+- A registration change edits the `restic-apps` pod template, so the Deployment restarts with the new user list (`Recreate`). rest-server reloads a changed htpasswd file, but the list is only rebuilt at start.
+- An app's repository URL is `rest:http://restic-apps.platform-backups.svc.cluster.local:8000/ns-app-<name>/pvc-<pvc>`, the same `ns-<namespace>/pvc-<pvc>` layout on the same disk, so the rebuild hold, `make restore` and `restore-all` see app repositories like any other.
+- Secret `backups-restic-app-<name>` holds `RESTIC_PASSWORD` (that app's own), `RESTIC_REPOSITORY` (the apps server prefix), `RESTIC_REST_USERNAME` (`ns-app-<name>`), `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`.
+- `restic-check` and `restic-offsite` open an `ns-app-<name>/...` repository with that app's own password, mounted at `/credentials/app-<name>/RESTIC_PASSWORD`, with core's password removed from that command's environment. Core repositories use core's password as before. Each job mounts only the `RESTIC_PASSWORD` key of an app credential, and the apps server only the `htpasswd` key.
 - Retention counts are the env settings `backup_retention_daily`, `backup_retention_weekly`, and `backup_retention_monthly`.
 - A ReplicationSource copies those into `restic.retain`, sets `retain.within: 7d`, and sets `pruneIntervalDays: 7`.
 - `within` keeps every snapshot from the last 7 days (VolSync passes `--keep-within`), so one backup of an empty recreated claim cannot forget that day's good snapshot yet.
@@ -62,6 +77,9 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - For every PVC that is not annotated `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`, it generates Secret `restic-<pvc>` and ReplicationSource `<pvc>` in that namespace.
 - `RESTIC_REPOSITORY` is Secret `backups-restic` key `RESTIC_REPOSITORY` plus `ns-<namespace>/pvc-<pvc>`.
 - `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` are copied from that Secret with a data generate and an apiCall lookup.
+- Rules `restic-secret` and `replication-source` exclude namespaces `app-*`. Rules `restic-secret-app` and `replication-source-app` match only `app-*`. They read `platform-backups/backups-restic-<namespace>` and nothing else. Their apiCall defaults are empty, so a missing credential skips the claim (precondition) instead of erroring. The app Secret is built like the core one from that app's Secret. The app ReplicationSource is the same generate block as the core one, hold and `backup: paused` included.
+- Generate runs on PVC events and policy changes, not on a new Secret. A credential registered after the app's PVC already exists enrolls it on the PVC's next update (App credentials, below).
+- Rule `privileged-movers` still covers every enrolled namespace, `app-*` included: local-path ignores `fsGroup`, so an app's mover runs privileged too.
 - The ReplicationSource uses the restic mover, `copyMethod: Direct`, `cacheCapacity: 1Gi`, and `trigger.schedule` from `backup_schedule`.
 - A mutate-existing rule sets annotation `volsync.backube/privileged-movers: "true"` on the PVC's namespace. It lands asynchronously, so the first sync may fail once and pass on retry.
 - The VolSync controller pod's `TZ` is `time_zone`. The 0.17 cron parser uses the process local zone and has no timezone field. The chart has no env hook, so a HelmRelease postRenderer sets `TZ` and mounts the node zoneinfo directory.
@@ -103,6 +121,9 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 - `ci/tests/test_verify.py` (read-only, fail-closed standing checks, including enrollment freshness and the rebuild hold).
 - `ci/tests/test_restic_rest_server.py` (off-host copy renders only where the env lists it; the copy script initialises a missing destination, copies each repository, prints only `PASS`/`FAIL`, and fails every repository at once when the target is down; the source-password key wiring), `ci/tests/test_env_schema.py` (listing it requires the sealed file), `ci/tests/test_verify.py` (its freshness).
 - `ci/tests/test_drill.py` and `make drill ENV=<env>` (real restore target, checksum comparisons, etcd-copy check, and in-cluster cleanup).
+- `ci/checks/backup-isolation` (on every env's rendered platform-configs and on `platform/backups/apps`) and `ci/tests/test_backup_isolation.py`: a registered app renders its Secret and mounts only where needed; a core-only env renders nothing for apps; seeded failures for a Secret rule that can reach an `app-` namespace from `backups-restic`, an app credential in core's server, `backups-restic` in the apps server, the apps server without `--private-repos`, and an app credential without the apps server; and env-schema's registration rules.
+- `ci/tests/test_rest_server_isolation.py`: the pinned `rest-server` and `restic` (installed by `make deps`) run as the manifests configure them, core's server plus the apps server's own start script on one data directory. An app login inits, backs up, forgets and prunes its own repository. It cannot open, forget or prune a core repository or another app's on either server, even with the right restic password. It cannot create a core repository. A sealed line naming core's user is still served only as `ns-app-<name>`.
+- `ci/tests/test_backup_enrollment.py` (the `-app` rules read only the app's own Secret and skip a missing one), `ci/tests/test_restic_rest_server.py` (check and copy use the app's own password with core's unset, and fail an unregistered app's repository alone), `ci/tests/test_bootstrap_secrets.py` (`APP=` mints the app's own credential once and refuses a recorded one), `ci/tests/test_verify.py` (the app-isolation check and an unregistered app PVC).
 
 ## Operations
 
@@ -120,6 +141,27 @@ A Job started before this merge has no deadline. Delete one stuck `Pending`: `co
 After Ansible has run, `kubectl label node <node> role.<dns_suffix>/<role>=true` for each role and `kubectl taint node <node> node-role.jarvis.io/dedicated:NoSchedule-` (`KUBECONFIG=~/.kube/jarvis-<env>.yaml`), then revert. Do not run Ansible, including `make site`, until that revert lands.
 
 Do not merge a change to ClusterPolicy `pvc-backup` during a restore. The policy is annotated `kustomize.toolkit.fluxcd.io/force: Enabled`, so Flux recreates it and Kyverno regenerates every Secret and ReplicationSource.
+
+### App credentials
+
+Each hosted app that keeps data gets its own restic password, its own apps-server login and its own repositories, before it stores data. Owner-run, needs the age public key only.
+
+Turn the apps server on and add an app:
+
+1. `make bootstrap-secrets ENV=<env> APP=app-<name>`. It seals `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` and writes `envs/<env>/flux/platform-configs/backups/app-<name>/kustomization.yaml`, the Component that applies that Secret and mounts it in `restic-apps`, `restic-check` and `restic-offsite`. Nothing is printed but the created paths. A second run changes nothing. If git already records that app's sealed file, it refuses: the app's repositories open only with the first password.
+2. In `envs/<env>/flux/platform-configs/kustomization.yaml`, list `../../../../core/platform/backups/apps` under `resources:` once per env, and add `backups/app-<name>` under `components:`. Commit and push.
+3. After Flux applies it: `restic-apps` restarts with the new user (`app users: <n>`). The app's PVCs get Secret `restic-<pvc>` and ReplicationSource `<pvc>` when they bind. A PVC that existed before step 2 is enrolled on its next update; annotate it once (`kubectl annotate pvc -n app-<name> <pvc> backup-credential=registered --overwrite`).
+4. `make verify ENV=<env>` passes, with no `not backed up` line for that app.
+
+How to tell it worked: `restic-apps` has a ready endpoint, the app's ReplicationSource completes a sync, and the next `restic-check` prints `PASS ns-app-<name>/pvc-<pvc>`.
+
+Retire an app (after its app is removed and its data is no longer wanted):
+
+1. Remove `backups/app-<name>` from `components:` and delete `envs/<env>/flux/platform-configs/backups/app-<name>/`. Commit and push. `restic-apps` restarts without that user, so its login stops working. Flux keeps Secret `backups-restic-app-<name>` (prune disabled); delete it with `kubectl -n platform-backups delete secret backups-restic-app-<name>`.
+2. The repositories stay on disk, and `restic-check` and `restic-offsite` print `FAIL ns-app-<name>/...: no backup credential registered for its app` until they are removed. Remove `<backup_path>/restic/ns-app-<name>` as root on the backup-role node once the data is not needed. The off-host copy keeps its copy until the owner removes it there.
+3. Leave `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` in place. Re-adding that app name later reuses it (step 1 of adding writes only the Component), so any repositories still on disk open again. Once Git has recorded that file, `make bootstrap-secrets` never mints a new one for that name.
+
+When the last app is retired, remove the `core/platform/backups/apps` line too. Flux keeps Deployment `restic-apps` (prune disabled); delete it and Service `restic-apps` by hand.
 
 ### Restore one namespace
 
@@ -232,7 +274,9 @@ How to tell it worked: `make site` exits 0, `restore-all` prints `HOLD lifted` a
 
 ### Rotate the restic password
 
-Every repository uses the one password in Secret `platform-backups/backups-restic`. Kyverno copies it into each `restic-<pvc>` Secret (`synchronize: true` on an apiCall). CronJob `etcd-snapshots` reads that same Secret and writes repository `host-etcd-snapshots`. Changing the Secret changes every repository at once.
+This rotation covers core repositories only. Wherever a step below lists repositories, skip every `ns-app-*` directory, and in the hash check skip PVCs in `app-` namespaces: each app's repositories open only with that app's own password, which this rotation does not touch.
+
+Every core repository uses the one password in Secret `platform-backups/backups-restic`. Kyverno copies it into each `restic-<pvc>` Secret (`synchronize: true` on an apiCall). CronJob `etcd-snapshots` reads that same Secret and writes repository `host-etcd-snapshots`. Changing the Secret changes every repository at once.
 
 `make bootstrap-secrets` does not replace a `backups-restic` file git already records unless `ROTATE_RESTIC=1`. That flag mints a new password and does not add it to existing repositories. A live rotation is the steps below. Do not point them at the drill repository: `make drill` creates and deletes `ns-platform-drill/pvc-drill` in the same run, and this rotation does not run `make drill`. Keep the old key until the last step. While any Secret still holds the old password, that key still opens every repository.
 
@@ -332,7 +376,7 @@ Delete `old-password`, `new-password`, `new-password.json`, and `repos.txt`.
 
 What it does: CronJob `restic-offsite` runs daily at 04:00 in `time_zone` on the backup-role node. It mounts `backup_path/restic` read-only and, for `host-etcd-snapshots` and every `ns-*/pvc-*`, runs `restic copy --no-lock` from that local repository into the off-host repository `<RESTIC_REPOSITORY><path>`. A missing off-host repository is created first with `restic init --copy-chunker-params`, so the copy deduplicates. It prints only `PASS <path>`, `FAIL <path>: restic exited <n>`, or the unreachable-target line below. It never forgets or prunes on either side. The local side takes no lock, so a run that overlaps a prune can only fail and retry. A missing `host-etcd-snapshots` fails.
 
-Credentials: the local password is `RESTIC_PASSWORD` from `backups-restic`. Everything about the target is in one Secret per env, `platform-backups/backups-offsite`, loaded as environment variables:
+Credentials: the local password is `RESTIC_PASSWORD` from `backups-restic` for core repositories. A hosted app's repository `ns-app-<name>/...` is copied with that app's own password on both sides, so its off-host copy also opens only with the app's password, and is kept apart from core's by path and key. It needs no new target login: apps never hold the target login, and they cannot reach the target. An app repository whose app has no registered credential prints `FAIL <path>: no backup credential registered for its app`. Everything about the target is in one Secret per env, `platform-backups/backups-offsite`, loaded as environment variables:
 
 - `RESTIC_REPOSITORY`: the off-host prefix, ending in `/`, for example `rest:http://<user>:<password>@<host>:8000/` (`https` also works), or `s3:https://<endpoint>/<bucket>/`. `sftp:` is not supported.
 - rest-server setup: one rest-server per env, run without `--private-repos` (it serves only two path levels, and the user-name level would break `ns-<ns>/pvc-<pvc>`). `RESTIC_REPOSITORY` is the server root ending in `/`. Append-only mode is fine because the copy never forgets or prunes.
@@ -423,3 +467,7 @@ How to tell it worked: `PASS <source>` from the Job, then `PASS restore platform
 - Restore uses no VolumeSnapshot, volume populator, or snapshot class.
 - etcd cluster-reset is not a make target and is not part of the drill.
 - An older snapshot that exists only in the restic copy has no owner-run path yet.
+- App isolation is at the rest-server login: both servers run as root on one hostPath, so isolation holds as long as neither process is compromised. Core is trusted the other way: core's login on `restic` (no `--private-repos`) can delete `ns-app-*` files, though it cannot decrypt them.
+- A retired app's repositories left on disk make `restic-check` fail, so `make verify`'s repository check fails until they are removed (App credentials, Retire). An app's mover still runs privileged in its own namespace. App repositories have no size cap, and nothing retires them automatically.
+- An app login can forget and prune its own repositories (no `--append-only`), the same as core's.
+- Kyverno's background controller can read every Secret, app credentials included, as it already reads `backups-restic`.

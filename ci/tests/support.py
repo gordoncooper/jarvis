@@ -346,6 +346,28 @@ def _bootstrap_copy(root: Path, name: str) -> None:
         mod._repo_root = previous_repo_root
 
 
+def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
+    """Turn on the apps server in the copy and register one app credential, as an owner would:
+    bootstrap-secrets --app seals it to the copy's throwaway key and writes the Component, then
+    the env lists the apps server and that Component."""
+    import yaml
+
+    sops = shutil.which("sops")
+    if not sops:
+        raise RuntimeError("sops not found on PATH (run make deps)")
+    mod = load_tool("bootstrap_secrets_app_copy", REPO_ROOT / "tools" / "bootstrap-secrets")
+    mod.REPO_ROOT = copy.root
+    mod._repo_root = lambda: copy.root
+    mod.bootstrap_app(copy.name, namespace, sops_bin=sops)
+    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    apps = "../../../../core/platform/backups/apps"
+    if apps not in doc["resources"]:
+        doc["resources"].append(apps)
+    doc.setdefault("components", []).append(f"backups/{namespace}")
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+
+
 def _render_copy(env_dir: Path) -> None:
     lib = str(REPO_ROOT / "tools" / "lib")
     if lib not in sys.path:

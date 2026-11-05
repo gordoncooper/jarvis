@@ -22,6 +22,8 @@ If `k3s-token` is missing and any other file above is present, bootstrap refuses
 
 If git already records `backups-restic`, bootstrap refuses to recreate it. `make bootstrap-secrets ENV=<env> ROTATE_RESTIC=1` mints a new password anyway. That flag does not add the password to existing repositories. Rotating a live password is in `platform/backups/CONTRACT.md`.
 
+A hosted app that keeps data gets its own credential: `make bootstrap-secrets ENV=<env> APP=app-<name>` seals `app-<name>/backups-restic-app-<name>.sops.yaml` (a restic password, an apps-server login `ns-app-<name>`, and its bcrypt `htpasswd` line) and writes the Component that registers it. It mints nothing else, and refuses when git already records that app's file. Registering it, and retiring it, is in `platform/backups/CONTRACT.md`, App credentials. This example env registers no app.
+
 `backups-offsite` is not generated: the owner sets up the off-host target and seals it with `make seal` (`platform/backups/CONTRACT.md`, Off-host copy). This example env lists it in `flux/platform-configs/kustomization.yaml` to show the copy turned on; a copy that does not want it removes those two lines.
 
 ## Age-key custody

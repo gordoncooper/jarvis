@@ -64,7 +64,10 @@ spec:
                 - secretRef:
                     name: backups-offsite
               env:
-                # Local side: the one core password. An explicit env entry wins over envFrom.
+                # Local side: core's one password for core repositories. An explicit env entry wins
+                # over envFrom. A hosted app's repository (ns-app-*) is copied with that app's own
+                # password on both sides, from /credentials/<namespace>/RESTIC_PASSWORD, which an
+                # env's app registration mounts; its off-host copy opens only with that password.
                 - name: RESTIC_FROM_PASSWORD
                   valueFrom:
                     secretKeyRef:
@@ -97,17 +100,34 @@ spec:
                       failed=1
                       continue
                     fi
+                    # Core's passwords never reach an app repository command.
+                    run=
+                    key=
+                    from=
+                    case "$repo" in
+                      ns-app-*/*)
+                        key=/credentials/$(dirname "$repo" | cut -c4-)/RESTIC_PASSWORD
+                        if [ ! -f "$key" ]; then
+                          echo "FAIL $repo: no backup credential registered for its app"
+                          failed=1
+                          continue
+                        fi
+                        run="env -u RESTIC_PASSWORD -u RESTIC_FROM_PASSWORD"
+                        from="--from-password-file $key"
+                        key="--password-file $key"
+                        ;;
+                    esac
                     dest="$RESTIC_REPOSITORY$repo"
                     status=0
-                    restic --repo "$dest" cat config >/dev/null 2>&1 || status=$?
+                    $run restic --repo "$dest" cat config $key >/dev/null 2>&1 || status=$?
                     if [ "$status" -eq 10 ]; then
                       status=0
-                      restic --repo "$dest" init --from-repo "/repositories/$repo" \
-                        --copy-chunker-params >/dev/null 2>&1 || status=$?
+                      $run restic --repo "$dest" init --from-repo "/repositories/$repo" \
+                        --copy-chunker-params $key $from >/dev/null 2>&1 || status=$?
                     fi
                     if [ "$status" -eq 0 ]; then
-                      restic --repo "$dest" --no-lock copy --from-repo "/repositories/$repo" \
-                        >/dev/null 2>&1 || status=$?
+                      $run restic --repo "$dest" --no-lock copy --from-repo "/repositories/$repo" \
+                        $key $from >/dev/null 2>&1 || status=$?
                     fi
                     if [ "$status" -eq 0 ]; then
                       echo "PASS $repo"

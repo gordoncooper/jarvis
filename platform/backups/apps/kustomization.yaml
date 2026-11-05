@@ -1,0 +1,7 @@
+# Opt-in: an env that hosts an app with data lists this directory in
+# envs/<env>/flux/platform-configs/kustomization.yaml, and registers each app's
+# credential there as a Component (platform-backups CONTRACT, App credentials).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rest-server-apps.yaml

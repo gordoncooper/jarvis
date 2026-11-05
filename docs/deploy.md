@@ -100,6 +100,8 @@ make bootstrap-secrets ENV=<env>
 
 Commit all of `envs/<env>/` in the instance repository: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit its `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md).
 
+A core-only env stops here. An env that will host an app that keeps data gives that app its own backup credential before the app stores anything: `make bootstrap-secrets ENV=<env> APP=app-<name>`, then the two lines in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md#app-credentials). An app volume without one is never backed up, and `make verify` fails it.
+
 ## Bootstrap the cluster
 
 From the repo root. The env schema runs first and stops before Ansible on any error:

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Install pinned sops, age, age-keygen, gitleaks, kustomize, kubeconform, and kubectl into ~/.local/bin."""
+"""Install pinned sops, age, age-keygen, gitleaks, kustomize, kubeconform, kubectl, restic, and
+rest-server into ~/.local/bin."""
 
 from __future__ import annotations
 
+import bz2
 import hashlib
 import os
 import platform
@@ -153,8 +155,11 @@ class TarballSpec:
     version_key: str
     version_args: tuple[str, ...]
     url: Callable[[str, str], str]
+    # Path inside the archive; {v} and {arch} are filled in.
     member: str
     tar_arch: Callable[[str], str] = lambda arch: arch
+    # versions.env key prefix for the archive sha256, when the CLI name is not a shell name.
+    sha_prefix: str | None = None
 
 
 TARBALL_INSTALLS: dict[str, TarballSpec] = {
@@ -185,6 +190,16 @@ TARBALL_INSTALLS: dict[str, TarballSpec] = {
         ),
         member="gitleaks",
         tar_arch=lambda arch: "x64" if arch == "amd64" else arch,
+    ),
+    "rest-server": TarballSpec(
+        version_key="rest_server_version",
+        version_args=("--version",),
+        url=lambda v, arch: (
+            f"https://github.com/restic/rest-server/releases/download/v{v}/"
+            f"rest-server_{v}_linux_{arch}.tar.gz"
+        ),
+        member="rest-server_{v}_linux_{arch}/rest-server",
+        sha_prefix="rest_server",
     ),
 }
 
@@ -218,16 +233,17 @@ def install_tarball_cli(
         return
 
     tar_arch = spec.tar_arch(arch)
-    sha_key = f"{name}_linux_{arch}_tarball_sha256"
+    sha_key = f"{spec.sha_prefix or name}_linux_{arch}_tarball_sha256"
     url = spec.url(version, tar_arch)
+    member = spec.member.format(v=version, arch=tar_arch)
     with tempfile.TemporaryDirectory(prefix=f"jarvis-{name}-") as tmp:
         tarball = Path(tmp) / f"{name}.tar.gz"
         print(f"downloading {name} {version} ({tar_arch})…")
         download(url, tarball)
         verify_sha256(tarball, versions[sha_key], f"{name} archive")
         with tarfile.open(tarball, "r:gz") as archive:
-            archive.extract(spec.member, path=tmp)
-        binary = Path(tmp) / spec.member
+            archive.extract(member, path=tmp)
+        binary = Path(tmp) / member
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary, dest)
         os.chmod(dest, 0o755)
@@ -248,6 +264,30 @@ def install_kubectl(versions: dict[str, str], arch: str, dest_dir: Path) -> None
         print(f"downloading kubectl {version} ({arch})…")
         download(url, binary)
         _install_binary(binary, dest, versions[sha_key], "kubectl", version)
+
+
+def install_restic(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
+    """restic ships as one bzip2-compressed binary; the sha256 is of the .bz2."""
+    version = versions["restic_version"]
+    dest = dest_dir / "restic"
+    if installed_version(dest, ["version"]) == version:
+        print(f"restic {version} already installed at {dest}")
+        return
+    url = (
+        f"https://github.com/restic/restic/releases/download/v{version}/"
+        f"restic_{version}_linux_{arch}.bz2"
+    )
+    with tempfile.TemporaryDirectory(prefix="jarvis-restic-") as tmp:
+        archive = Path(tmp) / "restic.bz2"
+        print(f"downloading restic {version} ({arch})…")
+        download(url, archive)
+        verify_sha256(archive, versions[f"restic_linux_{arch}_bz2_sha256"], "restic archive")
+        binary = Path(tmp) / "restic"
+        binary.write_bytes(bz2.decompress(archive.read_bytes()))
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, dest)
+        os.chmod(dest, 0o755)
+        print(f"installed restic {version} -> {dest}")
 
 
 def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
@@ -301,6 +341,7 @@ def main() -> None:
     install_sops(versions, arch, INSTALL_DIR)
     install_age(versions, arch, INSTALL_DIR)
     install_kubectl(versions, arch, INSTALL_DIR)
+    install_restic(versions, arch, INSTALL_DIR)
     for cli_name, spec in TARBALL_INSTALLS.items():
         install_tarball_cli(cli_name, spec, versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")

@@ -138,7 +138,12 @@ def test_enrollment_policy_rules() -> None:
         _rule(policy, "privileged-movers"),
     )
     assert secret["match"] == source["match"] == mutate["match"]
-    assert secret["exclude"] == source["exclude"] == mutate["exclude"]
+    assert secret["exclude"] == source["exclude"]
+    # Core's credential never reaches a hosted app's namespace; the -app rules cover those.
+    assert {"namespaces": ["app-*"]} in [item["resources"] for item in secret["exclude"]["any"]]
+    assert mutate["exclude"]["any"] == [
+        item for item in secret["exclude"]["any"] if item["resources"] != {"namespaces": ["app-*"]}
+    ]
     excluded = secret["exclude"]["any"]
     assert {"annotations": {"backup": "none"}} in [
         item["resources"] for item in excluded
@@ -179,6 +184,27 @@ def test_enrollment_policy_rules() -> None:
     assert target["name"] == "{{ request.object.metadata.namespace }}"
     annotation = mutate["mutate"]["patchStrategicMerge"]["metadata"]["annotations"]
     assert annotation["volsync.backube/privileged-movers"] == "true"
+
+
+def test_app_pvc_rules_use_only_that_apps_credential() -> None:
+    """An app- PVC's Secret is built from platform-backups/backups-restic-<namespace> only, and
+    neither its Secret nor its ReplicationSource is generated while that credential is missing.
+    The ReplicationSource is the core one, hold and pause included."""
+    policy = next(
+        doc for doc in _docs(ROOT / "platform/backups/enrollment.yaml") if doc.get("kind") == "ClusterPolicy"
+    )
+    secret, source = _rule(policy, "restic-secret-app"), _rule(policy, "replication-source-app")
+    url = "/api/v1/namespaces/platform-backups/secrets/backups-restic-{{ request.object.metadata.namespace }}"
+    for rule in (secret, source):
+        assert rule["match"]["any"][0]["resources"]["namespaces"] == ["app-*"]
+        assert [entry["apiCall"]["urlPath"] for entry in rule["context"] if "/secrets/" in entry.get("apiCall", {}).get("urlPath", "")] == [url]
+        assert len(rule["preconditions"]["all"]) == 2
+    assert next(entry for entry in secret["context"] if entry["name"] == "appRestic")["apiCall"]["default"] == {}
+    assert {"key": "{{ appRestic.RESTIC_PASSWORD || '' }}", "operator": "NotEquals", "value": ""} in secret["preconditions"]["all"]
+    assert {"key": "{{ appCredential }}", "operator": "Equals", "value": "true"} in source["preconditions"]["all"]
+    assert all("backupsRestic" not in value for value in secret["generate"]["data"]["data"].values())
+    assert secret["generate"]["name"] == _rule(policy, "restic-secret")["generate"]["name"]
+    assert source["generate"] == _rule(policy, "replication-source")["generate"]
 
 
 def test_enrollment_policy_is_on_the_platform_configs_build(example_copy: ExampleCopy) -> None:

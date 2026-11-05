@@ -21,7 +21,7 @@ help:
 	@echo "  make drill-cleanup      Retry drill namespace/repository cleanup (ENV=<env> required)"
 	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339, NODE)"
 	@echo "  make restore-all        Restore all PVCs (ENV required; optional AS_OF=RFC3339, RETIRE, ACCEPT_EMPTY, NODE)"
-	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password)"
+	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password; APP=app-<name> mints only that hosted app's backup credential)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required; NAMESPACE=<ns> for an add-on's Secret)"
 	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
 	@echo "  INSTANCE=<path>         Instance checkout that holds envs/<env> and its .sops.yaml (default: this checkout)"
@@ -75,7 +75,7 @@ restore-all:
 bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
-	@"$(VENV)/bin/python" tools/bootstrap-secrets --env "$(ENV)" $(if $(filter 1,$(ROTATE_RESTIC)),--rotate-restic,)
+	@"$(VENV)/bin/python" tools/bootstrap-secrets --env "$(ENV)" $(if $(filter 1,$(ROTATE_RESTIC)),--rotate-restic,) $(if $(APP),--app "$(APP)",)
 
 age-key-check:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
