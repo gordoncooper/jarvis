@@ -1,6 +1,6 @@
 # Agents
 
-Infra, platform, and services for JARVIS AlphaCut (GitOps on k3s).
+Infra, platform, and services for Jarvis (GitOps on k3s).
 
 Read `rulebooks/coding-agents.md` for workflow, reporting, and merge readiness.
 
