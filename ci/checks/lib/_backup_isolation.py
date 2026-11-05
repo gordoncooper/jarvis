@@ -148,9 +148,20 @@ def _apps_server_reasons(doc: dict) -> list[str]:
 
 
 def _secret_volumes(doc: dict) -> list[tuple[str, list[str] | None]]:
-    """(Secret name, mounted keys or None for all) for each Secret a workload mounts."""
+    """(Secret name, keys or None for all) for each Secret a workload reads: volumes, projected
+    volumes, env secretKeyRef and envFrom secretRef."""
     found: list[tuple[str, list[str] | None]] = []
-    for volume in (pod_spec(doc) or {}).get("volumes") or []:
+    pod = pod_spec(doc) or {}
+    for container in (pod.get("containers") or []) + (pod.get("initContainers") or []):
+        for item in container.get("env") or []:
+            ref = (item.get("valueFrom") or {}).get("secretKeyRef")
+            if isinstance(ref, dict):
+                found.append((str(ref.get("name")), [ref.get("key")]))
+        for item in container.get("envFrom") or []:
+            ref = item.get("secretRef")
+            if isinstance(ref, dict):
+                found.append((str(ref.get("name")), None))
+    for volume in pod.get("volumes") or []:
         sources = [volume] + list((volume.get("projected") or {}).get("sources") or [])
         for source in sources:
             secret = source.get("secret")

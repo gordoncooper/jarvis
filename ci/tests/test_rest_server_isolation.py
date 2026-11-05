@@ -73,6 +73,9 @@ def servers(tmp_path: Path):
         # The blog line names core's user; the apps server must still call it ns-app-blog.
         named = "restic" if app == "app-blog" else f"ns-{app}"
         (creds / app / "htpasswd").write_text(tool._htpasswd_line(named, logins[f"ns-{app}"]), encoding="utf-8")
+    # A folder that is not a namespace name never becomes a user.
+    (creds / "app-Bad").mkdir()
+    (creds / "app-Bad" / "htpasswd").write_text(tool._htpasswd_line("x", logins["ns-app-shop"]), encoding="utf-8")
     core_port, apps_port = _free_port(), _free_port()
     container = yaml.safe_load(APPS_MANIFEST.read_text(encoding="utf-8").split("\n---\n")[0])["spec"]["template"]["spec"]["containers"][0]
     script = (

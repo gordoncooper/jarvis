@@ -103,6 +103,17 @@ def _core_secret_in_apps_server(docs: list[dict]) -> None:
     _pod(_find(docs, "Deployment", "restic-apps"))["volumes"].append({"name": "core", "secret": {"secretName": "backups-restic"}})
 
 
+def _app_password_in_apps_server(docs: list[dict]) -> None:
+    volume = next(item for item in _pod(_find(docs, "Deployment", "restic-apps"))["volumes"] if item["name"] == APP)
+    volume["secret"].pop("items")
+
+
+def _app_secret_in_core_env(docs: list[dict]) -> None:
+    _pod(_find(docs, "Deployment", "restic"))["containers"][0].setdefault("envFrom", []).append(
+        {"secretRef": {"name": f"backups-restic-{APP}"}}
+    )
+
+
 def _no_private_repos(docs: list[dict]) -> None:
     container = _pod(_find(docs, "Deployment", "restic-apps"))["containers"][0]
     container["command"] = [part.replace(" --private-repos", "") for part in container["command"]]
@@ -119,6 +130,8 @@ def _no_apps_server(docs: list[dict]) -> None:
         (_app_rule_reads_core, "rule restic-secret-app generates a Secret in an app- namespace"),
         (_app_secret_in_core_server, "core's rest-server mounts Secret backups-restic-app-shop"),
         (_core_secret_in_apps_server, "the apps server mounts Secret backups-restic;"),
+        (_app_password_in_apps_server, "the apps server mounts backups-restic-app-shop keys None; only htpasswd"),
+        (_app_secret_in_core_env, "core's rest-server mounts Secret backups-restic-app-shop"),
         (_no_private_repos, "the apps server runs without --private-repos"),
         (_no_apps_server, "Secret backups-restic-app-shop is an app credential, but platform/backups/apps is not listed"),
     ],

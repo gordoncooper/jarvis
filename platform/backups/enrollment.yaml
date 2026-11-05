@@ -156,7 +156,8 @@ spec:
         - name: appCredential
           apiCall:
             urlPath: "/api/v1/namespaces/platform-backups/secrets/backups-restic-{{ request.object.metadata.namespace }}"
-            jmesPath: "metadata.name && 'true' || 'false'"
+            # The same test as restic-secret-app: a credential with a password.
+            jmesPath: "data.RESTIC_PASSWORD && 'true' || 'false'"
             default: "false"
         - *rebuild-hold
         - *pause-backup

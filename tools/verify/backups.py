@@ -75,8 +75,20 @@ def check_app_isolation(kubectl: Kubectl, *, apps_server: bool) -> None:
     command = [str(part) for item in pod.get("containers") or [] for part in (item.get("command") or []) + (item.get("args") or [])]
     if not any("--private-repos" in part for part in command):
         raise CheckError(f"{APPS_SERVER} runs without --private-repos")
-    if any((volume.get("secret") or {}).get("secretName") == "backups-restic" for volume in pod.get("volumes") or []):
+    if "backups-restic" in _secret_names(pod):
         raise CheckError(f"{APPS_SERVER} mounts core's backups-restic")
+
+
+def _secret_names(pod: dict) -> set[str]:
+    """Every Secret a pod reads: volumes, projected volumes, env and envFrom."""
+    names: set[str] = set()
+    for volume in pod.get("volumes") or []:
+        for source in [volume, *((volume.get("projected") or {}).get("sources") or [])]:
+            names.add(str((source.get("secret") or {}).get("secretName") or (source.get("secret") or {}).get("name")))
+    for container in (pod.get("containers") or []) + (pod.get("initContainers") or []):
+        names.update(str(((item.get("valueFrom") or {}).get("secretKeyRef") or {}).get("name")) for item in container.get("env") or [])
+        names.update(str((item.get("secretRef") or {}).get("name")) for item in container.get("envFrom") or [])
+    return names
 
 
 def check_backups(

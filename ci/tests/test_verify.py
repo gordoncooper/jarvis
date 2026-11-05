@@ -78,6 +78,7 @@ class Cluster:
         self.hello = False
         self.core_users = ["restic"]
         self.apps_command = ["/bin/sh", "-c", "exec rest-server --private-repos"]
+        self.apps_env_from: list[dict] = []
         self.pvcs = [("app", "data")]
 
     def kubectl(
@@ -153,7 +154,7 @@ class Cluster:
                 },
             )
         if argv[:3] == ["get", "deployment", "restic-apps"]:
-            pod = {"containers": [{"command": self.apps_command}], "volumes": []}
+            pod = {"containers": [{"command": self.apps_command, "envFrom": self.apps_env_from}], "volumes": []}
             return _completed(argv, {"spec": {"template": {"spec": pod}}})
         if argv[:2] == ["get", "replicationsource"]:
             if self.bad_sources_json:
@@ -798,6 +799,19 @@ def test_app_isolation_static_half(
     output = capsys.readouterr().out
     assert line in output
     assert SECRET_VALUE not in output
+
+
+def test_apps_server_reading_core_secret_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The apps server never reads backups-restic, through a volume or the environment."""
+    _list_apps_server(tmp_path)
+    cluster = Cluster()
+    cluster.apps_env_from = [{"secretRef": {"name": "backups-restic"}}]
+    assert _run(tmp_path, cluster, monkeypatch) == 1
+    assert "FAIL app backup isolation: restic-apps mounts core's backups-restic" in capsys.readouterr().out
 
 
 def test_app_pvc_without_a_registered_credential_fails(
