@@ -15,4 +15,8 @@ An echo server (`traefik/whoami`, pinned by digest) reachable on the LAN on TCP 
 Asking in `app.yaml` alone is not enough, and neither is the line alone. Both must name the same port. A grants file placed in this folder grants nothing. The Service's `targetPort` must be the number `app.yaml` gives as `target`; a named port is refused.
 
 - `app.yaml`: no `network.web` (so no web address), `volumes: []`, the one LAN port.
-- `deploy/`: a Deployment (non-root, read-only root filesystem, probes on `/health`) and the LoadBalancer Service.
+- `deploy/`: a Deployment (non-root, all capabilities dropped, `RuntimeDefault` seccomp, read-only root filesystem, `priorityClassName: hosted-app`, startup, readiness and liveness probes on `/health`, memory request equal to limit at 32Mi) and the LoadBalancer Service.
+
+It stays LAN-port only: no web address, no egress, and no caller (hello-web's call to it is refused). Reachable from the LAN only.
+
+**Env exception line needed:** `- lan-demo: lan-port 8080/TCP`.

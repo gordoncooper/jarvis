@@ -12,6 +12,7 @@ spec:
       labels:
         app: lan-demo
     spec:
+      priorityClassName: hosted-app
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -31,6 +32,12 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /health
+              port: lan
+            periodSeconds: 2
+            failureThreshold: 15
           readinessProbe:
             httpGet:
               path: /health
