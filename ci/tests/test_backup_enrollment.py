@@ -222,7 +222,8 @@ def _assert_enrollment_on_platform_configs(root, env: str) -> None:
         if isinstance(doc, dict)
     ]
     policies = [doc for doc in docs if doc.get("kind") == "ClusterPolicy"]
-    assert [doc["metadata"]["name"] for doc in policies] == ["pvc-backup"]
+    # app-derive is the hosted apps' (platform/app-hosting); it makes no backup object.
+    assert sorted(doc["metadata"]["name"] for doc in policies) == ["app-derive", "pvc-backup"]
     assert not any(doc.get("kind") == "ReplicationSource" for doc in docs)
     controllers = [
         doc

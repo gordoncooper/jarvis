@@ -138,7 +138,8 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
 def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
     """The layer Kustomizations the env entry applies, from its kustomize build.
 
-    The root Kustomization in sync.yaml is not a layer; the env schema checks it.
+    The root Kustomization in sync.yaml is not a layer; the env schema checks it. Nor is a hosted
+    app's wiring, which the env renders from its app list; ci/checks/app-hosting checks those.
     """
     return [
         doc
@@ -147,6 +148,7 @@ def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
         and doc.get("kind") == "Kustomization"
         and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION_API)
         and doc["metadata"]["name"] != "flux-system"
+        and not doc["metadata"]["name"].endswith("-wiring")
     ]
 
 
@@ -666,9 +668,10 @@ def validate_env_flux(root: Path, env: str) -> None:
     """Kustomize-build the env flux entry and each Flux path, then kubeconform.
 
     Each stage is built with its components, and each add-on Kustomization on the
-    services stage's path is built too, as on the cluster.
+    services stage's path is built too, as on the cluster, with its postBuild values. A hosted
+    app's own Kustomizations read the apps repository, which is not in this checkout.
     """
-    from _manifests import flux_paths
+    from _manifests import ROOT_SOURCE, flux_paths, postbuild_values, substitute
 
     env_rel = f"envs/{env}/flux"
     env_docs = [doc for doc in yaml.safe_load_all(_kustomize_build(env_rel, root=root)) if isinstance(doc, dict)]
@@ -681,8 +684,13 @@ def validate_env_flux(root: Path, env: str) -> None:
     seen: dict[tuple[str, str, str], str] = {}
     for path in paths:
         name = path.kustomization["metadata"]["name"]
+        source = (path.kustomization.get("spec") or {}).get("sourceRef") or {}
+        if source.get("name", ROOT_SOURCE) != ROOT_SOURCE:
+            continue
         assert path.error is None and not path.partial, f"{name}: {path.error or 'partial build'}"
-        output = yaml.safe_dump_all(path.docs, sort_keys=False)
+        output = yaml.safe_dump_all(
+            substitute(path.docs, postbuild_values(path.kustomization, env_docs)), sort_keys=False
+        )
         _record_object_identities(output, name, seen)
         if isinstance((path.kustomization.get("spec") or {}).get("decryption"), dict):
             _validate_platform_configs_without_sops_secrets(output, version)

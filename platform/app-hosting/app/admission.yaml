@@ -1,6 +1,7 @@
-# Binds ValidatingAdmissionPolicy app-file to this app: its namespace, and its App as the
-# params. A missing App refuses every object the policy matches there. Prune stays off, so a
-# namespace the env dropped stays refused once its App is gone.
+# Binds ValidatingAdmissionPolicies app-file and app-grants to this app's namespace: the first
+# to its App, the second to its grants. A missing App or grants ConfigMap refuses every object
+# they match there. Prune stays off, so a namespace the env dropped stays refused once its
+# App is gone.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
@@ -18,3 +19,39 @@ spec:
     namespaceSelector:
       matchLabels:
         kubernetes.io/metadata.name: app-${app_name}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-grants-${app_name}
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  policyName: app-grants
+  validationActions: [Deny]
+  paramRef:
+    name: app-${app_name}-grants
+    namespace: flux-system
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: app-${app_name}
+---
+# The env's exception lines for this app, and its host. Only this wiring writes it: an app
+# writes only in its own namespace (app-tenant). Prune stays off with the binding.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-${app_name}-grants
+  namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+data:
+  host: ${app_name}.apps.${dns_suffix}
+  privileged: "${app_grant_privileged}"
+  root: "${app_grant_root}"
+  host-network: "${app_grant_host_network}"
+  host-path: "${app_grant_host_path}"
+  hostnames: "${app_grant_hostnames}"
+  lan-ports: "${app_grant_lan_ports}"

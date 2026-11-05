@@ -186,8 +186,8 @@ def flux_paths(root: Path, env_rel: str, env_docs: list[dict]) -> list[FluxPath]
         for item in stage.docs:
             if is_flux_kustomization(item):
                 item = substitute(item, values)
-                source = (item.get("spec") or {}).get("sourceRef") or {}
-                if source.get("name") != ROOT_SOURCE:
+                source = (item.get("spec") or {}).get("sourceRef")
+                if isinstance(source, dict) and source.get("name") != ROOT_SOURCE:
                     found.append(FluxPath(item, doc, [], None, True))
                     continue
                 found.append(build_flux_path(root, env_rel, item, parent=doc))

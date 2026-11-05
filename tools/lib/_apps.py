@@ -134,24 +134,33 @@ def grants_for(data: dict[str, Any], app: str) -> list[str]:
 def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) -> dict[str, str]:
     """The inline values one app's wiring reads: its name, its grants, and env values core
     does not publish in cluster-vars."""
-    grants = grants_for(data, app)
     for key in ("pod_cidr", "service_cidr"):
         ipaddress.ip_network(str(cluster_vars[key]), strict=True)
+    grants = grant_data(data, app, "")
+    return {
+        "app_name": app,
+        **{f"app_grant_{key.replace('-', '_')}": value for key, value in grants.items() if key != "host"},
+        "app_pod_cidr": str(cluster_vars["pod_cidr"]),
+        "app_service_cidr": str(cluster_vars["service_cidr"]),
+        "apps_git_repo_url": str(cluster_vars["apps_git_repo_url"]),
+    }
+
+
+def grant_data(data: dict[str, Any], app: str, dns_suffix: str) -> dict[str, str]:
+    """The data of ConfigMap flux-system/app-<name>-grants the app's wiring writes."""
+    grants = grants_for(data, app)
 
     def values(kind: str) -> str:
         return ",".join(sorted(grant.partition(" ")[2] for grant in grants if grant.startswith(kind + " ")))
 
     return {
-        "app_name": app,
-        "app_grant_privileged": _flag("privileged" in grants),
-        "app_grant_root": _flag("root" in grants),
-        "app_grant_host_network": _flag("host-network" in grants),
-        "app_grant_host_path": _flag("host-path" in grants),
-        "app_grant_hostnames": values("hostname"),
-        "app_grant_lan_ports": values("lan-port"),
-        "app_pod_cidr": str(cluster_vars["pod_cidr"]),
-        "app_service_cidr": str(cluster_vars["service_cidr"]),
-        "apps_git_repo_url": str(cluster_vars["apps_git_repo_url"]),
+        "host": f"{app}.apps.{dns_suffix}",
+        "privileged": _flag("privileged" in grants),
+        "root": _flag("root" in grants),
+        "host-network": _flag("host-network" in grants),
+        "host-path": _flag("host-path" in grants),
+        "hostnames": values("hostname"),
+        "lan-ports": values("lan-port"),
     }
 
 

@@ -22,6 +22,7 @@ _CONFIGS_BEFORE = {
 }
 _CONFIGS_ADDED = {
     ("Certificate", "platform-cert-manager", "wildcard"),
+    ("Certificate", "platform-cert-manager", "wildcard-apps"),
     ("ClusterIssuer", "", "internal-ca"),
     ("Secret", "platform-cert-manager", "cert-manager-ca"),
     ("TLSStore", "platform-cert-manager", "default"),
@@ -33,6 +34,15 @@ _TESTAPP = {
     ("Ingress", "platform-testapp", "testapp"),
     ("Namespace", "", "platform-testapp"),
     ("Service", "platform-testapp", "testapp"),
+}
+# platform/app-hosting/policies: cluster-wide, in every env, apps or not.
+_APP_HOSTING = {
+    ("ClusterPolicy", "", "app-derive"),
+    ("ValidatingAdmissionPolicy", "", "app-file"),
+    ("ValidatingAdmissionPolicy", "", "app-identity"),
+    ("ValidatingAdmissionPolicy", "", "app-tenant"),
+    ("ValidatingAdmissionPolicyBinding", "", "app-identity"),
+    ("ValidatingAdmissionPolicyBinding", "", "app-tenant"),
 }
 
 
@@ -60,6 +70,7 @@ def test_controller_list_lives_on_platform() -> None:
         "kyverno",
         "cert-manager/controller",
         "app-dns",
+        "app-hosting/crd",
     ]
     operator = yaml.safe_load(
         (REPO_ROOT / "platform/flux-operator/kustomization.yaml").read_text(encoding="utf-8")
@@ -190,7 +201,7 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         else set()
     )
     assert _idents(f"envs/{env}/flux/platform-configs", root=root) == (
-        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | offsite
+        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | _APP_HOSTING | offsite
     )
     suffix = str(load_cluster_vars(root, env=env)["dns_suffix"])
     for path in (REPO_ROOT / "platform/cert-manager").rglob("*"):
@@ -209,6 +220,11 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
     assert certificate["spec"]["secretName"] == "wildcard-tls"
     assert certificate["spec"]["issuerRef"] == {"name": "internal-ca", "kind": "ClusterIssuer"}
     assert certificate["spec"]["dnsNames"] == ["*.${dns_suffix}"]
+    # Hosted apps: a second wildcard, so core's certificate and key are not reissued for it.
+    apps = docs[("Certificate", "wildcard-apps")]
+    assert apps["spec"]["dnsNames"] == ["*.apps.${dns_suffix}"]
+    assert apps["spec"]["issuerRef"] == certificate["spec"]["issuerRef"]
     store = docs[("TLSStore", "default")]
     assert store["metadata"]["namespace"] == "platform-cert-manager"
     assert store["spec"]["defaultCertificate"]["secretName"] == "wildcard-tls"
+    assert store["spec"]["certificates"] == [{"secretName": apps["spec"]["secretName"]}]
