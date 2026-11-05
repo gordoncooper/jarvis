@@ -32,7 +32,7 @@ FLAG_GRANTS = ("privileged", "root", "host-network", "host-path", "lan-all", "no
 VALUE_GRANTS = ("hostname", "lan-port", "lan-target")
 # Grants that open the LAN, so need the env's lan_cidrs.
 LAN_GRANTS = ("lan-all", "lan-target")
-# values/cluster-vars.yaml: the env's home-network ranges.
+# values/cluster-vars.yaml: the env's LAN ranges.
 LAN_CIDRS = "lan_cidrs"
 _PRIVATE = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 _KEYS = frozenset({"apps", "exceptions"})
@@ -147,7 +147,7 @@ def grant_problem(grant: Any, dns_suffix: str | None, lan_cidrs: Sequence[str] =
         return "a grant is a string"
     kind, _, value = grant.partition(" ")
     if kind in LAN_GRANTS and not lan_cidrs:
-        return f"a LAN grant needs the env's home-network ranges: set {LAN_CIDRS} in values/cluster-vars.yaml"
+        return f"a LAN grant needs the env's LAN ranges: set {LAN_CIDRS} in values/cluster-vars.yaml"
     if grant in FLAG_GRANTS:
         return None
     if kind == "lan-target":

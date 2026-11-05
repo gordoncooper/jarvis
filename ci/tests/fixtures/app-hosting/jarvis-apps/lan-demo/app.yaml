@@ -4,8 +4,8 @@ metadata:
   name: lan-demo
 spec:
   network:
-    # No web: section, so no web address: reached only on its home-network port.
-    # The risky item: TCP 8080 on the home network, forwarded to container port 8080.
+    # No web: section, so no web address: reached only on its LAN port.
+    # The risky item: TCP 8080 on the LAN, forwarded to container port 8080.
     # The cluster refuses the LoadBalancer Service for it unless the env holds the line
     #   - lan-demo: lan-port 8080/TCP
     ports:

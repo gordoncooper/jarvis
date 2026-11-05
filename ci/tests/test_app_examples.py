@@ -5,7 +5,7 @@ env-00 lists hello-web, notes and lan-demo with lan-demo's exception line, so:
 - tools/app-check passes each folder;
 - the env's wiring renders, matches what is committed, and env-schema passes it;
 - each app's deploy/ objects pass the admission policies with the env's grants;
-- lan-demo's home-network Service is refused without the env's line;
+- lan-demo's LAN Service is refused without the env's line;
 - a hostPath edit of an example is refused without a host-path line.
 """
 
@@ -74,7 +74,7 @@ def test_examples_pass_admission_with_the_env_line(tmp_path: Path, monkeypatch: 
 
 
 def test_lan_port_refused_without_the_env_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rule: a home-network port the app asks for is refused unless the env grants it."""
+    """Rule: a LAN port the app asks for is refused unless the env grants it."""
     _instance, _env_dir, values = _env(tmp_path, lan_line=False)
     _admission_env(monkeypatch, values)
     service = next(doc for doc in admission._deploy("lan-demo") if doc["kind"] == "Service")

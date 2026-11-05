@@ -245,7 +245,7 @@ spec:
                         - key: kubernetes.io/metadata.name
                           operator: In
                           values: "{{ map(&join('', ['app-', @]), request.object.spec.network.callers) }}"
-    # Home-network ports, from any address to each target port. Their LoadBalancer Service
+    # LAN ports, from any address to each target port. Their LoadBalancer Service
     # passes admission only with the env's lan-port line, so without one nothing outside the
     # cluster reaches them.
     - name: ports

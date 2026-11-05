@@ -38,7 +38,7 @@ spec:
                 network:
                   description: >-
                     What reaches the app and what it reaches. Absent or empty: no web address,
-                    no home-network port, no egress beyond DNS, no caller.
+                    no LAN port, no egress beyond DNS, no caller.
                   type: object
                   properties:
                     web:
@@ -61,7 +61,7 @@ spec:
                           pattern: "^/[!-~]*$"
                     ports:
                       description: >-
-                        Home-network ports, each a LoadBalancer port listen forwarding to container
+                        LAN ports, each a LoadBalancer port listen forwarding to container
                         port target. Each needs the env's lan-port <listen>/<protocol> line.
                       type: array
                       maxItems: 16

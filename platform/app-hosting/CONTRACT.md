@@ -19,7 +19,7 @@ Without that line the env renders none of this: no App CRD, no app admission pol
   | --- | --- | --- | --- |
   | `metadata.name` | yes | | The app's name: its folder name, a DNS label of at most 59 characters. Its namespace is `app-<name>`. |
   | `spec.network.web` | no | no web address | The web address `https://<name>.apps.<dns suffix>` on 443, TLS from core's wildcard. `port`: the plain-HTTP container port Traefik reaches. `healthPath`: what the uptime check requests, starting with `/` (default `/`); healthy is any answer but a 5xx. No app-chosen external port, no app TLS. |
-  | `spec.network.ports` | no | `[]` | Home-network ports, each a LoadBalancer port: `listen` (on the LoadBalancer), `target` (the container port), `protocol` (`TCP` or `UDP`). Each needs the env's `lan-port <listen>/<protocol>` line. No cluster-internal entries: the namespace reaches itself, and other apps reach it through `callers`. |
+  | `spec.network.ports` | no | `[]` | LAN ports, each a LoadBalancer port: `listen` (on the LoadBalancer), `target` (the container port), `protocol` (`TCP` or `UDP`). Each needs the env's `lan-port <listen>/<protocol>` line. No cluster-internal entries: the namespace reaches itself, and other apps reach it through `callers`. |
   | `spec.network.egress.internet` | no | `false` | Any port and protocol to the internet; never the LAN or the cluster. |
   | `spec.network.egress.lan` | no | `[]` | LAN targets by name, each needing the env's `lan-target` lines, or exactly `[all]` (`all` is reserved), needing `lan-all`. |
   | `spec.network.egress.apps` | no | `[]` | Apps this app calls, at `<service>.app-<other>.svc`. |
@@ -29,7 +29,7 @@ Without that line the env renders none of this: no App CRD, no app admission pol
   | `spec.risky` | no | all off | Asks for `privileged`, `root`, `hostNetwork`, `hostPath` (booleans) or `hostnames` (custom hostnames outside `.apps`). Each needs the env's exception line. |
   | `spec.envs.<env>` | no | | Per-env overrides of `network.egress.internet` and `resources`. |
 
-  Every network field defaults closed: an App with no `network` has no web address, no home-network port, no egress beyond cluster DNS and no caller. App-to-app traffic flows only when the caller lists the callee under `egress.apps` and the callee lists the caller under `callers`. The API server refuses an App that breaks the schema. `tools/app-check` also refuses unknown keys, which the API server would drop unread. Kubernetes probes stay in the app's `deploy/`.
+  Every network field defaults closed: an App with no `network` has no web address, no LAN port, no egress beyond cluster DNS and no caller. App-to-app traffic flows only when the caller lists the callee under `egress.apps` and the callee lists the caller under `callers`. The API server refuses an App that breaks the schema. `tools/app-check` also refuses unknown keys, which the API server would drop unread. Kubernetes probes stay in the app's `deploy/`.
 - **Hostname.** `<name>.apps.<dns suffix>`, always. The app writes `${app_host}` as its Ingress host; the app's Kustomization fills it. Certificate `wildcard-apps` (`*.apps.<dns suffix>`, internal CA) serves every app, so no app has its own certificate and none can claim a core or add-on name.
 - **What core derives, per listed app** (`app/`, applied as the platform account by the env's `app-<name>-wiring`):
   - Namespace `app-<name>`, labelled `hosting.jarvis.io/app: <name>`, annotated with its host, the env, the env's pod, service and LAN ranges (`hosting.jarvis.io/lan-cidrs`) and the env's LAN grants for the app (`hosting.jarvis.io/lan-all`, `hosting.jarvis.io/lan-targets`, equal to the grants ConfigMap's), Pod Security `warn` and `audit` at `restricted`;
@@ -98,6 +98,6 @@ Without that line the env renders none of this: no App CRD, no app admission pol
 - Kyverno re-derives an app's allows when its App changes, not when the env's grants or ranges change: removing a `lan-all` or `lan-target` line updates the namespace and the grants at once, and closes the derived `app-lan-all` or `app-lan` at the App's next change. Until then the hole the App asked for and the env had granted stays open.
 - Egress is filtered by address and port, not by internet hostname.
 - No multicast, mDNS or other LAN discovery: a LAN target is a fixed range the env names.
-- No internet-facing app: the web address and home-network ports are for the LAN.
+- No internet-facing app: the web address and LAN ports are for the LAN.
 - LAN ranges are IPv4 inside RFC 1918.
 - The cluster's own nodes sit on the LAN: `lan-all`, or a `lan-target` range holding a node, lets the app's pods reach the node-side endpoints (the Kubernetes API, the kubelet, Traefik and anything else listening on a node) as any LAN device can. Grant the whole LAN only to an app trusted that far, and keep `lan-target` ranges off the nodes.

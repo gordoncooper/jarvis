@@ -53,7 +53,7 @@ kind: Service
 metadata:
   name: lan-demo
 spec:
-  # The home-network port from the app file: port is its listen, targetPort its target (a
+  # The LAN port from the app file: port is its listen, targetPort its target (a
   # number, which the cluster checks). ServiceLB needs no node port, and the cluster refuses one.
   type: LoadBalancer
   allocateLoadBalancerNodePorts: false
