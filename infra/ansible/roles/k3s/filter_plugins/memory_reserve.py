@@ -1,8 +1,8 @@
 """The node memory reserve as the kubelet's memory.available eviction threshold.
 
 The kubelet subtracts its hard eviction thresholds from allocatable, so pods cannot be
-scheduled into them, and evicts the lowest-priority pods over their requests first once
-free memory falls below them. The reserve is node_memory_reserve_percent of the node's
+scheduled into them, and once free memory falls below them it evicts pods whose usage
+exceeds their requests first, by priority among those, before the kernel has to act. The reserve is node_memory_reserve_percent of the node's
 memory, rendered as a percent (the kubelet applies it to the node's own capacity); the
 env's or host's eviction-hard keeps its other signals, and its memory.available wins when
 it is larger. A percent of 0 leaves eviction-hard as written.

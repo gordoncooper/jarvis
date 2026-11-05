@@ -1,6 +1,8 @@
 # Hosted apps run below everything else. Core and add-on pods set no class and run at 0
-# (k3s's own at system-cluster-critical), so under memory pressure the kubelet evicts app pods
-# before theirs, and an app pod never preempts anything: the scheduler leaves it Pending.
+# (k3s's own at system-cluster-critical), so a core pod that cannot fit preempts app pods,
+# and an app pod never preempts anything: the scheduler leaves it Pending. Under memory
+# pressure the kubelet first picks pods whose usage exceeds their requests, and only then
+# goes by priority; app pods cannot exceed theirs (app-file holds memory request == limit).
 # Prune stays off with the other app-hosting objects, so a path move cannot drop the class
 # under running app pods.
 apiVersion: scheduling.k8s.io/v1

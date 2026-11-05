@@ -222,6 +222,7 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
             for item, field in _risky_uses(_pod_spec(doc), annotations):
                 if not risky.get(field):
                     yield f"{ref}: uses {item}, which needs the app file's risky.{field} and the env's exception line"
+            yield from _memory_problems(ref, _pod_spec(doc))
             if _pod_spec(doc).get("priorityClassName") not in (None, PRIORITY_CLASS):
                 yield f"{ref}: sets priorityClassName; core runs every app pod at {PRIORITY_CLASS} and refuses another class"
         for claim in _claims(doc):
@@ -297,6 +298,28 @@ def _risky_uses(pod: dict, annotations: dict | None = None) -> Iterator[tuple[st
     )
     if pod_context.get("runAsUser") == 0 or any(context.get("runAsUser") == 0 for context in contexts) or not non_root:
         yield "root (every container needs runAsNonRoot: true and no runAsUser 0)", "root"
+
+
+_MEMORY = re.compile(r"^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|)$")
+_MEMORY_FACTOR = {"": 1, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15, "E": 10**18,
+                  "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50, "Ei": 2**60}
+
+
+def _bytes(quantity: object) -> float | str:
+    """A memory quantity in bytes, or the text itself when it is no plain quantity."""
+    match = _MEMORY.fullmatch(str(quantity).strip())
+    return float(match.group(1)) * _MEMORY_FACTOR[match.group(2)] if match else str(quantity)
+
+
+def _memory_problems(ref: str, pod: dict) -> Iterator[str]:
+    """admission's app-file: a container's memory request is its limit (a limit alone passes)."""
+    for container in [*(pod.get("containers") or []), *(pod.get("initContainers") or [])]:
+        resources = container.get("resources") or {}
+        request = (resources.get("requests") or {}).get("memory")
+        limit = (resources.get("limits") or {}).get("memory")
+        if request is not None and (limit is None or _bytes(request) != _bytes(limit)):
+            yield (f"{ref}: container {container.get('name')} requests memory {request} with limit {limit}; "
+                   "a hosted app's memory request equals its limit (or set the limit alone)")
 
 
 def _unconfined(context: dict) -> bool:

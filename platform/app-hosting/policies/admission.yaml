@@ -278,12 +278,22 @@ spec:
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type != 'LoadBalancer' ||
         (has(object.spec.allocateLoadBalancerNodePorts) && !object.spec.allocateLoadBalancerNodePorts)
       message: "an app's LoadBalancer sets allocateLoadBalancerNodePorts: false"
-    # Every app pod runs at the lowest priority, so the kubelet evicts it first and it never
-    # preempts core. ClusterPolicy app-priority sets the class; this refuses any other.
+    # Every app pod runs at the lowest priority: core preempts it, it never preempts core, and
+    # among pods the kubelet would evict alike it goes first. ClusterPolicy app-priority sets
+    # the class; this refuses any other.
     - expression: >-
         !has(variables.podSpec.containers) ||
         (has(variables.podSpec.priorityClassName) && variables.podSpec.priorityClassName == 'hosted-app')
       message: "an app's pods run at PriorityClass hosted-app, which core sets on its workloads; no other class"
+    # An app reserves all the memory it may use: a container's memory request is its limit, so
+    # it never uses more of a node than the scheduler set aside for it. A limit alone passes
+    # (Kubernetes copies it to the request); a pod with neither gets the LimitRange's equal pair.
+    - expression: >-
+        variables.containers.all(c, !has(c.resources) || !has(c.resources.requests) ||
+          !('memory' in c.resources.requests) ||
+          (has(c.resources.limits) && 'memory' in c.resources.limits &&
+           quantity(string(c.resources.requests.memory)).compareTo(quantity(string(c.resources.limits.memory))) == 0))
+      message: "a hosted app's container sets a memory limit equal to its memory request (or a limit alone)"
     # Traefik reads its router settings from annotations; an app keeps only the two its web
     # address needs, on Traefik's class. The entrypoint is required: without it Traefik serves
     # the route on every entrypoint, plain HTTP included.

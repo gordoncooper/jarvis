@@ -51,7 +51,8 @@ spec:
         - port: 53
           protocol: TCP
 ---
-# Per-container defaults, small, for a container that sets no requests or limits. The
+# Per-container defaults, small, for a container that sets no requests or limits. Memory's
+# request is its limit, as app-file requires of an app: the app reserves all it may use. The
 # namespace total is the quota app-derive sets from the App (500m and 512Mi by default), so
 # a rollout surge or a backup mover still fits beside a default pod.
 apiVersion: v1
@@ -67,4 +68,4 @@ spec:
         memory: 128Mi
       defaultRequest:
         cpu: 50m
-        memory: 64Mi
+        memory: 128Mi

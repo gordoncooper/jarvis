@@ -278,6 +278,19 @@ def test_pod_security_restricted_beyond_the_baseline_needs_privileged(tmp_path: 
     _run(tmp_path, "restricted", None, cases)
 
 
+def test_app_containers_reserve_their_memory_limit(tmp_path: Path) -> None:
+    """Rule: a hosted app's container memory request equals its limit (the same quantity in any
+    unit, or a limit alone), so it never uses more of a node than the scheduler set aside."""
+    def sized(name: str, resources: dict) -> dict:
+        return _pod(name, "web-demo", containers=[{**_container(), "resources": resources}])
+
+    _run(tmp_path, "memory", None, [
+        (sized("equal", {"requests": {"memory": "128Mi"}, "limits": {"memory": "0.125Gi"}}), PASS),
+        (sized("limit-only", {"limits": {"memory": "128Mi"}}), PASS),
+        (sized("under-limit", {"requests": {"memory": "64Mi"}, "limits": {"memory": "128Mi"}}), FILE_FAILS),
+    ])
+
+
 def test_app_pods_run_at_the_hosted_app_class_only(tmp_path: Path) -> None:
     """Rule: app-priority sets hosted-app on every workload the tenant ships, over any class it
     picks; admission refuses a pod or workload at another class or none. The VolSync
@@ -552,6 +565,8 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("web-demo", _job("j", "web-demo", securityContext={"runAsNonRoot": True}), "more than Pod Security restricted"),
         ("web-demo", _job("j", "web-demo", containers=[_container(procMount="Unmasked")]), "more than Pod Security restricted"),
         ("web-demo", _job("j", "web-demo", priorityClassName="high"), "refuses another class"),
+        ("web-demo", _job("j", "web-demo", containers=[{**_container(), "resources": {
+            "requests": {"memory": "64Mi"}, "limits": {"memory": "128Mi"}}}]), "memory request equals its limit"),
         ("web-demo", _ingress("i", "web-demo", f"web-demo.apps.{SUFFIX}"), "sets ingressClassName: traefik"),
         ("web-demo", {**_ingress("i", "web-demo", f"web-demo.apps.{SUFFIX}", ingressClassName="traefik"),
                       "metadata": {"name": "i", "annotations": {"traefik.ingress.kubernetes.io/router.middlewares": "x"}}},
@@ -564,7 +579,7 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
     ],
     ids=["privileged", "bare-pod", "host-network", "root", "host-path", "undeclared-pvc", "unbacked-without-annotation",
          "host-outside-apps", "nodeport", "loadbalancer-not-listed", "loadbalancer-wrong-target", "loadbalancer-node-ports",
-         "networkpolicy", "ingressroute", "other-namespace", "no-drop-all", "no-seccomp", "proc-unmasked", "other-priority-class",
+         "networkpolicy", "ingressroute", "other-namespace", "no-drop-all", "no-seccomp", "proc-unmasked", "other-priority-class", "memory-request-under-limit",
          "ingress-no-class", "ingress-middleware", "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
