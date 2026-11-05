@@ -95,8 +95,10 @@ def _run_site(
     flux_instance: bool = True,
     control_plane: tuple[str, ...] = ("cp-1",),
     override: dict[str, object] | None = None,
+    sync_file: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """flux_instance passes the example env's FluxInstance; False keeps the jarvis_env path."""
+    """flux_instance passes the example env's FluxInstance; False keeps the jarvis_env path.
+    sync_file replaces the example env's sync.yaml."""
     require_cli("ansible-playbook")
     inventory = tmp_path / "hosts.yml"
     _inventory(inventory, data_disk_hosts=data_disk_hosts, control_plane=control_plane)
@@ -117,7 +119,7 @@ def _run_site(
     ]
     if flux_instance:
         cmd.extend(["-e", f"flux_instance_file={example_flux_entry(tmp_path).instance_file}"])
-        cmd.extend(["-e", f"flux_sync_file={_EXAMPLE_SYNC}"])
+        cmd.extend(["-e", f"flux_sync_file={sync_file or _EXAMPLE_SYNC}"])
     if check:
         cmd.append("--check")
     if tags is not None:
@@ -229,6 +231,12 @@ def test_missing_env_flux_instance_fails_before_any_change(tmp_path: Path) -> No
     """R1: site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
     result = _run_site(tmp_path, jarvis_env="env-absent", flux_instance=False)
     _stopped_before_base_os(result, "envs/env-absent/flux/flux-instance.yaml or sync.yaml is missing")
+
+
+def test_missing_sync_yaml_with_flux_instance_present_fails_before_any_change(tmp_path: Path) -> None:
+    """site.yml applies sync.yaml after flux-instance.yaml, so a missing sync.yaml stops it too."""
+    result = _run_site(tmp_path, sync_file=tmp_path / "absent-sync.yaml")
+    _stopped_before_base_os(result, "flux-instance.yaml or sync.yaml is missing")
 
 
 def test_unmarked_k3s_fails_before_any_change(tmp_path: Path) -> None:

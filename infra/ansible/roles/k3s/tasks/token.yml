@@ -65,6 +65,26 @@
   register: k3s_node_token_stat
   when: k3s_mode == 'server'
 
+# The secure form pins the CA hash. A server with no token file mints a fresh CA, so the
+# sealed token would never match it. The value is read only for its prefix and never printed.
+- name: Note whether the sealed server token is the secure form
+  ansible.builtin.set_fact:
+    k3s_sealed_secure_form: "{{ k3s_server_token is match('K10') }}"
+  when: k3s_mode == 'server'
+  no_log: true
+
+- name: Refuse a sealed secure-form server token on a server with no token file
+  ansible.builtin.assert:
+    that:
+      - k3s_node_token_stat.stat.exists or not (k3s_sealed_secure_form | bool)
+    fail_msg: >-
+      The sealed server_token in {{ k3s_token_file | basename }} is the K10...::server: form,
+      and {{ inventory_hostname }} has no k3s token file yet, so it would mint a new CA and
+      reject that token. Nothing was changed. Seal only the passphrase after ::server: (see
+      platform/backups/CONTRACT.md, Rebuild a dead node).
+    quiet: true
+  when: k3s_mode == 'server'
+
 - name: Read the server token on this node
   ansible.builtin.slurp:
     src: "{{ k3s_data_dir }}/server/token"

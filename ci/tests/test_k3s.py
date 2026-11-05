@@ -1139,6 +1139,17 @@ def test_server_refuses_a_sealed_token_that_differs_from_the_node(
         assert value not in output
 
 
+def test_server_with_no_token_file_refuses_a_sealed_secure_form_token(tmp_path: Path) -> None:
+    """A fresh server mints a new CA, so a sealed K10 token stops the run visibly, without its value."""
+    _sealed_tokens(tmp_path, server=f"K10abc123::server:{_SERVER_TOKEN}")
+    proc, facts = _run_token_read(tmp_path, mode="server")
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0 and "Nothing was changed" in output, output
+    assert not facts.exists()
+    for value in ("K10abc123", _SERVER_TOKEN, _AGENT_TOKEN):
+        assert value not in output
+
+
 def _role_play(tmp_path: Path, bin_dir: Path) -> Path:
     play = tmp_path / "role.yml"
     play.write_text(

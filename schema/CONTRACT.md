@@ -20,6 +20,8 @@ A real env lives in a private instance checkout. `INSTANCE=<path>` points the sc
 ## Expects
 
 - One folder per env: `envs/<env>/` with the two files above present when that env is active.
+- Once an env has a `flux/` folder or sealed files, `flux/` holds every Flux entry file: `sync.yaml`, `flux-instance.yaml`, `kustomization.yaml`, `identities.yaml`, the four `kustomizations/*.yaml` and `platform-configs/kustomization.yaml`. A missing one fails the schema. An env with neither yet (prep-node on a new env) needs none.
+- Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `cert-manager-ca.sops.yaml` and `backups-restic.sops.yaml`, which the env's platform-configs path applies.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
 - When `flux_git_repo_url` is `ssh://`, `envs/<env>/secrets/flux-deploy-key.sops.yaml` (the read-only deploy key) is required.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's `flux/platform-configs/kustomization.yaml` lists `core/platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same prep-node reason. An env that does not list it needs nothing new.
@@ -109,7 +111,7 @@ The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluste
 
 The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_configmap.py`. Every other known key in `schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.
 
-When `flux/sync.yaml` is present, its root `GitRepository` `flux-system` url and `ref.name` match `flux_git_repo_url` and `flux_git_ref`, its `core` `GitRepository` matches `core_git_repo_url` and `core_git_ref` and has no `secretRef`, the root includes `core` at `toPath: core`, an `ssh://` root names a `secretRef`, and the root Kustomization `flux-system` applies `./envs/<env>/flux` from `flux-system`. `site.yml` preflight requires the file.
+In `flux/sync.yaml`, the root `GitRepository` `flux-system` url and `ref.name` match `flux_git_repo_url` and `flux_git_ref`, its `core` `GitRepository` matches `core_git_repo_url` and `core_git_ref` and has no `secretRef`, the root includes `core` at `toPath: core`, an `ssh://` root names a `secretRef`, and the root Kustomization `flux-system` applies `./envs/<env>/flux` from `flux-system`. `site.yml` preflight requires the file.
 
 `validate_env_tree(..., pre_host=True)` skips the missing `.sops.yaml` recipient requirement and the generated ConfigMap match. Other `.sops.yaml` checks still run. `tools/prep-node` uses that mode before it contacts a host, then runs the full check at the end.
 

@@ -4,6 +4,9 @@ kind: FluxInstance
 metadata:
   name: flux
   namespace: flux-system
+  # The root Kustomization owns this object; a bad commit that drops it must not remove Flux.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   distribution:
     # renovate: datasource=github-releases depName=fluxcd/flux2 versioning=semver

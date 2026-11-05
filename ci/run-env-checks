@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Run every env-level check against the checkout INSTANCE names (an instance repo),
+# or against this checkout when INSTANCE is unset. An instance CI and a local run both
+# call this, so a new env-level check reaches every instance with no change there.
+#   INSTANCE=<path> bash ci/run-env-checks
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+export PATH="${HOME}/.local/bin:${repo_root}/.venv/bin:${PATH}"
+
+# The checks that read envs/<env> through instance_root, in ci/checks/.
+env_checks=(env-schema flux-identity flux-prune flux-substitute manifest-lint secret-scan)
+
+failed=()
+for name in "${env_checks[@]}"; do
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::group::$name"
+  fi
+  if "ci/checks/${name}"; then
+    echo "ok   ${name}"
+  else
+    echo "FAIL ${name}" >&2
+    failed+=("$name")
+  fi
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::endgroup::"
+  fi
+done
+if ((${#failed[@]} > 0)); then
+  echo "failing env checks (${#failed[@]}): ${failed[*]}" >&2
+  exit 1
+fi
+echo "env checks passed: ${env_checks[*]}"

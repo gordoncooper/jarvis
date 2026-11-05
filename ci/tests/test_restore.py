@@ -468,6 +468,14 @@ def test_empty_mover_logs_fail(capsys) -> None:
     assert "backup-" not in [arg for call in cluster.calls for arg in call]
 
 
+def test_restore_all_on_an_empty_env_is_a_clean_no_op(capsys) -> None:
+    """A fresh env has no hold and no PVC: restore-all says so and exits 0, changing nothing."""
+    cluster = _Cluster([], will_pause=True)
+    assert _run(cluster, app=None, all_pvcs=True) == 0
+    assert "nothing to restore: no rebuild hold and no PVC" in capsys.readouterr().out
+    assert not any(call[0] in ("apply", "delete", "patch", "create") for call in cluster.calls)
+
+
 def test_named_restore_fails_when_nothing_matches(capsys) -> None:
     cluster = _Cluster([], will_pause=True, hold=["ns-demo/pvc-drill"])
     assert _run(cluster, app="typo", all_pvcs=False) != 0

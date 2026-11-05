@@ -42,7 +42,13 @@ A real env lives in its own private instance repository, made from `envs/env-00`
 8. Render the ConfigMap with `INSTANCE=<path> python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output <path>/envs/<env>/flux/generated/cluster-vars-configmap.yaml`. prep-node also rewrites that file when it already exists.
 9. Commit `envs/<env>/` and `.sops.yaml` in the instance repository. Do not commit the age private key. Push to the branch `flux_git_ref` names, then run `site.yml` as below.
 
+An instance checkout with no `.git` counts as "not recorded" for prep-node and bootstrap-secrets, so neither refuses on the ground that git already records a file. Run them from a real clone when that refusal matters.
+
+Run every env-level check against the instance with `INSTANCE=<path> bash ci/run-env-checks`. That one entry point is the list the instance CI calls too, so a new env-level check reaches an instance without a change there.
+
 The copy already has `flux/`: `flux-instance.yaml` (it installs the controllers and is the env's only Flux version pin), `sync.yaml`, the four Kustomizations `platform-controllers` (`./core/platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./core/services`) and `apps` (`./core/apps`), chained with `dependsOn`, `identities.yaml` (the service accounts those Kustomizations and the platform HelmReleases run as), and `platform-configs/kustomization.yaml`. That list is `core/platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`, and the opt-in off-host copy. Step 6 creates those files, so the list needs no hand edit.
+
+The FluxInstance, both GitRepositories and the root Kustomization carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so a commit that deletes one from Git cannot make Flux remove its own sources; `ci/checks/flux-prune` enforces it. Removing one on purpose means deleting it from the cluster by hand. The layer Kustomizations keep prune on.
 
 `sync.yaml` holds two Flux sources and the root Kustomization. The root `GitRepository` `flux-system` is the instance repository. It includes the core `GitRepository` `core` (this repository, public) at `core/`, so each Flux path reads env files and core files from one artifact, decrypted by the one `sops-age` key. The root Kustomization `flux-system` applies `./envs/<env>/flux` as kustomize-controller. `site.yml` applies `flux-instance.yaml` and then `sync.yaml` once on a new cluster, and stops before any change when either is missing; Flux reconciles both from Git after that.
 
