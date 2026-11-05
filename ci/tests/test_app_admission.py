@@ -1,14 +1,19 @@
 """Hosted-app admission, offline: every rule in platform/app-hosting/policies against seeded
 good and bad objects, with the pinned kyverno CLI, and tools/app-check on the same objects.
 
-The bindings and the grants ConfigMap are rendered from the real per-app wiring
-(platform/app-hosting/app) with the env's values, so the test sees what the cluster gets.
+The namespaces are rendered from the real per-app wiring (platform/app-hosting/app) with the
+env's values, so app-grants sees the annotations the cluster gets. The CLI cannot run two parts
+as they are: it does not resolve the selector paramRef of the cluster-wide app-file binding, so
+a binding naming each App stands in for it, and its namespaceObject holds only a name and
+labels, so app-grants' grants variable reads the rendered annotations from a literal instead.
+test_app_admission_apiserver.py proves both real ones.
 """
 
 from __future__ import annotations
 
 import copy
 import ipaddress
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -62,8 +67,16 @@ def _wiring(app: str, grants: list[str]) -> list[dict]:
     """What the app's wiring applies, rendered with the env's exception lines for it."""
     data = {"apps": [app], "exceptions": [{app: grant} for grant in grants]}
     values = {**_apps.substitutes(data, app, CLUSTER_VARS), "dns_suffix": SUFFIX, "jarvis_env": "env-00"}
-    docs = [doc for name in ("namespace.yaml", "admission.yaml") for doc in _docs(WIRING / name)]
-    return substitute(docs, values)
+    return substitute(_docs(WIRING / "namespace.yaml"), values)
+
+
+def _app_file_stand_in(app: str) -> dict:
+    """What the cluster-wide app-file binding resolves to in app's namespace."""
+    return {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingAdmissionPolicyBinding",
+            "metadata": {"name": f"app-file-{app}"},
+            "spec": {"policyName": "app-file", "validationActions": ["Deny"],
+                     "paramRef": {"name": app, "namespace": f"app-{app}", "parameterNotFoundAction": "Deny"},
+                     "matchResources": {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"app-{app}"}}}}}
 
 
 def _deploy(app: str) -> list[dict]:
@@ -162,14 +175,18 @@ def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, d
     """kyverno test on cases: (object, {policy: pass|fail|skip}). Fails with the CLI's table."""
     work = tmp_path / label
     work.mkdir()
-    wiring = [doc for app, (_doc, grants) in _ENV.items() for doc in _wiring(app, grants)]
-    namespaces = [doc for doc in wiring if doc["kind"] == "Namespace"]
-    bindings = [doc for doc in wiring if doc["kind"] == "ValidatingAdmissionPolicyBinding"]
-    params = [doc for doc in wiring if doc["kind"] == "ConfigMap"] + [app for app, _ in _ENV.values()]
+    namespaces = [doc for app, (_doc, grants) in _ENV.items() for doc in _wiring(app, grants)]
+    policies = [doc for doc in _docs(POLICIES / "admission.yaml")
+                if (doc["kind"], doc["metadata"]["name"]) != ("ValidatingAdmissionPolicyBinding", "app-file")]
+    annotations = {doc["metadata"]["name"]: doc["metadata"]["annotations"] for doc in namespaces}
+    for policy in policies:
+        if (policy["kind"], policy["metadata"]["name"]) == ("ValidatingAdmissionPolicy", "app-grants"):
+            grants = next(item for item in policy["spec"]["variables"] if item["name"] == "grants")
+            grants["expression"] = f"{json.dumps(annotations)}[namespaceObject.metadata.name]"
     (work / "policies.yaml").write_text(
-        yaml.safe_dump_all([*_docs(POLICIES / "admission.yaml"), *bindings]), encoding="utf-8"
+        yaml.safe_dump_all([*policies, *(_app_file_stand_in(app) for app in _ENV)]), encoding="utf-8"
     )
-    (work / "params.yaml").write_text(yaml.safe_dump_all(params), encoding="utf-8")
+    (work / "params.yaml").write_text(yaml.safe_dump_all([app for app, _ in _ENV.values()]), encoding="utf-8")
     (work / "resources.yaml").write_text(yaml.safe_dump_all([doc for doc, _ in cases]), encoding="utf-8")
     selector = [
         {"name": doc["metadata"]["name"], "labels": {**doc["metadata"]["labels"], "kubernetes.io/metadata.name": doc["metadata"]["name"]}}
@@ -439,9 +456,10 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
 
 
 def test_an_app_cannot_write_its_own_grants_or_leave_its_namespace(tmp_path: Path) -> None:
-    """Rule: the app's identity writes only its shipped kinds in app-<name>. A grants ConfigMap it
-    ships is refused in flux-system and ignored in its own namespace (the binding reads
-    flux-system), so an exception line in the app's own folder grants nothing."""
+    """Rule: the app's identity writes only its shipped kinds in app-<name>, and a Namespace is
+    not one, so it cannot write its own grants. A grants ConfigMap it ships is refused in
+    flux-system and read by nothing in its own namespace, so an exception line in the app's own
+    folder grants nothing."""
     tenant = TENANT.format(app="web-demo")
     local = {"apiVersion": "v1", "kind": "ConfigMap",
              "metadata": {"name": "app-web-demo-grants", "namespace": "app-web-demo"}, "data": {"privileged": "true"}}
@@ -449,10 +467,12 @@ def test_an_app_cannot_write_its_own_grants_or_leave_its_namespace(tmp_path: Pat
     forged["metadata"] = {"name": "forged-grants", "namespace": "flux-system"}
     network = _object("NetworkPolicy", "allow-all", "web-demo", "networking.k8s.io/v1", podSelector={})
     other = _object("ConfigMap", "elsewhere", "notes")
+    own_namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "app-web-demo", "namespace": "app-web-demo"}}
     tenant_ok = {"app-tenant": "pass"}
     tenant_fails = {"app-tenant": "fail"}
     _run(tmp_path, "tenant", tenant, [
         (local, tenant_ok), (forged, tenant_fails), (network, tenant_fails), (other, tenant_fails),
+        (own_namespace, tenant_fails),
         (_pod("privileged-after-forging", "web-demo", **_PRIVILEGED), BOTH_FAIL),
     ])
     # A Traefik route would claim any host; kyverno apply reads a stand-in CRD for its kind.
@@ -799,14 +819,14 @@ def test_derive_opens_internet_and_lan_only_as_asked_and_granted(tmp_path: Path)
         assert not _allows(allow, "10.80.3.4", 8443, "TCP")
 
 
-def test_uptime_opt_out_reaches_the_grants_the_uptime_check_reads() -> None:
+def test_uptime_opt_out_reaches_the_namespace_the_uptime_check_reads() -> None:
     """Rule: the uptime check is on unless the env has '<app>: no-uptime-check'; the line reaches
-    the app's grants ConfigMap, where the uptime check reads it."""
-    def grants(lines: list[str]) -> dict:
-        return next(doc for doc in _wiring("notes", lines) if doc["kind"] == "ConfigMap")["data"]
+    the app's namespace, where the uptime check reads it."""
+    def opt_out(lines: list[str]) -> str:
+        return _wiring("notes", lines)[0]["metadata"]["annotations"]["hosting.jarvis.io/no-uptime-check"]
 
-    assert grants([])["no-uptime-check"] == "false"
-    assert grants(["no-uptime-check"])["no-uptime-check"] == "true"
+    assert opt_out([]) == "false"
+    assert opt_out(["no-uptime-check"]) == "true"
 
 
 @pytest.mark.parametrize("hosting", [True, False], ids=["hosting-on", "hosting-off"])

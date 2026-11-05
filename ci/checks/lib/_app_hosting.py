@@ -6,18 +6,19 @@ builds its path with its postBuild values and checks what the cluster gets:
 - The wiring is for an app the env lists in values/apps.yaml, and the env lists no app
   without one.
 - Namespace app-<name>, labelled hosting.jarvis.io/app: <name>, kept by prune: disabled, its
-  LAN-grant annotations equal to the env's lan-all, lan-target and lan-port lines for the app.
+  grant annotations equal to the env's exception lines for the app, and its host annotation
+  <name>.apps.<dns suffix>.
 - The network baseline: default-deny (both directions, no allow), cluster-dns and
   same-namespace, and LimitRange app, all in app-<name>.
-- Bindings app-file-<name> (the app's App in app-<name>) and app-grants-<name>
-  (flux-system/app-<name>-grants), each refusing when its params are missing.
-- The grants ConfigMap holds exactly the env's exception lines for that app, and the
-  app's host is <name>.apps.<dns suffix>.
 - The tenant flux-system/app-<name> holds one Role in app-<name>, on the kinds an app ships
   only, bound to it alone.
 - The app's two Kustomizations run as that tenant, target app-<name>, read only the app's
   own sources, decrypt nothing and take no substitution source, only app_host.
 - Nothing else: the wiring's kinds are these.
+
+And for an env that lists an app: core's policies hold the cluster-wide bindings app-file (the
+App in the object's own namespace, refusing when there is none) and app-grants, each on every
+namespace labelled hosting.jarvis.io/app.
 """
 
 from __future__ import annotations
@@ -30,11 +31,11 @@ from _manifests import flux_paths, kustomize_build, namespace_of, postbuild_valu
 
 import _apps  # tools/lib, which schema.env (through _manifests) puts on the path
 from _app_file import SHIPPED_KINDS
+from schema.env import CORE_SOURCE_DIR
 
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
-# Grants the wiring also writes on the namespace, where ClusterPolicy app-derive reads them.
-LAN_GRANT_KEYS = ("lan-all", "lan-targets", "lan-ports")
+POLICIES = f"{CORE_SOURCE_DIR}/platform/app-hosting/policies"
 _KINDS = frozenset(
     {
         "Namespace",
@@ -43,12 +44,16 @@ _KINDS = frozenset(
         "RoleBinding",
         "NetworkPolicy",
         "LimitRange",
-        "ValidatingAdmissionPolicyBinding",
-        "ConfigMap",
         "GitRepository",
         "Kustomization",
     }
 )
+_LABELLED = {"namespaceSelector": {"matchExpressions": [{"key": "hosting.jarvis.io/app", "operator": "Exists"}]}}
+_BINDINGS = {
+    "app-file": {"policyName": "app-file", "validationActions": ["Deny"], "matchResources": _LABELLED,
+                 "paramRef": {"selector": {}, "parameterNotFoundAction": "Deny"}},
+    "app-grants": {"policyName": "app-grants", "validationActions": ["Deny"], "matchResources": _LABELLED},
+}
 _KUSTOMIZATION_FIELDS = frozenset(
     {"interval", "retryInterval", "path", "prune", "serviceAccountName", "targetNamespace", "sourceRef", "dependsOn", "postBuild"}
 )
@@ -93,6 +98,10 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         (doc.get("data") or {} for doc in env_docs if doc.get("kind") == "ConfigMap" and _name(doc) == "cluster-vars"), {}
     )
     wired: set[str] = set()
+    if listed:
+        # From core's folder: the example env's platform-configs stage builds only the core list.
+        policies, error = kustomize_build(root, POLICIES)
+        yield from [error] if error else binding_problems(policies)
     for path in flux_paths(root, env_rel, env_docs):
         name = _name(path.kustomization)
         if path.parent is not None or not (name.startswith("app-") and name.endswith("-wiring")):
@@ -105,11 +114,20 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
             yield f"{ref_of(path.kustomization)}: {path.error}"
             continue
         docs = substitute(path.docs, postbuild_values(path.kustomization, env_docs))
-        grants = _apps.grant_data(data, app, cluster_vars.get("dns_suffix", ""))
+        grants = _apps.grant_annotations(data, app, cluster_vars.get("dns_suffix", ""))
         yield from (f"app {app}: {problem}" for problem in wiring_problems(app, docs, grants))
     for app in listed:
         if app not in wired:
             yield f"values/apps.yaml lists {app}, and the flux tree has no {_apps.wiring_name(app)}"
+
+
+def binding_problems(docs: list[dict]) -> Iterator[str]:
+    found = {_name(doc): doc for doc in docs if doc.get("kind") == "ValidatingAdmissionPolicyBinding"}
+    for name, want in _BINDINGS.items():
+        if name not in found:
+            yield f"has no ValidatingAdmissionPolicyBinding {name}"
+        elif found[name].get("spec") != want:
+            yield f"{ref_of(found[name])}: binds {name} to every labelled namespace, refusing where params are missing"
 
 
 def wiring_problems(app: str, docs: list[dict], grants: dict[str, str]) -> Iterator[str]:
@@ -136,10 +154,10 @@ def wiring_problems(app: str, docs: list[dict], grants: dict[str, str]) -> Itera
         annotations = meta.get("annotations") or {}
         if annotations.get(_PRUNE) != "disabled":
             problems.append(f"Namespace {namespace}: lacks {_PRUNE}: disabled, so dropping the app could delete its volumes")
-        # app-derive opens the LAN from these, so they are the env's grants exactly.
-        for key in LAN_GRANT_KEYS:
-            if annotations.get(f"hosting.jarvis.io/{key}") != grants.get(key):
-                problems.append(f"Namespace {namespace}: annotation hosting.jarvis.io/{key} is not the env's grant {grants.get(key)!r}")
+        # app-grants admits and app-derive opens the LAN from these, so they are the env's grants exactly.
+        for key, value in grants.items():
+            if annotations.get(key) != value:
+                problems.append(f"Namespace {namespace}: annotation {key} is not the env's grant {value!r}")
     deny = found.get(("NetworkPolicy", namespace, "default-deny"))
     deny_spec = (deny or {}).get("spec") or {}
     if deny is None or deny_spec != {"podSelector": {}, "policyTypes": ["Ingress", "Egress"]}:
@@ -147,22 +165,6 @@ def wiring_problems(app: str, docs: list[dict], grants: dict[str, str]) -> Itera
     for name in ("cluster-dns", "same-namespace"):
         need("NetworkPolicy", namespace, name)
     need("LimitRange", namespace, "app")
-    for policy, params in (("app-file", {"name": app, "namespace": namespace}), ("app-grants", {"name": f"app-{app}-grants", "namespace": FLUX_NAMESPACE})):
-        binding = need("ValidatingAdmissionPolicyBinding", "default", f"{policy}-{app}")
-        if binding is None:
-            continue
-        spec = binding.get("spec") or {}
-        want = {
-            "policyName": policy,
-            "validationActions": ["Deny"],
-            "paramRef": {**params, "parameterNotFoundAction": "Deny"},
-            "matchResources": {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": namespace}}},
-        }
-        if spec != want:
-            problems.append(f"{ref_of(binding)}: binds {policy} to {namespace} with its params, refusing when they are missing")
-    config = need("ConfigMap", FLUX_NAMESPACE, f"app-{app}-grants")
-    if config is not None and (config.get("data") or {}) != grants:
-        problems.append(f"{ref_of(config)}: holds {config.get('data')}, not the env's exception lines {grants}")
     problems.extend(_tenant_problems(app, docs, namespace, tenant))
     yield from problems
 

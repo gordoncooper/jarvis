@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Download the pinned kube-apiserver and etcd, sha256 checked, into the git-ignored directory
+ci/tests/test_app_admission_apiserver.py runs them from. Nothing here talks to a cluster."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import shutil
+import sys
+import tarfile
+import urllib.request
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _versions() -> dict[str, str]:
+    lines = (REPO_ROOT / "tools" / "versions.env").read_text(encoding="utf-8").splitlines()
+    return dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _fetch(url: str, dest: Path, expected: str) -> None:
+    """dest holds url's bytes at the pinned digest, or this stops with dest gone."""
+    if not dest.is_file() or _sha256(dest) != expected:
+        with urllib.request.urlopen(url) as response, dest.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+    actual = _sha256(dest)
+    if actual != expected:
+        dest.unlink()
+        sys.exit(f"{url}: sha256 mismatch (expected {expected}, got {actual})")
+
+
+def main() -> None:
+    if sys.platform != "linux" or os.uname().machine != "x86_64":
+        sys.exit("fetch-test-apiserver supports linux amd64 only")
+    versions = _versions()
+    apiserver_version, etcd_version = versions["kubectl_version"], versions["etcd_version"]
+    target = REPO_ROOT / ".scratch" / "apiserver" / f"{apiserver_version}-{etcd_version}"
+    target.mkdir(parents=True, exist_ok=True)
+
+    apiserver = target / "kube-apiserver"
+    _fetch(f"https://dl.k8s.io/release/v{apiserver_version}/bin/linux/amd64/kube-apiserver", apiserver,
+           versions["kube_apiserver_linux_amd64_binary_sha256"])
+    apiserver.chmod(0o755)
+
+    stem = f"etcd-v{etcd_version}-linux-amd64"
+    tarball = target / f"{stem}.tar.gz"
+    _fetch(f"https://github.com/etcd-io/etcd/releases/download/v{etcd_version}/{stem}.tar.gz", tarball,
+           versions["etcd_linux_amd64_tarball_sha256"])
+    etcd = target / "etcd"
+    with tarfile.open(tarball, "r:gz") as archive, etcd.open("wb") as handle:
+        source = archive.extractfile(f"{stem}/etcd")
+        if source is None:
+            sys.exit(f"{tarball}: no {stem}/etcd")
+        shutil.copyfileobj(source, handle)
+    etcd.chmod(0o755)
+    print(f"kube-apiserver {apiserver_version} and etcd {etcd_version} -> {target}")
+
+
+if __name__ == "__main__":
+    main()

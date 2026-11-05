@@ -226,6 +226,7 @@ def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) ->
     grants = grant_data(data, app, "")
     return {
         "app_name": app,
+        "quote": '"',
         **{f"app_grant_{key.replace('-', '_')}": value for key, value in grants.items() if key != "host"},
         "app_pod_cidr": str(cluster_vars["pod_cidr"]),
         "app_service_cidr": str(cluster_vars["service_cidr"]),
@@ -234,8 +235,13 @@ def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) ->
     }
 
 
+def grant_annotations(data: dict[str, Any], app: str, dns_suffix: str) -> dict[str, str]:
+    """The annotations the app's wiring writes on its namespace from the env's exception lines."""
+    return {f"hosting.jarvis.io/{key}": value for key, value in grant_data(data, app, dns_suffix).items()}
+
+
 def grant_data(data: dict[str, Any], app: str, dns_suffix: str) -> dict[str, str]:
-    """The data of ConfigMap flux-system/app-<name>-grants the app's wiring writes."""
+    """The app's host and the env's exception lines for it, by grant."""
     grants = grants_for(data, app)
 
     def values(kind: str) -> str:

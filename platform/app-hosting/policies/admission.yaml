@@ -63,7 +63,7 @@ spec:
       - apiGroups: ["*"]
         apiVersions: ["*"]
         operations: [CREATE, UPDATE, DELETE]
-        resources: ["*", "*/*"]
+        resources: ["*/*"]
         scope: "*"
   matchConditions:
     - name: app-tenant
@@ -93,12 +93,14 @@ spec:
   policyName: app-tenant
   validationActions: [Deny]
 ---
-# app-file and app-grants: the objects in an app's namespace against the pod baseline. Each
-# app's wiring binds both to that namespace. app-file reads the app's own App: an object
-# matches what the file declares, and a risky item is one the file asks for. app-grants reads
-# ConfigMap flux-system/app-<name>-grants, which only the wiring writes from the env's
-# exception lines: a risky item is one the env grants. A risky item passes only both. A
-# missing App or grants ConfigMap refuses everything the policy matches.
+# app-file and app-grants: the objects in an app's namespace against the pod baseline. One
+# binding each, here, covers every namespace labelled hosting.jarvis.io/app, so a namespace
+# holds these whatever becomes of its wiring. app-file reads the App in the object's own
+# namespace: an object matches what the file declares, and a risky item is one the file asks
+# for. A labelled namespace with no App refuses everything the policy matches. app-grants reads
+# the namespace's annotations, which only the wiring writes from the env's exception lines: a
+# risky item is one the env grants, and a missing annotation grants nothing. A risky item
+# passes only both.
 # Carve-outs, keyed on identities a tenant cannot take: the VolSync controller's own Jobs
 # and claims (its privileged movers), and the pods the job controller makes for a Job, whose
 # template these policies already admitted unless VolSync made it.
@@ -231,6 +233,8 @@ spec:
       expression: >-
         object.kind == 'Service' && has(object.spec.type) && object.spec.type == 'LoadBalancer' ?
         object.spec.ports.map(p, string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) : []
+    - name: grants
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
   validations:
     - expression: "params.metadata.namespace == namespaceObject.metadata.name"
       message: "the binding's App is not this namespace's"
@@ -329,6 +333,26 @@ spec:
       message: "an app's PVCs and claim templates set no volumeName, dataSource or dataSourceRef; the volume binder binds them"
 ---
 apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-file
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  policyName: app-file
+  validationActions: [Deny]
+  # No name or namespace: the API server reads the App in the object's own namespace, and with
+  # none there refuses. app-identity keeps it to one, named after the namespace.
+  paramRef:
+    selector: {}
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: hosting.jarvis.io/app
+          operator: Exists
+---
+apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: app-grants
@@ -336,9 +360,6 @@ metadata:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   failurePolicy: Fail
-  paramKind:
-    apiVersion: v1
-    kind: ConfigMap
   matchConstraints:
     resourceRules:
       - apiGroups: [""]
@@ -456,20 +477,22 @@ spec:
       expression: >-
         object.kind == 'Service' && has(object.spec.type) && object.spec.type == 'LoadBalancer' ?
         object.spec.ports.map(p, string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) : []
+    - name: grants
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
   validations:
-    - expression: "!variables.usesPrivileged || params.data[?'privileged'].orValue('') == 'true'"
+    - expression: "!variables.usesPrivileged || variables.grants[?'hosting.jarvis.io/privileged'].orValue('') == 'true'"
       message: "anything beyond Pod Security restricted (see app-file) needs the env's '<app>: privileged' exception"
-    - expression: "!variables.usesRoot || params.data[?'root'].orValue('') == 'true'"
+    - expression: "!variables.usesRoot || variables.grants[?'hosting.jarvis.io/root'].orValue('') == 'true'"
       message: "every container runs with runAsNonRoot: true and no runAsUser 0, unless the env has '<app>: root'"
-    - expression: "!variables.usesHostNetwork || params.data[?'host-network'].orValue('') == 'true'"
+    - expression: "!variables.usesHostNetwork || variables.grants[?'hosting.jarvis.io/host-network'].orValue('') == 'true'"
       message: "host network and host ports need the env's '<app>: host-network' exception"
-    - expression: "!variables.usesHostPath || params.data[?'host-path'].orValue('') == 'true'"
+    - expression: "!variables.usesHostPath || variables.grants[?'hosting.jarvis.io/host-path'].orValue('') == 'true'"
       message: "hostPath volumes need the env's '<app>: host-path' exception"
     - expression: >-
         object.kind != 'Ingress' ||
         (!has(object.spec.defaultBackend) && !has(object.spec.tls) && has(object.spec.rules) &&
-         variables.hosts.all(h, h == params.data[?'host'].orValue('-') ||
-           h in params.data[?'hostnames'].orValue('').split(',')))
+         variables.hosts.all(h, h == variables.grants[?'hosting.jarvis.io/host'].orValue('-') ||
+           h in variables.grants[?'hosting.jarvis.io/hostnames'].orValue('').split(',')))
       message: >-
         an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the env grants as
         '<app>: hostname <name>'; no default backend and no spec.tls (the apps wildcard serves it)
@@ -478,5 +501,20 @@ spec:
       message: "an app's Services are ClusterIP, or LoadBalancer for its network.ports; no NodePort or ExternalName"
     - expression: "object.kind != 'Service' || !has(object.spec.externalIPs)"
       message: "an app's Service sets no externalIPs"
-    - expression: "variables.lanPorts.all(p, p in params.data[?'lan-ports'].orValue('').split(','))"
+    - expression: "variables.lanPorts.all(p, p in variables.grants[?'hosting.jarvis.io/lan-ports'].orValue('').split(','))"
       message: "a LoadBalancer exposes only ports the env grants as '<app>: lan-port <port>/<protocol>'"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-grants
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  policyName: app-grants
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: hosting.jarvis.io/app
+          operator: Exists

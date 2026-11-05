@@ -47,6 +47,7 @@ def test_listed_apps_with_core_wiring_pass(tmp_path: Path) -> None:
 
 
 _APP = "platform/app-hosting/app"
+_POLICIES = "platform/app-hosting/policies/admission.yaml"
 
 
 @pytest.mark.parametrize(
@@ -56,10 +57,15 @@ _APP = "platform/app-hosting/app"
         (f"{_APP}/baseline.yaml", "name: default-deny", "name: deny-later", "default-deny selects every pod"),
         (f"{_APP}/namespace.yaml", "hosting.jarvis.io/app: ${app_name}", "hosting.jarvis.io/app: other", "label hosting.jarvis.io/app"),
         (f"{_APP}/namespace.yaml", "    kustomize.toolkit.fluxcd.io/prune: disabled\n", "", "could delete its volumes"),
-        (f"{_APP}/admission.yaml", "parameterNotFoundAction: Deny", "parameterNotFoundAction: Allow", "refusing when they are missing"),
-        (f"{_APP}/admission.yaml", "host-path: \"${app_grant_host_path}\"", "host-path: \"true\"", "not the env's exception lines"),
-        (f"{_APP}/namespace.yaml", "lan-all: \"${app_grant_lan_all}\"", "lan-all: \"true\"", "annotation hosting.jarvis.io/lan-all"),
-        (f"{_APP}/namespace.yaml", "lan-ports: \"${app_grant_lan_ports}\"", "lan-ports: \"443/TCP\"", "annotation hosting.jarvis.io/lan-ports"),
+        (_POLICIES, "parameterNotFoundAction: Deny", "parameterNotFoundAction: Allow", "refusing where params are missing"),
+        (_POLICIES, "    selector: {}\n", "    name: other\n", "refusing where params are missing"),
+        (_POLICIES, "  name: app-grants\n  annotations:\n    kustomize.toolkit.fluxcd.io/prune: disabled\nspec:\n  policyName: app-grants",
+         "  name: app-grants-all\n  annotations:\n    kustomize.toolkit.fluxcd.io/prune: disabled\nspec:\n  policyName: app-grants", "has no ValidatingAdmissionPolicyBinding app-grants"),
+        (f"{_APP}/namespace.yaml", "host-path: ${quote}${app_grant_host_path}${quote}", "host-path: \"true\"", "annotation hosting.jarvis.io/host-path"),
+        (f"{_APP}/namespace.yaml", "    hosting.jarvis.io/privileged: ${quote}${app_grant_privileged}${quote}\n", "", "annotation hosting.jarvis.io/privileged"),
+        (f"{_APP}/namespace.yaml", "root: ${quote}${app_grant_root}${quote}", "root: \"${app_grant_root}\"", "annotation hosting.jarvis.io/root"),
+        (f"{_APP}/namespace.yaml", "lan-all: ${quote}${app_grant_lan_all}${quote}", "lan-all: \"true\"", "annotation hosting.jarvis.io/lan-all"),
+        (f"{_APP}/namespace.yaml", "lan-ports: ${quote}${app_grant_lan_ports}${quote}", "lan-ports: \"443/TCP\"", "annotation hosting.jarvis.io/lan-ports"),
         (f"{_APP}/tenant.yaml", "resources: [jobs, cronjobs]", "resources: [jobs, cronjobs, networkpolicies]", "batch/networkpolicies"),
         (f"{_APP}/tenant.yaml", "  - apiGroups: [hosting.jarvis.io]", "  - apiGroups: [traefik.io]\n    resources: [ingressroutes]\n    verbs: [create]\n  - apiGroups: [hosting.jarvis.io]", "traefik.io/ingressroutes"),
         (f"{_APP}/flux.yaml", "  targetNamespace: app-${app_name}\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "  targetNamespace: default\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "objects land in app-"),
@@ -70,7 +76,8 @@ _APP = "platform/app-hosting/app"
         (f"{_APP}/kustomization.yaml", "  - flux.yaml", "  - flux.yaml\n  - extra.yaml", "holds no ClusterRole"),
     ],
     ids=["default-deny-ingress-only", "no-default-deny", "namespace-label", "namespace-prunable", "binding-allows-missing-params",
-         "grant-without-env-line", "lan-grant-on-namespace-without-env-line", "lan-port-on-namespace-without-env-line",
+         "binding-names-one-app", "no-grants-binding",
+         "grant-without-env-line", "grant-annotation-missing", "flag-a-boolean-after-substitution", "lan-grant-on-namespace-without-env-line", "lan-port-on-namespace-without-env-line",
          "role-grants-networkpolicies", "role-grants-traefik", "objects-outside-namespace",
          "substitution-source", "decryption", "other-source", "role-elsewhere", "extra-kind"],
 )
@@ -188,6 +195,8 @@ _APP_PIECES = {
     ("ValidatingAdmissionPolicy", "app-grants"),
     ("ValidatingAdmissionPolicyBinding", "app-identity"),
     ("ValidatingAdmissionPolicyBinding", "app-tenant"),
+    ("ValidatingAdmissionPolicyBinding", "app-file"),
+    ("ValidatingAdmissionPolicyBinding", "app-grants"),
     ("ClusterPolicy", "app-derive"),
     ("ClusterPolicy", "app-priority"),
     ("PriorityClass", "hosted-app"),

@@ -146,14 +146,10 @@ def postbuild_values(doc: dict, env_docs: list[dict]) -> dict[str, str]:
 
 
 def substitute(node: object, values: dict[str, str]) -> object:
-    """node with each ${name} that values holds replaced, as postBuild does."""
-    if isinstance(node, str):
-        return _VARIABLE.sub(lambda match: values.get(match.group(1), match.group(0)), node)
-    if isinstance(node, dict):
-        return {key: substitute(value, values) for key, value in node.items()}
-    if isinstance(node, list):
-        return [substitute(value, values) for value in node]
-    return node
+    """node with each ${name} that values holds replaced, as postBuild does: in the YAML text,
+    which is then parsed again, so an unquoted false becomes a boolean and an empty value null."""
+    text = yaml.safe_dump(node, width=2**31 - 1)
+    return yaml.safe_load(_VARIABLE.sub(lambda match: values.get(match.group(1), match.group(0)), text))
 
 
 @dataclass(frozen=True)
