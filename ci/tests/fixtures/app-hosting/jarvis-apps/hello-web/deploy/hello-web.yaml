@@ -37,8 +37,8 @@ data:
       # Granted both ways: hello-web lists notes under egress.apps, notes lists hello-web
       # under callers.
       location /notes/ {
-        rewrite ^/notes/(.*)$ /$1 break;
         set $upstream http://notes.app-notes.svc.cluster.local;
+        rewrite ^/notes/(.*)$ /$1 break;
         proxy_pass $upstream;
         proxy_connect_timeout 3s;
       }
@@ -46,16 +46,16 @@ data:
       # Not granted: lan-demo is not under egress.apps, so the default-deny egress drops
       # the connection and nginx answers 504.
       location /blocked/ {
-        rewrite ^/blocked/(.*)$ /$1 break;
         set $upstream http://lan-demo.app-lan-demo.svc.cluster.local:8080;
+        rewrite ^/blocked/(.*)$ /$1 break;
         proxy_pass $upstream;
         proxy_connect_timeout 3s;
       }
 
       # Granted by network.egress.internet: any port to a public address.
       location /internet/ {
-        rewrite ^/internet/(.*)$ /$1 break;
         set $upstream http://example.com;
+        rewrite ^/internet/(.*)$ /$1 break;
         proxy_pass $upstream;
         proxy_set_header Host example.com;
         proxy_connect_timeout 3s;
