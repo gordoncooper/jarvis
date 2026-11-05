@@ -263,7 +263,7 @@ spec:
          object.kind == 'StatefulSet' && has(object.spec.volumeClaimTemplates) ? object.spec.volumeClaimTemplates : []
         ).all(claim,
           (object.kind == 'PersistentVolumeClaim' && request.operation == 'UPDATE' &&
-           request.userInfo.username in ['system:serviceaccount:kube-system:persistent-volume-binder', 'system:kube-controller-manager'] &&
+           request.userInfo.username in ['system:serviceaccount:kube-system:persistent-volume-binder', 'system:kube-controller-manager', 'system:kube-scheduler'] &&
            variables.volsyncOwned) ||
           (params.spec.volumes.exists(v,
             (v.name == claim.metadata.name ||

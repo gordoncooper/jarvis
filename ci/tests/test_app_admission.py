@@ -399,27 +399,38 @@ def test_claims_bind_only_to_what_the_cluster_provisions(tmp_path: Path) -> None
 
 
 def test_binder_updates_volsync_cache_pvcs(tmp_path: Path) -> None:
-    """Rule: the volume binder's PreBind UPDATE of a VolSync-owned cache PVC (ownerReference to
-    ReplicationSource or ReplicationDestination) passes even when undeclared; tenant CREATE of
-    undeclared PVC fails, even with forged ownerReference; binder without VolSync provenance fails.
-    The binder's UPDATE is proven only live (kyverno test sends no request.operation)."""
+    """Rule: scheduler PreBind UPDATE (selected-node annotation, k8s v1.36.5 binder.go:450→565)
+    and binder/controller-manager UPDATE (volumeName) of VolSync-owned cache PVCs pass even when
+    undeclared; tenant CREATE with forged ownerReference fails; scheduler/binder without VolSync
+    provenance fail. The UPDATE+VolSync pass cases are proven only live (kyverno test sends no
+    request.operation, same limitation as existing binder volumeName tests at line 391-394).
+    This test proves the DENY cases."""
+    # Tenant with forged VolSync ownerReference (CREATE blocked by UPDATE-only carve-out)
     forged = _pvc("forged-volsync", "notes")
     forged["metadata"]["ownerReferences"] = [
-        {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "name": "fake", "uid": "2"}
+        {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "name": "fake", "uid": "3"}
     ]
     
+    # Scheduler/binder without VolSync provenance (no ownerReference)
     undeclared = _pvc("undeclared", "notes")
-    undeclared_no_owner = _pvc("no-owner", "notes")
-    undeclared_no_owner["spec"]["volumeName"] = "pv-no-owner-1"
+    scheduler_no_owner = _pvc("no-owner-sched", "notes")
+    if "annotations" not in scheduler_no_owner["metadata"]:
+        scheduler_no_owner["metadata"]["annotations"] = {}
+    scheduler_no_owner["metadata"]["annotations"]["volume.kubernetes.io/selected-node"] = "worker-1"
+    binder_no_owner = _pvc("no-owner-bind", "notes")
+    binder_no_owner["spec"]["volumeName"] = "pv-no-owner-1"
     
+    scheduler = "system:kube-scheduler"
     binder = "system:serviceaccount:kube-system:persistent-volume-binder"
     tenant = TENANT.format(app="notes")
     
-    # Tenant with forged VolSync ownerReference fails (CREATE blocked).
+    # Tenant with forged VolSync ownerReference fails (CREATE, no UPDATE operation).
     _run(tmp_path, "tenant-forged-owner", tenant, [(forged, FILE_FAILS)])
+    # Scheduler without VolSync provenance fails (no ownerReference).
+    _run(tmp_path, "scheduler-no-volsync", scheduler, [(scheduler_no_owner, FILE_FAILS)])
     # Binder without VolSync provenance fails (no ownerReference).
-    _run(tmp_path, "binder-no-volsync", binder, [(undeclared_no_owner, FILE_FAILS)])
-    # Tenant undeclared PVC fails.
+    _run(tmp_path, "binder-no-volsync", binder, [(binder_no_owner, FILE_FAILS)])
+    # Tenant undeclared PVC fails (not declared in App).
     _run(tmp_path, "tenant-undeclared", tenant, [(undeclared, FILE_FAILS)])
 
 
