@@ -235,6 +235,12 @@ spec:
         object.spec.ports.map(p, string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) : []
     - name: grants
       expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: volsyncOwned
+      expression: >-
+        object.kind == 'PersistentVolumeClaim' && has(object.metadata.ownerReferences) &&
+        object.metadata.ownerReferences.exists(o,
+          o.apiVersion.startsWith('volsync.backube/') &&
+          o.kind in ['ReplicationSource', 'ReplicationDestination'])
   validations:
     - expression: "params.metadata.namespace == namespaceObject.metadata.name"
       message: "the binding's App is not this namespace's"
@@ -255,11 +261,15 @@ spec:
     - expression: >-
         (object.kind == 'PersistentVolumeClaim' ? [object] :
          object.kind == 'StatefulSet' && has(object.spec.volumeClaimTemplates) ? object.spec.volumeClaimTemplates : []
-        ).all(claim, params.spec.volumes.exists(v,
-          (v.name == claim.metadata.name ||
-           (object.kind == 'PersistentVolumeClaim' && claim.metadata.name.startsWith(v.name + '-') &&
-            request.userInfo.username == 'system:serviceaccount:kube-system:statefulset-controller')) &&
-          v.backup == !(has(claim.metadata.annotations) && claim.metadata.annotations[?'backup'].orValue('') == 'none')))
+        ).all(claim,
+          (object.kind == 'PersistentVolumeClaim' &&
+           request.userInfo.username in ['system:serviceaccount:kube-system:persistent-volume-binder', 'system:kube-controller-manager'] &&
+           variables.volsyncOwned) ||
+          (params.spec.volumes.exists(v,
+            (v.name == claim.metadata.name ||
+             (object.kind == 'PersistentVolumeClaim' && claim.metadata.name.startsWith(v.name + '-') &&
+              request.userInfo.username == 'system:serviceaccount:kube-system:statefulset-controller')) &&
+            v.backup == !(has(claim.metadata.annotations) && claim.metadata.annotations[?'backup'].orValue('') == 'none'))))
       message: >-
         every PVC (and StatefulSet claim template, whose claims the StatefulSet controller names
         <volume>-<set>-<n>) is a volume the app file declares; one declared
@@ -479,6 +489,12 @@ spec:
         object.spec.ports.map(p, string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) : []
     - name: grants
       expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: volsyncOwned
+      expression: >-
+        object.kind == 'PersistentVolumeClaim' && has(object.metadata.ownerReferences) &&
+        object.metadata.ownerReferences.exists(o,
+          o.apiVersion.startsWith('volsync.backube/') &&
+          o.kind in ['ReplicationSource', 'ReplicationDestination'])
   validations:
     - expression: "!variables.usesPrivileged || variables.grants[?'hosting.jarvis.io/privileged'].orValue('') == 'true'"
       message: "anything beyond Pod Security restricted (see app-file) needs the env's '<app>: privileged' exception"

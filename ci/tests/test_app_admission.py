@@ -398,6 +398,23 @@ def test_claims_bind_only_to_what_the_cluster_provisions(tmp_path: Path) -> None
     _run(tmp_path, "volsync-claim", VOLSYNC, [(restored, {"app-file": "skip", "app-grants": "skip"})])
 
 
+def test_binder_updates_volsync_cache_pvcs(tmp_path: Path) -> None:
+    """Rule: the volume binder's PreBind UPDATE of a VolSync-owned cache PVC (ownerReference to
+    ReplicationSource or ReplicationDestination) passes even when undeclared; the tenant's CREATE
+    of an undeclared PVC still fails."""
+    cache = _pvc("volsync-src-data-cache", "notes")
+    cache["metadata"]["ownerReferences"] = [
+        {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "name": "data", "uid": "1"}
+    ]
+    undeclared = _pvc("undeclared", "notes")
+    binder = "system:serviceaccount:kube-system:persistent-volume-binder"
+    tenant = TENANT.format(app="notes")
+    # The binder's work on a VolSync cache PVC passes (provenance via ownerReference).
+    _run(tmp_path, "binder-volsync", binder, [(cache, PASS)])
+    # The tenant's undeclared PVC still fails.
+    _run(tmp_path, "tenant-undeclared", tenant, [(undeclared, FILE_FAILS)])
+
+
 def test_volsync_mover_passes_and_a_look_alike_does_not(tmp_path: Path) -> None:
     """Rule: the VolSync controller's privileged mover Job, and the job controller's pod for it,
     pass; the same Job or Pod from the app's own identity is refused."""
