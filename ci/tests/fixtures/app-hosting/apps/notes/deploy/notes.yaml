@@ -43,6 +43,10 @@ spec:
       containers:
         - name: notes
           image: registry.example/notes@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           ports:
             - name: http
               containerPort: 3000

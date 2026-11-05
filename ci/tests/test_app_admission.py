@@ -75,7 +75,8 @@ def _deploy(app: str) -> list[dict]:
 def _pod(name: str, app: str, *, owner_job: bool = False, **pod: object) -> dict:
     spec = {
         "securityContext": {"runAsNonRoot": True},
-        "containers": [{"name": "c", "image": "registry.example/x@sha256:" + "0" * 64}],
+        "containers": [{"name": "c", "image": "registry.example/x@sha256:" + "0" * 64,
+                        "securityContext": {"allowPrivilegeEscalation": False}}],
         **pod,
     }
     metadata: dict = {"name": name, "namespace": f"app-{app}"}
@@ -192,7 +193,12 @@ def test_pod_baseline_refuses_risky_items_without_a_grant(tmp_path: Path) -> Non
         (_pod("host-pid", "web-demo", hostPID=True), BOTH_FAIL),
         (_pod("host-ipc", "web-demo", hostIPC=True), BOTH_FAIL),
         (_pod("host-port", "web-demo", containers=[{"name": "c", "image": "x", "ports": [{"containerPort": 80, "hostPort": 80}]}]), BOTH_FAIL),
-        (_pod("capability", "web-demo", containers=[{"name": "c", "image": "x", "securityContext": {"capabilities": {"add": ["SYS_ADMIN"]}}}]), BOTH_FAIL),
+        (_pod("capability", "web-demo", containers=[{"name": "c", "image": "x", "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"add": ["SYS_ADMIN"]}}}]), BOTH_FAIL),
+        (_pod("escalation-unset", "web-demo", containers=[{"name": "c", "image": "x"}]), BOTH_FAIL),
+        (_pod("unconfined", "web-demo", securityContext={"runAsNonRoot": True, "seccompProfile": {"type": "Unconfined"}}), BOTH_FAIL),
+        (_pod("sysctls", "web-demo", securityContext={"runAsNonRoot": True, "sysctls": [{"name": "net.core.somaxconn", "value": "1024"}]}), BOTH_FAIL),
+        (_pod("nfs", "web-demo", volumes=[{"name": "n", "nfs": {"server": "nfs.example", "path": "/"}}]), FILE_FAILS),
+        (_pod("volumes-ok", "web-demo", volumes=[{"name": "e", "emptyDir": {}}, {"name": "c", "configMap": {"name": "x"}}]), PASS),
         # Asked for and granted; granted but also root, which neither asks for; asked for and not
         # granted; granted for another item only.
         (_pod("granted-privileged", "granted", containers=[{"name": "c", "image": "x", "securityContext": {"privileged": True}}]), PASS),
@@ -213,13 +219,23 @@ def test_volsync_mover_passes_and_a_look_alike_does_not(tmp_path: Path) -> None:
     skip = {"app-file": "skip", "app-grants": "skip"}
     _run(tmp_path, "volsync", VOLSYNC, [(mover_job, skip), (cache, skip)])
     _run(tmp_path, "job-controller", JOB_CONTROLLER, [(mover_pod, skip)])
-    _run(tmp_path, "look-alike", TENANT.format(app="notes"), [(mover_job, BOTH_FAIL), (mover_pod, BOTH_FAIL), (cache, FILE_FAILS)])
+    _run(tmp_path, "look-alike", TENANT.format(app="notes"), [(mover_job, BOTH_FAIL), (mover_pod, BOTH_FAIL), (cache, FILE_FAILS),
+                                                         (_pvc("data-db-0", "notes"), FILE_FAILS)])
+
+
+def test_statefulset_controller_claims_of_a_declared_volume_pass(tmp_path: Path) -> None:
+    """Rule: the StatefulSet controller's claim <volume>-<set>-<n> of a declared template passes;
+    one of an undeclared template does not."""
+    _run(tmp_path, "sts", "system:serviceaccount:kube-system:statefulset-controller",
+         [(_pvc("data-db-0", "notes"), PASS), (_pvc("pgdata-db-0", "notes"), FILE_FAILS)])
 
 
 def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -> None:
     """Rule: a PVC is a declared volume with the declared backup; an Ingress host is
     <name>.apps.<suffix>; Services are ClusterIP or a granted lan LoadBalancer."""
-    lb = {"type": "LoadBalancer", "ports": [{"port": 8443, "protocol": "TCP"}], "selector": {"app": "x"}}
+    lb = {"type": "LoadBalancer", "allocateLoadBalancerNodePorts": False,
+          "ports": [{"port": 8443, "protocol": "TCP"}], "selector": {"app": "x"}}
+    with_node_ports = {**lb, "allocateLoadBalancerNodePorts": True}
     cases = [
         (_pvc("undeclared", "notes"), FILE_FAILS),
         (_pvc("cache", "notes"), FILE_FAILS),
@@ -233,6 +249,7 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
         (_ingress("own-tls", "web-demo", f"web-demo.apps.{SUFFIX}", tls=[{"hosts": [f"web-demo.apps.{SUFFIX}"], "secretName": "x"}]), GRANT_FAILS),
         (_object("Service", "lb", "web-demo", **lb), BOTH_FAIL),
         (_object("Service", "lan", "lan", **lb), PASS),
+        (_object("Service", "lan-node-ports", "lan", **with_node_ports), FILE_FAILS),
         (_object("Service", "nodeport", "web-demo", type="NodePort", ports=[{"port": 80}]), GRANT_FAILS),
         (_object("Service", "external-ips", "web-demo", ports=[{"port": 80}], externalIPs=["192.0.2.1"]), GRANT_FAILS),
     ]
@@ -355,13 +372,14 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("notes", _pvc("cache", "notes"), "carries annotation backup: none"),
         ("web-demo", _ingress("i", "web-demo", f"grafana.{SUFFIX}"), "is ${app_host}"),
         ("web-demo", _object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "type NodePort"),
-        ("web-demo", _object("Service", "s", "web-demo", type="LoadBalancer", ports=[{"port": 80}]), "not a lan port"),
+        ("web-demo", _object("Service", "s", "web-demo", type="LoadBalancer", allocateLoadBalancerNodePorts=False, ports=[{"port": 80}]), "not a lan port"),
+        ("lan", _object("Service", "s", "lan", type="LoadBalancer", ports=[{"port": 8443, "protocol": "TCP"}]), "allocateLoadBalancerNodePorts: false"),
         ("web-demo", _object("NetworkPolicy", "n", "web-demo", "networking.k8s.io/v1"), "an app ships only"),
         ("web-demo", _object("IngressRoute", "r", "web-demo", "traefik.io/v1alpha1"), "an app ships only"),
         ("web-demo", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "namespace": "flux-system"}}, "lands in namespace app-web-demo"),
     ],
     ids=["privileged", "bare-pod", "host-network", "root", "host-path", "undeclared-pvc", "unbacked-without-annotation",
-         "host-outside-apps", "nodeport", "loadbalancer-not-lan", "networkpolicy", "ingressroute", "other-namespace"],
+         "host-outside-apps", "nodeport", "loadbalancer-not-lan", "loadbalancer-node-ports", "networkpolicy", "ingressroute", "other-namespace"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
     """Rule: tools/app-check fails, on the folder alone, each object the cluster refuses for the

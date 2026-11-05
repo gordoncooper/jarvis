@@ -39,6 +39,7 @@ _TESTAPP = {
 _APP_HOSTING = {
     ("ClusterPolicy", "", "app-derive"),
     ("ValidatingAdmissionPolicy", "", "app-file"),
+    ("ValidatingAdmissionPolicy", "", "app-grants"),
     ("ValidatingAdmissionPolicy", "", "app-identity"),
     ("ValidatingAdmissionPolicy", "", "app-tenant"),
     ("ValidatingAdmissionPolicyBinding", "", "app-identity"),

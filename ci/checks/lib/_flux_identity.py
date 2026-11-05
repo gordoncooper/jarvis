@@ -13,8 +13,10 @@ Kustomization in it, then checks:
   applies that tree with the controller's own identity: the root Kustomization
   flux-system/flux-system names kustomize-controller, and its path (the tree
   itself) is not checked as a tenant path.
-- Only PLATFORM_KUSTOMIZATIONS run as PLATFORM_SERVICE_ACCOUNT, and of the
-  objects on their paths only those on PLATFORM_PATHS. No other account a Flux
+- Only PLATFORM_KUSTOMIZATIONS, and each hosted app's wiring (app-<name>-wiring
+  applying APP_WIRING_PATH from the root source, nothing more), run as
+  PLATFORM_SERVICE_ACCOUNT, and of the objects on their paths only those on
+  PLATFORM_PATHS. A Kustomization named like a wiring that is not one fails. No other account a Flux
   object runs as is bound by a ClusterRoleBinding, by a RoleBinding in the
   namespace the Flux objects live in, or to cluster-admin, admin or edit.
 - No Kustomization's path declares the account it runs as, or a binding for it.

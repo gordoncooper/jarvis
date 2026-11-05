@@ -217,6 +217,7 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
         if metadata.get("namespace") not in (None, f"app-{name}"):
             yield f"{ref}: lands in namespace app-{name} only; leave metadata.namespace unset"
         if kind in _WORKLOADS:
+            yield from _volume_problems(ref, _pod_spec(doc))
             for item, field in _risky_uses(_pod_spec(doc)):
                 if not risky.get(field):
                     yield f"{ref}: uses {item}, which needs the app file's risky.{field} and the env's exception line"
@@ -239,13 +240,17 @@ def _risky_uses(pod: dict) -> Iterator[tuple[str, str]]:
     containers = [*(pod.get("containers") or []), *(pod.get("initContainers") or [])]
     contexts = [container.get("securityContext") or {} for container in containers]
     pod_context = pod.get("securityContext") or {}
-    if pod.get("hostPID") or pod.get("hostIPC") or any(
+    if pod.get("hostPID") or pod.get("hostIPC") or "sysctls" in pod_context or _unconfined(pod_context) or any(
         context.get("privileged")
-        or context.get("allowPrivilegeEscalation")
+        or context.get("allowPrivilegeEscalation") is not False
+        or _unconfined(context)
         or any(cap != "NET_BIND_SERVICE" for cap in (context.get("capabilities") or {}).get("add") or [])
         for context in contexts
     ):
-        yield "privileged mode, host PID or IPC, privilege escalation or added capabilities", "privileged"
+        yield (
+            "privileged mode, host PID or IPC, allowPrivilegeEscalation not false, added capabilities, "
+            "an unconfined seccomp profile or sysctls"
+        ), "privileged"
     if pod.get("hostNetwork") or any(
         port.get("hostPort") for container in containers for port in container.get("ports") or []
     ):
@@ -258,6 +263,22 @@ def _risky_uses(pod: dict) -> Iterator[tuple[str, str]]:
     )
     if pod_context.get("runAsUser") == 0 or any(context.get("runAsUser") == 0 for context in contexts) or not non_root:
         yield "root (every container needs runAsNonRoot: true and no runAsUser 0)", "root"
+
+
+def _unconfined(context: dict) -> bool:
+    return (context.get("seccompProfile") or {}).get("type") == "Unconfined"
+
+
+# Volume types a pod may use; others mount from the node's network, past every NetworkPolicy.
+VOLUME_TYPES = frozenset(
+    {"configMap", "secret", "emptyDir", "persistentVolumeClaim", "projected", "downwardAPI", "csi", "ephemeral", "hostPath"}
+)
+
+
+def _volume_problems(ref: str, pod: dict) -> Iterator[str]:
+    for volume in pod.get("volumes") or []:
+        if not VOLUME_TYPES & set(volume):
+            yield f"{ref}: volume {volume.get('name')} is not one of {', '.join(sorted(VOLUME_TYPES - {'hostPath'}))}"
 
 
 def _claims(doc: dict) -> list[dict]:
@@ -301,6 +322,8 @@ def _service_problems(ref: str, spec: dict, lan: set[tuple[int, str]]) -> Iterat
     if kind != "LoadBalancer":
         yield f"{ref}: type {kind}; an app's Services are ClusterIP, or LoadBalancer for its lan ports"
         return
+    if spec.get("allocateLoadBalancerNodePorts") is not False:
+        yield f"{ref}: a LoadBalancer sets allocateLoadBalancerNodePorts: false, so no node port opens on every node"
     for port in spec.get("ports") or []:
         if (port.get("port"), port.get("protocol", "TCP")) not in lan:
             yield f"{ref}: LoadBalancer port {port.get('port')} is not a lan port in the app file"

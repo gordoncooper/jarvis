@@ -100,7 +100,7 @@ _CLUSTER_VARS_REQUIRED = frozenset(
     }
 )
 
-# Optional until the step that consumes them (D45). A set value is still checked.
+# Optional. A set value is still checked. apps_git_repo_url is required once values/apps.yaml lists an app.
 _CLUSTER_VARS_OPTIONAL = frozenset(
     {
         "ssh_user",

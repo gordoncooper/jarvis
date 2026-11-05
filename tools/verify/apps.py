@@ -90,7 +90,9 @@ def check_declared_unbacked(kubectl: Kubectl) -> None:
             continue
         if (pvc.get("metadata") or {}).get("labels", {}).get("app.kubernetes.io/created-by") == "volsync":
             continue
-        (reported if (namespace, name) in declared else problems).append(f"{namespace}/{name}")
+        # A StatefulSet's claim is <volume>-<set>-<n>.
+        ok = any(ns == namespace and (name == volume or name.startswith(f"{volume}-")) for ns, volume in declared)
+        (reported if ok else problems).append(f"{namespace}/{name}")
     if problems:
         raise CheckError(f"{', '.join(problems)}: annotated backup: none, and the app file does not declare them backup: false")
     if reported:

@@ -33,7 +33,7 @@ spec:
           variable:
             jmesPath: "request.object.spec.envs.\"{{ envName }}\""
             default: {}
-        # D30 small: 500m CPU and 512Mi memory unless the file (or its env override) says otherwise.
+        # Small: 500m CPU and 512Mi memory unless the file (or its env override) says otherwise.
         - name: cpu
           variable:
             jmesPath: "not_null(override.resources.cpu, request.object.spec.resources.cpu, '500m')"

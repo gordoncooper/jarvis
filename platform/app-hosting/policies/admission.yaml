@@ -160,11 +160,21 @@ spec:
       expression: >-
         (has(variables.podSpec.hostPID) && variables.podSpec.hostPID) ||
         (has(variables.podSpec.hostIPC) && variables.podSpec.hostIPC) ||
-        variables.containers.exists(c, has(c.securityContext) && (
+        has(variables.podSecurity.sysctls) ||
+        (has(variables.podSecurity.seccompProfile) && variables.podSecurity.seccompProfile.type == 'Unconfined') ||
+        variables.containers.exists(c, !has(c.securityContext) ||
+          !has(c.securityContext.allowPrivilegeEscalation) || c.securityContext.allowPrivilegeEscalation ||
           (has(c.securityContext.privileged) && c.securityContext.privileged) ||
-          (has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation) ||
+          (has(c.securityContext.seccompProfile) && c.securityContext.seccompProfile.type == 'Unconfined') ||
           (has(c.securityContext.capabilities) && has(c.securityContext.capabilities.add) &&
-           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE'))))
+           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE')))
+    # Volume types a pod may use. Others (nfs, iscsi, rbd, cephfs and the like) mount from the
+    # node's network, where no NetworkPolicy applies. hostPath is its own risky item.
+    - name: usesOtherVolume
+      expression: >-
+        has(variables.podSpec.volumes) && variables.podSpec.volumes.exists(v, !(
+          has(v.configMap) || has(v.secret) || has(v.emptyDir) || has(v.persistentVolumeClaim) ||
+          has(v.projected) || has(v.downwardAPI) || has(v.csi) || has(v.ephemeral) || has(v.hostPath)))
     - name: usesHostNetwork
       expression: >-
         (has(variables.podSpec.hostNetwork) && variables.podSpec.hostNetwork) ||
@@ -188,7 +198,9 @@ spec:
     - expression: "params.metadata.namespace == namespaceObject.metadata.name"
       message: "the binding's App is not this namespace's"
     - expression: "!variables.usesPrivileged || (has(params.spec.risky) && has(params.spec.risky.privileged) && params.spec.risky.privileged)"
-      message: "privileged mode, host PID or IPC, privilege escalation and added capabilities need the app file's risky.privileged"
+      message: "privileged mode, host PID or IPC, allowPrivilegeEscalation not false, added capabilities, an unconfined seccomp profile and sysctls need the app file's risky.privileged"
+    - expression: "!variables.usesOtherVolume"
+      message: "a pod's volumes are configMap, secret, emptyDir, persistentVolumeClaim, projected, downwardAPI, csi or ephemeral"
     - expression: "!variables.usesRoot || (has(params.spec.risky) && has(params.spec.risky.root) && params.spec.risky.root)"
       message: "every container runs with runAsNonRoot: true and no runAsUser 0, unless the app file asks for risky.root"
     - expression: "!variables.usesHostNetwork || (has(params.spec.risky) && has(params.spec.risky.hostNetwork) && params.spec.risky.hostNetwork)"
@@ -198,10 +210,14 @@ spec:
     - expression: >-
         (object.kind == 'PersistentVolumeClaim' ? [object] :
          object.kind == 'StatefulSet' && has(object.spec.volumeClaimTemplates) ? object.spec.volumeClaimTemplates : []
-        ).all(claim, params.spec.volumes.exists(v, v.name == claim.metadata.name &&
+        ).all(claim, params.spec.volumes.exists(v,
+          (v.name == claim.metadata.name ||
+           (object.kind == 'PersistentVolumeClaim' && claim.metadata.name.startsWith(v.name + '-') &&
+            request.userInfo.username == 'system:serviceaccount:kube-system:statefulset-controller')) &&
           v.backup == !(has(claim.metadata.annotations) && claim.metadata.annotations[?'backup'].orValue('') == 'none')))
       message: >-
-        every PVC (and StatefulSet claim template) is a volume the app file declares; one declared
+        every PVC (and StatefulSet claim template, whose claims the StatefulSet controller names
+        <volume>-<set>-<n>) is a volume the app file declares; one declared
         backup: false carries annotation backup: none, one declared backup: true does not
     - expression: >-
         variables.hosts.all(h, h.startsWith(params.metadata.name + '.apps.') ||
@@ -211,6 +227,11 @@ spec:
         variables.lanPorts.all(p, has(params.spec.ports) &&
           params.spec.ports.exists(q, string(q.port) + '/' + q.protocol == p && has(q.lan) && q.lan))
       message: "a LoadBalancer exposes only ports the app file marks lan"
+    # ServiceLB publishes on the edge nodes with no node port; one would open the port on every node.
+    - expression: >-
+        object.kind != 'Service' || !has(object.spec.type) || object.spec.type != 'LoadBalancer' ||
+        (has(object.spec.allocateLoadBalancerNodePorts) && !object.spec.allocateLoadBalancerNodePorts)
+      message: "an app's LoadBalancer sets allocateLoadBalancerNodePorts: false"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -269,11 +290,21 @@ spec:
       expression: >-
         (has(variables.podSpec.hostPID) && variables.podSpec.hostPID) ||
         (has(variables.podSpec.hostIPC) && variables.podSpec.hostIPC) ||
-        variables.containers.exists(c, has(c.securityContext) && (
+        has(variables.podSecurity.sysctls) ||
+        (has(variables.podSecurity.seccompProfile) && variables.podSecurity.seccompProfile.type == 'Unconfined') ||
+        variables.containers.exists(c, !has(c.securityContext) ||
+          !has(c.securityContext.allowPrivilegeEscalation) || c.securityContext.allowPrivilegeEscalation ||
           (has(c.securityContext.privileged) && c.securityContext.privileged) ||
-          (has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation) ||
+          (has(c.securityContext.seccompProfile) && c.securityContext.seccompProfile.type == 'Unconfined') ||
           (has(c.securityContext.capabilities) && has(c.securityContext.capabilities.add) &&
-           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE'))))
+           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE')))
+    # Volume types a pod may use. Others (nfs, iscsi, rbd, cephfs and the like) mount from the
+    # node's network, where no NetworkPolicy applies. hostPath is its own risky item.
+    - name: usesOtherVolume
+      expression: >-
+        has(variables.podSpec.volumes) && variables.podSpec.volumes.exists(v, !(
+          has(v.configMap) || has(v.secret) || has(v.emptyDir) || has(v.persistentVolumeClaim) ||
+          has(v.projected) || has(v.downwardAPI) || has(v.csi) || has(v.ephemeral) || has(v.hostPath)))
     - name: usesHostNetwork
       expression: >-
         (has(variables.podSpec.hostNetwork) && variables.podSpec.hostNetwork) ||
@@ -295,7 +326,7 @@ spec:
         object.spec.ports.map(p, string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) : []
   validations:
     - expression: "!variables.usesPrivileged || params.data[?'privileged'].orValue('') == 'true'"
-      message: "privileged mode, host PID or IPC, privilege escalation and added capabilities need the env's '<app>: privileged' exception"
+      message: "privileged mode, host PID or IPC, allowPrivilegeEscalation not false, added capabilities, an unconfined seccomp profile and sysctls need the env's '<app>: privileged' exception"
     - expression: "!variables.usesRoot || params.data[?'root'].orValue('') == 'true'"
       message: "every container runs with runAsNonRoot: true and no runAsUser 0, unless the env has '<app>: root'"
     - expression: "!variables.usesHostNetwork || params.data[?'host-network'].orValue('') == 'true'"
