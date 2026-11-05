@@ -4,6 +4,7 @@ core-names
 digest-pin
 env-schema
 flux-identity
+flux-prune
 flux-substitute
 loadbalancer
 manifest-lint

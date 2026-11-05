@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# CI rule check: Flux's own objects and protected kinds carry prune: disabled, so a bad
+# commit cannot make Flux delete its sources, namespaces, secrets or volumes.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+python3 - <<'PY'
+from pathlib import Path
+
+from _flux_prune import format_violations, scan_flux_prune
+from schema.env import instance_root
+
+violations = scan_flux_prune(instance_root(Path(".")))
+if violations:
+    for line in format_violations(violations):
+        print(line, flush=True)
+    raise SystemExit(1)
+PY

@@ -1103,6 +1103,10 @@ def run(
         )
         if invalid_retired:
             raise Fail(f"retired repository is not missing from the hold: {invalid_retired[0]}")
+        if not chosen and all_pvcs and hold is None:
+            # A fresh env has no volumes yet; that is a finished restore, not a failure.
+            _line("nothing to restore: no rebuild hold and no PVC")
+            return 0
         if not chosen and (hold is None or not all_pvcs):
             raise Fail("no PVC to restore")
         if node is not None:

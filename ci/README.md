@@ -4,6 +4,10 @@
 
 Run `bash ci/run-checks` and the tests near your change before pushing. CI at the head SHA is the test record.
 
+`ci/run-env-checks` runs the env-level checks (the ones that read `envs/<env>` through `INSTANCE`) in one go: `INSTANCE=<path> bash ci/run-env-checks`. An instance repo's CI calls it, so a check added to its list reaches every instance.
+
+Tests that build a throwaway env copy refuse a tracked path in the repo. Where the temp dir must sit inside a worktree, point pytest at a git-ignored one: `pytest --basetemp=.scratch/tmp`.
+
 ## Coding-agent deny lists
 
 `ci/checks/cli-deny` proves `.cursor/cli.json` and `.claude/settings.json` against one corpus, `ci/checks/fixtures/guard-corpus.tsv`. To add a category, add `block` rows that name it (the bare command and the wrapper forms both clients see), add `allow` rows for the everyday commands nearest to it, then add entries to both files until the check passes. Leave a form neither client can block out of the corpus and describe it by category only. A failure names the client, category and corpus line, never the command.

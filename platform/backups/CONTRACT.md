@@ -164,7 +164,7 @@ What it changes: the same per-PVC restore as above. `No eligible snapshots found
 
 `make restore-all` deletes the hold only after every restore has succeeded or was explicitly accepted empty and every listed repository has a PVC or is named in `RETIRE`. It then removes `backup: paused`. Sources cannot report unpaused while the hold exists, so restore deletes the hold before removing those annotations and checking every source. If resume or that check fails, it re-adds the annotations and restores the hold. If rollback itself fails, it prints the exact environment-bound recovery commands and exits nonzero. A listed repository that is neither restored, accepted empty, nor retired keeps the hold, and the restored PVCs stay `backup: paused`.
 
-How to tell it worked: `HOLD lifted` when a hold was set, `SUMMARY` with restored, accepted-empty, and retired counts, and exit 0.
+How to tell it worked: `HOLD lifted` when a hold was set, `SUMMARY` with restored, accepted-empty, and retired counts, and exit 0. With no hold and no PVC (a fresh env), one line `nothing to restore: no rebuild hold and no PVC` and exit 0. `make restore APP=<namespace>` with no match still fails.
 
 ### Drill
 
@@ -204,7 +204,7 @@ k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the or
 
 ### Rebuild a dead node
 
-Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make seal ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` (the contents of `/var/lib/rancher/k3s/server/token` on the server) and `stringData.agent_token`. A new env gets an agent token that is a separate random value. A cluster sealed from its node may have an agent token equal to its server token until the agent token is rotated at its next rebuild.
+Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make seal ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` and `stringData.agent_token`. Seal only the passphrase in `server_token`: the part of `/var/lib/rancher/k3s/server/token` after `::server:`. The full `K10<ca-hash>::server:<passphrase>` form pins the cluster CA hash, so it fails on any rebuild that mints a fresh CA (see [k3s token](https://docs.k3s.io/cli/token)). The passphrase is the same value, so older snapshots stay restorable. The k3s role refuses a `K10…` server token on a server that has no token file yet. A new env gets an agent token that is a separate random value. A cluster sealed from its node may have an agent token equal to its server token until the agent token is rotated at its next rebuild.
 
 **Server.**
 
@@ -222,7 +222,9 @@ With the same token, the etcd cluster reset above can also restore a snapshot on
 4. Check that the restic repositories under `<backup_path>/restic` and the snapshot files in `<backup_path>/etcd-snapshots` are intact, and that `restic snapshots` counts match step 1.
 5. `make site ENV=<env>`, then `make restore-all ENV=<env>` as above.
 
-The new cluster starts from an empty datastore with the sealed tokens. An older etcd snapshot stays restorable as long as `server_token` is unchanged.
+The new cluster starts from an empty datastore with the sealed tokens, and restores no etcd snapshot. An older etcd snapshot stays restorable as long as `server_token` is unchanged. When the env has no PVCs, `restore-all` is a clean no-op (`nothing to restore: no rebuild hold and no PVC`, exit 0).
+
+When the rebuild ships with a change to Flux sources or paths, suspend every Flux Kustomization before that change merges, so the new sources do not prune objects the old paths applied. When the CA was rotated, trust the new `ca.crt` on clients and remove the old one.
 
 **Agents.** While the server is down, agents keep their pods running but cannot reach the API. They reconnect when it is back. An agent reinstalled under the same hostname is refused by the server's stored node password. Delete its Node (`kubectl delete node <host>`) or Secret `kube-system/<host>.node-password.k3s` first, then run `make site ENV=<env> LIMIT=<host>`.
 

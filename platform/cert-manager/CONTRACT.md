@@ -54,3 +54,6 @@ KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl delete secret -n platform-cert-mana
 openssl s_client -connect <svc>.<dns_suffix>:443 -servername <svc>.<dns_suffix> \
   -CAfile envs/<env>/ca.crt -verify_return_error </dev/null >/dev/null
 ```
+
+7. Print the SHA-256 fingerprint of the new root and record it in the env's README, so a client can check the file it trusts: `openssl x509 -noout -fingerprint -sha256 -in envs/<env>/ca.crt`.
+8. Trust the new `ca.crt` on every client and remove the old root from each client's trust store. A client that keeps the old root still accepts certificates the old CA signed.

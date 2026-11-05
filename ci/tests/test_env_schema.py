@@ -352,8 +352,9 @@ def test_ssh_root_requires_the_sealed_deploy_key(tmp_path: Path) -> None:
     assert "missing required file envs/env-test/secrets/flux-deploy-key.sops.yaml" in str(excinfo.value)
     (env / "secrets").mkdir()
     (env / "secrets" / "flux-deploy-key.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
-    (env / "secrets" / "k3s-token.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
-    validate_env_tree(tmp_path)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "flux-deploy-key" not in str(excinfo.value)
 
 
 def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -> None:
@@ -774,28 +775,60 @@ def test_storage_is_not_a_node_role(tmp_path: Path) -> None:
 
 def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None:
     """Once an env has sealed files, k3s-token.sops.yaml is required. Before that it is not."""
-    secrets = _write_env(tmp_path) / "secrets"
+    env = _write_env(tmp_path)
+    secrets = env / "secrets"
     secrets.mkdir(exist_ok=True)
     validate_env_tree(tmp_path)
+    _copy_flux_entry(env)
     (secrets / "grafana-admin.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/k3s-token.sops.yaml" in excinfo.value.messages[0]
-    (secrets / "k3s-token.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    for name in ("k3s-token", "cert-manager-ca"):
+        (secrets / f"{name}.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "missing required file envs/env-test/secrets/backups-restic.sops.yaml" in excinfo.value.messages[0]
+    (secrets / "backups-restic.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
     validate_env_tree(tmp_path)
+
+
+def _copy_flux_entry(env: Path) -> None:
+    """env-00's flux/ tree under a test env, enough to satisfy the must-exist files."""
+    shutil.copytree(
+        REPO_ROOT / "envs" / EXAMPLE_ENV / "flux",
+        env / "flux",
+        ignore=shutil.ignore_patterns("generated"),
+    )
+    for path in (env / "flux").rglob("*.yaml"):
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(f"envs/{EXAMPLE_ENV}/", f"envs/{env.name}/"), encoding="utf-8")
+    # No off-host copy unless a test lists it.
+    (env / "flux" / "platform-configs" / "kustomization.yaml").write_text("resources: []\n", encoding="utf-8")
+
+
+def test_missing_flux_entry_file_fails(tmp_path: Path) -> None:
+    """A flux/ folder without sync.yaml fails, even with flux-instance.yaml present."""
+    env = _write_env(tmp_path)
+    _copy_flux_entry(env)
+    (env / "flux" / "sync.yaml").unlink()
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path, pre_host=True)
+    assert "missing required file envs/env-test/flux/sync.yaml" in "\n".join(excinfo.value.messages)
 
 
 def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Path) -> None:
     """Once bootstrapped, an env listing platform/backups/offsite requires backups-offsite.sops.yaml."""
     env = _write_env(tmp_path)
+    _copy_flux_entry(env)
     configs = env / "flux" / "platform-configs"
-    configs.mkdir(parents=True)
     (configs / "kustomization.yaml").write_text(
         "resources:\n  - ../../../../core/platform/backups/offsite\n", encoding="utf-8"
     )
     validate_env_tree(tmp_path)
     (env / "secrets").mkdir(exist_ok=True)
-    (env / "secrets" / "k3s-token.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
+        (env / "secrets" / f"{name}.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/backups-offsite.sops.yaml" in "\n".join(

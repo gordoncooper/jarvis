@@ -8,6 +8,9 @@ kind: GitRepository
 metadata:
   name: flux-system
   namespace: flux-system
+  # The root Kustomization owns the sources; a bad commit that drops one must not remove Flux's own source.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 1m
   # flux_git_repo_url and flux_git_ref in values/cluster-vars.yaml.
@@ -29,6 +32,8 @@ kind: GitRepository
 metadata:
   name: core
   namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 1m
   # core_git_repo_url and core_git_ref in values/cluster-vars.yaml.
@@ -41,6 +46,10 @@ kind: Kustomization
 metadata:
   name: flux-system
   namespace: flux-system
+  # Deleting this object from Git must not prune the cluster it applies. The layer
+  # Kustomizations keep prune on.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 10m
   path: ./envs/env-00/flux

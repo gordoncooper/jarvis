@@ -16,10 +16,12 @@ def test_each_env_flux_instance_version_is_a_renovate_pin(example_copy: ExampleC
     """R33: Renovate reads each env FluxInstance's Flux version, its only pin."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     paths = sorted(ROOT.glob("envs/*/flux/flux-instance.yaml"))
+    tracked = set(paths)
     paths.append(example_copy.env_dir / "flux" / "flux-instance.yaml")
     assert paths
     for path in paths:
-        if path.is_relative_to(ROOT):
+        # The copy may sit in a git-ignored directory inside the repo; it is still a copy.
+        if path in tracked:
             rel = path.relative_to(ROOT).as_posix()
         else:
             rel = f"envs/{example_copy.name}/flux/flux-instance.yaml"

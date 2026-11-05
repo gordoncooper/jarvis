@@ -36,6 +36,20 @@ CORE_SOURCE = "core"
 SYNC_FILE = "sync.yaml"
 # The sealed read-only deploy key an ssh:// root reads with.
 DEPLOY_KEY_FILE = "flux-deploy-key.sops.yaml"
+# Files under flux/ that Ansible and the root Kustomization read.
+_FLUX_ENTRY_FILES = (
+    SYNC_FILE,
+    "flux-instance.yaml",
+    "kustomization.yaml",
+    "identities.yaml",
+    "kustomizations/platform-controllers.yaml",
+    "kustomizations/platform-configs.yaml",
+    "kustomizations/services.yaml",
+    "kustomizations/apps.yaml",
+    "platform-configs/kustomization.yaml",
+)
+# Sealed once bootstrap-secrets has run; platform-configs applies the last two.
+_BOOTSTRAP_SEALED = ("k3s-token", "cert-manager-ca", "backups-restic")
 
 
 def is_example_env(name: str) -> bool:
@@ -292,7 +306,10 @@ def _validate_env(
 
     secrets = env_dir / "secrets"
     # Once bootstrap-secrets has run, the k3s tokens are sealed too. prep-node checks before that.
-    sealed = (secrets / "k3s-token.sops.yaml",) if any(secrets.glob("*.sops.yaml")) else ()
+    bootstrapped = any(secrets.glob("*.sops.yaml"))
+    sealed = (
+        tuple(secrets / f"{name}.sops.yaml" for name in _BOOTSTRAP_SEALED) if bootstrapped else ()
+    )
     # An ssh:// root reads the env repo with the sealed deploy key.
     if cluster_vars_path.is_file() and _ssh_root(cluster_vars_path):
         sealed = (*sealed, secrets / DEPLOY_KEY_FILE)
@@ -319,6 +336,7 @@ def _validate_env(
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
+    errors.extend(_validate_flux_entry_files(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))
     errors.extend(
         _validate_committed_configmap(
@@ -625,6 +643,21 @@ def _ssh_root(cluster_vars_path: Path) -> bool:
     return isinstance(url, str) and url.startswith("ssh://")
 
 
+def _validate_flux_entry_files(
+    env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool
+) -> list[str]:
+    """Every Flux entry file exists once the env has a flux/ folder or sealed files. A new env
+    that has neither yet (prep-node checks it before the copy is edited) needs none."""
+    flux = env_dir / "flux"
+    if not flux.is_dir() and not bootstrapped:
+        return []
+    return [
+        f"{env_name}: missing required file {_display_path(flux / name, repo_root)}"
+        for name in _FLUX_ENTRY_FILES
+        if not (flux / name).is_file()
+    ]
+
+
 def _validate_flux_sources(
     env_dir: Path, repo_root: Path, env_name: str, cluster_vars: dict[str, Any]
 ) -> list[str]:
@@ -633,7 +666,7 @@ def _validate_flux_sources(
     path = env_dir / "flux" / SYNC_FILE
     rel = _display_path(path, repo_root)
     if not path.is_file():
-        return []
+        return []  # _validate_flux_entry_files reports it
     try:
         docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
     except yaml.YAMLError as exc:

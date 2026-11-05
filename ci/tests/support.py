@@ -193,8 +193,8 @@ def bootstrap_example_copy(
 
     root = (tmp_path / "repo").resolve()
     repo = REPO_ROOT.resolve()
-    if root == repo or repo in root.parents:
-        raise RuntimeError("refusing to write the example copy inside the repo")
+    if (root == repo or repo in root.parents) and not _git_ignored(repo, root):
+        raise RuntimeError("refusing to write the example copy at a tracked path in the repo")
     root.mkdir()
     for dirname in ("platform", "services", "apps"):
         (root / dirname).symlink_to(repo / dirname)
@@ -210,6 +210,17 @@ def bootstrap_example_copy(
     _seal_copy_offsite(root, name)
     _render_copy(dest)
     return ExampleCopy(root, name)
+
+
+def _git_ignored(repo: Path, path: Path) -> bool:
+    """True when git ignores path, so a copy there cannot touch tracked files.
+
+    An agent bound to its worktree runs the suite with --basetemp=.scratch/tmp.
+    """
+    proc = subprocess.run(
+        ["git", "check-ignore", "-q", str(path)], cwd=repo, check=False, capture_output=True
+    )
+    return proc.returncode == 0
 
 
 def _seal_copy_offsite(root: Path, name: str) -> None:
