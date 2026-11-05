@@ -24,6 +24,7 @@ from _manifests import substitute
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
 POLICIES = REPO_ROOT / "platform" / "app-hosting" / "policies"
+PRIORITY = REPO_ROOT / "platform" / "app-hosting" / "priority.yaml"
 WIRING = REPO_ROOT / "platform" / "app-hosting" / "app"
 SUFFIX = "env-00.example"
 TENANT = "system:serviceaccount:flux-system:app-{app}"
@@ -74,13 +75,38 @@ def _deploy(app: str) -> list[dict]:
     return docs
 
 
+_RESTRICTED = {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+
+
+def _mutated(tmp_path: Path, docs: list[dict], user: str | None = None) -> list[dict]:
+    """docs as ClusterPolicy app-priority leaves them at admission (kyverno apply), written by
+    user (default: the tenant of the first doc's namespace)."""
+    work = tmp_path / f"mutate-{len(list(tmp_path.glob('mutate-*')))}"
+    work.mkdir()
+    user = user or TENANT.format(app=docs[0]["metadata"]["namespace"].removeprefix("app-"))
+    (work / "resources.yaml").write_text(yaml.safe_dump_all(docs), encoding="utf-8")
+    # kyverno apply loads no policy from a file that also holds the PriorityClass.
+    policy = next(doc for doc in _docs(PRIORITY) if doc["kind"] == "ClusterPolicy")
+    (work / "policy.yaml").write_text(yaml.safe_dump(policy), encoding="utf-8")
+    command = [_kyverno(), "apply", str(work / "policy.yaml"), "--resource", str(work / "resources.yaml"),
+               "--remove-color", "-o", str(work / "out.yaml"), "--userinfo", str(_userinfo(work / "userinfo.yaml", user))]
+    proc = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0 and "Applying 2 policy rule(s)" in proc.stdout, proc.stdout + proc.stderr
+    out = work / "out.yaml"
+    changed = {(doc["kind"], doc["metadata"]["name"]): doc for doc in _docs(out)} if out.is_file() else {}
+    return [changed.get((doc["kind"], doc["metadata"]["name"]), doc) for doc in docs]
+
+
 def _pod(name: str, app: str, *, owner_job: bool = False, **pod: object) -> dict:
+    """A Pod Security restricted pod at the hosted-app class, as app-priority leaves it."""
     spec = {
-        "securityContext": {"runAsNonRoot": True},
+        "priorityClassName": "hosted-app",
+        "securityContext": {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}},
         "containers": [{"name": "c", "image": "registry.example/x@sha256:" + "0" * 64,
-                        "securityContext": {"allowPrivilegeEscalation": False}}],
+                        "securityContext": copy.deepcopy(_RESTRICTED)}],
         **pod,
     }
+    spec = {key: value for key, value in spec.items() if value is not None}
     metadata: dict = {"name": name, "namespace": f"app-{app}"}
     if owner_job:
         metadata["ownerReferences"] = [
@@ -168,7 +194,8 @@ def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, d
     (work / "kyverno-test.yaml").write_text(yaml.safe_dump(test), encoding="utf-8")
     proc = subprocess.run([_kyverno(), "test", str(work), "--remove-color", "--detailed-results"],
                           capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    wrong = [line for line in proc.stdout.splitlines() if "Want " in line]
+    assert proc.returncode == 0, "\n".join(wrong) or proc.stdout + proc.stderr
 
 
 PASS = {"app-file": "pass", "app-grants": "pass"}
@@ -178,9 +205,11 @@ BOTH_FAIL = {"app-file": "fail", "app-grants": "fail"}
 
 
 def test_sample_apps_pass_admission(tmp_path: Path) -> None:
-    """Rule: the sample apps' objects, the hostPath one with its env line, pass the baseline."""
-    cases = [(doc, PASS) for app in ("web-demo", "notes", "photos") for doc in _deploy(app)]
-    _run(tmp_path, "samples", None, cases)
+    """Rule: the sample apps' objects, the hostPath one with its env line, pass the baseline once
+    app-priority has set their class; without it (Kyverno down) their workloads are refused."""
+    docs = [doc for app in ("web-demo", "notes", "photos") for doc in _deploy(app)]
+    _run(tmp_path, "samples", None, [(doc, PASS) for doc in _mutated(tmp_path, docs)])
+    _run(tmp_path, "unmutated", None, [(doc, FILE_FAILS) for doc in docs if doc["kind"] == "Deployment"])
 
 
 def test_pod_baseline_refuses_risky_items_without_a_grant(tmp_path: Path) -> None:
@@ -212,6 +241,131 @@ def test_pod_baseline_refuses_risky_items_without_a_grant(tmp_path: Path) -> Non
         (_job("tenant-job", "web-demo", **_PRIVILEGED), BOTH_FAIL),
     ]
     _run(tmp_path, "baseline", None, cases)
+
+
+def _container(**security: object) -> dict:
+    return {"name": "c", "image": "x", "securityContext": {**copy.deepcopy(_RESTRICTED), **security}}
+
+
+def test_pod_security_restricted_beyond_the_baseline_needs_privileged(tmp_path: Path) -> None:
+    """Rule: Pod Security restricted holds every app pod: each container drops ALL (adding back
+    only NET_BIND_SERVICE), a RuntimeDefault or Localhost seccomp profile is set, and no
+    unmasked /proc, unconfined AppArmor or SELinux option beyond a container type; anything
+    beyond needs risky.privileged and the env's privileged line."""
+    no_seccomp = {"runAsNonRoot": True}
+    cases = [
+        (_pod("bind-service", "web-demo", containers=[_container(capabilities={"drop": ["ALL"], "add": ["NET_BIND_SERVICE"]})]), PASS),
+        (_pod("container-seccomp", "web-demo", securityContext=no_seccomp,
+              containers=[_container(seccompProfile={"type": "Localhost", "localhostProfile": "p.json"})]), PASS),
+        (_pod("selinux-container-type", "web-demo", containers=[_container(seLinuxOptions={"type": "container_init_t"})]), PASS),
+        (_pod("no-drop-all", "web-demo", containers=[_container(capabilities={"drop": ["NET_RAW"]})]), BOTH_FAIL),
+        (_pod("no-capabilities", "web-demo", containers=[{"name": "c", "image": "x", "securityContext": {"allowPrivilegeEscalation": False}}]), BOTH_FAIL),
+        (_pod("no-seccomp", "web-demo", securityContext=no_seccomp), BOTH_FAIL),
+        (_pod("one-container-unconfined", "web-demo", containers=[_container(), _container(seccompProfile={"type": "Unconfined"})]), BOTH_FAIL),
+        (_pod("proc-unmasked", "web-demo", containers=[_container(procMount="Unmasked")]), BOTH_FAIL),
+        (_pod("apparmor-unconfined", "web-demo", containers=[_container(appArmorProfile={"type": "Unconfined"})]), BOTH_FAIL),
+        (_pod("selinux-user", "web-demo", securityContext={**no_seccomp, "seccompProfile": {"type": "RuntimeDefault"},
+                                                            "seLinuxOptions": {"user": "system_u"}}), BOTH_FAIL),
+        (_pod("selinux-type", "web-demo", containers=[_container(seLinuxOptions={"type": "spc_t"})]), BOTH_FAIL),
+        (_pod("no-drop-granted", "granted", containers=[_container(capabilities={})]), PASS),
+    ]
+    for name, profile, expected in (("apparmor-unconfined-annotation", "unconfined", BOTH_FAIL),
+                                    ("apparmor-other-annotation", "other", BOTH_FAIL),
+                                    ("apparmor-localhost-annotation", "localhost/p", PASS)):
+        annotated = _pod(name, "web-demo")
+        annotated["metadata"]["annotations"] = {"container.apparmor.security.beta.kubernetes.io/c": profile}
+        cases.append((annotated, expected))
+    _run(tmp_path, "restricted", None, cases)
+
+
+def test_app_pods_run_at_the_hosted_app_class_only(tmp_path: Path) -> None:
+    """Rule: app-priority sets hosted-app on every workload the tenant ships, over any class it
+    picks; admission refuses a pod or workload at another class or none. The VolSync
+    controller's movers are left as they are."""
+    deployment = next(doc for doc in _deploy("web-demo") if doc["kind"] == "Deployment")
+    deployment["spec"]["template"]["spec"]["priorityClassName"] = "system-cluster-critical"
+    cron = {"apiVersion": "batch/v1", "kind": "CronJob", "metadata": {"name": "nightly", "namespace": "app-web-demo"},
+            "spec": {"schedule": "0 0 * * *", "jobTemplate": {"spec": {"template": {"spec": {
+                **{k: v for k, v in _pod("t", "web-demo")["spec"].items() if k != "priorityClassName"}, "restartPolicy": "Never"}}}}}}
+    mutated, mutated_cron = _mutated(tmp_path, [deployment, cron], user=TENANT.format(app="web-demo"))
+    assert mutated["spec"]["template"]["spec"]["priorityClassName"] == "hosted-app"
+    assert mutated_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["priorityClassName"] == "hosted-app"
+    mover = _job("volsync-src-data", "notes")
+    del mover["spec"]["template"]["spec"]["priorityClassName"]
+    assert "priorityClassName" not in _mutated(tmp_path, [mover], user=VOLSYNC)[0]["spec"]["template"]["spec"]
+    deployment["metadata"]["name"] = "unmutated"
+    _run(tmp_path, "priority", None, [
+        (mutated, PASS), (mutated_cron, PASS), (deployment, FILE_FAILS),
+        (_pod("other-class", "web-demo", priorityClassName="high"), FILE_FAILS),
+        (_pod("no-class", "web-demo", priorityClassName=None), FILE_FAILS),
+    ])
+
+
+def test_ingress_keeps_only_the_web_router_annotations(tmp_path: Path) -> None:
+    """Rule: an app's Ingress is on class traefik with entrypoint websecure and carries, of router
+    annotations, only that and tls true; other annotations (and Flux's labels) pass. A Service
+    carries no Traefik annotation."""
+    host = f"web-demo.apps.{SUFFIX}"
+    ok = {"traefik.ingress.kubernetes.io/router.entrypoints": "websecure", "traefik.ingress.kubernetes.io/router.tls": "true"}
+
+    def ingress(name: str, annotations: dict, **spec: object) -> dict:
+        spec = {key: value for key, value in {"ingressClassName": "traefik", **spec}.items() if value is not None}
+        doc = _ingress(name, "web-demo", host, **spec)
+        doc["metadata"]["annotations"] = annotations
+        doc["metadata"]["labels"] = {"kustomize.toolkit.fluxcd.io/name": "app-web-demo", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}
+        return doc
+
+    service = _object("Service", "s", "web-demo", ports=[{"port": 80}])
+    service["metadata"]["annotations"] = {"traefik.ingress.kubernetes.io/service.serverstransport": "x"}
+    _run(tmp_path, "ingress", None, [
+        (ingress("flux-applied", {**ok, "kustomize.toolkit.fluxcd.io/ssa": "Merge", "example.org/owner": "me"}), PASS),
+        (ingress("entrypoint-only", {"traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}), PASS),
+        (ingress("no-entrypoint", {}), FILE_FAILS),
+        (ingress("middleware", {**ok, "traefik.ingress.kubernetes.io/router.middlewares": "kube-system-x@kubernetescrd"}), FILE_FAILS),
+        (ingress("other-entrypoint", {**ok, "traefik.ingress.kubernetes.io/router.entrypoints": "web"}), FILE_FAILS),
+        (ingress("other-controller", {"nginx.ingress.kubernetes.io/server-snippet": "x"}), FILE_FAILS),
+        (ingress("legacy-class", {"kubernetes.io/ingress.class": "other"}), FILE_FAILS),
+        (ingress("no-class", ok, ingressClassName=None), FILE_FAILS),
+        (ingress("other-class", ok, ingressClassName="nginx"), FILE_FAILS),
+        (service, FILE_FAILS),
+    ])
+
+
+def test_claims_bind_only_to_what_the_cluster_provisions(tmp_path: Path) -> None:
+    """Rule: the tenant sets no volumeName, dataSource or dataSourceRef on a PVC or claim
+    template; the volume binder's volumeName update passes, and so does a later apply of the
+    bound claim; the VolSync controller's own claims are carved out."""
+    def claim(name: str, **spec: object) -> dict:
+        doc = _pvc("data", "notes")
+        doc["metadata"]["name"] = name
+        doc["spec"].update(spec)
+        return doc
+
+    tenant = TENANT.format(app="notes")
+    template = _job("t", "notes")["spec"]["template"]
+    sts = lambda name, spec: _object("StatefulSet", name, "notes", "apps/v1", serviceName="db", selector={}, template=template,  # noqa: E731
+                                     volumeClaimTemplates=[{"metadata": {"name": "data"}, "spec": spec}])
+    # kyverno test reads each case as a CREATE; claim names stand in for the declared volume.
+    for case in ("volume-name", "data-source", "data-source-ref"):
+        _ENV["notes"][0]["spec"]["volumes"].append({"name": case, "backup": True})
+    try:
+        _run(tmp_path, "claims", tenant, [
+            (claim("data"), PASS),
+            (sts("sts-clean", {}), PASS),
+            (claim("volume-name", volumeName="pv-other"), FILE_FAILS),
+            (claim("data-source", dataSource={"kind": "PersistentVolumeClaim", "name": "data"}), FILE_FAILS),
+            (claim("data-source-ref", dataSourceRef={"kind": "PersistentVolumeClaim", "name": "data"}), FILE_FAILS),
+            (sts("sts-volume-name", {"volumeName": "pv-other"}), FILE_FAILS),
+            (sts("sts-data-source", {"dataSource": {"kind": "PersistentVolumeClaim", "name": "data"}}), FILE_FAILS),
+        ])
+        # The binder's write. kyverno's CLI sends no oldObject, so a tenant's later apply of the
+        # bound claim (volumeName unchanged) is proven only live.
+        _run(tmp_path, "binder", "system:serviceaccount:kube-system:persistent-volume-binder",
+             [(claim("volume-name", volumeName="pv-1"), PASS)])
+    finally:
+        del _ENV["notes"][0]["spec"]["volumes"][-3:]
+    restored = claim("volsync-data-dst", dataSourceRef={"kind": "ReplicationDestination", "apiGroup": "volsync.backube", "name": "d"})
+    _run(tmp_path, "volsync-claim", VOLSYNC, [(restored, {"app-file": "skip", "app-grants": "skip"})])
 
 
 def test_volsync_mover_passes_and_a_look_alike_does_not(tmp_path: Path) -> None:
@@ -394,10 +548,24 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("web-demo", _object("NetworkPolicy", "n", "web-demo", "networking.k8s.io/v1"), "an app ships only"),
         ("web-demo", _object("IngressRoute", "r", "web-demo", "traefik.io/v1alpha1"), "an app ships only"),
         ("web-demo", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "namespace": "flux-system"}}, "lands in namespace app-web-demo"),
+        ("web-demo", _job("j", "web-demo", containers=[_container(capabilities={"drop": ["NET_RAW"]})]), "more than Pod Security restricted"),
+        ("web-demo", _job("j", "web-demo", securityContext={"runAsNonRoot": True}), "more than Pod Security restricted"),
+        ("web-demo", _job("j", "web-demo", containers=[_container(procMount="Unmasked")]), "more than Pod Security restricted"),
+        ("web-demo", _job("j", "web-demo", priorityClassName="high"), "refuses another class"),
+        ("web-demo", _ingress("i", "web-demo", f"web-demo.apps.{SUFFIX}"), "sets ingressClassName: traefik"),
+        ("web-demo", {**_ingress("i", "web-demo", f"web-demo.apps.{SUFFIX}", ingressClassName="traefik"),
+                      "metadata": {"name": "i", "annotations": {"traefik.ingress.kubernetes.io/router.middlewares": "x"}}},
+         "router.middlewares is not allowed"),
+        ("web-demo", {**_object("Service", "s", "web-demo", ports=[{"port": 80}]),
+                      "metadata": {"name": "s", "annotations": {"traefik.ingress.kubernetes.io/service.sticky.cookie": "true"}}},
+         "carries no Traefik annotation"),
+        ("notes", {**_pvc("data", "notes"), "spec": {"volumeName": "pv-other"}}, "sets volumeName"),
+        ("notes", {**_pvc("data", "notes"), "spec": {"dataSourceRef": {"kind": "PersistentVolumeClaim", "name": "x"}}}, "sets dataSourceRef"),
     ],
     ids=["privileged", "bare-pod", "host-network", "root", "host-path", "undeclared-pvc", "unbacked-without-annotation",
          "host-outside-apps", "nodeport", "loadbalancer-not-listed", "loadbalancer-wrong-target", "loadbalancer-node-ports",
-         "networkpolicy", "ingressroute", "other-namespace"],
+         "networkpolicy", "ingressroute", "other-namespace", "no-drop-all", "no-seccomp", "proc-unmasked", "other-priority-class",
+         "ingress-no-class", "ingress-middleware", "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
     """Rule: tools/app-check fails, on the folder alone, each object the cluster refuses for the
@@ -510,8 +678,8 @@ def _quota(app: str, cpu: str, memory: str, lbs: str = "0") -> dict:
 def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
     """Rule: the quota and each allow come from the App's network section (with its env
     override); an allow the file does not ask for is not made; app-to-app opens one side per
-    file, so traffic flows only when both list each other; the backups allow follows the
-    registered credential."""
+    file, so traffic flows only when both list each other; a LAN port opens only when the env
+    grants it as lan-port; the backups allow follows the registered credential."""
     notes, photos, web, lan = _app("notes"), _app("photos"), _app("web-demo"), _ENV["lan"][0]
     offline = _app("offline", network={"egress": {"internet": True}},
                    envs={"env-00": {"network": {"egress": {"internet": False}}, "resources": {"memory": "256Mi"}}})
@@ -528,8 +696,13 @@ def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
         "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "platform-backups"}},
                 "podSelector": {"matchLabels": {"app.kubernetes.io/name": "restic-apps"}}}],
         "ports": [{"port": 8000, "protocol": "TCP"}]}]})
-    _generate_test(tmp_path, POLICIES / "derive.yaml", [notes, photos, web, lan, offline, credential],
-                   _namespace_notes({"notes": [], "photos": [], "web-demo": [], "lan": _ENV["lan"][1], "offline": []}), [
+    # The same ports as lan, with the env granting one of them, or none.
+    partial, ungranted = (_app(name, network=lan["spec"]["network"]) for name in ("lan-partial", "lan-ungranted"))
+    partial_ports = _network_policy("lan-partial", "app-ports", {"policyTypes": ["Ingress"], "ingress": [{
+        "from": [{"ipBlock": {"cidr": "0.0.0.0/0"}}], "ports": [{"port": 8080, "protocol": "TCP"}]}]})
+    _generate_test(tmp_path, POLICIES / "derive.yaml", [notes, photos, web, lan, offline, credential, partial, ungranted],
+                   _namespace_notes({"notes": [], "photos": [], "web-demo": [], "lan": _ENV["lan"][1], "offline": [],
+                                     "lan-partial": ["lan-port 443/TCP"], "lan-ungranted": []}), [
         ("quota", (notes, _quota("notes", "1", "1Gi"))),
         ("quota", (lan, _quota("lan", "500m", "512Mi", "2"))),
         ("apps", (notes, _network_policy("notes", "app-apps", {"policyTypes": ["Egress"], "egress": [{"to": [{"namespaceSelector": peers(["photos"])}]}]}))),
@@ -539,6 +712,8 @@ def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
         ("web", (web, web_allow)),
         ("web", (lan, None)),
         ("ports", (lan, ports)),
+        ("ports", (partial, partial_ports)),
+        ("ports", (ungranted, None)),
         ("ports", (web, None)),
         ("internet", (web, None)),
         # The env override: no internet on env-00 for an app that asks for it elsewhere.
@@ -603,6 +778,10 @@ def test_derive_opens_internet_and_lan_only_as_asked_and_granted(tmp_path: Path)
     assert _allows(lan_all, "10.200.0.99", 8123, "TCP") and not _allows(lan_all, "203.0.113.7", 443, "TCP")
     assert _allows(nas, "10.200.0.10", 445, "TCP") and _allows(nas, "10.200.0.10", 137, "UDP")
     assert not _allows(nas, "10.200.0.10", 22, "TCP") and not _allows(nas, "10.200.0.20", 80, "TCP")
+    # No allow an app's file derives reaches another app's pod (the env's pod range), so an
+    # app's LAN port, open to any address, is not open to other apps' pods.
+    for allow in (internet, lan_all, nas):
+        assert not _allows(allow, "10.80.3.4", 8443, "TCP")
 
 
 def test_uptime_opt_out_reaches_the_grants_the_uptime_check_reads() -> None:
@@ -615,14 +794,15 @@ def test_uptime_opt_out_reaches_the_grants_the_uptime_check_reads() -> None:
     assert grants(["no-uptime-check"])["no-uptime-check"] == "true"
 
 
-def test_privileged_movers_only_for_an_app_with_a_credential(tmp_path: Path) -> None:
+@pytest.mark.parametrize("hosting", [True, False], ids=["hosting-on", "hosting-off"])
+def test_privileged_movers_only_for_an_app_with_a_credential(tmp_path: Path, hosting: bool) -> None:
     """Rule: pvc-backup marks an app- namespace for privileged movers only once the env registers
-    the app's credential; a core namespace as before. The rule as an env with app hosting on
-    renders it."""
+    the app's credential, also for a namespace left after app hosting is switched off; a core
+    namespace as before. The rule as the env renders it."""
     from test_app_hosting import render_platform
 
     enrollment = tmp_path / "pvc-backup.yaml"
-    enrollment.write_text(yaml.safe_dump(render_platform(tmp_path / "render", hosting=True)[("ClusterPolicy", "pvc-backup")]),
+    enrollment.write_text(yaml.safe_dump(render_platform(tmp_path / "render", hosting=hosting)[("ClusterPolicy", "pvc-backup")]),
                           encoding="utf-8")
     namespace = lambda name: {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": name}}  # noqa: E731
     marked = lambda name: {**namespace(name), "metadata": {"name": name, "annotations": {"volsync.backube/privileged-movers": "true"}}}  # noqa: E731

@@ -227,6 +227,28 @@ def test_malformed_k3s_pin_fails_before_any_change(
     )
 
 
+def test_node_memory_reserve_out_of_range_fails_before_any_change(tmp_path: Path) -> None:
+    """Rule: a node memory reserve that is no whole number from 0 to 50 stops the opening play."""
+    result = _run_site(tmp_path, override={"node_memory_reserve_percent": 60})
+    _stopped_before_base_os(result, "node_memory_reserve_percent is a whole number from 0 to 50")
+
+
+@pytest.mark.parametrize("value", ["memory.available<lots", "memory.available<100MB", "nodefs.available<10%,memory.available<"])
+def test_unreadable_memory_threshold_fails_before_any_change(tmp_path: Path, value: str) -> None:
+    """Rule: an eviction-hard memory.available the reserve cannot compare stops the opening play."""
+    result = _run_site(tmp_path, override={"k3s_kubelet_eviction_hard": value})
+    _stopped_before_base_os(result, "is not a Kubernetes quantity")
+
+
+@pytest.mark.parametrize("value", ["memory.available<100Mi", "memory.available<1.5Gi,nodefs.available<10%", "memory.available<7%"])
+def test_readable_memory_threshold_passes_preflight(tmp_path: Path, value: str) -> None:
+    """Rule: a quantity or percent memory.available, beside other signals, passes the check."""
+    result = _run_site(tmp_path, override={"k3s_kubelet_eviction_hard": value})
+    output = result.stdout + result.stderr
+    task = output.split("TASK [Require a readable eviction-hard memory.available on each host]")[1].split("TASK [")[0]
+    assert "ok: [cp-1]" in task and "ok: [wk-1]" in task and "failed" not in task, task
+
+
 def test_missing_env_flux_instance_fails_before_any_change(tmp_path: Path) -> None:
     """R1: site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
     result = _run_site(tmp_path, jarvis_env="env-absent", flux_instance=False)

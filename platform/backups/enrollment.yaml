@@ -170,9 +170,26 @@ spec:
             operator: Equals
             value: "true"
       generate: *replication-source-generate
+    # An app- namespace gets privileged movers only once its own credential is registered (the
+    # same test as replication-source-app), so a namespace app hosting left behind never gets
+    # them without one, whether app hosting is on or off.
     - name: privileged-movers
       match: *enrolled-match
       exclude: *enrolled-exclude
+      context:
+        - name: appCredential
+          apiCall:
+            urlPath: "/api/v1/namespaces/platform-backups/secrets/backups-restic-{{ request.object.metadata.namespace }}"
+            jmesPath: "data.RESTIC_PASSWORD && 'true' || 'false'"
+            default: "false"
+      preconditions:
+        any:
+          - key: "{{ starts_with(request.object.metadata.namespace, 'app-') }}"
+            operator: Equals
+            value: false
+          - key: "{{ appCredential }}"
+            operator: Equals
+            value: "true"
       mutate:
         mutateExistingOnPolicyUpdate: true
         targets:

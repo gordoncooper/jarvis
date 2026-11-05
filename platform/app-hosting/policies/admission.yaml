@@ -156,18 +156,55 @@ spec:
         (has(variables.podSpec.ephemeralContainers) ? variables.podSpec.ephemeralContainers : [])
     - name: podSecurity
       expression: "has(variables.podSpec.securityContext) ? variables.podSpec.securityContext : {}"
+    - name: podAnnotations
+      expression: >-
+        object.kind == 'Pod' ? (has(object.metadata.annotations) ? object.metadata.annotations : {}) :
+        object.kind == 'CronJob' ?
+          (has(object.spec.jobTemplate.spec.template.metadata) && has(object.spec.jobTemplate.spec.template.metadata.annotations) ?
+           object.spec.jobTemplate.spec.template.metadata.annotations : {}) :
+        object.kind in ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job'] ?
+          (has(object.spec.template.metadata) && has(object.spec.template.metadata.annotations) ?
+           object.spec.template.metadata.annotations : {}) :
+        {}
+    # Pod Security restricted's seccomp: each container's own profile, or else the pod's, is
+    # RuntimeDefault or Localhost.
+    - name: podSeccompSet
+      expression: >-
+        has(variables.podSecurity.seccompProfile) && variables.podSecurity.seccompProfile.type in ['RuntimeDefault', 'Localhost']
+    # Pod Security baseline's SELinux options: no user or role, and a container type only.
+    - name: badSELinux
+      expression: >-
+        ((has(variables.podSecurity.seLinuxOptions) ? [variables.podSecurity.seLinuxOptions] : []) +
+         variables.containers.filter(c, has(c.securityContext) && has(c.securityContext.seLinuxOptions))
+           .map(c, c.securityContext.seLinuxOptions)
+        ).exists(o,
+          (has(o.type) && !(o.type in ['', 'container_t', 'container_init_t', 'container_kvm_t', 'container_engine_t'])) ||
+          (has(o.user) && o.user != '') || (has(o.role) && o.role != ''))
+    # Beyond Pod Security restricted: privileged mode, host PID or IPC, sysctls, privilege
+    # escalation, a capability other than NET_BIND_SERVICE or not dropping ALL, a seccomp
+    # profile that is unset or Unconfined, an unmasked /proc, an unconfined AppArmor profile,
+    # or SELinux options outside the container types.
     - name: usesPrivileged
       expression: >-
         (has(variables.podSpec.hostPID) && variables.podSpec.hostPID) ||
         (has(variables.podSpec.hostIPC) && variables.podSpec.hostIPC) ||
         has(variables.podSecurity.sysctls) ||
         (has(variables.podSecurity.seccompProfile) && variables.podSecurity.seccompProfile.type == 'Unconfined') ||
+        (has(variables.podSecurity.appArmorProfile) && variables.podSecurity.appArmorProfile.type == 'Unconfined') ||
+        variables.podAnnotations.exists(k, k.startsWith('container.apparmor.security.beta.kubernetes.io/') &&
+          !(variables.podAnnotations[k] == 'runtime/default' || variables.podAnnotations[k].startsWith('localhost/'))) ||
+        variables.badSELinux ||
         variables.containers.exists(c, !has(c.securityContext) ||
           !has(c.securityContext.allowPrivilegeEscalation) || c.securityContext.allowPrivilegeEscalation ||
           (has(c.securityContext.privileged) && c.securityContext.privileged) ||
-          (has(c.securityContext.seccompProfile) && c.securityContext.seccompProfile.type == 'Unconfined') ||
-          (has(c.securityContext.capabilities) && has(c.securityContext.capabilities.add) &&
-           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE')))
+          (has(c.securityContext.seccompProfile) ?
+            !(c.securityContext.seccompProfile.type in ['RuntimeDefault', 'Localhost']) : !variables.podSeccompSet) ||
+          !has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.drop) ||
+          !('ALL' in c.securityContext.capabilities.drop) ||
+          (has(c.securityContext.capabilities.add) &&
+           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE')) ||
+          (has(c.securityContext.procMount) && c.securityContext.procMount != 'Default') ||
+          (has(c.securityContext.appArmorProfile) && c.securityContext.appArmorProfile.type == 'Unconfined'))
     # Volume types a pod may use. Others (nfs, iscsi, rbd, cephfs and the like) mount from the
     # node's network, where no NetworkPolicy applies. hostPath is its own risky item.
     - name: usesOtherVolume
@@ -198,7 +235,11 @@ spec:
     - expression: "params.metadata.namespace == namespaceObject.metadata.name"
       message: "the binding's App is not this namespace's"
     - expression: "!variables.usesPrivileged || (has(params.spec.risky) && has(params.spec.risky.privileged) && params.spec.risky.privileged)"
-      message: "privileged mode, host PID or IPC, allowPrivilegeEscalation not false, added capabilities, an unconfined seccomp profile and sysctls need the app file's risky.privileged"
+      message: >-
+        anything beyond Pod Security restricted (privileged mode, host PID or IPC, sysctls,
+        allowPrivilegeEscalation not false, capabilities not dropping ALL or adding more than
+        NET_BIND_SERVICE, a seccomp profile not RuntimeDefault or Localhost, procMount Unmasked,
+        AppArmor unconfined, SELinux options beyond a container type) needs the app file's risky.privileged
     - expression: "!variables.usesOtherVolume"
       message: "a pod's volumes are configMap, secret, emptyDir, persistentVolumeClaim, projected, downwardAPI, csi or ephemeral"
     - expression: "!variables.usesRoot || (has(params.spec.risky) && has(params.spec.risky.root) && params.spec.risky.root)"
@@ -237,6 +278,45 @@ spec:
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type != 'LoadBalancer' ||
         (has(object.spec.allocateLoadBalancerNodePorts) && !object.spec.allocateLoadBalancerNodePorts)
       message: "an app's LoadBalancer sets allocateLoadBalancerNodePorts: false"
+    # Every app pod runs at the lowest priority, so the kubelet evicts it first and it never
+    # preempts core. ClusterPolicy app-priority sets the class; this refuses any other.
+    - expression: >-
+        !has(variables.podSpec.containers) ||
+        (has(variables.podSpec.priorityClassName) && variables.podSpec.priorityClassName == 'hosted-app')
+      message: "an app's pods run at PriorityClass hosted-app, which core sets on its workloads; no other class"
+    # Traefik reads its router settings from annotations; an app keeps only the two its web
+    # address needs, on Traefik's class. The entrypoint is required: without it Traefik serves
+    # the route on every entrypoint, plain HTTP included.
+    - expression: >-
+        object.kind != 'Ingress' ||
+        (has(object.spec.ingressClassName) && object.spec.ingressClassName == 'traefik' &&
+         has(object.metadata.annotations) &&
+         object.metadata.annotations[?'traefik.ingress.kubernetes.io/router.entrypoints'].orValue('') == 'websecure' &&
+         object.metadata.annotations.all(k,
+           !(k.startsWith('traefik.') || k.contains('traefik.io/') || k.contains('ingress.kubernetes.io/') ||
+             k == 'kubernetes.io/ingress.class') ||
+           (k == 'traefik.ingress.kubernetes.io/router.entrypoints' && object.metadata.annotations[k] == 'websecure') ||
+           (k == 'traefik.ingress.kubernetes.io/router.tls' && object.metadata.annotations[k] == 'true')))
+      message: >-
+        an app's Ingress sets ingressClassName: traefik and router.entrypoints: websecure, and of
+        Traefik's and other ingress controllers' annotations carries only that and router.tls: "true"
+    - expression: >-
+        object.kind != 'Service' || !has(object.metadata.annotations) ||
+        object.metadata.annotations.all(k, !(k.startsWith('traefik.') || k.contains('traefik.io/')))
+      message: "an app's Service carries no Traefik annotation"
+    # A claim binds only to the volume the cluster provisions for it: no pre-chosen volume and
+    # no copy of another claim or snapshot. The volume binder sets volumeName when the claim
+    # binds; it stays as it is after that.
+    - expression: >-
+        (object.kind == 'PersistentVolumeClaim' ? [object.spec] :
+         object.kind == 'StatefulSet' && has(object.spec.volumeClaimTemplates) ?
+           object.spec.volumeClaimTemplates.map(t, has(t.spec) ? t.spec : {}) : []
+        ).all(s, !has(s.dataSource) && !has(s.dataSourceRef) &&
+          (!has(s.volumeName) || s.volumeName == '' ||
+           (object.kind == 'PersistentVolumeClaim' &&
+            (request.userInfo.username in ['system:serviceaccount:kube-system:persistent-volume-binder', 'system:kube-controller-manager'] ||
+             (oldObject != null && has(oldObject.spec.volumeName) && oldObject.spec.volumeName == s.volumeName)))))
+      message: "an app's PVCs and claim templates set no volumeName, dataSource or dataSourceRef; the volume binder binds them"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -291,18 +371,55 @@ spec:
         (has(variables.podSpec.ephemeralContainers) ? variables.podSpec.ephemeralContainers : [])
     - name: podSecurity
       expression: "has(variables.podSpec.securityContext) ? variables.podSpec.securityContext : {}"
+    - name: podAnnotations
+      expression: >-
+        object.kind == 'Pod' ? (has(object.metadata.annotations) ? object.metadata.annotations : {}) :
+        object.kind == 'CronJob' ?
+          (has(object.spec.jobTemplate.spec.template.metadata) && has(object.spec.jobTemplate.spec.template.metadata.annotations) ?
+           object.spec.jobTemplate.spec.template.metadata.annotations : {}) :
+        object.kind in ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job'] ?
+          (has(object.spec.template.metadata) && has(object.spec.template.metadata.annotations) ?
+           object.spec.template.metadata.annotations : {}) :
+        {}
+    # Pod Security restricted's seccomp: each container's own profile, or else the pod's, is
+    # RuntimeDefault or Localhost.
+    - name: podSeccompSet
+      expression: >-
+        has(variables.podSecurity.seccompProfile) && variables.podSecurity.seccompProfile.type in ['RuntimeDefault', 'Localhost']
+    # Pod Security baseline's SELinux options: no user or role, and a container type only.
+    - name: badSELinux
+      expression: >-
+        ((has(variables.podSecurity.seLinuxOptions) ? [variables.podSecurity.seLinuxOptions] : []) +
+         variables.containers.filter(c, has(c.securityContext) && has(c.securityContext.seLinuxOptions))
+           .map(c, c.securityContext.seLinuxOptions)
+        ).exists(o,
+          (has(o.type) && !(o.type in ['', 'container_t', 'container_init_t', 'container_kvm_t', 'container_engine_t'])) ||
+          (has(o.user) && o.user != '') || (has(o.role) && o.role != ''))
+    # Beyond Pod Security restricted: privileged mode, host PID or IPC, sysctls, privilege
+    # escalation, a capability other than NET_BIND_SERVICE or not dropping ALL, a seccomp
+    # profile that is unset or Unconfined, an unmasked /proc, an unconfined AppArmor profile,
+    # or SELinux options outside the container types.
     - name: usesPrivileged
       expression: >-
         (has(variables.podSpec.hostPID) && variables.podSpec.hostPID) ||
         (has(variables.podSpec.hostIPC) && variables.podSpec.hostIPC) ||
         has(variables.podSecurity.sysctls) ||
         (has(variables.podSecurity.seccompProfile) && variables.podSecurity.seccompProfile.type == 'Unconfined') ||
+        (has(variables.podSecurity.appArmorProfile) && variables.podSecurity.appArmorProfile.type == 'Unconfined') ||
+        variables.podAnnotations.exists(k, k.startsWith('container.apparmor.security.beta.kubernetes.io/') &&
+          !(variables.podAnnotations[k] == 'runtime/default' || variables.podAnnotations[k].startsWith('localhost/'))) ||
+        variables.badSELinux ||
         variables.containers.exists(c, !has(c.securityContext) ||
           !has(c.securityContext.allowPrivilegeEscalation) || c.securityContext.allowPrivilegeEscalation ||
           (has(c.securityContext.privileged) && c.securityContext.privileged) ||
-          (has(c.securityContext.seccompProfile) && c.securityContext.seccompProfile.type == 'Unconfined') ||
-          (has(c.securityContext.capabilities) && has(c.securityContext.capabilities.add) &&
-           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE')))
+          (has(c.securityContext.seccompProfile) ?
+            !(c.securityContext.seccompProfile.type in ['RuntimeDefault', 'Localhost']) : !variables.podSeccompSet) ||
+          !has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.drop) ||
+          !('ALL' in c.securityContext.capabilities.drop) ||
+          (has(c.securityContext.capabilities.add) &&
+           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE')) ||
+          (has(c.securityContext.procMount) && c.securityContext.procMount != 'Default') ||
+          (has(c.securityContext.appArmorProfile) && c.securityContext.appArmorProfile.type == 'Unconfined'))
     # Volume types a pod may use. Others (nfs, iscsi, rbd, cephfs and the like) mount from the
     # node's network, where no NetworkPolicy applies. hostPath is its own risky item.
     - name: usesOtherVolume
@@ -331,7 +448,7 @@ spec:
         object.spec.ports.map(p, string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) : []
   validations:
     - expression: "!variables.usesPrivileged || params.data[?'privileged'].orValue('') == 'true'"
-      message: "privileged mode, host PID or IPC, allowPrivilegeEscalation not false, added capabilities, an unconfined seccomp profile and sysctls need the env's '<app>: privileged' exception"
+      message: "anything beyond Pod Security restricted (see app-file) needs the env's '<app>: privileged' exception"
     - expression: "!variables.usesRoot || params.data[?'root'].orValue('') == 'true'"
       message: "every container runs with runAsNonRoot: true and no runAsUser 0, unless the env has '<app>: root'"
     - expression: "!variables.usesHostNetwork || params.data[?'host-network'].orValue('') == 'true'"

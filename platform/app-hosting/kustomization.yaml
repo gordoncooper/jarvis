@@ -5,9 +5,8 @@
 #     - ../../../../core/platform/app-hosting
 #
 # and off by removing it (with its app list). It is a Component, not a directory under
-# resources, because it adds to two objects platform-configs already has: TLSStore default
-# serves the apps wildcard, and pvc-backup's privileged-movers marks an app- namespace only
-# once its backup credential is registered. Without the line, the env renders none of this.
+# resources, because it adds to an object platform-configs already has: TLSStore default
+# serves the apps wildcard. Without the line, the env renders none of this.
 # The per-app wiring (app/) is applied by each app's own wiring Kustomization, not here.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
@@ -16,6 +15,7 @@ resources:
   - kyverno-rbac.yaml
   - policies/admission.yaml
   - policies/derive.yaml
+  - priority.yaml
   - certificate.yaml
 patches:
   - target:
@@ -28,31 +28,3 @@ patches:
         path: /spec/certificates
         value:
           - secretName: wildcard-apps-tls
-  # The same credential test as pvc-backup's -app rules. The test op stops the build if the
-  # rule moves, so the patch never lands on another rule.
-  - target:
-      group: kyverno.io
-      kind: ClusterPolicy
-      name: pvc-backup
-    patch: |-
-      - op: test
-        path: /spec/rules/4/name
-        value: privileged-movers
-      - op: add
-        path: /spec/rules/4/context
-        value:
-          - name: appCredential
-            apiCall:
-              urlPath: "/api/v1/namespaces/platform-backups/secrets/backups-restic-{{ request.object.metadata.namespace }}"
-              jmesPath: "data.RESTIC_PASSWORD && 'true' || 'false'"
-              default: "false"
-      - op: add
-        path: /spec/rules/4/preconditions
-        value:
-          any:
-            - key: "{{ starts_with(request.object.metadata.namespace, 'app-') }}"
-              operator: Equals
-              value: false
-            - key: "{{ appCredential }}"
-              operator: Equals
-              value: "true"

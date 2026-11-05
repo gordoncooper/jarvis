@@ -66,10 +66,11 @@ def test_committed_env_00_render_wires_the_examples_and_passes_env_schema() -> N
 
 
 def test_examples_pass_admission_with_the_env_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rule: every example object is admitted with env-00's exception line."""
+    """Rule: every example object is admitted with env-00's exception line, once app-priority
+    has set its class (the examples set none)."""
     _instance, _env_dir, values = _env(tmp_path)
     _admission_env(monkeypatch, values)
-    cases = [(doc, admission.PASS) for app in APPS for doc in admission._deploy(app)]
+    cases = [(doc, admission.PASS) for app in APPS for doc in admission._mutated(tmp_path, admission._deploy(app))]
     admission._run(tmp_path, "granted", None, cases)
 
 
@@ -85,6 +86,6 @@ def test_host_path_refused_without_a_host_path_line(tmp_path: Path, monkeypatch:
     """Rule: hello-web with a hostPath volume added is refused; the app file does not ask, the env does not grant."""
     _instance, _env_dir, values = _env(tmp_path)
     _admission_env(monkeypatch, values)
-    deployment = next(doc for doc in admission._deploy("hello-web") if doc["kind"] == "Deployment")
+    deployment = next(doc for doc in admission._mutated(tmp_path, admission._deploy("hello-web")) if doc["kind"] == "Deployment")
     deployment["spec"]["template"]["spec"]["volumes"].append({"name": "h", "hostPath": {"path": "/srv"}})
     admission._run(tmp_path, "host-path", None, [(deployment, admission.BOTH_FAIL)])
