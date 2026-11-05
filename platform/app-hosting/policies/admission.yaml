@@ -223,10 +223,15 @@ spec:
         variables.hosts.all(h, h.startsWith(params.metadata.name + '.apps.') ||
           (has(params.spec.risky) && has(params.spec.risky.hostnames) && h in params.spec.risky.hostnames))
       message: "an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the app file asks for"
+    # A LoadBalancer port is a network.ports entry: listen as its port, the same protocol, and
+    # target as its targetPort (a number; the API server defaults an unset one to the port).
     - expression: >-
-        variables.lanPorts.all(p, has(params.spec.ports) &&
-          params.spec.ports.exists(q, string(q.port) + '/' + q.protocol == p && has(q.lan) && q.lan))
-      message: "a LoadBalancer exposes only ports the app file marks lan"
+        object.kind != 'Service' || !has(object.spec.type) || object.spec.type != 'LoadBalancer' ||
+        object.spec.ports.all(p, has(params.spec.network) && has(params.spec.network.ports) &&
+          params.spec.network.ports.exists(q, q.listen == p.port &&
+            q.protocol == (has(p.protocol) ? p.protocol : 'TCP') &&
+            (has(p.targetPort) ? p.targetPort : p.port) == q.target))
+      message: "a LoadBalancer port is one of the app file's network.ports: listen as port, its protocol, and target as a numeric targetPort"
     # ServiceLB publishes on the edge nodes with no node port; one would open the port on every node.
     - expression: >-
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type != 'LoadBalancer' ||
@@ -343,7 +348,7 @@ spec:
         '<app>: hostname <name>'; no default backend and no spec.tls (the apps wildcard serves it)
     - expression: >-
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type in ['ClusterIP', 'LoadBalancer']
-      message: "an app's Services are ClusterIP, or LoadBalancer for its lan ports; no NodePort or ExternalName"
+      message: "an app's Services are ClusterIP, or LoadBalancer for its network.ports; no NodePort or ExternalName"
     - expression: "object.kind != 'Service' || !has(object.spec.externalIPs)"
       message: "an app's Service sets no externalIPs"
     - expression: "variables.lanPorts.all(p, p in params.data[?'lan-ports'].orValue('').split(','))"

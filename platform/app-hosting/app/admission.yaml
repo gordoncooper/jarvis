@@ -40,6 +40,8 @@ spec:
 ---
 # The env's exception lines for this app, and its host. Only this wiring writes it: an app
 # writes only in its own namespace (app-tenant). Prune stays off with the binding.
+# lan-all and lan-targets are copied to the namespace for app-derive; no-uptime-check is
+# for the uptime check, which reads it here.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -55,3 +57,6 @@ data:
   host-path: "${app_grant_host_path}"
   hostnames: "${app_grant_hostnames}"
   lan-ports: "${app_grant_lan_ports}"
+  lan-all: "${app_grant_lan_all}"
+  lan-targets: "${app_grant_lan_targets}"
+  no-uptime-check: "${app_grant_no_uptime_check}"

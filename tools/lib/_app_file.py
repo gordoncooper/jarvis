@@ -44,9 +44,7 @@ SHIPPED_KINDS = frozenset(
 _WORKLOADS = {"Deployment", "StatefulSet", "Job", "CronJob"}
 # The CRD's CEL rules, by rule text. A rule added to the CRD fails here until it has its twin.
 _RULES = {
-    "type(self) == int ? (self >= 1 && self <= 65535) : self == 'none'": lambda value: (
-        1 <= value <= 65535 if _is_int(value) else value == "none"
-    ),
+    "!('all' in self) || self.size() == 1": lambda value: "all" not in value or len(value) == 1,
 }
 
 
@@ -112,22 +110,17 @@ def _schema_problems(value: Any, schema: dict, where: str) -> Iterator[str]:
     if value is None:
         yield f"{where}: is required"
         return
-    if schema.get("x-kubernetes-int-or-string"):
-        if not (_is_int(value) or isinstance(value, str)):
-            yield f"{where}: is a number or a string"
-            return
-    else:
-        kind = schema.get("type")
-        ok = {
-            "object": isinstance(value, dict),
-            "array": isinstance(value, list),
-            "string": isinstance(value, str),
-            "integer": _is_int(value),
-            "boolean": isinstance(value, bool),
-        }.get(kind, True)
-        if not ok:
-            yield f"{where}: is a {kind}"
-            return
+    kind = schema.get("type")
+    ok = {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "integer": _is_int(value),
+        "boolean": isinstance(value, bool),
+    }.get(kind, True)
+    if not ok:
+        yield f"{where}: is a {kind}"
+        return
     for rule in schema.get("x-kubernetes-validations") or []:
         check = _RULES.get(rule["rule"])
         if check is None:
@@ -201,7 +194,7 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
     spec = app.get("spec") or {}
     risky = spec.get("risky") or {}
     volumes = {volume["name"]: volume["backup"] for volume in spec.get("volumes") or []}
-    lan = {(port["port"], port["protocol"]) for port in spec.get("ports") or [] if port.get("lan")}
+    lan = {(port["listen"], port["protocol"]): port["target"] for port in (spec.get("network") or {}).get("ports") or []}
     hostnames = set(risky.get("hostnames") or [])
     for doc in objects:
         kind = str(doc.get("kind"))
@@ -313,17 +306,20 @@ def _ingress_problems(ref: str, spec: dict, hostnames: set[str]) -> Iterator[str
             yield f"{ref}: host {host!r} is {HOST_VARIABLE} (<name>.apps.<dns suffix>) or one of risky.hostnames"
 
 
-def _service_problems(ref: str, spec: dict, lan: set[tuple[int, str]]) -> Iterator[str]:
+def _service_problems(ref: str, spec: dict, lan: dict[tuple[int, str], int]) -> Iterator[str]:
     kind = spec.get("type", "ClusterIP")
     if spec.get("externalIPs"):
         yield f"{ref}: sets no externalIPs"
     if kind == "ClusterIP":
         return
     if kind != "LoadBalancer":
-        yield f"{ref}: type {kind}; an app's Services are ClusterIP, or LoadBalancer for its lan ports"
+        yield f"{ref}: type {kind}; an app's Services are ClusterIP, or LoadBalancer for its network.ports"
         return
     if spec.get("allocateLoadBalancerNodePorts") is not False:
         yield f"{ref}: a LoadBalancer sets allocateLoadBalancerNodePorts: false, so no node port opens on every node"
     for port in spec.get("ports") or []:
-        if (port.get("port"), port.get("protocol", "TCP")) not in lan:
-            yield f"{ref}: LoadBalancer port {port.get('port')} is not a lan port in the app file"
+        key = (port.get("port"), port.get("protocol", "TCP"))
+        if key not in lan:
+            yield f"{ref}: LoadBalancer port {port.get('port')} is not a listen port in the app file's network.ports"
+        elif port.get("targetPort", port.get("port")) != lan[key]:
+            yield f"{ref}: LoadBalancer port {port.get('port')} sets targetPort {lan[key]}, the number network.ports gives as target"

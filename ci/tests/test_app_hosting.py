@@ -58,6 +58,7 @@ _APP = "platform/app-hosting/app"
         (f"{_APP}/namespace.yaml", "    kustomize.toolkit.fluxcd.io/prune: disabled\n", "", "could delete its volumes"),
         (f"{_APP}/admission.yaml", "parameterNotFoundAction: Deny", "parameterNotFoundAction: Allow", "refusing when they are missing"),
         (f"{_APP}/admission.yaml", "host-path: \"${app_grant_host_path}\"", "host-path: \"true\"", "not the env's exception lines"),
+        (f"{_APP}/namespace.yaml", "lan-all: \"${app_grant_lan_all}\"", "lan-all: \"true\"", "annotation hosting.jarvis.io/lan-all"),
         (f"{_APP}/tenant.yaml", "resources: [jobs, cronjobs]", "resources: [jobs, cronjobs, networkpolicies]", "batch/networkpolicies"),
         (f"{_APP}/tenant.yaml", "  - apiGroups: [hosting.jarvis.io]", "  - apiGroups: [traefik.io]\n    resources: [ingressroutes]\n    verbs: [create]\n  - apiGroups: [hosting.jarvis.io]", "traefik.io/ingressroutes"),
         (f"{_APP}/flux.yaml", "  targetNamespace: app-${app_name}\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "  targetNamespace: default\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "objects land in app-"),
@@ -68,7 +69,7 @@ _APP = "platform/app-hosting/app"
         (f"{_APP}/kustomization.yaml", "  - flux.yaml", "  - flux.yaml\n  - extra.yaml", "holds no ClusterRole"),
     ],
     ids=["default-deny-ingress-only", "no-default-deny", "namespace-label", "namespace-prunable", "binding-allows-missing-params",
-         "grant-without-env-line", "role-grants-networkpolicies", "role-grants-traefik", "objects-outside-namespace",
+         "grant-without-env-line", "lan-grant-on-namespace-without-env-line", "role-grants-networkpolicies", "role-grants-traefik", "objects-outside-namespace",
          "substitution-source", "decryption", "other-source", "role-elsewhere", "extra-kind"],
 )
 def test_app_wiring_outside_the_contract_fails(tmp_path: Path, file: str, old: str, new: str, expected: str) -> None:
@@ -116,20 +117,42 @@ def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None
         ({"apps": ["web"], "exceptions": [{"web": "hostname grafana.env-00.example"}]}, "outside env-00.example"),
         ({"apps": ["web"], "exceptions": [{"web": "lan-port 70000/TCP"}]}, "lan-port takes"),
         ({"apps": ["web"], "exceptions": [{"web": "privileged"}, {"web": "privileged"}]}, "listed twice"),
+        ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.99.0.10/32 445/TCP"}]}, "outside the env's lan_cidrs"),
+        ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 203.0.113.0/24 443/TCP"}]}, "outside the env's lan_cidrs"),
+        ({"apps": ["web"], "exceptions": [{"web": "lan-target all 10.200.0.0/24 445/TCP"}]}, "other than all"),
+        ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.200.0.10/32"}]}, "lan-target takes"),
     ],
     ids=["not-a-label", "too-long", "duplicate", "size-in-list", "unknown-grant", "bad-exception-name", "unlisted-app",
-         "two-grants-one-line", "hostname-in-zone", "bad-lan-port", "duplicate-line"],
+         "two-grants-one-line", "hostname-in-zone", "bad-lan-port", "duplicate-line", "lan-target-off-lan",
+         "lan-target-internet", "lan-target-all", "lan-target-no-port"],
 )
 def test_env_app_list_rejects_what_it_does_not_hold(values: dict, expected: str) -> None:
-    """Rule: the app list holds names only, and each exception line one known grant for a listed app."""
-    errors = _apps.validate(values, "env-00.example")
+    """Rule: the app list holds names only, and each exception line one known grant for a listed
+    app; a lan-target range sits inside the env's LAN ranges, so it cannot open the internet."""
+    errors = _apps.validate(values, "env-00.example", ["10.200.0.0/24"])
     assert any(expected in error for error in errors), errors
+
+
+@pytest.mark.parametrize("grant", ["lan-all", "lan-target nas 10.200.0.10/32 445/TCP"])
+def test_lan_grant_needs_the_env_lan_ranges(grant: str) -> None:
+    """Rule: an env that grants a LAN item names its LAN ranges (lan_cidrs)."""
+    errors = _apps.validate({"apps": ["web"], "exceptions": [{"web": grant}]}, "env-00.example")
+    assert any("set lan_cidrs" in error for error in errors), errors
+
+
+def test_lan_target_against_an_invalid_lan_range_is_reported_not_raised() -> None:
+    """Rule: a lan_cidrs entry that is no network (reported as lan_cidrs) holds no lan-target."""
+    errors = _apps.validate({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.200.0.10/32 445/TCP"}]},
+                            "env-00.example", ["10.200.0.1/24"])
+    assert any("outside the env's lan_cidrs" in error for error in errors), errors
 
 
 def test_env_app_list_and_grants_that_fit_pass() -> None:
     """Rule: each known grant on a listed app passes."""
-    lines = [{"web": grant} for grant in ("privileged", "root", "host-network", "host-path", "hostname photos.example.org", "lan-port 8443/TCP")]
-    assert _apps.validate({"apps": ["web"], "exceptions": lines}, "env-00.example") == []
+    lines = [{"web": grant} for grant in ("privileged", "root", "host-network", "host-path", "hostname photos.example.org",
+                                          "lan-port 8443/TCP", "lan-all", "lan-target nas 10.200.0.10/32 445/TCP",
+                                          "lan-target nas 10.200.0.10/32 137/UDP", "no-uptime-check")]
+    assert _apps.validate({"apps": ["web"], "exceptions": lines}, "env-00.example", ["10.200.0.0/24"]) == []
 
 
 def _schema_errors(instance: Path) -> list[str]:

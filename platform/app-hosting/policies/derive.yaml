@@ -1,8 +1,9 @@
 # What core derives from an app's App, in that app's namespace only: its quota and the network
-# allows the file asks for. The namespace's default-deny, DNS and same-namespace allows come
-# from the trusted wiring (platform/app-hosting/app), so if this policy has not run, the app
-# gets no traffic rather than open traffic. The env name and the env's pod and service CIDRs
-# are read from annotations the wiring sets on the namespace.
+# allows the file's network section asks for. The namespace's default-deny, DNS and
+# same-namespace allows come from the trusted wiring (platform/app-hosting/app), so if this
+# policy has not run, the app gets no traffic rather than open traffic. The env name, the env's
+# pod, service and LAN ranges, and the env's LAN grants for the app are read from annotations
+# the wiring sets on the namespace, which no tenant can edit.
 # Prune stays off: deleting the policy deletes every object it generated (synchronize).
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
@@ -42,7 +43,31 @@ spec:
             jmesPath: "not_null(override.resources.memory, request.object.spec.resources.memory, '512Mi')"
         - name: internet
           variable:
-            jmesPath: "not_null(override.internet, request.object.spec.internet, `false`)"
+            jmesPath: "not_null(override.network.egress.internet, request.object.spec.network.egress.internet, `false`)"
+        # Never the internet: private, shared and link-local ranges, and the env's pod, service
+        # and LAN ranges.
+        - name: internetExcept
+          variable:
+            jmesPath: >-
+              [['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16'],
+              [notes."hosting.jarvis.io/pod-cidr", notes."hosting.jarvis.io/service-cidr"],
+              split(notes."hosting.jarvis.io/lan-cidrs" || '', ',')][] | [?@ != '']
+        - name: lanRanges
+          variable:
+            jmesPath: "split(notes.\"hosting.jarvis.io/lan-cidrs\" || '', ',')[?@ != ''] | map(&{ipBlock: {cidr: @}}, @)"
+        - name: lanAsks
+          variable:
+            jmesPath: "request.object.spec.network.egress.lan || `[]`"
+        # The env's lan-target lines ('<name> <cidr> <port>/<protocol>', comma-separated) for
+        # the targets the App lists, as egress rules.
+        - name: lanEgress
+          variable:
+            jmesPath: >-
+              split(notes."hosting.jarvis.io/lan-targets" || '', ',')[?@ != '']
+              | map(&split(@, ' '), @)
+              | [?contains(`{{ to_string(lanAsks) }}`, [0])]
+              | map(&{to: [{ipBlock: {cidr: @[1]}}],
+              ports: [{port: to_number(split(@[2], '/')[0]), protocol: split(@[2], '/')[1]}]}, @)
       generate:
         generateExisting: true
         synchronize: true
@@ -57,15 +82,16 @@ spec:
               limits.memory: "{{ memory }}"
               requests.cpu: "{{ cpu }}"
               requests.memory: "{{ memory }}"
-              services.loadbalancers: "{{ to_string(length(request.object.spec.ports[?lan] || `[]`)) }}"
+              services.loadbalancers: "{{ to_string(length(request.object.spec.network.ports || `[]`)) }}"
               services.nodeports: "0"
+    # The web address: Traefik to network.web.port.
     - name: web
       match: *app-match
       preconditions:
         all:
-          - key: "{{ type(request.object.spec.webPort) }}"
-            operator: Equals
-            value: number
+          - key: "{{ request.object.spec.network.web.port || `0` }}"
+            operator: GreaterThan
+            value: 0
       generate:
         generateExisting: true
         synchronize: true
@@ -86,10 +112,11 @@ spec:
                       matchLabels:
                         app.kubernetes.io/name: traefik
                 ports:
-                  - port: "{{ request.object.spec.webPort }}"
+                  - port: "{{ request.object.spec.network.web.port }}"
                     protocol: TCP
-    # Internet: DNS (from the wiring) plus TCP 443, not to private, shared, link-local or the
-    # env's own pod and service ranges.
+    # Internet: DNS (from the wiring) plus any port and protocol to 0.0.0.0/0, except private,
+    # shared, link-local, the env's pod and service ranges and its LAN ranges. Internet never
+    # opens the LAN or the cluster.
     - name: internet
       match: *app-match
       context: *app-context
@@ -113,24 +140,21 @@ spec:
               - to:
                   - ipBlock:
                       cidr: 0.0.0.0/0
-                      except:
-                        - 10.0.0.0/8
-                        - 172.16.0.0/12
-                        - 192.168.0.0/16
-                        - 100.64.0.0/10
-                        - 169.254.0.0/16
-                        - "{{ notes.\"hosting.jarvis.io/pod-cidr\" }}"
-                        - "{{ notes.\"hosting.jarvis.io/service-cidr\" }}"
-                ports:
-                  - port: 443
-                    protocol: TCP
-    # App to app: this side's half. Traffic flows only when the caller lists the callee under
-    # talksTo and the callee lists the caller under acceptsFrom.
-    - name: talks-to
+                      except: "{{ internetExcept }}"
+    # The whole LAN: the App asks for lan: [all] and the env grants lan-all. Any port to each of
+    # the env's LAN ranges.
+    - name: lan-all
       match: *app-match
+      context: *app-context
       preconditions:
         all:
-          - key: "{{ length(request.object.spec.talksTo || `[]`) }}"
+          - key: all
+            operator: AnyIn
+            value: "{{ lanAsks }}"
+          - key: "{{ notes.\"hosting.jarvis.io/lan-all\" || '' }}"
+            operator: Equals
+            value: "true"
+          - key: "{{ length(lanRanges) }}"
             operator: GreaterThan
             value: 0
       generate:
@@ -138,51 +162,23 @@ spec:
         synchronize: true
         apiVersion: networking.k8s.io/v1
         kind: NetworkPolicy
-        name: app-talks-to
+        name: app-lan-all
         namespace: "{{ request.object.metadata.namespace }}"
         data:
           spec:
             podSelector: {}
             policyTypes: [Egress]
             egress:
-              - to:
-                  - namespaceSelector:
-                      matchExpressions:
-                        - key: kubernetes.io/metadata.name
-                          operator: In
-                          values: "{{ map(&join('', ['app-', @]), request.object.spec.talksTo) }}"
-    - name: accepts-from
-      match: *app-match
-      preconditions:
-        all:
-          - key: "{{ length(request.object.spec.acceptsFrom || `[]`) }}"
-            operator: GreaterThan
-            value: 0
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-accepts-from
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Ingress]
-            ingress:
-              - from:
-                  - namespaceSelector:
-                      matchExpressions:
-                        - key: kubernetes.io/metadata.name
-                          operator: In
-                          values: "{{ map(&join('', ['app-', @]), request.object.spec.acceptsFrom) }}"
-    # A port the file marks lan. Its LoadBalancer Service passes admission only with the env's
-    # lan-port exception, so without one nothing outside the cluster reaches it.
+              - to: "{{ lanRanges }}"
+    # Named LAN targets: each target the App lists under egress.lan that the env grants as
+    # '<app>: lan-target <name> <cidr> <port>/<protocol>', on that port only. A target the env
+    # does not grant, or a grant the App does not ask for, opens nothing.
     - name: lan
       match: *app-match
+      context: *app-context
       preconditions:
         all:
-          - key: "{{ length(request.object.spec.ports[?lan] || `[]`) }}"
+          - key: "{{ length(lanEgress) }}"
             operator: GreaterThan
             value: 0
       generate:
@@ -195,12 +191,86 @@ spec:
         data:
           spec:
             podSelector: {}
+            policyTypes: [Egress]
+            egress: "{{ lanEgress }}"
+    # App to app: this side's half. Traffic flows only when the caller lists the callee under
+    # egress.apps and the callee lists the caller under callers.
+    - name: apps
+      match: *app-match
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.network.egress.apps || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-apps
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Egress]
+            egress:
+              - to:
+                  - namespaceSelector:
+                      matchExpressions:
+                        - key: kubernetes.io/metadata.name
+                          operator: In
+                          values: "{{ map(&join('', ['app-', @]), request.object.spec.network.egress.apps) }}"
+    - name: callers
+      match: *app-match
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.network.callers || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-callers
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchExpressions:
+                        - key: kubernetes.io/metadata.name
+                          operator: In
+                          values: "{{ map(&join('', ['app-', @]), request.object.spec.network.callers) }}"
+    # LAN ports, from any address to each target port. Their LoadBalancer Service
+    # passes admission only with the env's lan-port line, so without one nothing outside the
+    # cluster reaches them.
+    - name: ports
+      match: *app-match
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.network.ports || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-ports
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
             policyTypes: [Ingress]
             ingress:
               - from:
                   - ipBlock:
                       cidr: 0.0.0.0/0
-                ports: "{{ request.object.spec.ports[?lan].{port: port, protocol: protocol} }}"
+                ports: "{{ request.object.spec.network.ports[].{port: target, protocol: protocol} }}"
     # Backups: an app reaches the apps rest-server only once the env registers its credential
     # (platform-backups/backups-restic-app-<name>). Removing the credential removes the allow.
     - name: backups

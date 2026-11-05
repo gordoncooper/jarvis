@@ -5,7 +5,8 @@ builds its path with its postBuild values and checks what the cluster gets:
 
 - The wiring is for an app the env lists in values/apps.yaml, and the env lists no app
   without one.
-- Namespace app-<name>, labelled hosting.jarvis.io/app: <name>, kept by prune: disabled.
+- Namespace app-<name>, labelled hosting.jarvis.io/app: <name>, kept by prune: disabled, its
+  LAN-grant annotations equal to the env's lan-all and lan-target lines for the app.
 - The network baseline: default-deny (both directions, no allow), cluster-dns and
   same-namespace, and LimitRange app, all in app-<name>.
 - Bindings app-file-<name> (the app's App in app-<name>) and app-grants-<name>
@@ -32,6 +33,8 @@ from _app_file import SHIPPED_KINDS
 
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
+# Grants the wiring also writes on the namespace, where ClusterPolicy app-derive reads them.
+LAN_GRANT_KEYS = ("lan-all", "lan-targets")
 _KINDS = frozenset(
     {
         "Namespace",
@@ -130,8 +133,13 @@ def wiring_problems(app: str, docs: list[dict], grants: dict[str, str]) -> Itera
         meta = ns.get("metadata") or {}
         if (meta.get("labels") or {}).get("hosting.jarvis.io/app") != app:
             problems.append(f"Namespace {namespace}: label hosting.jarvis.io/app is {app}")
-        if (meta.get("annotations") or {}).get(_PRUNE) != "disabled":
+        annotations = meta.get("annotations") or {}
+        if annotations.get(_PRUNE) != "disabled":
             problems.append(f"Namespace {namespace}: lacks {_PRUNE}: disabled, so dropping the app could delete its volumes")
+        # app-derive opens the LAN from these, so they are the env's grants exactly.
+        for key in LAN_GRANT_KEYS:
+            if annotations.get(f"hosting.jarvis.io/{key}") != grants.get(key):
+                problems.append(f"Namespace {namespace}: annotation hosting.jarvis.io/{key} is not the env's grant {grants.get(key)!r}")
     deny = found.get(("NetworkPolicy", namespace, "default-deny"))
     deny_spec = (deny or {}).get("spec") or {}
     if deny is None or deny_spec != {"podSelector": {}, "policyTypes": ["Ingress", "Egress"]}:

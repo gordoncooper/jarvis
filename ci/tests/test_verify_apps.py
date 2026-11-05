@@ -31,7 +31,8 @@ class Cluster:
         self.ranges = [_item("LimitRange", "app-notes", "app")]
         self.bindings = [{"metadata": {"name": "app-file-notes"}}, {"metadata": {"name": "app-grants-notes"}}]
         self.grants = {"host": f"notes.apps.{SUFFIX}", "privileged": "false", "root": "false", "host-network": "false",
-                       "host-path": "false", "hostnames": "notes.example.org", "lan-ports": ""}
+                       "host-path": "false", "hostnames": "notes.example.org", "lan-ports": "",
+                       "lan-all": "false", "lan-targets": "", "no-uptime-check": "false"}
         self.hosts = [f"notes.apps.{SUFFIX}", "notes.example.org"]
         self.apps = [_item("App", "app-notes", "notes", spec={"volumes": [{"name": "cache", "backup": False}, {"name": "data", "backup": True}]})]
         self.pvcs = [_item("PersistentVolumeClaim", "app-notes", "cache", metadata={"namespace": "app-notes", "name": "cache", "annotations": {"backup": "none"}})]
@@ -65,11 +66,13 @@ def test_listed_app_with_its_baseline_and_grants_passes() -> None:
         (lambda c: c.namespaces[0]["metadata"].update(labels={}), "label hosting.jarvis.io/app"),
         (lambda c: c.bindings.pop(1), "no ValidatingAdmissionPolicyBinding app-grants-notes"),
         (lambda c: c.grants.update(privileged="true"), "not the env's exception lines"),
+        (lambda c: c.grants.update({"lan-all": "true"}), "not the env's exception lines"),
         (lambda c: setattr(c, "grants", None), "no grants ConfigMap"),
         (lambda c: c.hosts.append(f"grafana.{SUFFIX}"), "host 'grafana.env-test.example' is not"),
         (lambda c: c.ranges.clear(), "no LimitRange app"),
     ],
-    ids=["no-default-deny", "unlabelled", "no-grants-binding", "grant-without-line", "no-grants", "host-outside-apps", "no-limitrange"],
+    ids=["no-default-deny", "unlabelled", "no-grants-binding", "grant-without-line", "lan-grant-without-line", "no-grants",
+         "host-outside-apps", "no-limitrange"],
 )
 def test_app_namespace_off_its_baseline_fails(seed, expected: str) -> None:
     """Rule: each missing baseline object, an ungranted exception and a host outside .apps fail."""
