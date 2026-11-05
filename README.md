@@ -1,6 +1,6 @@
 # jarvis
 
-Infra, platform, and services for JARVIS AlphaCut (GitOps on k3s).
+Infra, platform, and services for Jarvis (GitOps on k3s).
 
 From a fresh copy to a running cluster: [docs/deploy.md](docs/deploy.md).
 
