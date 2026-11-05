@@ -518,8 +518,13 @@ def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
 
 def test_privileged_movers_only_for_an_app_with_a_credential(tmp_path: Path) -> None:
     """Rule: pvc-backup marks an app- namespace for privileged movers only once the env registers
-    the app's credential; a core namespace as before."""
-    enrollment = REPO_ROOT / "platform" / "backups" / "enrollment.yaml"
+    the app's credential; a core namespace as before. The rule as an env with app hosting on
+    renders it."""
+    from test_app_hosting import render_platform
+
+    enrollment = tmp_path / "pvc-backup.yaml"
+    enrollment.write_text(yaml.safe_dump(render_platform(tmp_path / "render", hosting=True)[("ClusterPolicy", "pvc-backup")]),
+                          encoding="utf-8")
     namespace = lambda name: {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": name}}  # noqa: E731
     marked = lambda name: {**namespace(name), "metadata": {"name": name, "annotations": {"volsync.backube/privileged-movers": "true"}}}  # noqa: E731
     registered, unregistered, core = _pvc("data", "notes"), _pvc("data", "web-demo"), _pvc("data", "x")

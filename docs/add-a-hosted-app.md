@@ -29,17 +29,25 @@ In the apps repository:
 
 In the env's repository:
 
-1. Add the name to `envs/<env>/values/apps.yaml` (names only), and `apps_git_repo_url` to `values/cluster-vars.yaml` if it is not there yet:
+1. Once per env, turn app hosting on (it is off by default): add to `envs/<env>/flux/platform-configs/kustomization.yaml`
+
+   ```yaml
+   components:
+     - ../../../../core/platform/app-hosting
+   ```
+
+   next to any `backups/app-<name>` registrations already there. Without it, env-schema refuses an app list.
+2. Add the name to `envs/<env>/values/apps.yaml` (names only), and `apps_git_repo_url` to `values/cluster-vars.yaml` if it is not there yet:
 
    ```yaml
    apps:
      - <name>
    ```
 
-2. If the app asks for a risky item in `spec.risky` or a `lan` port, add the matching exception line, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>` or `lan-port <port>/<TCP|UDP>`. Without it the cluster refuses the objects that use that item.
-3. If a volume is `backup: true`, register the app's backup credential: `make bootstrap-secrets ENV=<env> APP=app-<name> INSTANCE=<path>` ([platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md), App credentials). Until then that volume gets no backup, and `make verify` fails it.
-4. Render the wiring: `INSTANCE=<path> python3 tools/lib/render_apps.py --env <env> --output <path>/envs/<env>/flux/generated/apps.yaml`. List `generated/apps.yaml` under `resources` in `envs/<env>/flux/kustomization.yaml` once.
-5. Run `INSTANCE=<path> bash ci/run-env-checks`, then commit and push. `make verify ENV=<env>` then checks the app's namespace, network baseline, grants and hosts.
+3. If the app asks for a risky item in `spec.risky` or a `lan` port, add the matching exception line, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>` or `lan-port <port>/<TCP|UDP>`. Without it the cluster refuses the objects that use that item.
+4. If a volume is `backup: true`, register the app's backup credential: `make bootstrap-secrets ENV=<env> APP=app-<name> INSTANCE=<path>` ([platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md), App credentials). Until then that volume gets no backup, and `make verify` fails it.
+5. Render the wiring: `INSTANCE=<path> python3 tools/lib/render_apps.py --env <env> --output <path>/envs/<env>/flux/generated/apps.yaml`. List `generated/apps.yaml` under `resources` in `envs/<env>/flux/kustomization.yaml` once.
+6. Run `INSTANCE=<path> bash ci/run-env-checks`, then commit and push. `make verify ENV=<env>` then checks the app's namespace, network baseline, grants and hosts.
 
 Changing the app later needs nothing in the env: its file and `deploy/` reach the cluster from the apps repository.
 
@@ -47,3 +55,4 @@ Changing the app later needs nothing in the env: its file and `deploy/` reach th
 
 1. Remove its name (and its exception lines) from `values/apps.yaml` and render again. With no app left, delete `generated/apps.yaml` and its line instead. Commit and push. Flux prunes the app's Kustomizations, which prune its objects.
 2. Delete what `prune: disabled` kept, as the cluster admin: namespace `app-<name>` (its volumes go with it), ServiceAccount `flux-system/app-<name>`, ConfigMap `flux-system/app-<name>-grants`, GitRepositories `flux-system/app-<name>` and `app-<name>-file`, and ValidatingAdmissionPolicyBindings `app-file-<name>` and `app-grants-<name>`. Retire its backup credential as the backups contract says.
+3. With no app left, the env may turn app hosting off: remove the `components:` line for `core/platform/app-hosting`. The CRD keeps `prune: disabled`; delete it by hand once no App is left.

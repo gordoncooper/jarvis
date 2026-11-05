@@ -2,6 +2,15 @@
 
 Hosted apps are untrusted: built by the code factory or third-party, kept in the apps repository, one folder each. Core and add-ons are the trusted zone ([services/CONTRACT.md](../../services/CONTRACT.md)) and are unaffected by anything here except the cluster-wide policy objects. How to write one and turn it on: [docs/add-a-hosted-app.md](../../docs/add-a-hosted-app.md).
 
+App hosting is an optional core component, **off by default**. An env turns it on with one line in `envs/<env>/flux/platform-configs/kustomization.yaml`, the file where it turns on the apps backup server:
+
+```yaml
+components:
+  - ../../../../core/platform/app-hosting
+```
+
+Without that line the env renders none of this: no App CRD, no app admission policies or bindings, no `app-derive` policy or its Kyverno role, no `wildcard-apps` certificate or TLSStore entry, and `pvc-backup`'s `privileged-movers` as core has it. An env that lists apps with the switch off fails `ci/checks/env-schema`. The switch is a kustomize Component, not a directory under `resources:`, because it adds to two objects platform-configs already holds: TLSStore `default` (the apps wildcard) and `pvc-backup` (`privileged-movers` marks an `app-` namespace only once its credential is registered).
+
 ## Offers
 
 - **The app file.** Every app folder `<name>/` in the apps repository holds one `app.yaml`, an `App` (`hosting.jarvis.io/v1alpha1`, CRD in `crd/app-crd.yaml`). It is the whole definition of the app, per-env differences included. Nothing of an app deploys without a valid one.
@@ -43,7 +52,7 @@ Hosted apps are untrusted: built by the code factory or third-party, kept in the
 - The env lists the app in `envs/<env>/values/apps.yaml` (names only) and commits the render, `envs/<env>/flux/generated/apps.yaml`, listed in its `flux/kustomization.yaml`.
 - An app with a `backup: true` volume has its own backup credential registered by the env ([platform/backups/CONTRACT.md](../backups/CONTRACT.md), App credentials); until then that PVC gets no backup and `make verify` fails it.
 - **Tenant secrets.** No app secrets path exists yet. When one is built, it applies only Secrets sealed for the app, and never `backups-restic-app-<name>.sops.yaml`, which lives in the same `envs/<env>/secrets/app-<name>/` folder but is the backup credential `platform-backups` holds.
-- Platform: the CRD on `platform-controllers` (`crd/`), the policies on `platform-configs` (`policies/`), Kyverno's aggregated role `kyverno:app-derive`, and Traefik in `kube-system` (`app.kubernetes.io/name: traefik`).
+- Platform: the switch (`kustomization.yaml`) on the env's `platform-configs` path, which brings the CRD (`crd/`), the policies (`policies/`), Kyverno's aggregated role `kyverno:app-derive` (`kyverno-rbac.yaml`) and `wildcard-apps` (`certificate.yaml`); Kyverno and cert-manager from `platform-controllers`; Traefik in `kube-system` (`app.kubernetes.io/name: traefik`).
 
 ## Health
 
@@ -52,7 +61,8 @@ Hosted apps are untrusted: built by the code factory or third-party, kept in the
 
 ## Config
 
-- **Turn an app on:** add its name to `apps:` in `envs/<env>/values/apps.yaml`, run `python3 tools/lib/render_apps.py --env <env> --output envs/<env>/flux/generated/apps.yaml`, and list `generated/apps.yaml` in `envs/<env>/flux/kustomization.yaml`. **Turn it off:** remove the name and re-render (or, with no app left, delete the file and its line). Changing an app needs no env edit. The render holds only the env's names, lines, `apps_git_repo_url` and CIDRs; a core change to the wiring reaches the env with no re-render.
+- **Turn app hosting on:** the `components:` line above. Turn it off only once the env lists no app; the CRD and the app namespaces keep `prune: disabled` and stay until the operator deletes them.
+- **Turn an app on:** with app hosting on, add its name to `apps:` in `envs/<env>/values/apps.yaml`, run `python3 tools/lib/render_apps.py --env <env> --output envs/<env>/flux/generated/apps.yaml`, and list `generated/apps.yaml` in `envs/<env>/flux/kustomization.yaml`. **Turn it off:** remove the name and re-render (or, with no app left, delete the file and its line). Changing an app needs no env edit. The render holds only the env's names, lines, `apps_git_repo_url` and CIDRs; a core change to the wiring reaches the env with no re-render.
 - **Exception lines** go under `exceptions:` in the same file, one `- <app>: <grant>` each. A grant counts only for an app on the list whose App asks for the same item; removing the line and re-rendering removes the grant at the next admission. A custom hostname stays outside the env's `dns_suffix`. Only the env's repository can grant one: its file reaches the cluster as the grants ConfigMap the platform account applies, never through the apps repository, and a file in the app's own folder grants nothing.
 - **Per-env differences** live in the App's `spec.envs.<env>`.
 - `tools/app-check <folder>...` is the validator the apps repository's CI runs, from a checkout of this repository at a pinned commit (Python 3, PyYAML, and kustomize for a `deploy/kustomization.yaml`).
@@ -61,7 +71,8 @@ Hosted apps are untrusted: built by the code factory or third-party, kept in the
 
 - `ci/checks/app-hosting` (per env: it wires exactly the apps it lists, and each wiring gives its app the namespace and label, `default-deny` and the other baseline objects, both bindings refusing missing params, grants equal to the env's lines, and a tenant whose Role and Kustomizations stay in its namespace and sources). `ci/tests/test_app_hosting.py` seeds each failure, and env-schema's and flux-identity's app rules.
 - `ci/tests/test_app_admission.py` runs every admission rule, the derive policy and `privileged-movers` with the pinned `kyverno` CLI against good and bad objects, with the bindings and grants rendered from the real wiring, and runs `tools/app-check` on the same objects: the mover passes, a look-alike tenant Job or Pod fails, an excepted pod passes only with the env's line, a grants ConfigMap the app ships grants nothing.
-- `ci/checks/env-schema` (the app list, exception lines, `apps_git_repo_url`, the render), `ci/checks/flux-identity` (the wiring as the platform account, the app's Kustomizations as its tenant), `ci/checks/flux-prune`, `ci/checks/addons` (no add-on is named `apps`).
+- `ci/tests/test_app_hosting.py` renders `platform-controllers` and `platform-configs` with and without the switch: off holds no app-hosting object and core's `privileged-movers`; on holds every one, and nothing else differs.
+- `ci/checks/env-schema` (apps only with the switch on, the app list, exception lines, `apps_git_repo_url`, the render), `ci/checks/flux-identity` (the wiring as the platform account, the app's Kustomizations as its tenant), `ci/checks/flux-prune`, `ci/checks/addons` (no add-on is named `apps`).
 - `make verify` component `apps` (`tools/verify/apps.py`; `ci/tests/test_verify_apps.py`).
 
 ## Operations

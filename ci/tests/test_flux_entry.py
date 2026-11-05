@@ -248,16 +248,17 @@ def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list
 
 def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     """The env's platform-configs path is platform/configs plus that env's SOPS secrets,
-    and the opt-in off-host copy."""
+    and the opt-in off-host copy. Its components (app hosting, app backup registrations) are
+    env-schema's."""
     from schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
 
     base = f"envs/{env}/flux/platform-configs"
     resources = [posixpath.normpath(posixpath.join(base, item)) for item in doc.get("resources") or []]
     configs = f"{CORE_SOURCE_DIR}/platform/configs"
     errors = []
-    keys = sorted(set(doc) - {"apiVersion", "kind", "resources"})
+    keys = sorted(set(doc) - {"apiVersion", "kind", "resources", "components"})
     if keys:
-        errors.append(f"keys other than resources: {keys}")
+        errors.append(f"keys other than resources and components: {keys}")
     if resources.count(configs) != 1:
         errors.append(f"{configs} is not listed exactly once")
     others = [

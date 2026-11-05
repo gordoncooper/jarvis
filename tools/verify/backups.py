@@ -192,7 +192,7 @@ def check_offsite_copy(kubectl: Kubectl, *, now: datetime) -> None:
 @register("backups")
 def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
     env_dir = ctx.repo_root / "envs" / ctx.env
-    registered = frozenset(item for item in app_registrations(env_dir) if isinstance(item, str))
+    registered = frozenset(item for item in app_registrations(env_dir, ctx.repo_root) if isinstance(item, str))
     checks: list[tuple[int, str, object]] = [
         (20, "backups-restic present", lambda: check_secret(ctx.kubectl)),
         (

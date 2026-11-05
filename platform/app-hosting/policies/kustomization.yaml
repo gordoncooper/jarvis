@@ -1,7 +1,0 @@
-# On the platform-configs path, in every env, whether or not it hosts an app. With no app
-# namespace these policies match nothing but namespace and App writes.
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - admission.yaml
-  - derive.yaml

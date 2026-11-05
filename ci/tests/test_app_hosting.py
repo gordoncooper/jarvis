@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -151,6 +152,75 @@ def test_env_schema_requires_the_committed_render(tmp_path: Path) -> None:
     assert any("the env lists no app; remove it" in error for error in _schema_errors(instance))
     (env_dir / "flux" / _apps.GENERATED_REL).unlink()
     assert _schema_errors(instance) == []
+
+
+_APP_PIECES = {
+    ("CustomResourceDefinition", "apps.hosting.jarvis.io"),
+    ("ClusterRole", "kyverno:app-derive"),
+    ("ValidatingAdmissionPolicy", "app-identity"),
+    ("ValidatingAdmissionPolicy", "app-tenant"),
+    ("ValidatingAdmissionPolicy", "app-file"),
+    ("ValidatingAdmissionPolicy", "app-grants"),
+    ("ValidatingAdmissionPolicyBinding", "app-identity"),
+    ("ValidatingAdmissionPolicyBinding", "app-tenant"),
+    ("ClusterPolicy", "app-derive"),
+    ("Certificate", "wildcard-apps"),
+}
+
+
+def render_platform(tmp_path: Path, *, hosting: bool) -> dict[tuple[str, str], dict]:
+    """What platform-controllers and platform-configs render, with or without the switch."""
+    from support import _kustomize_build
+
+    work = tmp_path / ("on" if hosting else "off")
+    work.mkdir(parents=True)
+    rel = lambda path: os.path.relpath(REPO_ROOT / path, work)  # noqa: E731
+    listing = {"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization",
+               "resources": [rel("platform"), rel("platform/configs")]}
+    if hosting:
+        listing["components"] = [rel("platform/app-hosting")]
+    (work / "kustomization.yaml").write_text(yaml.safe_dump(listing), encoding="utf-8")
+    docs = [doc for doc in yaml.safe_load_all(_kustomize_build(str(work), root=work)) if isinstance(doc, dict)]
+    return {(doc["kind"], doc["metadata"]["name"]): doc for doc in docs}
+
+
+def _rule(policy: dict, name: str) -> dict:
+    return next(rule for rule in policy["spec"]["rules"] if rule["name"] == name)
+
+
+def test_app_hosting_off_renders_none_of_it(tmp_path: Path) -> None:
+    """Rule: without the switch, an env gets no app-hosting object, no apps certificate in the
+    TLSStore, and pvc-backup's privileged-movers as core has it."""
+    off = render_platform(tmp_path, hosting=False)
+    assert not _APP_PIECES & set(off)
+    assert "certificates" not in off[("TLSStore", "default")]["spec"]
+    enrollment = yaml.safe_load((REPO_ROOT / "platform/backups/enrollment.yaml").read_text(encoding="utf-8"))
+    assert _rule(off[("ClusterPolicy", "pvc-backup")], "privileged-movers") == _rule(enrollment, "privileged-movers")
+    assert "preconditions" not in _rule(enrollment, "privileged-movers")
+
+
+def test_app_hosting_on_renders_all_of_it(tmp_path: Path) -> None:
+    """Rule: with the switch, the env gets every app-hosting object, the apps certificate in the
+    TLSStore, and privileged-movers gated on the app's credential; nothing else changes."""
+    on, off = render_platform(tmp_path, hosting=True), render_platform(tmp_path, hosting=False)
+    assert _APP_PIECES <= set(on)
+    assert set(on) - _APP_PIECES == set(off)
+    assert on[("TLSStore", "default")]["spec"]["certificates"] == [{"secretName": "wildcard-apps-tls"}]
+    movers = _rule(on[("ClusterPolicy", "pvc-backup")], "privileged-movers")
+    assert [entry["name"] for entry in movers["context"]] == ["appCredential"]
+    assert len(movers["preconditions"]["any"]) == 2
+    others = lambda policy: [rule for rule in policy["spec"]["rules"] if rule["name"] != "privileged-movers"]  # noqa: E731
+    assert others(on[("ClusterPolicy", "pvc-backup")]) == others(off[("ClusterPolicy", "pvc-backup")])
+    for key in set(off) - {("TLSStore", "default"), ("ClusterPolicy", "pvc-backup")}:
+        assert on[key] == off[key], key
+
+
+def test_env_schema_rejects_apps_while_hosting_is_off(tmp_path: Path) -> None:
+    """Rule: an env that lists apps turns app hosting on; the list is not silently ignored."""
+    _product, instance = _tree(tmp_path)
+    configs = instance / "envs" / "env-00" / "flux" / "platform-configs" / "kustomization.yaml"
+    _edit(configs, "components:\n  - ../../../../core/platform/app-hosting\n", "")
+    assert any("app hosting is off" in error for error in _schema_errors(instance))
 
 
 def test_env_schema_requires_the_apps_repository_for_an_app(tmp_path: Path) -> None:

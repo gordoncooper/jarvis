@@ -222,8 +222,12 @@ def _assert_enrollment_on_platform_configs(root, env: str) -> None:
         if isinstance(doc, dict)
     ]
     policies = [doc for doc in docs if doc.get("kind") == "ClusterPolicy"]
-    # app-derive is the hosted apps' (platform/app-hosting); it makes no backup object.
-    assert sorted(doc["metadata"]["name"] for doc in policies) == ["app-derive", "pvc-backup"]
+    # app-derive is the hosted apps' (platform/app-hosting, when the env turns it on); it
+    # makes no backup object.
+    from schema.env import app_hosting_listed
+
+    hosting = ["app-derive"] if app_hosting_listed(root / "envs" / env, root) else []
+    assert sorted(doc["metadata"]["name"] for doc in policies) == [*hosting, "pvc-backup"]
     assert not any(doc.get("kind") == "ReplicationSource" for doc in docs)
     controllers = [
         doc

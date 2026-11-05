@@ -30,6 +30,8 @@ DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
 # An env turns the off-host copy on by listing this directory and its sealed secret in platform-configs.
 OFFSITE_COPY_DIR = "platform/backups/offsite"
 OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
+# An env turns app hosting on by listing this core Component in its platform-configs components.
+APP_HOSTING_DIR = "platform/app-hosting"
 # The root GitRepository includes the core source at this directory, so env files
 # reach core as <root>/core/... . In the product checkout, core is the checkout itself.
 CORE_SOURCE_DIR = "core"
@@ -648,19 +650,38 @@ def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
     return _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR)
 
 
-def app_registrations(env_dir: Path) -> list[object]:
-    """The app credentials an env registers: its platform-configs components, as
-    <registration dir>/<namespace>. An entry of another shape is returned as is for the check."""
+def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool:
+    path, _doc = _platform_configs(env_dir)
+    target = (Path(repo_root) / CORE_SOURCE_DIR / APP_HOSTING_DIR).resolve()
+    return isinstance(item, str) and (path.parent / item.strip()).resolve() == target
+
+
+def app_hosting_listed(env_dir: Path, repo_root: Path) -> bool:
+    """True when the env turns app hosting on: its platform-configs components list the core
+    app-hosting Component."""
+    _path, doc = _platform_configs(env_dir)
+    components = doc.get("components")
+    return isinstance(components, list) and any(
+        _app_hosting_component(env_dir, repo_root, item) for item in components
+    )
+
+
+def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[object]:
+    """The app credentials an env registers: its platform-configs components other than the
+    app-hosting switch, as <registration dir>/<namespace>. An entry of another shape is
+    returned as is for the check."""
     _path, doc = _platform_configs(env_dir)
     components = doc.get("components")
     if not isinstance(components, list):
         return []
+    root = Path(repo_root) if repo_root is not None else env_dir.parents[1]
     prefix = f"{_app_backups.REGISTRATION_DIR}/"
     return [
         item.strip().removeprefix("./").removeprefix(prefix)
         if isinstance(item, str) and item.strip().removeprefix("./").startswith(prefix)
         else item
         for item in components
+        if not _app_hosting_component(env_dir, root, item)
     ]
 
 
@@ -670,7 +691,7 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
     sealed only in its own namespace's folder."""
     rel = _display_path(env_dir / "flux" / "platform-configs" / "kustomization.yaml", repo_root)
     errors: list[str] = []
-    registered = app_registrations(env_dir)
+    registered = app_registrations(env_dir, repo_root)
     for item in registered:
         if not isinstance(item, str) or not _app_backups.APP_NAMESPACE.fullmatch(item):
             errors.append(
@@ -847,6 +868,11 @@ def _validate_apps(
     dns_suffix = cluster_vars.get("dns_suffix")
     errors.extend(f"{rel}: {problem}" for problem in _apps.validate(data, dns_suffix if isinstance(dns_suffix, str) else None))
     apps = _apps.app_names(data)
+    if apps and not app_hosting_listed(env_dir, repo_root):
+        errors.append(
+            f"{rel}: lists apps, but app hosting is off; list ../../../../{CORE_SOURCE_DIR}/{APP_HOSTING_DIR} "
+            "under components in flux/platform-configs/kustomization.yaml, or remove the list"
+        )
     if apps and not cluster_vars.get("apps_git_repo_url"):
         errors.append(f"{rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
     generated = env_dir / "flux" / _apps.GENERATED_REL

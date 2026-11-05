@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from schema.env import instance_root, resolve_cluster_vars  # noqa: E402  (puts tools/lib on the path)
+from schema.env import app_hosting_listed, instance_root, resolve_cluster_vars  # noqa: E402  (puts tools/lib on the path)
 import _apps  # noqa: E402
 
 
@@ -32,6 +32,8 @@ def render_env(env_dir: Path) -> str | None:
     problems = _apps.validate(data, cluster_vars.get("dns_suffix"))
     if problems:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(problems)}")
+    if not app_hosting_listed(env_dir, env_dir.parents[1]):
+        raise SystemExit(f"{env_dir}: lists apps, but app hosting is off (platform/app-hosting/CONTRACT.md, Config)")
     if not cluster_vars.get("apps_git_repo_url"):
         raise SystemExit(f"{env_dir}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
     return _apps.render(data, resolve_cluster_vars(cluster_vars))
