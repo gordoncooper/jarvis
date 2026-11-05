@@ -8,7 +8,7 @@ apps:
 # Exception lines, '<app>: <grant>', one grant each. A grant takes effect only for an app
 # whose app file asks for the same item. Grants: privileged, root, host-network,
 # host-path, hostname <name>, lan-port <port>/<TCP|UDP>, lan-all,
-# lan-target <name> <cidr> <port>/<TCP|UDP> (inside values/cluster-vars.yaml lan_cidrs),
-# no-uptime-check.
+# lan-target <name> <cidr> <port>/<TCP|UDP> (inside values/cluster-vars.yaml lan_cidrs).
+# One line needs no ask: no-uptime-check takes the app's web address out of the uptime check.
 exceptions:
   - lan-demo: lan-port 8080/TCP

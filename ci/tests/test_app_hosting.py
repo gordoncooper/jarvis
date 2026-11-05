@@ -140,6 +140,13 @@ def test_lan_grant_needs_the_env_lan_ranges(grant: str) -> None:
     assert any("set lan_cidrs" in error for error in errors), errors
 
 
+def test_lan_target_against_an_invalid_lan_range_is_reported_not_raised() -> None:
+    """Rule: a lan_cidrs entry that is no network (reported as lan_cidrs) holds no lan-target."""
+    errors = _apps.validate({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.200.0.10/32 445/TCP"}]},
+                            "env-00.example", ["10.200.0.1/24"])
+    assert any("outside the env's lan_cidrs" in error for error in errors), errors
+
+
 def test_env_app_list_and_grants_that_fit_pass() -> None:
     """Rule: each known grant on a listed app passes."""
     lines = [{"web": grant} for grant in ("privileged", "root", "host-network", "host-path", "hostname photos.example.org",

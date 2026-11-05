@@ -182,9 +182,22 @@ def _lan_target_problem(value: str, lan_cidrs: Sequence[str]) -> str | None:
     match = _LAN_PORT.fullmatch(port)
     if not match or not 1 <= int(match.group(1)) <= 65535:
         return usage
-    if not any(network.version == 4 and network.subnet_of(ipaddress.ip_network(lan)) for lan in lan_cidrs):
+    if not any(network.version == 4 and network.subnet_of(lan) for lan in _networks(lan_cidrs)):
         return f"lan-target range {cidr} is outside the env's {LAN_CIDRS}"
     return None
+
+
+def _networks(cidrs: Sequence[str]) -> list[ipaddress.IPv4Network]:
+    """The valid IPv4 ranges among cidrs; lan_cidrs_problems reports the others."""
+    found = []
+    for cidr in cidrs:
+        try:
+            network = ipaddress.ip_network(cidr, strict=True)
+        except ValueError:
+            continue
+        if network.version == 4:
+            found.append(network)
+    return found
 
 
 def app_names(data: dict[str, Any]) -> list[str]:
