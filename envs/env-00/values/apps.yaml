@@ -2,11 +2,11 @@
 # in its own app file in the apps repository. No list, or an empty one, runs no app.
 # This example lists the three sample apps so CI renders their wiring; a new env removes them.
 apps:
-  - web-demo
+  - hello-web
   - notes
-  - photos
+  - lan-demo
 # Exception lines, '<app>: <grant>', one grant each. A grant takes effect only for an app
 # whose app file asks for the same item. Grants: privileged, root, host-network,
 # host-path, hostname <name>, lan-port <port>/<TCP|UDP>.
 exceptions:
-  - photos: host-path
+  - lan-demo: lan-port 8080/TCP

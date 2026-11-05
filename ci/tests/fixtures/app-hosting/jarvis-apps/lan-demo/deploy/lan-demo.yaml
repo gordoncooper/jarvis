@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lan-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lan-demo
+  template:
+    metadata:
+      labels:
+        app: lan-demo
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: whoami
+          # traefik/whoami v1.12.0: echoes the request back.
+          image: docker.io/traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
+          args: ["--port", "8080"]
+          ports:
+            - name: lan
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: lan
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: lan
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lan-demo
+spec:
+  # The lan port from the app file. ServiceLB needs no node port, and the cluster
+  # refuses one.
+  type: LoadBalancer
+  allocateLoadBalancerNodePorts: false
+  selector:
+    app: lan-demo
+  ports:
+    - name: lan
+      port: 8080
+      protocol: TCP
+      targetPort: lan
