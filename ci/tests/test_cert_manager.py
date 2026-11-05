@@ -40,6 +40,8 @@ _APP_HOSTING = {
     ("ClusterRole", "", "kyverno:app-derive"),
     ("CustomResourceDefinition", "", "apps.hosting.jarvis.io"),
     ("ClusterPolicy", "", "app-derive"),
+    ("ClusterPolicy", "", "app-priority"),
+    ("PriorityClass", "", "hosted-app"),
     ("ValidatingAdmissionPolicy", "", "app-file"),
     ("ValidatingAdmissionPolicy", "", "app-grants"),
     ("ValidatingAdmissionPolicy", "", "app-identity"),

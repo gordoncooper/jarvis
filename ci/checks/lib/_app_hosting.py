@@ -6,7 +6,7 @@ builds its path with its postBuild values and checks what the cluster gets:
 - The wiring is for an app the env lists in values/apps.yaml, and the env lists no app
   without one.
 - Namespace app-<name>, labelled hosting.jarvis.io/app: <name>, kept by prune: disabled, its
-  LAN-grant annotations equal to the env's lan-all and lan-target lines for the app.
+  LAN-grant annotations equal to the env's lan-all, lan-target and lan-port lines for the app.
 - The network baseline: default-deny (both directions, no allow), cluster-dns and
   same-namespace, and LimitRange app, all in app-<name>.
 - Bindings app-file-<name> (the app's App in app-<name>) and app-grants-<name>
@@ -34,7 +34,7 @@ from _app_file import SHIPPED_KINDS
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 # Grants the wiring also writes on the namespace, where ClusterPolicy app-derive reads them.
-LAN_GRANT_KEYS = ("lan-all", "lan-targets")
+LAN_GRANT_KEYS = ("lan-all", "lan-targets", "lan-ports")
 _KINDS = frozenset(
     {
         "Namespace",

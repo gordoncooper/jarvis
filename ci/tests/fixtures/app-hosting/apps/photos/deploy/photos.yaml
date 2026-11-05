@@ -16,6 +16,8 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: photos
           image: registry.example/photos@sha256:2222222222222222222222222222222222222222222222222222222222222222
@@ -29,7 +31,7 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               memory: 256Mi
           volumeMounts:

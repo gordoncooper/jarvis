@@ -27,6 +27,8 @@ DEFAULT_SSH_USER = "ubuntu"
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 # Weekly repository check, hours away from midnight-to-01:00 backups and the 00:05/12:05 etcd copy.
 DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
+# The share of each node's memory no pod is scheduled into (the k3s role's eviction-hard).
+DEFAULT_NODE_MEMORY_RESERVE_PERCENT = 10
 # An env turns the off-host copy on by listing this directory and its sealed secret in platform-configs.
 OFFSITE_COPY_DIR = "platform/backups/offsite"
 OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
@@ -113,6 +115,7 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "llm_provider_host",
         "chrony_nts",
         "backup_check_schedule",
+        "node_memory_reserve_percent",
     }
 )
 
@@ -158,6 +161,8 @@ def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
         resolved["age_key_file"] = DEFAULT_AGE_KEY_FILE
     if "backup_check_schedule" not in resolved:
         resolved["backup_check_schedule"] = DEFAULT_BACKUP_CHECK_SCHEDULE
+    if "node_memory_reserve_percent" not in resolved:
+        resolved["node_memory_reserve_percent"] = DEFAULT_NODE_MEMORY_RESERVE_PERCENT
     return resolved
 
 
@@ -519,6 +524,10 @@ def _validate_cluster_vars(
             errors.append(f"{rel_path}: {key} must be an integer")
         elif val <= 0:
             errors.append(f"{rel_path}: {key} must be > 0")
+
+    reserve = data.get("node_memory_reserve_percent")
+    if reserve is not None and (not _is_int_not_bool(reserve) or not 0 <= reserve <= 50):
+        errors.append(f"{rel_path}: node_memory_reserve_percent must be an integer from 0 to 50")
 
     for key in ("backup_schedule", "backup_check_schedule"):
         schedule = data.get(key)

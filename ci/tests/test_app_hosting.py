@@ -59,6 +59,7 @@ _APP = "platform/app-hosting/app"
         (f"{_APP}/admission.yaml", "parameterNotFoundAction: Deny", "parameterNotFoundAction: Allow", "refusing when they are missing"),
         (f"{_APP}/admission.yaml", "host-path: \"${app_grant_host_path}\"", "host-path: \"true\"", "not the env's exception lines"),
         (f"{_APP}/namespace.yaml", "lan-all: \"${app_grant_lan_all}\"", "lan-all: \"true\"", "annotation hosting.jarvis.io/lan-all"),
+        (f"{_APP}/namespace.yaml", "lan-ports: \"${app_grant_lan_ports}\"", "lan-ports: \"443/TCP\"", "annotation hosting.jarvis.io/lan-ports"),
         (f"{_APP}/tenant.yaml", "resources: [jobs, cronjobs]", "resources: [jobs, cronjobs, networkpolicies]", "batch/networkpolicies"),
         (f"{_APP}/tenant.yaml", "  - apiGroups: [hosting.jarvis.io]", "  - apiGroups: [traefik.io]\n    resources: [ingressroutes]\n    verbs: [create]\n  - apiGroups: [hosting.jarvis.io]", "traefik.io/ingressroutes"),
         (f"{_APP}/flux.yaml", "  targetNamespace: app-${app_name}\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "  targetNamespace: default\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "objects land in app-"),
@@ -69,7 +70,8 @@ _APP = "platform/app-hosting/app"
         (f"{_APP}/kustomization.yaml", "  - flux.yaml", "  - flux.yaml\n  - extra.yaml", "holds no ClusterRole"),
     ],
     ids=["default-deny-ingress-only", "no-default-deny", "namespace-label", "namespace-prunable", "binding-allows-missing-params",
-         "grant-without-env-line", "lan-grant-on-namespace-without-env-line", "role-grants-networkpolicies", "role-grants-traefik", "objects-outside-namespace",
+         "grant-without-env-line", "lan-grant-on-namespace-without-env-line", "lan-port-on-namespace-without-env-line",
+         "role-grants-networkpolicies", "role-grants-traefik", "objects-outside-namespace",
          "substitution-source", "decryption", "other-source", "role-elsewhere", "extra-kind"],
 )
 def test_app_wiring_outside_the_contract_fails(tmp_path: Path, file: str, old: str, new: str, expected: str) -> None:
@@ -187,6 +189,8 @@ _APP_PIECES = {
     ("ValidatingAdmissionPolicyBinding", "app-identity"),
     ("ValidatingAdmissionPolicyBinding", "app-tenant"),
     ("ClusterPolicy", "app-derive"),
+    ("ClusterPolicy", "app-priority"),
+    ("PriorityClass", "hosted-app"),
     ("Certificate", "wildcard-apps"),
 }
 
@@ -212,29 +216,21 @@ def _rule(policy: dict, name: str) -> dict:
 
 
 def test_app_hosting_off_renders_none_of_it(tmp_path: Path) -> None:
-    """Rule: without the switch, an env gets no app-hosting object, no apps certificate in the
-    TLSStore, and pvc-backup's privileged-movers as core has it."""
+    """Rule: without the switch, an env gets no app-hosting object and no apps certificate in the
+    TLSStore."""
     off = render_platform(tmp_path, hosting=False)
     assert not _APP_PIECES & set(off)
     assert "certificates" not in off[("TLSStore", "default")]["spec"]
-    enrollment = yaml.safe_load((REPO_ROOT / "platform/backups/enrollment.yaml").read_text(encoding="utf-8"))
-    assert _rule(off[("ClusterPolicy", "pvc-backup")], "privileged-movers") == _rule(enrollment, "privileged-movers")
-    assert "preconditions" not in _rule(enrollment, "privileged-movers")
 
 
 def test_app_hosting_on_renders_all_of_it(tmp_path: Path) -> None:
-    """Rule: with the switch, the env gets every app-hosting object, the apps certificate in the
-    TLSStore, and privileged-movers gated on the app's credential; nothing else changes."""
+    """Rule: with the switch, the env gets every app-hosting object and the apps certificate in
+    the TLSStore; nothing else changes (pvc-backup's credential guard is core's, on or off)."""
     on, off = render_platform(tmp_path, hosting=True), render_platform(tmp_path, hosting=False)
     assert _APP_PIECES <= set(on)
     assert set(on) - _APP_PIECES == set(off)
     assert on[("TLSStore", "default")]["spec"]["certificates"] == [{"secretName": "wildcard-apps-tls"}]
-    movers = _rule(on[("ClusterPolicy", "pvc-backup")], "privileged-movers")
-    assert [entry["name"] for entry in movers["context"]] == ["appCredential"]
-    assert len(movers["preconditions"]["any"]) == 2
-    others = lambda policy: [rule for rule in policy["spec"]["rules"] if rule["name"] != "privileged-movers"]  # noqa: E731
-    assert others(on[("ClusterPolicy", "pvc-backup")]) == others(off[("ClusterPolicy", "pvc-backup")])
-    for key in set(off) - {("TLSStore", "default"), ("ClusterPolicy", "pvc-backup")}:
+    for key in set(off) - {("TLSStore", "default")}:
         assert on[key] == off[key], key
 
 

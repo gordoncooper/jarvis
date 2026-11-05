@@ -40,6 +40,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: notes
           image: registry.example/notes@sha256:1111111111111111111111111111111111111111111111111111111111111111
@@ -53,7 +55,7 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 512Mi
             limits:
               memory: 512Mi
           volumeMounts:

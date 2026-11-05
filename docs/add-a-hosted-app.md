@@ -48,7 +48,7 @@ In the apps repository:
    ```
 
    Also optional: `resources` (500m CPU, 512Mi memory for the whole app), `risky` (nothing), and `envs.<env>` to change `network.egress.internet` or `resources` in one env. Probes stay in `deploy/`.
-3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, Ingresses, PodDisruptionBudgets and HorizontalPodAutoscalers. Each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false`, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. A PVC is named like a declared volume and carries annotation `backup: none` exactly when declared `backup: false`. The Ingress host is `${app_host}`, class `traefik`, entrypoint `websecure`, with no `tls` section. A LAN port is a `LoadBalancer` Service with `allocateLoadBalancerNodePorts: false`, each port a `network.ports` entry: `port` its `listen`, `targetPort` its `target` as a number.
+3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, Ingresses, PodDisruptionBudgets and HorizontalPodAutoscalers. Pods meet Pod Security `restricted`: each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` (adding back only `NET_BIND_SERVICE`), a `seccompProfile` of `RuntimeDefault` (or `Localhost`) is set on the pod or every container, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. Each container's memory request equals its memory limit (or set the limit alone): the app reserves all the memory it may use, and a container past its limit is OOM-killed and restarted. Set no `priorityClassName`: core runs every app pod at `hosted-app`, below everything else, so core preempts it when space runs out. A PVC is named like a declared volume, carries annotation `backup: none` exactly when declared `backup: false`, and sets no `volumeName`, `dataSource` or `dataSourceRef`. The Ingress host is `${app_host}`, `ingressClassName: traefik`, with no `tls` section; of router annotations it carries only `traefik.ingress.kubernetes.io/router.entrypoints: websecure` and `traefik.ingress.kubernetes.io/router.tls: "true"`, and a Service carries no Traefik annotation. A LAN port is a `LoadBalancer` Service with `allocateLoadBalancerNodePorts: false`, each port a `network.ports` entry: `port` its `listen`, `targetPort` its `target` as a number.
 4. Run `python3 <jarvis checkout>/tools/app-check <name>`. It reports every rule the folder breaks; the apps repository's CI runs the same tool from a pinned commit of this repository.
 
 ## Turn it on in an env
@@ -62,7 +62,7 @@ In the env's repository:
      - ../../../../core/platform/app-hosting
    ```
 
-   next to any `backups/app-<name>` registrations already there. Without it, env-schema refuses an app list.
+   next to any `backups/app-<name>` registrations already there. Without it, env-schema refuses an app list. The first time, `platform-configs` may fail one apply while the new App CRD becomes known to the API server and Kyverno; its next retry, about a minute later, passes on its own.
 2. Add the name to `envs/<env>/values/apps.yaml` (names only), and `apps_git_repo_url` to `values/cluster-vars.yaml` if it is not there yet:
 
    ```yaml

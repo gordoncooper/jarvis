@@ -27,6 +27,9 @@ local_path_data: /var/lib/jarvis/local-path
 k3s_kubelet_kube_reserved: cpu=100m,memory=128Mi
 k3s_kubelet_system_reserved: cpu=100m,memory=128Mi
 k3s_kubelet_eviction_hard: memory.available<100Mi
+# The share of each node's memory no pod is scheduled into: the kubelet's
+# memory.available eviction threshold, unless the line above is larger.
+node_memory_reserve_percent: 10
 
 ntp_pools:
   - time.example

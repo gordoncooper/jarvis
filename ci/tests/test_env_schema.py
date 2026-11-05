@@ -299,6 +299,17 @@ def test_chrony_nts_must_be_a_boolean(tmp_path: Path, value: object):
     assert "chrony_nts must be true or false" in "\n".join(excinfo.value.messages)
 
 
+@pytest.mark.parametrize("value", [51, -1, "10", True])
+def test_node_memory_reserve_is_a_percent_from_0_to_50(tmp_path: Path, value: object):
+    """Rule: the node memory reserve is a whole percent from 0 to 50."""
+    cv = _valid_cluster_vars()
+    cv["node_memory_reserve_percent"] = value
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "node_memory_reserve_percent must be an integer from 0 to 50" in "\n".join(excinfo.value.messages)
+
+
 def test_repo_urls_must_share_owner_handle(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["apps_git_repo_url"] = "https://github.com/other-owner/example-apps"

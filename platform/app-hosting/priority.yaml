@@ -1,0 +1,67 @@
+# Hosted apps run below everything else. Core and add-on pods set no class and run at 0
+# (k3s's own at system-cluster-critical), so a core pod that cannot fit preempts app pods,
+# and an app pod never preempts anything: the scheduler leaves it Pending. Under memory
+# pressure the kubelet first picks pods whose usage exceeds their requests, and only then
+# goes by priority; app pods cannot exceed theirs (app-file holds memory request == limit).
+# Prune stays off with the other app-hosting objects, so a path move cannot drop the class
+# under running app pods.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: hosted-app
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+value: -1000
+globalDefault: false
+preemptionPolicy: Never
+description: Hosted apps; below every core and add-on pod, never preempts.
+---
+# Sets hosted-app on every workload an app ships, so its author need not. The admission
+# policies app-file and app-grants refuse any other class, so if Kyverno is down (Ignore) the
+# app's workloads are refused rather than run at core's priority; core requests never wait on
+# it. The VolSync controller's movers keep core's priority, as its other carve-outs do.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: app-priority
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    pod-policies.kyverno.io/autogen-controllers: none
+spec:
+  webhookConfiguration:
+    failurePolicy: Ignore
+  background: false
+  rules:
+    - name: workloads
+      match:
+        any:
+          - resources:
+              kinds: [Deployment, StatefulSet, Job]
+              namespaces: [app-*]
+      exclude: &movers
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: volsync
+                namespace: volsync
+      mutate:
+        patchStrategicMerge:
+          spec:
+            template:
+              spec:
+                priorityClassName: hosted-app
+    - name: cronjobs
+      match:
+        any:
+          - resources:
+              kinds: [CronJob]
+              namespaces: [app-*]
+      exclude: *movers
+      mutate:
+        patchStrategicMerge:
+          spec:
+            jobTemplate:
+              spec:
+                template:
+                  spec:
+                    priorityClassName: hosted-app

@@ -42,6 +42,13 @@ SHIPPED_KINDS = frozenset(
     }
 )
 _WORKLOADS = {"Deployment", "StatefulSet", "Job", "CronJob"}
+# ClusterPolicy app-priority sets it on every workload; app-file refuses another.
+PRIORITY_CLASS = "hosted-app"
+# The only router annotations an app's Ingress carries (app-file holds the same pairs).
+INGRESS_ANNOTATIONS = {
+    "traefik.ingress.kubernetes.io/router.entrypoints": "websecure",
+    "traefik.ingress.kubernetes.io/router.tls": "true",
+}
 # The CRD's CEL rules, by rule text. A rule added to the CRD fails here until it has its twin.
 _RULES = {
     "!('all' in self) || self.size() == 1": lambda value: "all" not in value or len(value) == 1,
@@ -211,38 +218,73 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
             yield f"{ref}: lands in namespace app-{name} only; leave metadata.namespace unset"
         if kind in _WORKLOADS:
             yield from _volume_problems(ref, _pod_spec(doc))
-            for item, field in _risky_uses(_pod_spec(doc)):
+            annotations = (_template(doc).get("metadata") or {}).get("annotations") or {}
+            for item, field in _risky_uses(_pod_spec(doc), annotations):
                 if not risky.get(field):
                     yield f"{ref}: uses {item}, which needs the app file's risky.{field} and the env's exception line"
+            yield from _memory_problems(ref, _pod_spec(doc))
+            if _pod_spec(doc).get("priorityClassName") not in (None, PRIORITY_CLASS):
+                yield f"{ref}: sets priorityClassName; core runs every app pod at {PRIORITY_CLASS} and refuses another class"
         for claim in _claims(doc):
             yield from _claim_problems(ref, claim, volumes)
+        annotations = metadata.get("annotations") or {}
         if kind == "Ingress":
             yield from _ingress_problems(ref, doc.get("spec") or {}, hostnames)
+            yield from _router_problems(ref, doc.get("spec") or {}, annotations)
         if kind == "Service":
             yield from _service_problems(ref, doc.get("spec") or {}, lan)
+            if any(_traefik_key(key) for key in annotations):
+                yield f"{ref}: carries no Traefik annotation"
 
 
-def _pod_spec(doc: dict) -> dict:
+def _template(doc: dict) -> dict:
     spec = doc.get("spec") or {}
     if doc.get("kind") == "CronJob":
         spec = ((spec.get("jobTemplate") or {}).get("spec")) or {}
-    return ((spec.get("template") or {}).get("spec")) or {}
+    return spec.get("template") or {}
 
 
-def _risky_uses(pod: dict) -> Iterator[tuple[str, str]]:
+def _pod_spec(doc: dict) -> dict:
+    return _template(doc).get("spec") or {}
+
+
+_SECCOMP = frozenset({"RuntimeDefault", "Localhost"})
+_SELINUX_TYPES = frozenset({"", "container_t", "container_init_t", "container_kvm_t", "container_engine_t"})
+
+
+def _beyond_restricted(pod: dict, pod_context: dict, contexts: list[dict], annotations: dict) -> bool:
+    """Whether the pod needs more than Pod Security restricted (admission's usesPrivileged)."""
+    pod_seccomp = (pod_context.get("seccompProfile") or {}).get("type") in _SECCOMP
+    selinux = [options for options in (pod_context.get("seLinuxOptions"), *(c.get("seLinuxOptions") for c in contexts)) if options]
+    return bool(
+        pod.get("hostPID") or pod.get("hostIPC") or "sysctls" in pod_context or _unconfined(pod_context)
+        or (pod_context.get("appArmorProfile") or {}).get("type") == "Unconfined"
+        or any(key.startswith("container.apparmor.security.beta.kubernetes.io/")
+               and not (value == "runtime/default" or str(value).startswith("localhost/"))
+               for key, value in annotations.items())
+        or any(options.get("type", "") not in _SELINUX_TYPES or options.get("user") or options.get("role") for options in selinux)
+        or any(
+            context.get("privileged")
+            or context.get("allowPrivilegeEscalation") is not False
+            or ((context["seccompProfile"].get("type") not in _SECCOMP) if context.get("seccompProfile") else not pod_seccomp)
+            or "ALL" not in ((context.get("capabilities") or {}).get("drop") or [])
+            or any(cap != "NET_BIND_SERVICE" for cap in (context.get("capabilities") or {}).get("add") or [])
+            or context.get("procMount", "Default") != "Default"
+            or (context.get("appArmorProfile") or {}).get("type") == "Unconfined"
+            for context in contexts
+        )
+    )
+
+
+def _risky_uses(pod: dict, annotations: dict | None = None) -> Iterator[tuple[str, str]]:
     containers = [*(pod.get("containers") or []), *(pod.get("initContainers") or [])]
     contexts = [container.get("securityContext") or {} for container in containers]
     pod_context = pod.get("securityContext") or {}
-    if pod.get("hostPID") or pod.get("hostIPC") or "sysctls" in pod_context or _unconfined(pod_context) or any(
-        context.get("privileged")
-        or context.get("allowPrivilegeEscalation") is not False
-        or _unconfined(context)
-        or any(cap != "NET_BIND_SERVICE" for cap in (context.get("capabilities") or {}).get("add") or [])
-        for context in contexts
-    ):
+    if _beyond_restricted(pod, pod_context, contexts, annotations or {}):
         yield (
-            "privileged mode, host PID or IPC, allowPrivilegeEscalation not false, added capabilities, "
-            "an unconfined seccomp profile or sysctls"
+            "more than Pod Security restricted (privileged mode, host PID or IPC, sysctls, allowPrivilegeEscalation "
+            "not false, capabilities not dropping ALL or adding more than NET_BIND_SERVICE, a seccomp profile not "
+            "RuntimeDefault or Localhost, procMount Unmasked, AppArmor unconfined, or SELinux options beyond a container type)"
         ), "privileged"
     if pod.get("hostNetwork") or any(
         port.get("hostPort") for container in containers for port in container.get("ports") or []
@@ -256,6 +298,28 @@ def _risky_uses(pod: dict) -> Iterator[tuple[str, str]]:
     )
     if pod_context.get("runAsUser") == 0 or any(context.get("runAsUser") == 0 for context in contexts) or not non_root:
         yield "root (every container needs runAsNonRoot: true and no runAsUser 0)", "root"
+
+
+_MEMORY = re.compile(r"^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|)$")
+_MEMORY_FACTOR = {"": 1, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15, "E": 10**18,
+                  "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50, "Ei": 2**60}
+
+
+def _bytes(quantity: object) -> float | str:
+    """A memory quantity in bytes, or the text itself when it is no plain quantity."""
+    match = _MEMORY.fullmatch(str(quantity).strip())
+    return float(match.group(1)) * _MEMORY_FACTOR[match.group(2)] if match else str(quantity)
+
+
+def _memory_problems(ref: str, pod: dict) -> Iterator[str]:
+    """admission's app-file: a container's memory request is its limit (a limit alone passes)."""
+    for container in [*(pod.get("containers") or []), *(pod.get("initContainers") or [])]:
+        resources = container.get("resources") or {}
+        request = (resources.get("requests") or {}).get("memory")
+        limit = (resources.get("limits") or {}).get("memory")
+        if request is not None and (limit is None or _bytes(request) != _bytes(limit)):
+            yield (f"{ref}: container {container.get('name')} requests memory {request} with limit {limit}; "
+                   "a hosted app's memory request equals its limit (or set the limit alone)")
 
 
 def _unconfined(context: dict) -> bool:
@@ -285,6 +349,10 @@ def _claims(doc: dict) -> list[dict]:
 def _claim_problems(ref: str, claim: dict, volumes: dict[str, bool]) -> Iterator[str]:
     metadata = claim.get("metadata") or {}
     claim_name = metadata.get("name")
+    spec = claim.get("spec") or {}
+    chosen = sorted(key for key in ("dataSource", "dataSourceRef") if key in spec) + (["volumeName"] if spec.get("volumeName") else [])
+    if chosen:
+        yield f"{ref}: claim {claim_name} sets {', '.join(chosen)}; the cluster provisions and binds an app's volumes"
     if claim_name not in volumes:
         yield f"{ref}: claim {claim_name} is not a volume the app file declares"
         return
@@ -304,6 +372,22 @@ def _ingress_problems(ref: str, spec: dict, hostnames: set[str]) -> Iterator[str
         host = rule.get("host")
         if host != HOST_VARIABLE and host not in hostnames:
             yield f"{ref}: host {host!r} is {HOST_VARIABLE} (<name>.apps.<dns suffix>) or one of risky.hostnames"
+
+
+def _traefik_key(key: str) -> bool:
+    return key.startswith("traefik.") or "traefik.io/" in key
+
+
+def _router_problems(ref: str, spec: dict, annotations: dict) -> Iterator[str]:
+    if spec.get("ingressClassName") != "traefik":
+        yield f"{ref}: sets ingressClassName: traefik"
+    if annotations.get("traefik.ingress.kubernetes.io/router.entrypoints") != "websecure":
+        yield f"{ref}: sets annotation traefik.ingress.kubernetes.io/router.entrypoints: websecure (no plain-HTTP route)"
+    for key, value in annotations.items():
+        router = _traefik_key(key) or "ingress.kubernetes.io/" in key or key == "kubernetes.io/ingress.class"
+        if router and INGRESS_ANNOTATIONS.get(key) != str(value):
+            yield (f"{ref}: annotation {key} is not allowed; of router annotations an app's Ingress carries only "
+                   + " and ".join(f"{k}: {v!r}" for k, v in INGRESS_ANNOTATIONS.items()))
 
 
 def _service_problems(ref: str, spec: dict, lan: dict[tuple[int, str], int]) -> Iterator[str]:

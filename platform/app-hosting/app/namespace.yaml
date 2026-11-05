@@ -1,5 +1,6 @@
 # The app's namespace. ClusterPolicy app-derive reads the env, the env's CIDRs and LAN ranges,
-# and the env's LAN grants for this app (the same values as its grants ConfigMap) from its
+# and the env's LAN grants for this app (lan-all, lan-target and lan-port, the same values as
+# its grants ConfigMap) from its
 # annotations; no tenant can edit a Namespace. Prune stays off: removing the app from the
 # env's list keeps the namespace and its volumes until the operator deletes them.
 # Pod Security warns and audits at restricted; app-file and app-grants enforce the baseline,
@@ -21,3 +22,4 @@ metadata:
     hosting.jarvis.io/lan-cidrs: "${app_lan_cidrs}"
     hosting.jarvis.io/lan-all: "${app_grant_lan_all}"
     hosting.jarvis.io/lan-targets: "${app_grant_lan_targets}"
+    hosting.jarvis.io/lan-ports: "${app_grant_lan_ports}"

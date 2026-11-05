@@ -68,6 +68,16 @@ spec:
               | [?contains(`{{ to_string(lanAsks) }}`, [0])]
               | map(&{to: [{ipBlock: {cidr: @[1]}}],
               ports: [{port: to_number(split(@[2], '/')[0]), protocol: split(@[2], '/')[1]}]}, @)
+        # The env's lan-port lines ('<listen>/<protocol>', comma-separated), and the target port
+        # of each network.ports entry they grant.
+        - name: lanPortGrants
+          variable:
+            jmesPath: "split(notes.\"hosting.jarvis.io/lan-ports\" || '', ',')[?@ != '']"
+        - name: lanPorts
+          variable:
+            jmesPath: >-
+              (request.object.spec.network.ports || `[]`)[?contains(`{{ to_string(lanPortGrants) }}`,
+              join('/', [to_string(listen), protocol]))].{port: target, protocol: protocol}
       generate:
         generateExisting: true
         synchronize: true
@@ -245,14 +255,20 @@ spec:
                         - key: kubernetes.io/metadata.name
                           operator: In
                           values: "{{ map(&join('', ['app-', @]), request.object.spec.network.callers) }}"
-    # LAN ports, from any address to each target port. Their LoadBalancer Service
-    # passes admission only with the env's lan-port line, so without one nothing outside the
-    # cluster reaches them.
+    # LAN ports: each network.ports entry the env grants as '<app>: lan-port <listen>/<protocol>',
+    # from any address to its target port; an entry the env does not grant opens nothing. The
+    # source stays any address because ServiceLB's path rewrites it: the hostPort path arrives
+    # from its own pod in kube-system, and kube-proxy's path is masqueraded, on a multi-node
+    # cluster to the forwarding node's address inside the pod range. Other apps' pods stay out
+    # on their own side: every app namespace denies egress by default, and none of the allows
+    # above reaches the pod range except the apps both files list. An app granted the whole LAN,
+    # or a LAN target holding a node, comes in through a node's LAN address like any LAN device.
     - name: ports
       match: *app-match
+      context: *app-context
       preconditions:
         all:
-          - key: "{{ length(request.object.spec.network.ports || `[]`) }}"
+          - key: "{{ length(lanPorts) }}"
             operator: GreaterThan
             value: 0
       generate:
@@ -270,7 +286,7 @@ spec:
               - from:
                   - ipBlock:
                       cidr: 0.0.0.0/0
-                ports: "{{ request.object.spec.network.ports[].{port: target, protocol: protocol} }}"
+                ports: "{{ lanPorts }}"
     # Backups: an app reaches the apps rest-server only once the env registers its credential
     # (platform-backups/backups-restic-app-<name>). Removing the credential removes the allow.
     - name: backups

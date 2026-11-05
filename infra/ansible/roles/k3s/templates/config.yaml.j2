@@ -15,4 +15,4 @@ etcd-snapshot-dir: {{ backup_path }}/etcd-snapshots
 kubelet-arg:
   - "kube-reserved={{ jarvis_host_kube_reserved | default('') or k3s_kubelet_kube_reserved }}"
   - "system-reserved={{ jarvis_host_system_reserved | default('') or k3s_kubelet_system_reserved }}"
-  - "eviction-hard={{ jarvis_host_eviction_hard | default('') or k3s_kubelet_eviction_hard }}"
+  - "eviction-hard={{ (jarvis_host_eviction_hard | default('') or k3s_kubelet_eviction_hard) | with_memory_reserve(ansible_memtotal_mb, node_memory_reserve_percent | default(10)) }}"

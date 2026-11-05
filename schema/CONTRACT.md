@@ -74,7 +74,8 @@ A required key that is present but null counts as unset and fails.
 | `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
 | `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
 | `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
-| `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. |
+| `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. Its `memory.available` is raised to the node memory reserve below when that is larger. |
+| `node_memory_reserve_percent` | no | Whole number from 0 to 50; default `10`. The share of every node's memory no pod is scheduled into: headroom for pods that grow past their requests. The k3s role renders it as the kubelet's `memory.available<N%` hard eviction threshold. The kubelet subtracts it from allocatable; below it, the kubelet evicts pods whose usage exceeds their requests first, by priority among them, and only then pods within their requests, lowest priority first, before the kernel's OOM killer has to act. The env's or the host's `k3s_kubelet_eviction_hard` keeps its own `memory.available` when that is larger, compared on the node's memory. `kube-reserved` and `system-reserved` are unchanged and come on top. `0` leaves `eviction-hard` as written. Host-only (Ansible). |
 
 ### `inventory/hosts.yml`
 
@@ -89,7 +90,7 @@ Each host is a mapping with `node_roles` and the optional keys in the table. No 
 | `ssh_user` | no | SSH user for this host; overrides env `ssh_user`. Non-empty string. |
 | `k3s_kubelet_kube_reserved` | no | Host kubelet `kube-reserved`; overrides the env value. Non-empty string. |
 | `k3s_kubelet_system_reserved` | no | Host kubelet `system-reserved`; overrides the env value. Non-empty string. |
-| `k3s_kubelet_eviction_hard` | no | Host kubelet `eviction-hard`; overrides the env value. Non-empty string. |
+| `k3s_kubelet_eviction_hard` | no | Host kubelet `eviction-hard`; overrides the env value. Non-empty string. The env's node memory reserve still applies to it. |
 
 ### Node roles and labels
 
