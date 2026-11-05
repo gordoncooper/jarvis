@@ -1,6 +1,6 @@
 # Add a hosted app
 
-A hosted app lives in the apps repository, one folder per app, and is untrusted: core decides what it may do, and the cluster holds it to that. The rules are in [platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md). [ci/tests/fixtures/app-hosting/apps/](../ci/tests/fixtures/app-hosting/apps/) holds three complete examples: a plain web app, a stateful one, and one that asks for a risky item.
+A hosted app lives in the apps repository, one folder per app, and is untrusted: core decides what it may do, and the cluster holds it to that. The rules are in [platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md). [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtures/app-hosting/jarvis-apps/) holds copies of the three examples in the apps repository (`hello-web`, `notes`, `lan-demo`), which CI checks: a plain web app, a stateful one, and one that asks for a risky item.
 
 ## Write it
 

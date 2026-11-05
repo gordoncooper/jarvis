@@ -1,0 +1,8 @@
+apiVersion: hosting.jarvis.io/v1alpha1
+kind: App
+metadata:
+  name: hello-web
+spec:
+  # Plain defaults: no volumes, no internet, 500m CPU and 512Mi for the whole app.
+  webPort: 8080
+  volumes: []

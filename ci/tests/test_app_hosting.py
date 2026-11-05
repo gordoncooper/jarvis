@@ -86,11 +86,11 @@ def test_listed_app_without_wiring_and_wiring_without_listing_fail(tmp_path: Pat
     """Rule: the env runs exactly the apps it lists."""
     _product, instance = _tree(tmp_path)
     values = instance / "envs" / "env-00" / _apps.APPS_VALUES
-    _edit(values, "  - photos\n", "  - photos\n  - extra\n")
-    _edit(values, "  - web-demo\n", "")
+    _edit(values, "  - lan-demo\n", "  - lan-demo\n  - extra\n")
+    _edit(values, "  - hello-web\n", "")
     messages = _messages(instance)
     assert any("lists extra, and the flux tree has no app-extra-wiring" in item for item in messages), messages
-    assert any("wires app web-demo, which values/apps.yaml does not list" in item for item in messages), messages
+    assert any("wires app hello-web, which values/apps.yaml does not list" in item for item in messages), messages
 
 
 def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None:
@@ -143,9 +143,9 @@ def test_env_schema_requires_the_committed_render(tmp_path: Path) -> None:
     _product, instance = _tree(tmp_path)
     env_dir = instance / "envs" / "env-00"
     assert _schema_errors(instance) == []
-    _edit(env_dir / _apps.APPS_VALUES, "  - photos: host-path\n", "  - photos: privileged\n")
+    _edit(env_dir / _apps.APPS_VALUES, "  - lan-demo: lan-port 8080/TCP\n", "  - lan-demo: privileged\n")
     assert any("does not match" in error for error in _schema_errors(instance))
-    _edit(env_dir / _apps.APPS_VALUES, "  - photos: privileged\n", "  - photos: host-path\n")
+    _edit(env_dir / _apps.APPS_VALUES, "  - lan-demo: privileged\n", "  - lan-demo: lan-port 8080/TCP\n")
     _edit(env_dir / "flux" / "kustomization.yaml", "  - generated/apps.yaml\n", "")
     assert any("resources lists generated/apps.yaml" in error for error in _schema_errors(instance))
     (env_dir / _apps.APPS_VALUES).write_text("apps: []\n", encoding="utf-8")
