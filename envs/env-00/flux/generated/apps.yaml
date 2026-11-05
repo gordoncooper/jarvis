@@ -20,6 +20,7 @@ spec:
   postBuild:
     substitute:
       app_name: hello-web
+      quote: '"'
       app_grant_privileged: 'false'
       app_grant_root: 'false'
       app_grant_host_network: 'false'
@@ -56,6 +57,7 @@ spec:
   postBuild:
     substitute:
       app_name: notes
+      quote: '"'
       app_grant_privileged: 'false'
       app_grant_root: 'false'
       app_grant_host_network: 'false'
@@ -92,6 +94,7 @@ spec:
   postBuild:
     substitute:
       app_name: lan-demo
+      quote: '"'
       app_grant_privileged: 'false'
       app_grant_root: 'false'
       app_grant_host_network: 'false'

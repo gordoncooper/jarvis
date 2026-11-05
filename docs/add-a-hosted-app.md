@@ -80,5 +80,5 @@ Changing the app later needs nothing in the env: its file and `deploy/` reach th
 ## Turn it off
 
 1. Remove its name (and its exception lines) from `values/apps.yaml` and render again. With no app left, delete `generated/apps.yaml` and its line instead. Commit and push. Flux prunes the app's Kustomizations, which prune its objects.
-2. Delete what `prune: disabled` kept, as the cluster admin: namespace `app-<name>` (its volumes go with it), ServiceAccount `flux-system/app-<name>`, ConfigMap `flux-system/app-<name>-grants`, GitRepositories `flux-system/app-<name>` and `app-<name>-file`, and ValidatingAdmissionPolicyBindings `app-file-<name>` and `app-grants-<name>`. Retire its backup credential as the backups contract says.
+2. Delete what `prune: disabled` kept, as the cluster admin: namespace `app-<name>` (its volumes go with it), ServiceAccount `flux-system/app-<name>` and GitRepositories `flux-system/app-<name>` and `app-<name>-file`. Retire its backup credential as the backups contract says.
 3. With no app left, the env may turn app hosting off: remove the `components:` line for `core/platform/app-hosting`. The CRD keeps `prune: disabled`; delete it by hand once no App is left.

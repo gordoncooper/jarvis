@@ -6,12 +6,10 @@ make verify runs this component only for an env whose values/apps.yaml lists an 
 from __future__ import annotations
 
 from lib import _apps
-from lib._env import json_object
 
 from verify.common import CheckError, CheckWarning, Context, Kubectl, items
 from verify.registry import register
 
-FLUX_NAMESPACE = "flux-system"
 BASELINE_POLICIES = ("default-deny", "cluster-dns", "same-namespace")
 
 
@@ -25,16 +23,16 @@ def _key(item: dict) -> tuple[str, str]:
 
 
 def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None:
-    """Every listed app's namespace carries its label, network baseline, LimitRange and both
-    admission bindings; its grants hold exactly the env's exception lines; every Ingress host in
-    it is <name>.apps.<dns suffix> or a granted hostname. An app- namespace the env no longer
-    lists is reported."""
+    """The cluster-wide admission bindings exist. Every listed app's namespace carries its label,
+    network baseline and LimitRange; its annotations hold exactly the env's exception lines;
+    every Ingress host in it is <name>.apps.<dns suffix> or a granted hostname. An app- namespace
+    the env no longer lists is reported."""
     namespaces = {_key(item)[1]: item for item in _list(kubectl, "namespaces", "list namespaces")}
     policies = {_key(item) for item in _list(kubectl, "networkpolicies", "list NetworkPolicies")}
     ranges = {_key(item) for item in _list(kubectl, "limitranges", "list LimitRanges")}
     bindings = {_key(item)[1] for item in _list(kubectl, "validatingadmissionpolicybindings", "list admission bindings")}
     ingresses = _list(kubectl, "ingresses", "list Ingresses")
-    problems: list[str] = []
+    problems = [f"no ValidatingAdmissionPolicyBinding {policy}" for policy in ("app-file", "app-grants") if policy not in bindings]
     listed = _apps.app_names(data)
     for app in listed:
         namespace = f"app-{app}"
@@ -42,21 +40,17 @@ def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None
         if found is None:
             problems.append(f"{namespace}: no namespace")
             continue
-        if ((found.get("metadata") or {}).get("labels") or {}).get("hosting.jarvis.io/app") != app:
+        meta = found.get("metadata") or {}
+        if (meta.get("labels") or {}).get("hosting.jarvis.io/app") != app:
             problems.append(f"{namespace}: label hosting.jarvis.io/app is not {app}")
         problems.extend(f"{namespace}: no NetworkPolicy {name}" for name in BASELINE_POLICIES if (namespace, name) not in policies)
         if (namespace, "app") not in ranges:
             problems.append(f"{namespace}: no LimitRange app")
-        problems.extend(f"{namespace}: no ValidatingAdmissionPolicyBinding {policy}-{app}"
-                        for policy in ("app-file", "app-grants") if f"{policy}-{app}" not in bindings)
-        proc = kubectl(["get", "configmap", f"app-{app}-grants", "-n", FLUX_NAMESPACE, "-o", "json"])
-        grants = (json_object(proc, f"read {FLUX_NAMESPACE}/app-{app}-grants").get("data") or {}) if proc.returncode == 0 else None
-        if grants is None:
-            problems.append(f"{namespace}: no grants ConfigMap {FLUX_NAMESPACE}/app-{app}-grants")
-            continue
+        annotations = meta.get("annotations") or {}
+        for key, value in _apps.grant_annotations(data, app, dns_suffix).items():
+            if annotations.get(key) != value:
+                problems.append(f"{namespace}: annotation {key} is {annotations.get(key)!r}, not the env's {value!r}")
         want = _apps.grant_data(data, app, dns_suffix)
-        if grants != want:
-            problems.append(f"{namespace}: grants {grants} are not the env's exception lines {want}")
         allowed = {want["host"], *filter(None, want["hostnames"].split(","))}
         for ingress in ingresses:
             if _key(ingress)[0] != namespace:

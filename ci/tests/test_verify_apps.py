@@ -26,13 +26,14 @@ def _item(kind: str, namespace: str, name: str, **body: object) -> dict:
 class Cluster:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
-        self.namespaces = [{"metadata": {"name": "app-notes", "labels": {"hosting.jarvis.io/app": "notes"}}}]
+        grants = {"host": f"notes.apps.{SUFFIX}", "privileged": "false", "root": "false", "host-network": "false",
+                  "host-path": "false", "hostnames": "notes.example.org", "lan-ports": "",
+                  "lan-all": "false", "lan-targets": "", "no-uptime-check": "false"}
+        self.namespaces = [{"metadata": {"name": "app-notes", "labels": {"hosting.jarvis.io/app": "notes"},
+                                         "annotations": {f"hosting.jarvis.io/{key}": value for key, value in grants.items()}}}]
         self.policies = [_item("NetworkPolicy", "app-notes", name) for name in ("default-deny", "cluster-dns", "same-namespace")]
         self.ranges = [_item("LimitRange", "app-notes", "app")]
-        self.bindings = [{"metadata": {"name": "app-file-notes"}}, {"metadata": {"name": "app-grants-notes"}}]
-        self.grants = {"host": f"notes.apps.{SUFFIX}", "privileged": "false", "root": "false", "host-network": "false",
-                       "host-path": "false", "hostnames": "notes.example.org", "lan-ports": "",
-                       "lan-all": "false", "lan-targets": "", "no-uptime-check": "false"}
+        self.bindings = [{"metadata": {"name": "app-file"}}, {"metadata": {"name": "app-grants"}}]
         self.hosts = [f"notes.apps.{SUFFIX}", "notes.example.org"]
         self.apps = [_item("App", "app-notes", "notes", spec={"volumes": [{"name": "cache", "backup": False}, {"name": "data", "backup": True}]})]
         self.pvcs = [_item("PersistentVolumeClaim", "app-notes", "cache", metadata={"namespace": "app-notes", "name": "cache", "annotations": {"backup": "none"}})]
@@ -47,13 +48,12 @@ class Cluster:
         }
         if argv[0] == "get" and argv[1] in lists:
             return CompletedProcess(argv, 0, json.dumps({"items": lists[argv[1]]}), "")
-        if argv[:3] == ["get", "configmap", "app-notes-grants"] and self.grants is not None:
-            return CompletedProcess(argv, 0, json.dumps({"data": self.grants}), "")
         return CompletedProcess(argv, 1, "", "NotFound")
 
 
 def test_listed_app_with_its_baseline_and_grants_passes() -> None:
-    """Rule: a listed app's namespace with its baseline, bindings and the env's grants passes, read-only."""
+    """Rule: a listed app's namespace with its baseline and the env's grants, under the
+    cluster-wide bindings, passes, read-only."""
     cluster = Cluster()
     check_app_baseline(cluster.kubectl, data=ENV, dns_suffix=SUFFIX)
     assert all(call[0] == "get" for call in cluster.calls)
@@ -64,14 +64,14 @@ def test_listed_app_with_its_baseline_and_grants_passes() -> None:
     [
         (lambda c: c.policies.pop(0), "no NetworkPolicy default-deny"),
         (lambda c: c.namespaces[0]["metadata"].update(labels={}), "label hosting.jarvis.io/app"),
-        (lambda c: c.bindings.pop(1), "no ValidatingAdmissionPolicyBinding app-grants-notes"),
-        (lambda c: c.grants.update(privileged="true"), "not the env's exception lines"),
-        (lambda c: c.grants.update({"lan-all": "true"}), "not the env's exception lines"),
-        (lambda c: setattr(c, "grants", None), "no grants ConfigMap"),
+        (lambda c: c.bindings.pop(1), "no ValidatingAdmissionPolicyBinding app-grants"),
+        (lambda c: c.namespaces[0]["metadata"]["annotations"].update({"hosting.jarvis.io/privileged": "true"}), "annotation hosting.jarvis.io/privileged"),
+        (lambda c: c.namespaces[0]["metadata"]["annotations"].update({"hosting.jarvis.io/lan-all": "true"}), "annotation hosting.jarvis.io/lan-all"),
+        (lambda c: c.namespaces[0]["metadata"].pop("annotations"), "annotation hosting.jarvis.io/host "),
         (lambda c: c.hosts.append(f"grafana.{SUFFIX}"), "host 'grafana.env-test.example' is not"),
         (lambda c: c.ranges.clear(), "no LimitRange app"),
     ],
-    ids=["no-default-deny", "unlabelled", "no-grants-binding", "grant-without-line", "lan-grant-without-line", "no-grants",
+    ids=["no-default-deny", "unlabelled", "no-grants-binding", "grant-without-line", "lan-grant-without-line", "no-annotations",
          "host-outside-apps", "no-limitrange"],
 )
 def test_app_namespace_off_its_baseline_fails(seed, expected: str) -> None:

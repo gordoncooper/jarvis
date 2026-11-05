@@ -31,6 +31,9 @@ jobs:
       - name: Install pinned CLIs and Python test deps
         run: make deps
 
+      - name: Fetch the loopback API server for the admission test
+        run: ci/fetch-test-apiserver
+
       - name: Run ci/checks
         env:
           OWNER_NAME: ${{ vars.OWNER_NAME }}

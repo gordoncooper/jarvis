@@ -48,6 +48,8 @@ _APP_HOSTING = {
     ("ValidatingAdmissionPolicy", "", "app-tenant"),
     ("ValidatingAdmissionPolicyBinding", "", "app-identity"),
     ("ValidatingAdmissionPolicyBinding", "", "app-tenant"),
+    ("ValidatingAdmissionPolicyBinding", "", "app-file"),
+    ("ValidatingAdmissionPolicyBinding", "", "app-grants"),
 }
 
 
