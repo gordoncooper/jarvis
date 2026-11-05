@@ -262,7 +262,7 @@ spec:
         (object.kind == 'PersistentVolumeClaim' ? [object] :
          object.kind == 'StatefulSet' && has(object.spec.volumeClaimTemplates) ? object.spec.volumeClaimTemplates : []
         ).all(claim,
-          (object.kind == 'PersistentVolumeClaim' &&
+          (object.kind == 'PersistentVolumeClaim' && request.operation == 'UPDATE' &&
            request.userInfo.username in ['system:serviceaccount:kube-system:persistent-volume-binder', 'system:kube-controller-manager'] &&
            variables.volsyncOwned) ||
           (params.spec.volumes.exists(v,
