@@ -1,0 +1,9 @@
+# The add-on's wiring. An env turns it on by listing `hello` under spec.components
+# of its services Kustomization. The services stage applies these objects as the
+# platform account; the add-on's own objects run as addon-hello.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - namespace.yaml
+  - tenant.yaml
+  - flux.yaml

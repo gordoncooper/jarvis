@@ -31,10 +31,22 @@ def test_component_root_without_contract_fails(tmp_path: Path):
 
 
 def test_non_component_directory_ignored(tmp_path: Path):
+    """Folders inside an add-on are its own; only the add-on root needs the contract."""
     _listed_roots(tmp_path)
-    (tmp_path / "services" / "hermes" / "core" / "skills" / "geo").mkdir(parents=True)
+    (tmp_path / "services" / "widget" / "app" / "skills" / "geo").mkdir(parents=True)
+    for rel in ("services", "services/widget"):
+        (tmp_path / rel / "CONTRACT.md").write_text("# CONTRACT\n", encoding="utf-8")
 
     assert missing_contract_roots(tmp_path) == []
+
+
+def test_addon_and_slot_without_contract_fail(tmp_path: Path):
+    """Every add-on root, every slot, and the add-on contract itself have CONTRACT.md."""
+    _listed_roots(tmp_path)
+    (tmp_path / "services" / "widget").mkdir(parents=True)
+    (tmp_path / "services" / "slots" / "chat-bot").mkdir(parents=True)
+
+    assert missing_contract_roots(tmp_path) == ["services", "services/slots/chat-bot", "services/widget"]
 
 
 def test_undiscovered_platform_child_without_contract_fails(tmp_path: Path):

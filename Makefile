@@ -22,7 +22,7 @@ help:
 	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339, NODE)"
 	@echo "  make restore-all        Restore all PVCs (ENV required; optional AS_OF=RFC3339, RETIRE, ACCEPT_EMPTY, NODE)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password)"
-	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required)"
+	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required; NAMESPACE=<ns> for an add-on's Secret)"
 	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
 	@echo "  INSTANCE=<path>         Instance checkout that holds envs/<env> and its .sops.yaml (default: this checkout)"
 	@echo
@@ -88,9 +88,9 @@ seal:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
 	@if [ -n "$(FILE)" ]; then \
-		"$(VENV)/bin/python" tools/seal --env "$(ENV)" --name "$(NAME)" "$(FILE)"; \
+		"$(VENV)/bin/python" tools/seal --env "$(ENV)" --name "$(NAME)" $(if $(NAMESPACE),--namespace "$(NAMESPACE)") "$(FILE)"; \
 	else \
-		"$(VENV)/bin/python" tools/seal --env "$(ENV)" --name "$(NAME)"; \
+		"$(VENV)/bin/python" tools/seal --env "$(ENV)" --name "$(NAME)" $(if $(NAMESPACE),--namespace "$(NAMESPACE)"); \
 	fi
 
 site:

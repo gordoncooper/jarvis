@@ -805,6 +805,11 @@ def _copy_flux_entry(env: Path) -> None:
         path.write_text(text.replace(f"envs/{EXAMPLE_ENV}/", f"envs/{env.name}/"), encoding="utf-8")
     # No off-host copy unless a test lists it.
     (env / "flux" / "platform-configs" / "kustomization.yaml").write_text("resources: []\n", encoding="utf-8")
+    # A new env starts core-only, as docs/deploy.md has a copy drop the example's add-on list.
+    services = env / "flux" / "kustomizations" / "services.yaml"
+    doc = yaml.safe_load(services.read_text(encoding="utf-8"))
+    doc["spec"].pop("components", None)
+    services.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
 def test_missing_flux_entry_file_fails(tmp_path: Path) -> None:

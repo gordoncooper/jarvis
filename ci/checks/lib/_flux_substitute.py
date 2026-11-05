@@ -3,7 +3,8 @@
 kustomize-controller runs with StrictPostBuildSubstitutions, so an unknown
 key fails only at reconcile. For each env with a flux/ tree, this builds that
 tree, reads the keys each Flux Kustomization's postBuild gets from
-`substitute` and `substituteFrom`, then builds the Kustomization's path and
+`substitute` and `substituteFrom`, then builds the Kustomization's path (with
+its components, and the add-on Kustomizations on the services stage's path) and
 checks every ${name} in it, defaults included. As in Flux, `$${...}` is a
 literal and objects labelled or annotated substitute: disabled are skipped.
 """
@@ -15,9 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from _manifests import example_platform_configs, kustomize_build, namespace_of, ref_of
+from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
 
-_FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _SUBSTITUTE_KEY = "kustomize.toolkit.fluxcd.io/substitute"
 # Each `$$` is a literal `$`, so a variable starts after an odd run of `$`.
 _REFERENCE = re.compile(r"(?<!\$)(?:\$\$)*\$\{#?([_A-Za-z][_A-Za-z0-9]*)")
@@ -44,8 +44,8 @@ def scan_flux_substitute(repo_root: Path | str) -> list[FluxSubstituteViolation]
         if not env_docs:
             violations.append(FluxSubstituteViolation(env_rel, "flux tree builds to no objects"))
             continue
-        for kustomization in env_docs:
-            violations.extend(_kustomization_violations(root, env_rel, kustomization, env_docs))
+        for path in flux_paths(root, env_rel, env_docs):
+            violations.extend(_kustomization_violations(env_rel, path, env_docs))
     return sorted(violations, key=lambda item: (item.path, item.message))
 
 
@@ -54,13 +54,11 @@ def format_violations(violations: Iterable[FluxSubstituteViolation]) -> list[str
 
 
 def _kustomization_violations(
-    root: Path, env_rel: str, doc: dict, env_docs: list[dict]
+    env_rel: str, path: FluxPath, env_docs: list[dict]
 ) -> list[FluxSubstituteViolation]:
-    api = doc.get("apiVersion")
+    doc = path.kustomization
     spec = doc.get("spec")
-    if doc.get("kind") != "Kustomization" or not isinstance(api, str):
-        return []
-    if not api.startswith(_FLUX_KUSTOMIZATION_API) or not isinstance(spec, dict):
+    if not isinstance(spec, dict):
         return []
     post_build = spec.get("postBuild")
     if not isinstance(post_build, dict) or not (
@@ -70,15 +68,9 @@ def _kustomization_violations(
     ref = ref_of(doc)
     keys, problems = _published_keys(post_build, namespace_of(doc), env_docs)
     violations = [FluxSubstituteViolation(env_rel, f"{ref}: {problem}") for problem in problems]
-    path = spec.get("path")
-    if not isinstance(path, str) or not path.strip():
-        return violations + [FluxSubstituteViolation(env_rel, f"{ref}: spec.path is unset")]
-    if example_platform_configs(env_rel, path):
-        return violations
-    docs, error = kustomize_build(root, path.strip().removeprefix("./"))
-    if error:
-        return violations + [FluxSubstituteViolation(env_rel, f"{ref}: {error}")]
-    for item in docs:
+    if path.error:
+        return violations + [FluxSubstituteViolation(env_rel, f"{ref}: {path.error}")]
+    for item in path.docs:
         if _substitute_disabled(item):
             continue
         for name in sorted(set(_references(item)) - keys):

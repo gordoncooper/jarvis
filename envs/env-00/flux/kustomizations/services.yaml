@@ -1,3 +1,9 @@
+# The services stage applies each add-on's wiring from core: its namespaces, its
+# tenant account and Role, and its own Kustomizations, which run as that account.
+# It creates namespaces and bindings, so it runs as the platform account.
+# An env turns an add-on on by listing its folder under core/services in
+# spec.components, and off by removing the line. With none listed the env is core-only.
+# This example lists the sample add-on so CI renders it; a new env removes the list.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -8,12 +14,14 @@ spec:
   retryInterval: 1m
   path: ./core/services
   prune: true
-  serviceAccountName: flux-services
+  serviceAccountName: flux-platform
   sourceRef:
     kind: GitRepository
     name: flux-system
   dependsOn:
     - name: platform-configs
+  components:
+    - hello
   postBuild:
     substituteFrom:
       - kind: ConfigMap

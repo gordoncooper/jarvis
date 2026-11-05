@@ -15,6 +15,36 @@ def test_bootstrapped_example_env_has_every_protected_object_guarded(
     assert scan_flux_prune(example_copy.root) == []
 
 
+def test_addon_secret_without_the_annotation_is_reported(tmp_path) -> None:
+    """flux-prune builds each add-on Kustomization's path, so a sealed add-on Secret is checked too."""
+    import shutil
+
+    import yaml
+    from _sops import encrypt_secret_to_file
+    from support import bootstrap_example_copy
+
+    copy_env = bootstrap_example_copy(tmp_path)
+    assert scan_flux_prune(copy_env.root) == []
+    sealed = next((copy_env.env_dir / "secrets").glob("*/*.sops.yaml"))
+    doc = yaml.safe_load(sealed.read_text(encoding="utf-8"))
+    document = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": doc["metadata"]["name"], "namespace": doc["metadata"]["namespace"]},
+        "stringData": {"greeting": "placeholder"},
+    }
+    encrypt_secret_to_file(
+        repo_root=copy_env.root,
+        env=copy_env.name,
+        name=sealed.name.removesuffix(".sops.yaml"),
+        namespace=sealed.parent.name,
+        document=document,
+        sops_bin=shutil.which("sops"),
+    )
+    messages = [item.message for item in scan_flux_prune(copy_env.root)]
+    assert any(f"Secret {sealed.parent.name}/" in item and "must carry" in item for item in messages), messages
+
+
 def test_dropped_annotation_on_a_flux_object_is_reported() -> None:
     """The failing case: a GitRepository, FluxInstance and the root Kustomization without prune: disabled."""
     guarded = {"annotations": {PRUNE: "disabled"}}

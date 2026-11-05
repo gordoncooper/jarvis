@@ -1,0 +1,46 @@
+# The tenant identity. kustomize-controller impersonates it for the add-on's two
+# Kustomizations. It holds rights only in namespace hello, on the kinds the add-on
+# ships, and no pod mounts its token. prune: disabled keeps it while those
+# Kustomizations clean up after the env turns the add-on off; without it Flux
+# skips that cleanup.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: addon-hello
+  namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: addon-hello
+  namespace: hello
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: addon-hello
+  namespace: hello
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: addon-hello
+subjects:
+  - kind: ServiceAccount
+    name: addon-hello
+    namespace: flux-system

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Contract paths that must exist. platform/* is discovered at scan time.
+from schema.env import ADDONS_DIR, SLOTS_DIR
+
+# Contract paths that must exist. platform/*, the add-on contract at services/, each
+# add-on services/<name>/ and each slot services/slots/<slot>/ are discovered at scan time.
 # A root joins this list in the PR that creates it, and is removed when it is deleted.
 EXPLICIT_COMPONENT_ROOTS: tuple[str, ...] = (
     "docs/code-delivery",
@@ -21,6 +24,17 @@ def component_roots(repo_root: Path | str) -> tuple[str, ...]:
         for child in sorted(platform_dir.iterdir()):
             if child.is_dir():
                 roots.add(f"platform/{child.name}")
+    services_dir = root / ADDONS_DIR
+    if services_dir.is_dir():
+        roots.add(ADDONS_DIR)
+        for child in sorted(services_dir.iterdir()):
+            if child.is_dir() and child.name != SLOTS_DIR:
+                roots.add(f"{ADDONS_DIR}/{child.name}")
+        slots_dir = services_dir / SLOTS_DIR
+        if slots_dir.is_dir():
+            for child in sorted(slots_dir.iterdir()):
+                if child.is_dir():
+                    roots.add(f"{ADDONS_DIR}/{SLOTS_DIR}/{child.name}")
     return tuple(sorted(roots))
 
 

@@ -86,6 +86,23 @@ def test_r4_unknown_substitution_key_fails(tmp_path: Path) -> None:
     assert "ConfigMap demo/seeded uses ${not_a_cluster_var}" in violations[1].message
 
 
+def test_r4_unknown_key_on_a_nested_addon_path_fails(tmp_path: Path) -> None:
+    """An add-on's Kustomization on a stage's path is built and checked against its own postBuild."""
+    inner = (
+        "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\n"
+        "metadata:\n  name: addon-demo\n  namespace: flux-system\nspec:\n  path: ./inner\n"
+        "  postBuild:\n    substituteFrom:\n      - kind: ConfigMap\n        name: cluster-vars\n"
+    )
+    repo = _repo(tmp_path, inner)
+    (repo / "inner").mkdir()
+    (repo / "inner" / "kustomization.yaml").write_text("resources: [app.yaml]\n", encoding="utf-8")
+    (repo / "inner" / "app.yaml").write_text(_config_map("known", '  host: "x.${dns_suffix}"\n'), encoding="utf-8")
+    assert scan_flux_substitute(repo) == []
+    (repo / "inner" / "app.yaml").write_text(_config_map("seeded", '  host: "${not_published}"\n'), encoding="utf-8")
+    violations = scan_flux_substitute(repo)
+    assert any("addon-demo: ConfigMap demo/seeded uses ${not_published}" in item.message for item in violations)
+
+
 def test_r4_missing_substitute_from_source_fails(tmp_path: Path) -> None:
     layer = _config_map("known", '  host: "app.${dns_suffix}"\n')
     repo = _repo(tmp_path, layer, **{"kustomization.yaml": "resources: [layer.yaml]\n"})
