@@ -6,7 +6,7 @@ Shared backup for every PVC. VolSync 0.17 with the restic mover is the backup. O
 
 - Namespace `platform-backups`.
 - rest-server 0.14: one Deployment and ClusterIP Service `restic` on port 8000. No Ingress.
-- Bootstrap restic credentials (Secret `backups-restic`).
+- Bootstrap restic credentials (Secret `backups-restic`). Add-ons are in core's trusted zone, so their PVCs use this credential through the same policy ([services/CONTRACT.md](../../services/CONTRACT.md)).
 - CronJob `etcd-snapshots`: a read-only copy of the k3s snapshot directory into repository `host-etcd-snapshots`.
 - ClusterPolicy `pvc-backup` enrolls every PVC: one restic Secret and one VolSync `ReplicationSource` in that PVC's namespace.
 - A StatefulSet volume gets one `ReplicationSource` per PVC Kubernetes creates (`<template>-<statefulset>-<ordinal>`). Git does not list the ordinals.

@@ -34,7 +34,7 @@ A real env lives in its own private instance repository, made from `envs/env-00`
 
 1. Create an empty private repository and clone it next to this checkout. Copy `envs/env-00` into it as `envs/<env>`.
 2. Point every env command at that checkout with `INSTANCE=<path>`, for example `make site ENV=<env> INSTANCE=../<instance>`. `INSTANCE` covers `site`, `verify`, `drill`, `restore`, `restore-all`, `seal`, `bootstrap-secrets`, `age-key-check`, `tools/make-plan`, `tools/prep-node`, the env schema and the env-level checks. They read `<instance>/envs/<env>` and `<instance>/.sops.yaml`. Unset, they read this checkout.
-3. Replace the values in `envs/<env>/values/` and the hosts in `envs/<env>/inventory/hosts.yml`. Set `jarvis_env` to `<env>`. Every `envs/env-00/` path under `flux/` must name `<env>`. Set `flux_git_repo_url` and `flux_git_ref` to the instance repository, and `core_git_repo_url` and `core_git_ref` to this repository, and copy all four into `flux/sync.yaml`.
+3. Replace the values in `envs/<env>/values/` and the hosts in `envs/<env>/inventory/hosts.yml`. Set `jarvis_env` to `<env>`. Every `envs/env-00/` path under `flux/` must name `<env>`. Set `flux_git_repo_url` and `flux_git_ref` to the instance repository, and `core_git_repo_url` and `core_git_ref` to this repository, and copy all four into `flux/sync.yaml`. Delete the `components:` list from `flux/kustomizations/services.yaml`: the example lists the sample add-on so CI renders it, and a new env starts core-only. Turn add-ons on later ([add-an-addon.md](add-an-addon.md#turn-it-on-in-an-env)).
 4. Run `tools/prep-node` for the first host ([Prepare a node](#prepare-a-node)). It validates the env before it changes a host. It can create the age private key, or read one that is already there, and it prints the public key. It adds a missing age creation rule to the instance's `.sops.yaml`. It does not change a recipient that already exists.
 5. Check that the instance's `.sops.yaml` has one age creation rule for `envs/<env>/secrets/`.
 6. `make bootstrap-secrets ENV=<env> INSTANCE=<path>`
@@ -46,7 +46,7 @@ An instance checkout with no `.git` counts as "not recorded" for prep-node and b
 
 Run every env-level check against the instance with `INSTANCE=<path> bash ci/run-env-checks`. That one entry point is the list the instance CI calls too, so a new env-level check reaches an instance without a change there.
 
-The copy already has `flux/`: `flux-instance.yaml` (it installs the controllers and is the env's only Flux version pin), `sync.yaml`, the four Kustomizations `platform-controllers` (`./core/platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./core/services`) and `apps` (`./core/apps`), chained with `dependsOn`, `identities.yaml` (the service accounts those Kustomizations and the platform HelmReleases run as), and `platform-configs/kustomization.yaml`. That list is `core/platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`, and the opt-in off-host copy. Step 6 creates those files, so the list needs no hand edit.
+The copy already has `flux/`: `flux-instance.yaml` (it installs the controllers and is the env's only Flux version pin), `sync.yaml`, the four Kustomizations `platform-controllers` (`./core/platform`), `platform-configs` (`./envs/<env>/flux/platform-configs`), `services` (`./core/services`, plus the add-ons its `spec.components` lists) and `apps` (`./core/apps`), chained with `dependsOn`, `identities.yaml` (the service accounts those Kustomizations and the platform HelmReleases run as), and `platform-configs/kustomization.yaml`. A core-only env is a full env: with no add-on listed, every env-level check passes and `make verify` runs core's checks alone. Core is k3s, Flux, certificates, ingress, App DNS, backups, secrets and CI; everything Jarvis-owned on top is an add-on. That list is `core/platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`, and the opt-in off-host copy. Step 6 creates those files, so the list needs no hand edit.
 
 The FluxInstance, both GitRepositories and the root Kustomization carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so a commit that deletes one from Git cannot make Flux remove its own sources; `ci/checks/flux-prune` enforces it. Removing one on purpose means deleting it from the cluster by hand. The layer Kustomizations keep prune on.
 
@@ -116,7 +116,7 @@ Add `INSTANCE=<path>` for an env in an instance checkout. Produces a k3s cluster
 make verify ENV=<env>
 ```
 
-Uses `~/.kube/jarvis-<env>.yaml`. Each standing check prints `PASS`, `WARN`, or `FAIL`. `WARN` is a scheduled job with no success yet whose first run is still pending or running inside its first interval (exit 0). Once that run finishes without success, or the first interval passes, it is `FAIL`. Any `FAIL` exits 1.
+Uses `~/.kube/jarvis-<env>.yaml`. Core's checks always run; an add-on's checks run only when the env lists it. Each standing check prints `PASS`, `WARN`, or `FAIL`. `WARN` is a scheduled job with no success yet whose first run is still pending or running inside its first interval (exit 0). Once that run finishes without success, or the first interval passes, it is `FAIL`. Any `FAIL` exits 1.
 
 ## Drill
 

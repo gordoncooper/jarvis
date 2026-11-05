@@ -13,7 +13,6 @@ import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
-from typing import NamedTuple
 
 import pytest
 import yaml
@@ -501,8 +500,10 @@ def _assert_sops_leaf(path: Path, section: str, node: object) -> None:
 
 def test_sops_secret_leaves_stay_encrypted(example_copy: ExampleCopy) -> None:
     """SOPS secret leaves stay encrypted in every real env and in a bootstrapped copy."""
-    paths = sorted(REPO_ROOT.glob("envs/*/secrets/*.sops.yaml"))
-    paths.extend(sorted((example_copy.env_dir / "secrets").glob("*.sops.yaml")))
+    paths = sorted(REPO_ROOT.glob("envs/*/secrets/**/*.sops.yaml"))
+    # An add-on's Secrets sit in its namespace's folder.
+    paths.extend(sorted((example_copy.env_dir / "secrets").rglob("*.sops.yaml")))
+    assert any(path.parent != example_copy.env_dir / "secrets" for path in paths)
     assert paths
     for path in paths:
         docs = [
@@ -585,41 +586,6 @@ def _validate_platform_configs_without_sops_secrets(
     _kubeconform_validate(rendered, kubernetes_version)
 
 
-class FluxBuildTarget(NamedTuple):
-    name: str
-    path: str
-    strip_sops_secrets: bool
-
-
-def flux_kustomization_targets(flux_dir: Path) -> list[FluxBuildTarget]:
-    """Paths from Flux Kustomization objects under an env's flux directory."""
-    targets: list[FluxBuildTarget] = []
-    if not flux_dir.is_dir():
-        return targets
-    for path in sorted(item for item in flux_dir.rglob("*.yaml") if item.is_file()):
-        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
-            if not isinstance(doc, dict) or doc.get("kind") != "Kustomization":
-                continue
-            api = doc.get("apiVersion")
-            if not isinstance(api, str) or not api.startswith("kustomize.toolkit.fluxcd.io/"):
-                continue
-            metadata = doc.get("metadata")
-            spec = doc.get("spec")
-            assert isinstance(metadata, dict) and isinstance(spec, dict)
-            name = metadata.get("name")
-            rel = spec.get("path")
-            assert isinstance(name, str) and name
-            assert isinstance(rel, str) and rel
-            targets.append(
-                FluxBuildTarget(
-                    name,
-                    rel.removeprefix("./"),
-                    isinstance(spec.get("decryption"), dict),
-                )
-            )
-    return targets
-
-
 def _record_object_identities(
     output: str, layer: str, seen: dict[tuple[str, str, str], str]
 ) -> None:
@@ -697,19 +663,28 @@ def test_volsync_spec_is_checked_against_the_upstream_crd(kind: str) -> None:
 
 
 def validate_env_flux(root: Path, env: str) -> None:
-    """Kustomize-build the env flux entry and each Flux path, then kubeconform."""
-    flux_dir = root / "envs" / env / "flux"
-    targets = flux_kustomization_targets(flux_dir)
-    assert targets
+    """Kustomize-build the env flux entry and each Flux path, then kubeconform.
+
+    Each stage is built with its components, and each add-on Kustomization on the
+    services stage's path is built too, as on the cluster.
+    """
+    from _manifests import flux_paths
+
+    env_rel = f"envs/{env}/flux"
+    env_docs = [doc for doc in yaml.safe_load_all(_kustomize_build(env_rel, root=root)) if isinstance(doc, dict)]
+    paths = flux_paths(root, env_rel, env_docs)
+    assert paths
     pin = load_cluster_vars(root, env=env)["k3s_version"]
     assert isinstance(pin, str)
     version = kubernetes_version_from_k3s(pin)
     assert version is not None
     seen: dict[tuple[str, str, str], str] = {}
-    for target in targets:
-        output = _kustomize_build(target.path, root=root)
-        _record_object_identities(output, target.name, seen)
-        if target.strip_sops_secrets:
+    for path in paths:
+        name = path.kustomization["metadata"]["name"]
+        assert path.error is None and not path.partial, f"{name}: {path.error or 'partial build'}"
+        output = yaml.safe_dump_all(path.docs, sort_keys=False)
+        _record_object_identities(output, name, seen)
+        if isinstance((path.kustomization.get("spec") or {}).get("decryption"), dict):
             _validate_platform_configs_without_sops_secrets(output, version)
         else:
             _kubeconform_validate(output, version)

@@ -14,23 +14,26 @@ import yaml
 _SEGMENT = re.compile(r"^[a-z0-9-]+$")
 
 
-def secret_path(repo_root: Path, env: str, name: str) -> Path:
-    """Return envs/<env>/secrets/<name>.sops.yaml, or refuse before sops runs.
+def secret_path(repo_root: Path, env: str, name: str, namespace: str | None = None) -> Path:
+    """Return envs/<env>/secrets/[<namespace>/]<name>.sops.yaml, or refuse before sops runs.
 
-    The env directory must already exist. The resolved file's parent must be
-    that env's secrets directory, so a symlinked secrets/ cannot leave the repo.
+    An add-on's Secrets sit in its namespace's folder. The env directory must already
+    exist. The resolved file's parent must be that folder, so a symlinked secrets/
+    cannot leave the repo.
     """
-    if not _SEGMENT.fullmatch(env) or not _SEGMENT.fullmatch(name):
-        raise SystemExit("refusing env or name: only [a-z0-9-] segments are allowed")
+    segments = (env, name) if namespace is None else (env, name, namespace)
+    if not all(_SEGMENT.fullmatch(segment) for segment in segments):
+        raise SystemExit("refusing env, namespace or name: only [a-z0-9-] segments are allowed")
     root = repo_root.resolve()
     env_dir = root / "envs" / env
     if not env_dir.is_dir():
         raise SystemExit("env folder does not exist")
-    expected_parent = env_dir / "secrets"
+    folder = Path("secrets") if namespace is None else Path("secrets") / namespace
+    expected_parent = env_dir / folder
     destination = expected_parent / f"{name}.sops.yaml"
     if destination.resolve().parent != expected_parent:
         raise SystemExit("refusing a secret path outside envs/<env>/secrets")
-    return repo_root / "envs" / env / "secrets" / f"{name}.sops.yaml"
+    return repo_root / "envs" / env / folder / f"{name}.sops.yaml"
 
 
 def require_sops() -> str:
@@ -50,13 +53,14 @@ def encrypt_secret_to_file(
     name: str,
     document: dict,
     sops_bin: str,
+    namespace: str | None = None,
 ) -> None:
-    """Write an encrypted Secret manifest under envs/<env>/secrets/.
+    """Write an encrypted Secret manifest under envs/<env>/secrets/[<namespace>/].
 
     Plaintext is piped to sops on stdin and is not written to disk. The
     ciphertext is renamed into place so a failed encrypt leaves no target file.
     """
-    destination = secret_path(repo_root, env, name).resolve()
+    destination = secret_path(repo_root, env, name, namespace).resolve()
     repo_root = repo_root.resolve()
     override = destination.relative_to(repo_root).as_posix()
     payload = yaml.safe_dump(document, sort_keys=False)

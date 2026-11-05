@@ -357,19 +357,19 @@ def _manager_files(manager: dict) -> list[Path]:
     return files
 
 
-def test_testapp_image_tag_and_digest_are_a_custom_manager() -> None:
-    """R33: platform/testapp image pins are a file-scoped regex manager."""
-    source = (ROOT / "platform/testapp/testapp.yaml").read_text(encoding="utf-8")
+@pytest.mark.parametrize("rel", ["platform/testapp/testapp.yaml", "services/hello/app/hello.yaml"])
+def test_testapp_image_tag_and_digest_are_a_custom_manager(rel: str) -> None:
+    """R33: the canary image pins, and the sample add-on's copy, are one file-scoped regex manager."""
+    source = (ROOT / rel).read_text(encoding="utf-8")
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [
         manager
         for manager in renovate["customManagers"]
-        if any("platform\\/testapp\\/" in pattern for pattern in manager["managerFilePatterns"])
+        if any(re.search(pattern.strip("/"), rel) for pattern in manager["managerFilePatterns"])
     ]
     assert len(managers) == 1
     manager = managers[0]
     assert manager["datasourceTemplate"] == "docker"
-    assert manager["managerFilePatterns"] == ["/^platform\\/testapp\\/.+\\.yaml$/"]
     found = list(re.finditer(_js_to_python(manager["matchStrings"][0]), source))
     assert len(found) == 1
     image = next(line.strip() for line in source.splitlines() if line.strip().startswith("image:"))

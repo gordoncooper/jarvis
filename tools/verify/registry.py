@@ -1,8 +1,12 @@
-"""Named verify components. Platform-layer names always run today."""
+"""Named verify components. Core's always run; an add-on's run only when the env enables it."""
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Callable, Sequence
+from pathlib import Path
+
+from schema.env import ADDONS_DIR, addon_names
 
 from verify.common import CheckError, Context
 
@@ -18,6 +22,28 @@ def register(name: str) -> Callable[[Builder], Builder]:
         return fn
 
     return wrap
+
+
+def load_addons(core: Path, addons: Sequence[str]) -> tuple[str, ...]:
+    """Load services/<name>/verify.py for each enabled add-on that has one. Each registers a
+    component under its own name. An add-on that is not enabled is never loaded."""
+    loaded: list[str] = []
+    known = set(addon_names(core))
+    for name in addons:
+        if not isinstance(name, str) or name not in known:
+            raise CheckError(f"the env enables {name!r}, which is not an add-on in core/{ADDONS_DIR}")
+        path = core / ADDONS_DIR / name / "verify.py"
+        if not path.is_file():
+            continue
+        if name not in COMPONENTS:
+            spec = importlib.util.spec_from_file_location(f"addon_verify_{name.replace('-', '_')}", path)
+            if spec is None or spec.loader is None:
+                raise CheckError(f"cannot load {path}")
+            spec.loader.exec_module(importlib.util.module_from_spec(spec))
+        if name not in COMPONENTS:
+            raise CheckError(f"{path} registers no component named {name}")
+        loaded.append(name)
+    return tuple(loaded)
 
 
 def enabled_components(enabled: Sequence[str] | None) -> tuple[str, ...]:

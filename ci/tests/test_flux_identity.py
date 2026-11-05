@@ -124,7 +124,7 @@ def test_undeclared_service_account_fails(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "seed",
     [
-        {"tenant_ks": _kustomization("services", "./services", "flux-platform")},
+        {"tenant_ks": _kustomization("apps", "./services", "flux-platform")},
         {"tenant_docs": [_helmrelease("flux-platform")]},
     ],
     ids=["tenant-kustomization", "helmrelease-on-tenant-path"],
@@ -132,6 +132,50 @@ def test_undeclared_service_account_fails(tmp_path: Path) -> None:
 def test_platform_account_outside_the_allow_list_fails(tmp_path: Path, seed: dict) -> None:
     """Only the allow-listed Kustomizations and the objects on their paths run as flux-platform."""
     assert any("run as flux-platform" in item for item in _messages(_repo(tmp_path, **seed)))
+
+
+_ADDON_ACCOUNT = {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "addon-x", "namespace": "flux-system"}}
+
+
+def _addon_repo(root: Path, *, addon_ks: dict | None = None, app_docs: list[dict] | None = None) -> Path:
+    """A services stage, as the platform account, that wires one add-on: its account and its Kustomization."""
+    addon_ks = addon_ks or _kustomization("addon-x", "./services/x", "addon-x")
+    wiring = [_ADDON_ACCOUNT, _role_binding("x", "Role", "addon-x", account="addon-x"), addon_ks]
+    _repo(
+        root,
+        tenant_ks=_kustomization("services", "./services", "flux-platform"),
+        tenant_docs=wiring,
+    )
+    (root / "services" / "x").mkdir()
+    (root / "services" / "x" / "kustomization.yaml").write_text("resources: [app.yaml]\n", encoding="utf-8")
+    app = app_docs if app_docs is not None else [{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a", "namespace": "x"}}]
+    (root / "services" / "x" / "app.yaml").write_text(yaml.safe_dump_all(app), encoding="utf-8")
+    return root
+
+
+def test_services_stage_wiring_an_addon_tenant_passes(tmp_path: Path) -> None:
+    """The services stage declares the add-on's account; the add-on's Kustomization runs as it."""
+    assert _messages(_addon_repo(tmp_path)) == []
+
+
+def test_addon_kustomization_running_as_the_platform_account_fails(tmp_path: Path) -> None:
+    """An object on the services stage's path is an add-on's, and never runs as flux-platform."""
+    seed = _kustomization("addon-x", "./services/x", "flux-platform")
+    assert any("run as flux-platform" in item for item in _messages(_addon_repo(tmp_path, addon_ks=seed)))
+
+
+def test_addon_path_declaring_its_own_account_fails(tmp_path: Path) -> None:
+    """An add-on's own path cannot apply the tenant account it runs as."""
+    messages = _messages(_addon_repo(tmp_path, app_docs=[_ADDON_ACCOUNT]))
+    assert any("declares ServiceAccount flux-system/addon-x" in item for item in messages)
+
+
+def test_decryption_outside_flux_system_fails(tmp_path: Path) -> None:
+    """Only flux-system holds the env key; a Kustomization elsewhere that decrypts fails."""
+    seed = _kustomization("addon-x", "./services/x", "addon-x", decryption={"provider": "sops"})
+    seed["metadata"]["namespace"] = "x"
+    messages = _messages(_addon_repo(tmp_path, addon_ks=seed))
+    assert any("sets spec.decryption outside flux-system" in item for item in messages)
 
 
 def _other(kind: str) -> dict:
@@ -221,13 +265,13 @@ def test_cluster_wide_binding_for_a_tenant_fails(tmp_path: Path) -> None:
     assert any("binds flux-system/flux-tenant cluster-wide" in item for item in messages)
 
 
-def _role_binding(namespace: str, role_kind: str, role: str) -> dict:
+def _role_binding(namespace: str, role_kind: str, role: str, *, account: str = "flux-tenant") -> dict:
     return {
         "apiVersion": "rbac.authorization.k8s.io/v1",
         "kind": "RoleBinding",
         "metadata": {"name": "seeded", "namespace": namespace},
         "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": role_kind, "name": role},
-        "subjects": [dict(_PLATFORM_SUBJECT, name="flux-tenant")],
+        "subjects": [dict(_PLATFORM_SUBJECT, name=account)],
     }
 
 

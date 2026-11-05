@@ -74,6 +74,7 @@ class Cluster:
         self.nodes_rc = 0
         self.pods_rc = 0
         self.pods: list[dict] = []
+        self.hello = False
 
     def kubectl(
         self, args: Sequence[str], input: str | None = None
@@ -200,6 +201,10 @@ class Cluster:
                     "status": {"lastSuccessfulTime": self.offsite_sync},
                 },
             )
+        if self.hello and argv[:4] == ["get", "deployments", "-n", "hello"]:
+            return _completed(argv, {"items": [{"metadata": {"name": "hello"}, "status": {"readyReplicas": 1}}]})
+        if self.hello and argv[:3] == ["get", "secret", "hello-greeting"] and "go-template" in " ".join(argv):
+            return _completed(argv, "greeting\n")
         if argv[:3] == ["get", "configmap", verify_tool.HOLD_NAME]:
             if self.hold:
                 return _completed(argv, {"data": {"repos": "ns-app/pvc-data\n"}})
@@ -549,6 +554,30 @@ def test_disabled_component_checks_do_not_run(
         assert ran["extra"] is True
     finally:
         registry.COMPONENTS.pop("extra", None)
+
+
+def _enable_addons(root: Path, addons: list[str]) -> None:
+    path = root / "envs" / "env-test" / "flux" / "kustomizations" / "services.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"kind": "Kustomization", "spec": {"components": addons}}), encoding="utf-8")
+
+
+def test_core_only_env_passes_and_a_disabled_addon_is_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Core's checks always run. An add-on's checks load only when the env lists it."""
+    core_only = Cluster()
+    assert _run(tmp_path, core_only, monkeypatch) == 0
+    assert not any("hello" in call for call in core_only.calls)
+    _enable_addons(tmp_path, ["hello"])
+    missing = Cluster()
+    assert _run(tmp_path, missing, monkeypatch) == 1
+    assert ["get", "deployments", "-n", "hello", "-o", "json"] in missing.calls
+    ready = Cluster()
+    ready.hello = True
+    assert _run(tmp_path, ready, monkeypatch) == 0
+    assert any(call[:2] == ["get", "pvc"] for call in ready.calls)
 
 
 def test_explicit_enabled_list_keeps_default_components(

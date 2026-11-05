@@ -1,3 +1,4 @@
+addons
 cli-deny
 contract-md
 core-names

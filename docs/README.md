@@ -5,6 +5,7 @@
 | Path | Topic |
 | --- | --- |
 | [deploy.md](deploy.md) | Fresh copy to a running, verified cluster |
+| [add-an-addon.md](add-an-addon.md) | Write an add-on, and turn it on or off in an env |
 | [../ci/README.md](../ci/README.md) | What `ci/run-checks` and the test suite do before a push |
 | [../README.md](../README.md) | What this repo is, and the hardware limits |
 | [../infra/ansible/README.md](../infra/ansible/README.md) | Node bootstrap (`site.yml`) |
@@ -26,6 +27,9 @@
 | [../platform/kyverno/CONTRACT.md](../platform/kyverno/CONTRACT.md) | Kyverno admission |
 | [../platform/testapp/CONTRACT.md](../platform/testapp/CONTRACT.md) | Platform canary |
 | [../platform/traefik/CONTRACT.md](../platform/traefik/CONTRACT.md) | Ingress exposure |
+| [../services/CONTRACT.md](../services/CONTRACT.md) | Add-ons: what every add-on meets |
+| [../services/slots/chat-bot/CONTRACT.md](../services/slots/chat-bot/CONTRACT.md) | Chat-bot slot |
+| [../services/hello/CONTRACT.md](../services/hello/CONTRACT.md) | Sample add-on |
 
 ## Env docs
 

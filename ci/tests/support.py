@@ -177,6 +177,7 @@ def bootstrap_example_copy(
     *,
     name: str = "env-copy",
     hosts_text: str | None = None,
+    core_only: bool = False,
 ) -> ExampleCopy:
     """Copy env-00 into a tmp repo, rename it, bootstrap secrets, and render.
 
@@ -184,9 +185,10 @@ def bootstrap_example_copy(
     1. Link platform, services, and apps so kustomize can build the Flux paths.
     2. Copy envs/env-00 to envs/<name>.
     3. Set jarvis_env to <name> and rewrite every envs/env-00/ path.
-    4. Replace inventory/hosts.yml when hosts_text is set.
+    4. Replace inventory/hosts.yml when hosts_text is set. With core_only, drop the add-on list.
     5. Write a .sops.yaml age rule from a throwaway age-keygen key.
-    6. Run bootstrap-secrets' bootstrap() against the tmp repo, then seal a placeholder backups-offsite.
+    6. Run bootstrap-secrets' bootstrap() against the tmp repo, then seal a placeholder
+       backups-offsite and one placeholder Secret per namespace an enabled add-on decrypts.
     7. Render the cluster-vars ConfigMap over the copied file.
     """
     from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV
@@ -205,11 +207,53 @@ def bootstrap_example_copy(
     _rename_copied_env(dest, EXAMPLE_ENV, name)
     if hosts_text is not None:
         (dest / "inventory" / "hosts.yml").write_text(hosts_text, encoding="utf-8")
+    if core_only:
+        _drop_addons(dest)
     _write_copy_sops_rule(root, name, _throwaway_age_public(tmp_path))
     _bootstrap_copy(root, name)
     _seal_copy_offsite(root, name)
+    _seal_copy_addons(root, name)
     _render_copy(dest)
     return ExampleCopy(root, name)
+
+
+def _drop_addons(env_dir: Path) -> None:
+    import yaml
+    from schema.env import SERVICES_KUSTOMIZATION
+
+    path = env_dir / "flux" / SERVICES_KUSTOMIZATION
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc["spec"].pop("components", None)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+
+
+def _seal_copy_addons(root: Path, name: str) -> None:
+    """One placeholder Secret, sealed to the copy's throwaway key, per namespace an enabled add-on decrypts."""
+    from _sops import encrypt_secret_to_file
+    from schema.env import addon_documents, addon_secret_namespaces, enabled_addons
+
+    for addon in enabled_addons(root / "envs" / name):
+        for namespace in addon_secret_namespaces(addon_documents(REPO_ROOT, addon)):
+            secret = f"{namespace}-fixture"
+            document = {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                    "name": secret,
+                    "namespace": namespace,
+                    "annotations": {"kustomize.toolkit.fluxcd.io/prune": "disabled"},
+                },
+                "type": "Opaque",
+                "stringData": {"greeting": "placeholder"},
+            }
+            encrypt_secret_to_file(
+                repo_root=root,
+                env=name,
+                name=secret,
+                namespace=namespace,
+                document=document,
+                sops_bin=shutil.which("sops"),
+            )
 
 
 def _git_ignored(repo: Path, path: Path) -> bool:

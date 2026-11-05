@@ -9,7 +9,8 @@ metadata:
   namespace: flux-system
 ---
 # platform-controllers and platform-configs install CRDs, cluster policies,
-# webhooks and charts in their own namespaces.
+# webhooks and charts in their own namespaces. services applies each enabled
+# add-on's namespaces and tenant identity, which the add-on cannot create itself.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -26,41 +27,10 @@ subjects:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: flux-services
-  namespace: flux-system
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
   name: flux-apps
   namespace: flux-system
 ---
-# services and apps each apply and prune one placeholder ConfigMap in default.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: flux-services
-  namespace: default
-rules:
-  - apiGroups: [""]
-    resources: [configmaps]
-    resourceNames: [placeholder-services]
-    verbs: [get, create, update, patch, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: flux-services
-  namespace: default
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: flux-services
-subjects:
-  - kind: ServiceAccount
-    name: flux-services
-    namespace: flux-system
----
+# apps applies and prunes one placeholder ConfigMap in default.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

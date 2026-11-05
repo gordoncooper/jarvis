@@ -50,7 +50,7 @@ def test_a_single_failing_check_fails_the_run(tmp_path: Path) -> None:
 
 def test_run_env_checks_runs_every_env_check_against_instance(tmp_path: Path) -> None:
     """One entry point runs all env-level checks on INSTANCE, names each failure, and fails."""
-    names = ("env-schema", "flux-identity", "flux-prune", "flux-substitute", "manifest-lint", "secret-scan")
+    names = ("env-schema", "addons", "flux-identity", "flux-prune", "flux-substitute", "manifest-lint", "secret-scan")
     root = _repo(tmp_path, {name: 1 if name == "flux-prune" else 0 for name in names})
     shutil.copy(REPO_ROOT / "ci" / "run-env-checks", root / "ci" / "run-env-checks")
     for name in names:

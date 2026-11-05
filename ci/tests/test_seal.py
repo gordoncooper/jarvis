@@ -154,6 +154,36 @@ def test_seal_writes_a_valid_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert loaded["stringData"]["token"].startswith("ENC[")
 
 
+def test_seal_writes_an_addon_secret_in_its_namespace_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An add-on's Secret is sealed under envs/<env>/secrets/<namespace>/, in that namespace."""
+    mod = _load_seal()
+    public, _keyfile = _age_keypair(tmp_path)
+    _sops_rules(tmp_path, public)
+    _bind_repo(monkeypatch, mod, tmp_path)
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    out = mod.seal("env-test", "demo-token", _secret("demo-token"), sops_bin=_require_tool("sops"), namespace="demo")
+    assert out.parent == tmp_path / "envs" / "env-test" / "secrets" / "demo"
+    loaded = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert loaded["metadata"]["namespace"] == "demo"
+    assert loaded["stringData"]["token"].startswith("ENC[")
+
+
+@pytest.mark.parametrize("namespace", ["other", "../x", "Not-Valid"])
+def test_seal_refuses_a_bad_or_mismatched_namespace_before_sops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, namespace: str
+) -> None:
+    mod = _load_seal()
+    _bind_repo(monkeypatch, mod, tmp_path)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    wrapper, marker = _marker_sops(tmp_path)
+    with pytest.raises(SystemExit):
+        mod.seal("env-test", "demo-token", _secret("demo-token"), sops_bin=str(wrapper), namespace=namespace)
+    assert not marker.exists()
+
+
 def test_seal_refuses_to_overwrite_a_sealed_secret_without_force(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

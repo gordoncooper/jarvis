@@ -1,0 +1,43 @@
+# The add-on's objects, from core, as its tenant identity.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: addon-hello
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  path: ./core/services/hello/app
+  prune: true
+  serviceAccountName: addon-hello
+  targetNamespace: hello
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-vars
+---
+# The add-on's sealed Secrets, from the env, as the same tenant identity. This object
+# lives in flux-system, so the controller reads sops-age there; the tenant cannot.
+# The services stage fills ${jarvis_env}.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: addon-hello-secrets
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  path: ./envs/${jarvis_env}/secrets/hello
+  prune: true
+  serviceAccountName: addon-hello
+  targetNamespace: hello
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

@@ -2,7 +2,8 @@
 
 kustomize-controller reads kustomize.toolkit.fluxcd.io/prune off the live
 object and skips garbage collection when the value is disabled. For each env
-with a flux/ tree, this builds the root path and the four layer paths, then
+with a flux/ tree, this builds the root path, the four layer paths with their
+components, and the path of each add-on Kustomization on the services layer, then
 requires every object of a protected kind, and the root Kustomization, to
 carry prune: disabled. The layer Kustomizations keep prune on.
 
@@ -16,7 +17,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from _manifests import example_platform_configs, kind_of, kustomize_build
+from _manifests import flux_paths, kind_of, kustomize_build
 from schema.env import ROOT_SOURCE
 
 PRUNE = "kustomize.toolkit.fluxcd.io/prune"
@@ -145,21 +146,20 @@ def _applied(root: Path, env_rel: str) -> tuple[dict[Key, dict], list[str], bool
         return {}, [error], True
     applied = index(docs)
     problems: list[str] = []
-    partial = False
     for layer in LAYERS:
         doc = applied.get(("Kustomization", FLUX_NAMESPACE, layer))
         path = (doc or {}).get("spec", {}).get("path")
         if not isinstance(path, str) or not path.strip():
             problems.append(f"Kustomization {layer} has no spec.path in the env's flux tree")
+    partial = False
+    # Each layer with its components, and each add-on Kustomization on the services layer.
+    for path in flux_paths(root, env_rel, docs):
+        partial = partial or path.partial
+        if path.error:
+            if path.error != "spec.path is unset":
+                problems.append(path.error)
             continue
-        if example_platform_configs(env_rel, path):
-            partial = True
-            continue
-        built, error = kustomize_build(root, path)
-        if error:
-            problems.append(error)
-            continue
-        applied.update(index(built))
+        applied.update(index(path.docs))
     return applied, problems, partial or bool(problems)
 
 

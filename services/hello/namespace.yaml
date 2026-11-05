@@ -1,0 +1,9 @@
+# Turning the add-on off keeps the namespace and its sealed Secret; delete them by hand.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello
+  labels:
+    addons.jarvis.io/name: hello
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

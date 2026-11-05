@@ -13,7 +13,8 @@ from urllib.parse import urlparse
 
 import yaml
 
-_TOOLS_LIB = Path(__file__).resolve().parents[1] / "tools" / "lib"
+_PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+_TOOLS_LIB = _PRODUCT_ROOT / "tools" / "lib"
 if str(_TOOLS_LIB) not in sys.path:
     sys.path.insert(0, str(_TOOLS_LIB))
 
@@ -50,6 +51,15 @@ _FLUX_ENTRY_FILES = (
 )
 # Sealed once bootstrap-secrets has run; platform-configs applies the last two.
 _BOOTSTRAP_SEALED = ("k3s-token", "cert-manager-ca", "backups-restic")
+# Add-ons: one folder each under <core>/services/, a kustomize Component the services
+# Kustomization lists in spec.components. Slot contracts live under services/slots/.
+ADDONS_DIR = "services"
+SLOTS_DIR = "slots"
+SERVICES_KUSTOMIZATION = "kustomizations/services.yaml"
+# On an add-on's Flux Kustomization: the slot it fills.
+SLOT_LABEL = "addons.jarvis.io/slot"
+# An add-on's sealed Secrets are under envs/<env>/secrets/<namespace>/.
+ADDON_SECRETS_PATH = "./envs/${jarvis_env}/secrets/"
 
 
 def is_example_env(name: str) -> bool:
@@ -336,6 +346,7 @@ def _validate_env(
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
+    errors.extend(_validate_addons(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_entry_files(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))
     errors.extend(
@@ -632,6 +643,118 @@ def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> l
         f"{env_name}: platform-configs lists {OFFSITE_COPY_DIR}, "
         f"missing required file {_display_path(secret, repo_root)}"
     ]
+
+
+def core_dir(repo_root: Path | str) -> Path:
+    """Core as the env's Flux paths see it: <root>/core when the instance holds it there (its CI
+    does), otherwise the product checkout running this code."""
+    root = Path(repo_root)
+    return root / CORE_SOURCE_DIR if (root / CORE_SOURCE_DIR).is_dir() else _PRODUCT_ROOT
+
+
+def addon_names(core: Path) -> tuple[str, ...]:
+    """Every add-on core ships: a folder under services/ holding a kustomization file."""
+    base = core / ADDONS_DIR
+    if not base.is_dir():
+        return ()
+    return tuple(
+        sorted(
+            child.name
+            for child in base.iterdir()
+            if child.is_dir() and child.name != SLOTS_DIR and (child / "kustomization.yaml").is_file()
+        )
+    )
+
+
+def slot_names(core: Path) -> tuple[str, ...]:
+    """Every slot core defines: a folder under services/slots/."""
+    base = core / ADDONS_DIR / SLOTS_DIR
+    return tuple(sorted(child.name for child in base.iterdir() if child.is_dir())) if base.is_dir() else ()
+
+
+def enabled_addons(env_dir: Path) -> list[str]:
+    """The add-ons an env turns on: spec.components of its services Kustomization. None is core-only."""
+    path = env_dir / "flux" / SERVICES_KUSTOMIZATION
+    if not path.is_file():
+        return []
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    spec = doc.get("spec") if isinstance(doc, dict) else None
+    components = spec.get("components") if isinstance(spec, dict) else None
+    if not isinstance(components, list):
+        return []
+    return [item.strip().removeprefix("./") if isinstance(item, str) else item for item in components]
+
+
+def addon_documents(core: Path, name: str) -> list[dict]:
+    """The objects in the files an add-on's Component lists. Add-on wiring lists files only."""
+    folder = core / ADDONS_DIR / name
+    listing = yaml.safe_load((folder / "kustomization.yaml").read_text(encoding="utf-8"))
+    docs: list[dict] = []
+    for item in (listing or {}).get("resources") or []:
+        path = folder / str(item)
+        if path.is_file():
+            docs.extend(doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict))
+    return docs
+
+
+def addon_slots(docs: list[dict]) -> set[str]:
+    """Slots an add-on fills, from the label on its Flux Kustomizations."""
+    found: set[str] = set()
+    for doc in docs:
+        labels = (doc.get("metadata") or {}).get("labels") or {}
+        if doc.get("kind") == "Kustomization" and isinstance(labels.get(SLOT_LABEL), str):
+            found.add(labels[SLOT_LABEL])
+    return found
+
+
+def addon_secret_namespaces(docs: list[dict]) -> list[str]:
+    """Namespaces whose sealed Secrets an add-on's decrypting Kustomizations read from the env."""
+    found = []
+    for doc in docs:
+        spec = doc.get("spec") or {}
+        path = spec.get("path")
+        if doc.get("kind") == "Kustomization" and spec.get("decryption") and isinstance(path, str):
+            if path.startswith(ADDON_SECRETS_PATH):
+                found.append(path.removeprefix(ADDON_SECRETS_PATH).strip("/"))
+    return found
+
+
+def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
+    """Each listed add-on exists in core, once; at most one per slot; its sealed Secrets exist once
+    the env is bootstrapped. Like the off-host copy, a new env before bootstrap needs no secret."""
+    rel = _display_path(env_dir / "flux" / SERVICES_KUSTOMIZATION, repo_root)
+    listed = enabled_addons(env_dir)
+    core = core_dir(repo_root)
+    known = addon_names(core)
+    errors: list[str] = []
+    seen: set[str] = set()
+    by_slot: dict[str, list[str]] = {}
+    for name in listed:
+        if not isinstance(name, str) or name not in known:
+            errors.append(f"{rel}: unknown add-on {name!r} in spec.components (known: {', '.join(known) or 'none'})")
+            continue
+        if name in seen:
+            errors.append(f"{rel}: add-on {name} is listed twice")
+            continue
+        seen.add(name)
+        docs = addon_documents(core, name)
+        for slot in sorted(addon_slots(docs)):
+            by_slot.setdefault(slot, []).append(name)
+        if not bootstrapped or is_example_env(env_name):
+            continue
+        for namespace in addon_secret_namespaces(docs):
+            folder = env_dir / "secrets" / namespace
+            if not any(folder.glob("*.sops.yaml")):
+                errors.append(
+                    f"{env_name}: add-on {name} decrypts {_display_path(folder, repo_root)}, "
+                    "which holds no sealed file; seal one with make seal NAMESPACE=" + namespace
+                )
+    for slot, names in sorted(by_slot.items()):
+        if len(names) > 1:
+            errors.append(
+                f"{rel}: add-ons {', '.join(names)} all fill slot {slot}; an env enables at most one per slot"
+            )
+    return errors
 
 
 def _ssh_root(cluster_vars_path: Path) -> bool:

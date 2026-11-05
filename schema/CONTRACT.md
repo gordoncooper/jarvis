@@ -26,6 +26,7 @@ A real env lives in a private instance checkout. `INSTANCE=<path>` points the sc
 - When `flux_git_repo_url` is `ssh://`, `envs/<env>/secrets/flux-deploy-key.sops.yaml` (the read-only deploy key) is required.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's `flux/platform-configs/kustomization.yaml` lists `core/platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same prep-node reason. An env that does not list it needs nothing new.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file. A missing postBuild variable fails the Flux reconcile.
+- Add-ons: `flux/kustomizations/services.yaml` lists the add-ons the env turns on under `spec.components`, by folder name under core's `services/` ([services/CONTRACT.md](../services/CONTRACT.md)). No list is a core-only env. An unknown add-on, the same add-on twice, or two add-ons that fill one slot (label `addons.jarvis.io/slot`) fails the schema. Once `envs/<env>/secrets/` holds any `*.sops.yaml`, each folder an enabled add-on decrypts, `envs/<env>/secrets/<namespace>/`, holds at least one sealed file. Before that it is not required, for the same prep-node reason. The example env is exempt, as it holds no secret files. Core is `<root>/core` when the instance holds it there, and otherwise the product checkout that runs the schema.
 
 ## Health
 
@@ -99,6 +100,8 @@ The example env declares every known role. A new known role is declared on that 
 
 The example's platform-configs list also turns on the off-host copy: `core/platform/backups/offsite` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
 
+The example's services Kustomization lists the sample add-on under `spec.components`, so CI renders an add-on. A copy deletes that list and starts core-only. The test copy seals a placeholder in each folder the sample decrypts.
+
 ### Explicit env
 
 `bootstrap-secrets`, `seal`, and the cluster-vars renderer require `--env`. The Makefile targets `bootstrap-secrets` and `seal` require `ENV=`. Each fails when the env is omitted.
@@ -142,6 +145,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
 - A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
 - A behavior test accepts a new env that lists the off-host copy before bootstrap, rejects it once bootstrapped without `backups-offsite.sops.yaml`, and accepts it once the file is there.
+- `ci/tests/test_addons.py` accepts known add-ons, rejects an unknown add-on, a duplicate, and two add-ons for one slot, and rejects a bootstrapped env whose add-on Secret folder is empty.
 - A behavior test rejects a repo URL that includes userinfo, a query, or a fragment.
 - A behavior test accepts the example env's source pair and rejects a core source whose url does not match cluster-vars.
 - A behavior test requires `flux-deploy-key.sops.yaml` for an `ssh://` root and accepts the env once it is there.

@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import posixpath
+import re
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV
+from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV, ROOT_SOURCE
 
 SCAN_ROOTS = ("apps/", "platform/", "services/", "envs/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
+FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
+_KUSTOMIZATION_FILES = ("kustomization.yaml", "kustomization.yml", "Kustomization")
+# A postBuild variable; `$${...}` is a literal.
+_VARIABLE = re.compile(r"(?<!\$)\$\{([_A-Za-z][_A-Za-z0-9]*)\}")
 
 
 def load_documents(
@@ -71,8 +78,15 @@ def source_rel(root: Path, rel: str) -> str:
 
 
 def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
-    """The documents `kustomize build` renders for rel, or an error."""
+    """The documents `kustomize build` renders for rel, or an error.
+
+    A directory with no kustomization file gets what Flux generates for it: every
+    YAML manifest under it.
+    """
     rel = source_rel(root, rel)
+    target = root / rel
+    if target.is_dir() and not any((target / name).is_file() for name in _KUSTOMIZATION_FILES):
+        return _generated(target), None
     kustomize = shutil.which("kustomize")
     if kustomize is None:
         return [], "kustomize not found on PATH (run make deps)"
@@ -86,6 +100,116 @@ def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
     if proc.returncode != 0:
         return [], f"kustomize build {rel} failed: {(proc.stderr or proc.stdout).strip()}"
     return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)], None
+
+
+def _generated(target: Path) -> list[dict]:
+    docs: list[dict] = []
+    for path in sorted(item for item in target.rglob("*") if item.suffix in {".yaml", ".yml"}):
+        docs.extend(
+            doc
+            for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+            if isinstance(doc, dict) and "kind" in doc and "apiVersion" in doc
+        )
+    return docs
+
+
+def is_flux_kustomization(doc: dict) -> bool:
+    return doc.get("kind") == "Kustomization" and str(doc.get("apiVersion", "")).startswith(
+        FLUX_KUSTOMIZATION_API
+    )
+
+
+def is_root_kustomization(doc: dict) -> bool:
+    metadata = doc.get("metadata") or {}
+    return is_flux_kustomization(doc) and (metadata.get("namespace"), metadata.get("name")) == (
+        ROOT_SOURCE,
+        ROOT_SOURCE,
+    )
+
+
+def postbuild_values(doc: dict, env_docs: list[dict]) -> dict[str, str]:
+    """The values a Flux Kustomization's postBuild substitutes, from the env's flux tree."""
+    post_build = (doc.get("spec") or {}).get("postBuild") or {}
+    values: dict[str, str] = {}
+    for source in post_build.get("substituteFrom") or []:
+        if not isinstance(source, dict):
+            continue
+        for item in env_docs:
+            if (
+                item.get("kind") == source.get("kind")
+                and (item.get("metadata") or {}).get("name") == source.get("name")
+                and namespace_of(item) == namespace_of(doc)
+            ):
+                values.update({str(k): str(v) for k, v in (item.get("data") or {}).items()})
+    values.update({str(k): str(v) for k, v in (post_build.get("substitute") or {}).items()})
+    return values
+
+
+def substitute(node: object, values: dict[str, str]) -> object:
+    """node with each ${name} that values holds replaced, as postBuild does."""
+    if isinstance(node, str):
+        return _VARIABLE.sub(lambda match: values.get(match.group(1), match.group(0)), node)
+    if isinstance(node, dict):
+        return {key: substitute(value, values) for key, value in node.items()}
+    if isinstance(node, list):
+        return [substitute(value, values) for value in node]
+    return node
+
+
+@dataclass(frozen=True)
+class FluxPath:
+    """What one Flux Kustomization applies. parent is the stage whose path applies it, or None
+    for a stage in the env's flux tree. partial: the example env keeps part of it out of Git."""
+
+    kustomization: dict
+    parent: dict | None
+    docs: list[dict]
+    error: str | None
+    partial: bool
+
+
+def flux_paths(root: Path, env_rel: str, env_docs: list[dict]) -> list[FluxPath]:
+    """Each stage the env's flux tree applies, then each Flux Kustomization on a stage's path.
+
+    A stage's spec.components are built with its path, as Flux adds them to it. A
+    Kustomization on a stage's path gets the stage's postBuild values first, as on the cluster.
+    """
+    found: list[FluxPath] = []
+    for doc in env_docs:
+        if not is_flux_kustomization(doc) or is_root_kustomization(doc):
+            continue
+        stage = build_flux_path(root, env_rel, doc)
+        found.append(stage)
+        values = postbuild_values(doc, env_docs)
+        for item in stage.docs:
+            if is_flux_kustomization(item):
+                found.append(build_flux_path(root, env_rel, substitute(item, values), parent=doc))
+    return found
+
+
+def build_flux_path(root: Path, env_rel: str, doc: dict, *, parent: dict | None = None) -> FluxPath:
+    spec = doc.get("spec") or {}
+    path = spec.get("path")
+    if not isinstance(path, str) or not path.strip():
+        return FluxPath(doc, parent, [], "spec.path is unset", False)
+    rel = path.strip().removeprefix("./")
+    partial = False
+    if example_platform_configs(env_rel, path):
+        # Only the core list of the example's platform-configs path is in Git.
+        rel, partial = f"{CORE_SOURCE_DIR}/platform/configs", True
+    elif env_rel.startswith(f"envs/{EXAMPLE_ENV}/") and rel.startswith(f"envs/{EXAMPLE_ENV}/secrets/"):
+        # The example env holds no secret files; a bootstrapped copy builds this path.
+        return FluxPath(doc, parent, [], None, True)
+    docs, error = kustomize_build(root, rel)
+    if partial and error:
+        # A tree without the core list builds nothing here, as before bootstrap.
+        return FluxPath(doc, parent, [], None, True)
+    for component in spec.get("components") or []:
+        if error:
+            break
+        more, error = kustomize_build(root, posixpath.join(rel, str(component)))
+        docs = docs + more
+    return FluxPath(doc, parent, docs, error, partial)
 
 
 def example_platform_configs(env_rel: str, path: str) -> bool:

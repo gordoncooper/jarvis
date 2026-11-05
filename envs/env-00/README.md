@@ -4,4 +4,6 @@ Never-deployed example env. Copy this folder to `envs/<env>` in a private instan
 
 Replace the invented values in `values/` and the hosts in `inventory/hosts.yml`, and the placeholder URLs and refs in `values/cluster-vars.yaml` and `flux/sync.yaml`. Set `jarvis_env` to the new folder name. Every `envs/env-00/` path under `flux/` must use that name. `k3s_version`, `k3s_sha256`, and the Flux version pin are already set.
 
+`flux/kustomizations/services.yaml` lists the sample add-on `hello` under `spec.components` so CI renders an add-on. A copy deletes that list and starts core-only.
+
 Then follow [New env](../../docs/deploy.md#new-env).

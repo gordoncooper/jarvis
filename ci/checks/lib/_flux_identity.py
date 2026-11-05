@@ -8,20 +8,26 @@ Kustomization in it, then checks:
 
 - Every FluxInstance sets spec.cluster.multitenant: true.
 - Every Kustomization and HelmRelease sets spec.serviceAccountName, and the
-  env's flux tree declares that ServiceAccount in the object's namespace. The
-  root sync applies that tree with the controller's own identity: the root
-  Kustomization flux-system/flux-system names kustomize-controller, and its
-  path (the tree itself) is not checked as a tenant path.
-- Only PLATFORM_KUSTOMIZATIONS, and the objects on their paths, run as
-  PLATFORM_SERVICE_ACCOUNT. No other account a Flux object runs as is bound by
-  a ClusterRoleBinding, by a RoleBinding in the namespace the Flux objects
-  live in, or to cluster-admin, admin or edit.
+  env's flux tree declares that ServiceAccount in the object's namespace, or,
+  for an add-on's Kustomization, the services stage's path does. The root sync
+  applies that tree with the controller's own identity: the root Kustomization
+  flux-system/flux-system names kustomize-controller, and its path (the tree
+  itself) is not checked as a tenant path.
+- Only PLATFORM_KUSTOMIZATIONS run as PLATFORM_SERVICE_ACCOUNT, and of the
+  objects on their paths only those on PLATFORM_PATHS. No other account a Flux
+  object runs as is bound by a ClusterRoleBinding, by a RoleBinding in the
+  namespace the Flux objects live in, or to cluster-admin, admin or edit.
 - No Kustomization's path declares the account it runs as, or a binding for it.
+- Only Kustomizations in FLUX_NAMESPACE set spec.decryption: the env key lives
+  there, and a tenant namespace never gets it.
 - sourceRef, chart sourceRef, chartRef, dependsOn and healthChecks stay in the
   object's namespace. Flux allows a cross-namespace health check; this check
   does not.
 
-A Kustomization on a path is checked, but its own path is not built.
+Each stage's path is built with its spec.components, and so is the path of each
+Kustomization on a stage's path (an add-on's own Kustomizations), one level down.
+Deeper levels are not walked: ci/checks/addons forbids Flux objects on an
+add-on's own paths, which keeps the decryption rule complete.
 """
 
 from __future__ import annotations
@@ -30,19 +36,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from _manifests import example_platform_configs, kustomize_build, namespace_of, ref_of
+from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
 
 PLATFORM_SERVICE_ACCOUNT = "flux-platform"
+FLUX_NAMESPACE = "flux-system"
 # (namespace, name) of the Flux Kustomizations that may run as the platform account.
+# services applies add-on namespaces and tenant identities, which no tenant may create.
+SERVICES_STAGE = (FLUX_NAMESPACE, "services")
 PLATFORM_KUSTOMIZATIONS = frozenset(
-    {("flux-system", "platform-controllers"), ("flux-system", "platform-configs")}
+    {(FLUX_NAMESPACE, "platform-controllers"), (FLUX_NAMESPACE, "platform-configs"), SERVICES_STAGE}
 )
-# The core list the example env's platform-configs path applies. The example
-# env's own list also names bootstrap secrets that are not in Git.
-_EXAMPLE_PLATFORM_CONFIGS_CORE = "platform/configs"
+# Stages whose path's objects may run as the platform account too. The services
+# stage's path holds add-on Kustomizations, which run as their own tenant accounts.
+PLATFORM_PATHS = frozenset({(FLUX_NAMESPACE, "platform-controllers"), (FLUX_NAMESPACE, "platform-configs")})
 # The root Kustomization applies the env's flux tree, which declares every other
 # account, so it runs as the controller's own identity, which the FluxInstance creates.
-ROOT_KUSTOMIZATION = ("flux-system", "flux-system")
+ROOT_KUSTOMIZATION = (FLUX_NAMESPACE, FLUX_NAMESPACE)
 CONTROLLER_SERVICE_ACCOUNT = "kustomize-controller"
 
 _FLUX_APIS = {
@@ -78,25 +87,42 @@ def format_violations(violations: Iterable[FluxIdentityViolation]) -> list[str]:
     return [f"{item.path}: {item.message}" for item in violations]
 
 
+def _accounts(docs: Iterable[dict]) -> set[tuple[str, str]]:
+    return {(namespace_of(doc), _name(doc)) for doc in docs if doc.get("kind") == "ServiceAccount"}
+
+
 def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[str]:
-    accounts = {
-        (namespace_of(doc), _name(doc))
-        for doc in env_docs
-        if doc.get("kind") == "ServiceAccount"
-    }
+    accounts = _accounts(env_docs)
     flux_docs = [doc for doc in env_docs if _is_flux(doc)]
     for doc in env_docs:
         if doc.get("kind") == "FluxInstance":
             cluster = (doc.get("spec") or {}).get("cluster") or {}
             if cluster.get("multitenant") is not True:
                 yield f"{ref_of(doc)}: spec.cluster.multitenant is not true"
+    paths = flux_paths(root, env_rel, env_docs)
+    # The services stage, as the platform account, declares each add-on's tenant
+    # account and its bindings.
+    wiring = [
+        item
+        for path in paths
+        if path.parent is None and _wires_addons(path.kustomization)
+        for item in path.docs
+    ]
+    accounts |= _accounts(wiring)
+    on_paths = [item for path in paths if path.parent is None for item in path.docs if _is_flux(item)]
     tenants = {
         (namespace_of(doc), account)
-        for doc in flux_docs
+        for doc in [*flux_docs, *on_paths]
         if isinstance(account := _spec(doc).get("serviceAccountName"), str)
         and account != PLATFORM_SERVICE_ACCOUNT
     }
-    for doc in env_docs:
+    for doc in [*flux_docs, *on_paths]:
+        if doc.get("kind") == "Kustomization" and _spec(doc).get("decryption") and namespace_of(doc) != FLUX_NAMESPACE:
+            yield (
+                f"{ref_of(doc)}: sets spec.decryption outside {FLUX_NAMESPACE}; "
+                f"only {FLUX_NAMESPACE} decrypts with the env key"
+            )
+    for doc in [*env_docs, *wiring]:
         if doc.get("kind") not in _BINDING_KINDS:
             continue
         role = (doc.get("roleRef") or {}).get("name")
@@ -116,10 +142,9 @@ def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[st
             if account != CONTROLLER_SERVICE_ACCOUNT:
                 yield f"{ref_of(doc)}: spec.serviceAccountName is {account!r}, expected {CONTROLLER_SERVICE_ACCOUNT!r}"
             continue
-        platform = _is_platform_kustomization(doc)
-        yield from _object_problems(doc, accounts, may_run_as_platform=platform)
-        if doc.get("kind") == "Kustomization":
-            yield from _path_problems(root, env_rel, doc, accounts, platform)
+        yield from _object_problems(doc, accounts, may_run_as_platform=_is_platform_kustomization(doc))
+    for path in paths:
+        yield from _path_problems(path, accounts)
 
 
 def _object_problems(
@@ -136,35 +161,29 @@ def _object_problems(
             yield f"{ref}: ServiceAccount {namespace}/{account} is not declared in the env's flux tree"
         if account == PLATFORM_SERVICE_ACCOUNT and not may_run_as_platform:
             allowed = ", ".join(f"{ns}/{name}" for ns, name in sorted(PLATFORM_KUSTOMIZATIONS))
+            paths = ", ".join(f"{ns}/{name}" for ns, name in sorted(PLATFORM_PATHS))
             yield (
-                f"{ref}: only Kustomizations {allowed} and the objects on their paths "
-                f"run as {PLATFORM_SERVICE_ACCOUNT}"
+                f"{ref}: only Kustomizations {allowed}, and the objects on the paths of "
+                f"{paths}, run as {PLATFORM_SERVICE_ACCOUNT}"
             )
     for field, target in _references(spec):
         if target != namespace:
             yield f"{ref}: {field} points to namespace {target}"
 
 
-def _path_problems(
-    root: Path, env_rel: str, kustomization: dict, accounts: set[tuple[str, str]], platform: bool
-) -> list[str]:
+def _path_problems(path: FluxPath, accounts: set[tuple[str, str]]) -> list[str]:
+    kustomization = path.kustomization
     ref = ref_of(kustomization)
+    if path.error:
+        return [] if path.error == "spec.path is unset" else [f"{ref}: {path.error}"]
     spec = _spec(kustomization)
-    path = spec.get("path")
-    if not isinstance(path, str) or not path.strip():
-        return []
-    rel = path.strip().removeprefix("./")
-    if example_platform_configs(env_rel, path):
-        rel = _EXAMPLE_PLATFORM_CONFIGS_CORE
-    docs, error = kustomize_build(root, rel)
-    if error:
-        return [f"{ref}: {error}"]
     namespace = namespace_of(kustomization)
     account = spec.get("serviceAccountName")
     own = f"{namespace}/{account}, the account it runs as"
+    platform = (namespace, _name(kustomization)) in PLATFORM_PATHS
     problems: list[str] = []
-    for item in docs:
-        if _is_flux(item):
+    for item in path.docs:
+        if _is_flux(item) and path.parent is None:
             problems.extend(
                 f"{ref} path: {problem}"
                 for problem in _object_problems(item, accounts, may_run_as_platform=platform)
@@ -232,6 +251,13 @@ def _is_root_kustomization(doc: dict) -> bool:
 def _is_platform_kustomization(doc: dict) -> bool:
     key = (namespace_of(doc), _name(doc))
     return doc.get("kind") == "Kustomization" and key in PLATFORM_KUSTOMIZATIONS
+
+
+def _wires_addons(doc: dict) -> bool:
+    """The services stage, running as the platform account: its path declares tenant accounts."""
+    return (namespace_of(doc), _name(doc)) == SERVICES_STAGE and _spec(doc).get(
+        "serviceAccountName"
+    ) == PLATFORM_SERVICE_ACCOUNT
 
 
 def _spec(doc: dict) -> dict:
