@@ -9,7 +9,9 @@ Kustomization in it, then checks:
 - Every FluxInstance sets spec.cluster.multitenant: true.
 - Every Kustomization and HelmRelease sets spec.serviceAccountName, and the
   env's flux tree declares that ServiceAccount in the object's namespace. The
-  root sync applies that tree with the controller's own identity.
+  root sync applies that tree with the controller's own identity: the root
+  Kustomization flux-system/flux-system names kustomize-controller, and its
+  path (the tree itself) is not checked as a tenant path.
 - Only PLATFORM_KUSTOMIZATIONS, and the objects on their paths, run as
   PLATFORM_SERVICE_ACCOUNT. No other account a Flux object runs as is bound by
   a ClusterRoleBinding, by a RoleBinding in the namespace the Flux objects
@@ -38,6 +40,10 @@ PLATFORM_KUSTOMIZATIONS = frozenset(
 # The core list the example env's platform-configs path applies. The example
 # env's own list also names bootstrap secrets that are not in Git.
 _EXAMPLE_PLATFORM_CONFIGS_CORE = "platform/configs"
+# The root Kustomization applies the env's flux tree, which declares every other
+# account, so it runs as the controller's own identity, which the FluxInstance creates.
+ROOT_KUSTOMIZATION = ("flux-system", "flux-system")
+CONTROLLER_SERVICE_ACCOUNT = "kustomize-controller"
 
 _FLUX_APIS = {
     "Kustomization": "kustomize.toolkit.fluxcd.io/",
@@ -105,6 +111,11 @@ def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[st
             if role in _BROAD_ROLES:
                 yield f"{who} to {role}"
     for doc in flux_docs:
+        if _is_root_kustomization(doc):
+            account = _spec(doc).get("serviceAccountName")
+            if account != CONTROLLER_SERVICE_ACCOUNT:
+                yield f"{ref_of(doc)}: spec.serviceAccountName is {account!r}, expected {CONTROLLER_SERVICE_ACCOUNT!r}"
+            continue
         platform = _is_platform_kustomization(doc)
         yield from _object_problems(doc, accounts, may_run_as_platform=platform)
         if doc.get("kind") == "Kustomization":
@@ -212,6 +223,10 @@ def _binds(binding: dict, namespace: str, account: str) -> bool:
 def _is_flux(doc: dict) -> bool:
     api = _FLUX_APIS.get(str(doc.get("kind")))
     return api is not None and str(doc.get("apiVersion", "")).startswith(api)
+
+
+def _is_root_kustomization(doc: dict) -> bool:
+    return doc.get("kind") == "Kustomization" and (namespace_of(doc), _name(doc)) == ROOT_KUSTOMIZATION
 
 
 def _is_platform_kustomization(doc: dict) -> bool:

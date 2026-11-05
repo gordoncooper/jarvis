@@ -14,12 +14,13 @@ if str(_TOOLS_LIB) not in sys.path:
     sys.path.insert(0, str(_TOOLS_LIB))
 
 import _sops  # noqa: E402
+from _env import instance_root  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _repo_root() -> Path:
-    return REPO_ROOT
+    return instance_root(REPO_ROOT)
 
 
 def seal(

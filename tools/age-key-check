@@ -18,6 +18,10 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+
+from lib._env import instance_root  # noqa: E402
+
 _SEGMENT = re.compile(r"^[a-z0-9-]+$")
 _MODE_0600 = 0o600
 
@@ -25,7 +29,7 @@ _MODE_0600 = 0o600
 def _one_secret(env: str) -> Path | None:
     if not _SEGMENT.fullmatch(env):
         return None
-    secrets = (REPO_ROOT / "envs" / env / "secrets").resolve()
+    secrets = (instance_root(REPO_ROOT) / "envs" / env / "secrets").resolve()
     if not secrets.is_dir():
         return None
     for path in sorted(secrets.glob("*.sops.yaml")):
@@ -66,7 +70,7 @@ def check(env: str, key_file: Path) -> bool:
         with tempfile.TemporaryDirectory(prefix="jarvis-age-key-check-") as empty:
             result = subprocess.run(
                 [sops, "decrypt", str(secret)],
-                cwd=REPO_ROOT,
+                cwd=instance_root(REPO_ROOT),
                 env=_decrypt_env(key_file, empty),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,

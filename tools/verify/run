@@ -16,6 +16,7 @@ sys.path.insert(1, str(REPO_ROOT))
 
 from lib._env import (  # noqa: E402
     EnvError,
+    instance_root,
     kubeconfig_for,
     kubectl as run_kubectl,
     repository_values,
@@ -141,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             kubeconfig=kubeconfig,
         )
 
-    return run(REPO_ROOT, args.env, bound, _fetch, _issuer)
+    return run(instance_root(REPO_ROOT), args.env, bound, _fetch, _issuer)
 
 
 if __name__ == "__main__":

@@ -1,29 +1,53 @@
 ---
-- name: Check whether FluxInstance exists
+# The root GitRepository marks a cluster Flux already syncs. Until it exists, this
+# applies the FluxInstance (controllers), then sync.yaml (the root and core sources
+# and the root Kustomization). Flux reconciles both files from Git after that.
+- name: Check whether the root GitRepository exists
   ansible.builtin.command:
     cmd: >-
       {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
-      get fluxinstance {{ flux_instance_name }} -o name
-  register: flux_instance_lookup
+      get gitrepositories.source.toolkit.fluxcd.io {{ flux_root_source_name }} -o name
+  register: flux_root_lookup
   changed_when: false
+  # Before the FluxInstance installs the CRD, the type itself is unknown.
   failed_when: >-
-    flux_instance_lookup.rc != 0
+    flux_root_lookup.rc != 0
     and 'NotFound' not in (
-      (flux_instance_lookup.stderr | default(''))
-      ~ (flux_instance_lookup.stdout | default(''))
+      (flux_root_lookup.stderr | default(''))
+      ~ (flux_root_lookup.stdout | default(''))
     )
+    and "doesn't have a resource type" not in (flux_root_lookup.stderr | default(''))
   check_mode: false
 
-- name: Record FluxInstance presence
+- name: Record root GitRepository presence
   ansible.builtin.set_fact:
-    flux_instance_present: "{{ flux_instance_lookup.rc == 0 }}"
+    flux_root_present: "{{ flux_root_lookup.rc == 0 }}"
 
 - name: Hold PVC backups when this cluster is new and restic data is already on disk
-  when: not (flux_instance_present | bool)
+  when: not (flux_root_present | bool)
   ansible.builtin.import_tasks: rebuild_hold.yml
 
-- name: Apply the env FluxInstance from Git once
-  when: not (flux_instance_present | bool)
+- name: Apply the env FluxInstance from Git
+  when: not (flux_root_present | bool)
   ansible.builtin.command:
     cmd: "{{ k3s_binary_path }} kubectl apply -f -"
     stdin: "{{ lookup('file', flux_instance_file) }}"
+
+- name: Wait for the Flux source and kustomize CRDs
+  when: not (flux_root_present | bool)
+  ansible.builtin.command:
+    cmd: >-
+      {{ k3s_binary_path }} kubectl wait --for=condition=Established --timeout=10s
+      crd/gitrepositories.source.toolkit.fluxcd.io
+      crd/kustomizations.kustomize.toolkit.fluxcd.io
+  register: flux_crd_wait
+  until: flux_crd_wait.rc == 0
+  retries: "{{ flux_crd_wait_retries }}"
+  delay: "{{ flux_crd_wait_delay }}"
+  changed_when: false
+
+- name: Apply the env Flux sources and root Kustomization from Git once
+  when: not (flux_root_present | bool)
+  ansible.builtin.command:
+    cmd: "{{ k3s_binary_path }} kubectl apply -f -"
+    stdin: "{{ lookup('file', flux_sync_file) }}"

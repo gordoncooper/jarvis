@@ -11,8 +11,9 @@ python3 - <<'PY'
 from pathlib import Path
 
 from _flux_substitute import format_violations, scan_flux_substitute
+from schema.env import instance_root
 
-violations = scan_flux_substitute(Path("."))
+violations = scan_flux_substitute(instance_root(Path(".")))
 if violations:
     for line in format_violations(violations):
         print(line, flush=True)

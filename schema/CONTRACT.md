@@ -2,6 +2,8 @@
 
 Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic (`ci/checks/core-names`); env specifics live only under `envs/`. Config with no consumer is not in the schema; each piece arrives with the code that uses it.
 
+A real env lives in a private instance checkout. `INSTANCE=<path>` points the schema, the env-level checks and every env tool at `<path>/envs/<env>` and `<path>/.sops.yaml`. Unset, they read this checkout, which holds only the example env. `instance_root` in `tools/lib/_env.py` is the one resolver.
+
 ## Offers
 
 - A single validation contract for two files per env:
@@ -19,7 +21,8 @@ Defines what each deployment target under `envs/<env>/` may set. Core stays env-
 
 - One folder per env: `envs/<env>/` with the two files above present when that env is active.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
-- Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's `flux/platform-configs/kustomization.yaml` lists `platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same prep-node reason. An env that does not list it needs nothing new.
+- When `flux_git_repo_url` is `ssh://`, `envs/<env>/secrets/flux-deploy-key.sops.yaml` (the read-only deploy key) is required.
+- Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's `flux/platform-configs/kustomization.yaml` lists `core/platform/backups/offsite`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same prep-node reason. An env that does not list it needs nothing new.
 - `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file. A missing postBuild variable fails the Flux reconcile.
 
 ## Health
@@ -53,9 +56,11 @@ A required key that is present but null counts as unset and fails.
 | `service_cidr` | yes | Service network CIDR; an IP network, set once per env. |
 | `app_dns_cluster_ip` | yes | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |
 | `local_path_data` | yes | k3s local-path provisioner data directory. A subdirectory of `/var/lib/jarvis`, not that mount itself. |
-| `flux_git_repo_url` | yes | Public Git remote for FluxInstance sync (https only; owner/repo path; no userinfo, query, or fragment). |
+| `flux_git_repo_url` | yes | The env repository, the root `GitRepository` in `flux/sync.yaml`. `https://` (no userinfo, query, or fragment) or `ssh://<user>@<host>/<owner>/<repo>` read with the sealed deploy key; owner/repo path. |
 | `apps_git_repo_url` | no | When set, an https Git remote for the apps repo, with the same owner handle as `flux_git_repo_url`. When unset, the env owner is the `flux_git_repo_url` handle. |
-| `flux_git_ref` | yes | Git ref for FluxInstance sync (e.g. `refs/heads/main`). |
+| `flux_git_ref` | yes | Git ref of the root source (e.g. `refs/heads/main`). |
+| `core_git_repo_url` | yes | The public core repository, the `core` `GitRepository` in `flux/sync.yaml`. https only, read with no credential. |
+| `core_git_ref` | yes | Git ref of the core source (e.g. `refs/heads/main`). |
 | `llm_provider_host` | no | When set, an AI provider API hostname, with no scheme, path, or port. |
 | `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
 | `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
@@ -88,9 +93,9 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
+`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `sync.yaml` (the two sources and the root Kustomization, with placeholder URLs), `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list is `core/platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
-The example's platform-configs list also turns on the off-host copy: `platform/backups/offsite` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
+The example's platform-configs list also turns on the off-host copy: `core/platform/backups/offsite` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
 
 ### Explicit env
 
@@ -104,7 +109,7 @@ The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluste
 
 The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_configmap.py`. Every other known key in `schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.
 
-The FluxInstance `spec.sync` url, ref, and path match `flux_git_repo_url`, `flux_git_ref`, and `envs/<env>/flux`.
+When `flux/sync.yaml` is present, its root `GitRepository` `flux-system` url and `ref.name` match `flux_git_repo_url` and `flux_git_ref`, its `core` `GitRepository` matches `core_git_repo_url` and `core_git_ref` and has no `secretRef`, the root includes `core` at `toPath: core`, an `ssh://` root names a `secretRef`, and the root Kustomization `flux-system` applies `./envs/<env>/flux` from `flux-system`. `site.yml` preflight requires the file.
 
 `validate_env_tree(..., pre_host=True)` skips the missing `.sops.yaml` recipient requirement and the generated ConfigMap match. Other `.sops.yaml` checks still run. `tools/prep-node` uses that mode before it contacts a host, then runs the full check at the end.
 
@@ -136,7 +141,8 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
 - A behavior test accepts a new env that lists the off-host copy before bootstrap, rejects it once bootstrapped without `backups-offsite.sops.yaml`, and accepts it once the file is there.
 - A behavior test rejects a repo URL that includes userinfo, a query, or a fragment.
-- A behavior test rejects a FluxInstance whose sync url or ref does not match cluster-vars.
+- A behavior test accepts the example env's source pair and rejects a core source whose url does not match cluster-vars.
+- A behavior test requires `flux-deploy-key.sops.yaml` for an `ssh://` root and accepts the env once it is there.
 - A behavior test rejects a generated ConfigMap that does not match the cluster-vars render, and accepts that tree in pre-host mode.
 - A behavior test rejects a relative `backup_path`.
 - The cluster-vars ConfigMap render publishes only the allow-list in the postBuild section. Host-only keys stay out. A stale render fails the flux entry test.

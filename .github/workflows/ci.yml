@@ -10,49 +10,17 @@ on:
       - main
 
 jobs:
-  fast:
-    name: fast (${{ matrix.copy }})
+  # The product holds only the env-00 sample, so one leg covers it. Real envs
+  # live in instance repos, whose CI runs this repo's env-level checks.
+  ci:
+    name: ci
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        copy:
-          - full
-          - env00-only
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # ci/checks/secret-scan reads the whole history, so it needs every commit.
           fetch-depth: 0
-
-      - name: Keep only the env-00 sample (throwaway local commit, never pushed)
-        if: ${{ matrix.copy == 'env00-only' }}
-        run: |
-          set -euo pipefail
-          for dir in envs/*/; do
-            dir="${dir%/}"
-            if [[ "${dir}" != "envs/env-00" ]]; then
-              git rm -r -q "${dir}"
-            fi
-          done
-          remaining_non_example=0
-          for dir in envs/*/; do
-            name="${dir%/}"
-            name="${name#envs/}"
-            if [[ "${name}" != "env-00" ]]; then
-              remaining_non_example=1
-              break
-            fi
-          done
-          if [[ "${remaining_non_example}" -eq 0 && -f .sops.yaml ]]; then
-            git rm -q .sops.yaml
-          fi
-          if ! git diff --cached --quiet; then
-            git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "ci: keep only env-00"
-          fi
-          echo "envs/ now holds:"
-          git ls-files envs | cut -d/ -f2 | sort -u
 
       - name: Restore pinned CLIs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -72,18 +40,3 @@ jobs:
         run: |
           export PATH="${HOME}/.local/bin:${PATH}"
           .venv/bin/pytest -ra
-
-  ci:
-    name: ci
-    runs-on: ubuntu-latest
-    needs:
-      - fast
-    if: ${{ always() }}
-    steps:
-      - name: Require fast
-        run: |
-          set -euo pipefail
-          echo "fast: ${{ needs.fast.result }}"
-          if [[ "${{ needs.fast.result }}" != "success" ]]; then
-            exit 1
-          fi

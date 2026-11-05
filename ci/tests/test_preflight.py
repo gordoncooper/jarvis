@@ -23,6 +23,8 @@ from ansible_role_proof import (
 from conftest import require_cli
 from support import REPO_ROOT, bootstrap_example_copy
 
+_EXAMPLE_SYNC = REPO_ROOT / "envs" / "env-00" / "flux" / "sync.yaml"
+
 _REQUIRED = (
     "k3s_version",
     "k3s_sha256",
@@ -115,6 +117,7 @@ def _run_site(
     ]
     if flux_instance:
         cmd.extend(["-e", f"flux_instance_file={example_flux_entry(tmp_path).instance_file}"])
+        cmd.extend(["-e", f"flux_sync_file={_EXAMPLE_SYNC}"])
     if check:
         cmd.append("--check")
     if tags is not None:
@@ -225,7 +228,7 @@ def test_malformed_k3s_pin_fails_before_any_change(
 def test_missing_env_flux_instance_fails_before_any_change(tmp_path: Path) -> None:
     """R1: site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
     result = _run_site(tmp_path, jarvis_env="env-absent", flux_instance=False)
-    _stopped_before_base_os(result, "envs/env-absent/flux/flux-instance.yaml is missing")
+    _stopped_before_base_os(result, "envs/env-absent/flux/flux-instance.yaml or sync.yaml is missing")
 
 
 def test_unmarked_k3s_fails_before_any_change(tmp_path: Path) -> None:
@@ -371,6 +374,8 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
         "ansible_connection=local",
         "-e",
         f"flux_instance_file={flux_instance}",
+        "-e",
+        f"flux_sync_file={_EXAMPLE_SYNC}",
         *_k3s_paths(tmp_path),
     ]
     env = os.environ.copy()
@@ -445,7 +450,7 @@ def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> N
     )
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
-    assert "Require the env FluxInstance in Git" in output
-    assert "flux-instance.yaml is missing" not in output
+    assert "Require the env FluxInstance and Flux sources in Git" in output
+    assert "flux-instance.yaml or sync.yaml is missing" not in output
     assert "PLAY [Base OS]" not in output
     assert playbook_recap_field(output, "changed") == 0

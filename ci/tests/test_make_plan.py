@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from support import REPO_ROOT
 
@@ -34,6 +37,29 @@ def test_make_plan_ignores_inherited_variables(monkeypatch):
     proc = _run("verify", "ENV=env-00")
     assert proc.returncode == 0
     assert "/inherited-venv" not in proc.stdout
+
+
+def test_instance_points_make_plan_and_a_tool_at_an_instance_checkout(tmp_path: Path) -> None:
+    """INSTANCE resolves envs/<env> in an instance checkout; unset resolves this checkout."""
+    instance = tmp_path / "instance"
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", instance / "envs" / "env-00")
+    values = instance / "envs" / "env-00" / "values" / "cluster-vars.yaml"
+    values.write_text(
+        values.read_text(encoding="utf-8").replace("env-00.example", "instance.example"),
+        encoding="utf-8",
+    )
+    plan = _run("site", "ENV=env-00", f"INSTANCE={instance}")
+    assert plan.returncode == 0, plan.stderr
+    assert f"-i {instance}/envs/env-00/inventory/hosts.yml" in plan.stdout
+    assert _run("site", "ENV=env-00").stdout.count(f"{REPO_ROOT}/envs/env-00/inventory/hosts.yml") == 1
+
+    def render(**extra: str) -> str:
+        env = {k: v for k, v in os.environ.items() if k != "INSTANCE"} | extra
+        cmd = [sys.executable, "tools/lib/render_cluster_vars_configmap.py", "--env", "env-00"]
+        return subprocess.run(cmd, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True).stdout
+
+    assert "dns_suffix: instance.example" in render(INSTANCE=str(instance))
+    assert "dns_suffix: env-00.example" in render()
 
 
 def test_make_plan_rejects_a_target_that_is_not_a_name():

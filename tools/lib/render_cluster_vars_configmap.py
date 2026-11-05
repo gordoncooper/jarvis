@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from schema.env import resolve_cluster_vars  # noqa: E402
+from schema.env import instance_root, resolve_cluster_vars  # noqa: E402
 
 # Keys the cluster reads. Substituted ${var}s on this tree, plus jarvis_env,
 # which verify, drill and restore read from the live ConfigMap.
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     env_name = args.env
-    cluster_vars_path = REPO_ROOT / "envs" / env_name / "values" / "cluster-vars.yaml"
+    cluster_vars_path = instance_root(REPO_ROOT) / "envs" / env_name / "values" / "cluster-vars.yaml"
     if not cluster_vars_path.is_file():
         raise SystemExit(f"missing {cluster_vars_path}")
 

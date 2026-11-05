@@ -137,13 +137,17 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
 
 
 def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
-    """The Flux Kustomizations the env entry applies, from its kustomize build."""
+    """The layer Kustomizations the env entry applies, from its kustomize build.
+
+    The root Kustomization in sync.yaml is not a layer; the env schema checks it.
+    """
     return [
         doc
         for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux", root=root))
         if isinstance(doc, dict)
         and doc.get("kind") == "Kustomization"
         and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION_API)
+        and doc["metadata"]["name"] != "flux-system"
     ]
 
 
@@ -222,23 +226,15 @@ def _flux_instance(env: str, root: Path | None = None) -> dict:
 
 
 def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list[str]:
-    """Ansible applies this file once and looks it up by name; Flux then syncs it."""
+    """Ansible applies this file once; it installs the controllers and syncs nothing."""
     role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
-    cluster = load_cluster_vars(REPO_ROOT if root is None else root, env=env)
     errors = []
     metadata = doc.get("metadata") or {}
     lookup = (role["flux_system_namespace"], role["flux_instance_name"])
     if (metadata.get("namespace"), metadata.get("name")) != lookup:
-        errors.append(f"metadata is not {lookup}, the flux-operator lookup")
-    sync = doc.get("spec", {}).get("sync") or {}
-    expected = {
-        "url": cluster["flux_git_repo_url"],
-        "ref": cluster["flux_git_ref"],
-        "path": f"envs/{env}/flux",
-    }
-    for key, want in expected.items():
-        if sync.get(key) != want:
-            errors.append(f"spec.sync.{key} is {sync.get(key)!r}, expected {want!r}")
+        errors.append(f"metadata is not {lookup}, the flux-operator name")
+    if "sync" in (doc.get("spec") or {}):
+        errors.append("spec.sync is set; sync.yaml declares the sources")
     patches = doc.get("spec", {}).get("kustomize", {}).get("patches") or []
     if not any(
         _STRICT_SUBSTITUTION in str(patch.get("patch"))
@@ -252,20 +248,21 @@ def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list
 def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     """The env's platform-configs path is platform/configs plus that env's SOPS secrets,
     and the opt-in off-host copy."""
-    from schema.env import OFFSITE_COPY_DIR
+    from schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
 
     base = f"envs/{env}/flux/platform-configs"
     resources = [posixpath.normpath(posixpath.join(base, item)) for item in doc.get("resources") or []]
+    configs = f"{CORE_SOURCE_DIR}/platform/configs"
     errors = []
     keys = sorted(set(doc) - {"apiVersion", "kind", "resources"})
     if keys:
         errors.append(f"keys other than resources: {keys}")
-    if resources.count("platform/configs") != 1:
-        errors.append("platform/configs is not listed exactly once")
+    if resources.count(configs) != 1:
+        errors.append(f"{configs} is not listed exactly once")
     others = [
         item
         for item in resources
-        if item not in ("platform/configs", OFFSITE_COPY_DIR)
+        if item not in (configs, f"{CORE_SOURCE_DIR}/{OFFSITE_COPY_DIR}")
         and not (posixpath.dirname(item) == f"envs/{env}/secrets" and item.endswith(".sops.yaml"))
     ]
     if others:
@@ -313,9 +310,7 @@ def test_flux_instance_syncs_its_env_from_cluster_vars(example_copy: ExampleCopy
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        (("spec", "sync", "url"), "https://example.invalid/other"),
-        (("spec", "sync", "ref"), "refs/heads/other"),
-        (("spec", "sync", "path"), "envs/env-other/flux"),
+        (("spec", "sync"), {"kind": "GitRepository", "url": "https://example.invalid/other"}),
         (("metadata", "name"), "other"),
         (("spec", "kustomize", "patches"), []),
         (("spec", "kustomize", "patches", 0, "target", "kind"), "StatefulSet"),
@@ -352,7 +347,7 @@ def _add_extra(docs: list[dict]) -> None:
 
 def _move_platform_configs(docs: list[dict]) -> None:
     next(d for d in docs if d["metadata"]["name"] == "platform-configs")["spec"]["path"] = (
-        "./platform/configs"
+        "./core/platform/configs"
     )
 
 
@@ -453,15 +448,15 @@ def test_env_platform_configs_adds_only_its_secrets(example_copy: ExampleCopy) -
 @pytest.mark.parametrize(
     "seed",
     [
-        {"resources": ["../../../../platform/configs", "../../../../platform/testapp"]},
-        {"resources": ["../../../../platform/configs", "../../../env-other/secrets/x.sops.yaml"]},
+        {"resources": ["../../../../core/platform/configs", "../../../../core/platform/testapp"]},
+        {"resources": ["../../../../core/platform/configs", "../../../env-other/secrets/x.sops.yaml"]},
         {"resources": ["../../secrets/x.sops.yaml"]},
-        {"resources": ["../../../../platform/configs"], "patches": []},
+        {"resources": ["../../../../core/platform/configs"], "patches": []},
     ],
 )
 def test_env_platform_configs_with_more_than_its_secrets_fails(seed: dict) -> None:
     env = env_name()
-    clean = {"resources": ["../../../../platform/configs", "../../secrets/x.sops.yaml"]}
+    clean = {"resources": ["../../../../core/platform/configs", "../../secrets/x.sops.yaml"]}
     assert _platform_configs_errors(clean, env) == []
     assert _platform_configs_errors(seed, env)
 

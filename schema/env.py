@@ -13,6 +13,12 @@ from urllib.parse import urlparse
 
 import yaml
 
+_TOOLS_LIB = Path(__file__).resolve().parents[1] / "tools" / "lib"
+if str(_TOOLS_LIB) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_LIB))
+
+from _env import instance_root  # noqa: E402,F401  (the one INSTANCE resolver)
+
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
@@ -21,6 +27,15 @@ DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
 # An env turns the off-host copy on by listing this directory and its sealed secret in platform-configs.
 OFFSITE_COPY_DIR = "platform/backups/offsite"
 OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
+# The root GitRepository includes the core source at this directory, so env files
+# reach core as <root>/core/... . In the product checkout, core is the checkout itself.
+CORE_SOURCE_DIR = "core"
+# The root source and core source, and the file that declares them with the root Kustomization.
+ROOT_SOURCE = "flux-system"
+CORE_SOURCE = "core"
+SYNC_FILE = "sync.yaml"
+# The sealed read-only deploy key an ssh:// root reads with.
+DEPLOY_KEY_FILE = "flux-deploy-key.sops.yaml"
 
 
 def is_example_env(name: str) -> bool:
@@ -50,6 +65,8 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "local_path_data",
         "flux_git_repo_url",
         "flux_git_ref",
+        "core_git_repo_url",
+        "core_git_ref",
         "ntp_pools",
         "k3s_kubelet_kube_reserved",
         "k3s_kubelet_system_reserved",
@@ -276,6 +293,9 @@ def _validate_env(
     secrets = env_dir / "secrets"
     # Once bootstrap-secrets has run, the k3s tokens are sealed too. prep-node checks before that.
     sealed = (secrets / "k3s-token.sops.yaml",) if any(secrets.glob("*.sops.yaml")) else ()
+    # An ssh:// root reads the env repo with the sealed deploy key.
+    if cluster_vars_path.is_file() and _ssh_root(cluster_vars_path):
+        sealed = (*sealed, secrets / DEPLOY_KEY_FILE)
     for path in (cluster_vars_path, inventory, *sealed):
         if not path.is_file():
             errors.append(
@@ -299,15 +319,7 @@ def _validate_env(
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
-    errors.extend(
-        _validate_flux_instance_sync(
-            env_dir,
-            repo_root,
-            env_name,
-            cluster_vars.get("flux_git_repo_url"),
-            cluster_vars.get("flux_git_ref"),
-        )
-    )
+    errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))
     errors.extend(
         _validate_committed_configmap(
             env_dir, repo_root, cluster_vars_path, pre_host=pre_host
@@ -398,8 +410,15 @@ def _validate_cluster_vars(
     errors.extend(_validate_app_dns_cluster_ip(rel_path, data))
 
     flux_errors, flux_owner = _validate_repo_url(
-        rel_path, "flux_git_repo_url", data.get("flux_git_repo_url")
+        rel_path, "flux_git_repo_url", data.get("flux_git_repo_url"), ssh=True
     )
+    core_errors, _core_owner = _validate_repo_url(
+        rel_path, "core_git_repo_url", data.get("core_git_repo_url")
+    )
+    errors.extend(core_errors)
+    val = data.get("core_git_ref")
+    if val is not None and (not isinstance(val, str) or not val.strip()):
+        errors.append(f"{rel_path}: core_git_ref must be a non-empty string")
     apps_errors, apps_owner = _validate_repo_url(
         rel_path, "apps_git_repo_url", data.get("apps_git_repo_url")
     )
@@ -575,7 +594,7 @@ def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
         return False
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     resources = doc.get("resources") if isinstance(doc, dict) else None
-    target = (Path(repo_root) / OFFSITE_COPY_DIR).resolve()
+    target = (Path(repo_root) / CORE_SOURCE_DIR / OFFSITE_COPY_DIR).resolve()
     return any(
         isinstance(item, str) and (path.parent / item).resolve() == target
         for item in resources or []
@@ -597,55 +616,62 @@ def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> l
     ]
 
 
-def _validate_flux_instance_sync(
-    env_dir: Path,
-    repo_root: Path,
-    env_name: str,
-    flux_url: Any,
-    flux_ref: Any,
+def _ssh_root(cluster_vars_path: Path) -> bool:
+    try:
+        data = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return False
+    url = data.get("flux_git_repo_url") if isinstance(data, dict) else None
+    return isinstance(url, str) and url.startswith("ssh://")
+
+
+def _validate_flux_sources(
+    env_dir: Path, repo_root: Path, env_name: str, cluster_vars: dict[str, Any]
 ) -> list[str]:
-    """FluxInstance spec.sync must match flux_git_* and this env's flux path."""
-    path = env_dir / "flux" / "flux-instance.yaml"
+    """flux/sync.yaml declares the root and core GitRepositories from cluster-vars, the root
+    includes core at CORE_SOURCE_DIR, and the root Kustomization applies this env's flux path."""
+    path = env_dir / "flux" / SYNC_FILE
+    rel = _display_path(path, repo_root)
     if not path.is_file():
         return []
-    rel = _display_path(path, repo_root)
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
     except yaml.YAMLError as exc:
         return [f"{rel}: invalid YAML: {exc}"]
-    if not isinstance(data, dict):
-        return [f"{rel}: expected a YAML mapping"]
-    spec = data.get("spec")
-    sync = spec.get("sync") if isinstance(spec, dict) else None
-    if not isinstance(sync, dict):
-        sync = {}
-    expected = {
-        "url": flux_url if isinstance(flux_url, str) and flux_url.strip() else None,
-        "ref": flux_ref if isinstance(flux_ref, str) and flux_ref.strip() else None,
-        "path": f"envs/{env_name}/flux",
+
+    def find(kind: str, name: str) -> dict:
+        for doc in docs:
+            meta = doc.get("metadata") or {}
+            if doc.get("kind") == kind and meta.get("name") == name and meta.get("namespace") == ROOT_SOURCE:
+                return doc.get("spec") or {}
+        return {}
+
+    root, core, sync = find("GitRepository", ROOT_SOURCE), find("GitRepository", CORE_SOURCE), find("Kustomization", ROOT_SOURCE)
+    root_url = cluster_vars.get("flux_git_repo_url")
+    want = {
+        f"GitRepository {ROOT_SOURCE} spec.url": (root.get("url"), root_url, "flux_git_repo_url"),
+        f"GitRepository {ROOT_SOURCE} spec.ref.name": ((root.get("ref") or {}).get("name"), cluster_vars.get("flux_git_ref"), "flux_git_ref"),
+        f"GitRepository {CORE_SOURCE} spec.url": (core.get("url"), cluster_vars.get("core_git_repo_url"), "core_git_repo_url"),
+        f"GitRepository {CORE_SOURCE} spec.ref.name": ((core.get("ref") or {}).get("name"), cluster_vars.get("core_git_ref"), "core_git_ref"),
     }
-    sources = {
-        "url": "flux_git_repo_url in values/cluster-vars.yaml",
-        "ref": "flux_git_ref in values/cluster-vars.yaml",
-        "path": f"envs/{env_name}/flux",
-    }
-    errors: list[str] = []
-    for key, want in expected.items():
-        if want is None:
-            continue
-        got = sync.get(key)
-        if got != want:
-            errors.append(
-                f"{rel}: spec.sync.{key} is {got!r}, expected {want!r}; "
-                f"set it to {sources[key]}"
-            )
+    errors = [
+        f"{rel}: {field} is {got!r}, expected {expected!r}; set it to {key} in values/cluster-vars.yaml"
+        for field, (got, expected, key) in want.items()
+        if expected is not None and got != expected
+    ]
+    include = {"repository": {"name": CORE_SOURCE}, "toPath": CORE_SOURCE_DIR}
+    if include not in (root.get("include") or []):
+        errors.append(f"{rel}: GitRepository {ROOT_SOURCE} must include {CORE_SOURCE} at toPath {CORE_SOURCE_DIR}")
+    if core.get("secretRef"):
+        errors.append(f"{rel}: GitRepository {CORE_SOURCE} is public and takes no secretRef")
+    if isinstance(root_url, str) and root_url.startswith("ssh://") and not root.get("secretRef"):
+        errors.append(f"{rel}: GitRepository {ROOT_SOURCE} reads an ssh:// URL and needs spec.secretRef")
+    if sync.get("path") != f"./envs/{env_name}/flux" or (sync.get("sourceRef") or {}).get("name") != ROOT_SOURCE:
+        errors.append(f"{rel}: Kustomization {ROOT_SOURCE} must apply ./envs/{env_name}/flux from {ROOT_SOURCE}")
     return errors
 
 
 def _rendered_cluster_vars_configmap(cluster_vars_path: Path) -> str:
-    lib = Path(__file__).resolve().parents[1] / "tools" / "lib"
-    if str(lib) not in sys.path:
-        sys.path.insert(0, str(lib))
     from render_cluster_vars_configmap import render_document
 
     return render_document(cluster_vars_path)
@@ -700,9 +726,9 @@ def _validate_chrony_nts(rel_path: str, value: Any) -> list[str]:
 
 
 def repo_owner_handle(url: str) -> str | None:
-    """Return the first path segment when url is https and names owner/repo."""
+    """Return the first path segment when url is https or ssh and names owner/repo."""
     parsed = urlparse(url.strip())
-    if parsed.scheme != "https" or not parsed.netloc:
+    if parsed.scheme not in ("https", "ssh") or not parsed.netloc:
         return None
     parts = [part for part in parsed.path.strip("/").split("/") if part]
     if len(parts) < 2:
@@ -710,8 +736,13 @@ def repo_owner_handle(url: str) -> str | None:
     return parts[0]
 
 
-def _validate_repo_url(rel_path: str, key: str, value: Any) -> tuple[list[str], str | None]:
-    errors = _validate_https_url(rel_path, key, value)
+def _validate_repo_url(
+    rel_path: str, key: str, value: Any, *, ssh: bool = False
+) -> tuple[list[str], str | None]:
+    if ssh and isinstance(value, str) and value.startswith("ssh://"):
+        errors = _validate_ssh_url(rel_path, key, value)
+    else:
+        errors = _validate_https_url(rel_path, key, value)
     if errors or not isinstance(value, str) or not value.strip():
         return errors, None
     owner = repo_owner_handle(value)
@@ -730,6 +761,14 @@ def _validate_bare_hostname(rel_path: str, key: str, value: Any) -> list[str]:
         return [f"{rel_path}: {key} must not be empty"]
     if _looks_like_ip(value) or not _HOSTNAME.match(value):
         return [f"{rel_path}: {key} must be a bare hostname"]
+    return []
+
+
+def _validate_ssh_url(rel_path: str, key: str, value: str) -> list[str]:
+    """ssh://user@host/owner/repo, the form Flux reads with a deploy key."""
+    parsed = urlparse(value)
+    if not parsed.hostname or parsed.password is not None or "?" in value or "#" in value:
+        return [f"{rel_path}: {key} must be ssh://<user>@<host>/<owner>/<repo>"]
     return []
 
 
@@ -881,7 +920,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env", required=True)
     ns = parser.parse_args(argv)
     try:
-        validate_one_env(".", ns.env)
+        validate_one_env(instance_root(Path(".")), ns.env)
     except ValidationError as exc:
         print(exc, flush=True)
         return 1

@@ -14,10 +14,22 @@ import yaml
 
 Kubectl = Callable[..., CompletedProcess[str]]
 ENV_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Names an instance checkout. Its envs/<env> and .sops.yaml are the ones tools act on.
+INSTANCE_VAR = "INSTANCE"
 
 
 class EnvError(Exception):
     pass
+
+
+def instance_root(product_root: Path) -> Path:
+    """The checkout that holds envs/<env> and its .sops.yaml.
+
+    INSTANCE points at an instance checkout. Unset or empty, the product
+    checkout itself holds the env, as it does for env-00.
+    """
+    value = os.environ.get(INSTANCE_VAR, "")
+    return Path(value).expanduser().resolve() if value else product_root
 
 
 def tool_env(repo_root: Path) -> dict[str, str]:

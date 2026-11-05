@@ -1,5 +1,5 @@
 ---
-# Imported only when FluxInstance is absent (instance.yml). A later site.yml run
+# Imported only when the root GitRepository is absent (instance.yml). A later site.yml run
 # must not create this. The ConfigMap is cluster state, not Git.
 - name: Require the backup host
   ansible.builtin.assert:

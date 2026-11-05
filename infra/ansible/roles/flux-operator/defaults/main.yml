@@ -6,6 +6,8 @@ flux_operator_helm_timeout: 5m
 flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
 flux_instance_name: flux
+# sync.yaml's root GitRepository. Its presence marks a cluster Flux already syncs.
+flux_root_source_name: flux-system
 helm_binary_path: /usr/local/bin/helm
 # The play runs as root.
 helm_binary_owner: root
@@ -17,5 +19,14 @@ helm_version: 3.16.4
 helm_linux_amd64_tarball_sha256: fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179
 helm_archive_member_linux_amd64: linux-amd64/helm
 helm_download_url: "https://get.helm.sh/helm-v{{ helm_version }}-linux-amd64.tar.gz"
-# The repo's SOPS config. Its creation rule for envs/<jarvis_env>/secrets/ names the env's age recipients.
-flux_sops_config_file: "{{ role_path }}/../../../../.sops.yaml"
+# The instance checkout's SOPS config. Its creation rule for envs/<jarvis_env>/secrets/ names the env's age recipients.
+flux_sops_config_file: "{{ jarvis_instance_root }}/.sops.yaml"
+# An ssh:// root reads the env repo with this sealed read-only deploy key, created once as
+# flux-system/<flux_deploy_key_secret_name>, which sync.yaml's root GitRepository names.
+flux_deploy_key_file: "{{ jarvis_env_dir }}/secrets/flux-deploy-key.sops.yaml"
+flux_deploy_key_secret_name: flux-deploy-key
+# GitHub's published SSH host key (api.github.com/meta, ssh_keys). Public, not user-specific.
+flux_known_hosts: "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+# The FluxInstance installs the source and kustomize CRDs before sync.yaml can apply.
+flux_crd_wait_retries: 30
+flux_crd_wait_delay: 10

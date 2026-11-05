@@ -5,7 +5,7 @@ k3s_config_path: /etc/rancher/k3s/config.yaml
 k3s_unit_dir: /etc/systemd/system
 jarvis_marker_path: /etc/jarvis/env
 # The sealed server and agent tokens, decrypted on the controller.
-k3s_token_file: "{{ role_path }}/../../../../envs/{{ jarvis_env }}/secrets/k3s-token.sops.yaml"
+k3s_token_file: "{{ jarvis_env_dir }}/secrets/k3s-token.sops.yaml"
 # k3s v1.36.5+k3s1 built-in defaults (D6); snapshot dir comes from backup_path.
 k3s_etcd_snapshot_schedule_cron: "0 */12 * * *"
 k3s_etcd_snapshot_retention: 5
