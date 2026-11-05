@@ -1,0 +1,26 @@
+# The app's namespace. Its labels and annotations are what admission and the derive policy
+# read: the app's name and host, the env, the env's CIDRs, and the env's exception lines as
+# grants. No tenant can edit a Namespace. Prune stays off: removing the app from the env's
+# list keeps the namespace and its volumes until the operator deletes them.
+# Pod Security warns and audits at restricted; app-file enforces the baseline, because a
+# Pod Security label cannot admit the VolSync mover and refuse a tenant pod alike.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-${app_name}
+  labels:
+    hosting.jarvis.io/app: ${app_name}
+    grants.hosting.jarvis.io/privileged: "${app_grant_privileged}"
+    grants.hosting.jarvis.io/root: "${app_grant_root}"
+    grants.hosting.jarvis.io/host-network: "${app_grant_host_network}"
+    grants.hosting.jarvis.io/host-path: "${app_grant_host_path}"
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    hosting.jarvis.io/host: ${app_name}.apps.${dns_suffix}
+    hosting.jarvis.io/env: ${jarvis_env}
+    hosting.jarvis.io/hostnames: "${app_grant_hostnames}"
+    hosting.jarvis.io/lan-ports: "${app_grant_lan_ports}"
+    hosting.jarvis.io/pod-cidr: ${app_pod_cidr}
+    hosting.jarvis.io/service-cidr: ${app_service_cidr}

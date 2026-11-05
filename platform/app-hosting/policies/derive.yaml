@@ -1,0 +1,237 @@
+# What core derives from an app's App, in that app's namespace only: its quota and the network
+# allows the file asks for. The namespace's default-deny, DNS and same-namespace allows come
+# from the trusted wiring (platform/app-hosting/app), so if this policy has not run, the app
+# gets no traffic rather than open traffic. The env name and the env's pod and service CIDRs
+# are read from annotations the wiring sets on the namespace.
+# Prune stays off: deleting the policy deletes every object it generated (synchronize).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: app-derive
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  rules:
+    - name: quota
+      match: &app-match
+        any:
+          - resources:
+              kinds:
+                - hosting.jarvis.io/v1alpha1/App
+              namespaces:
+                - app-*
+      context: &app-context
+        - name: notes
+          apiCall:
+            urlPath: "/api/v1/namespaces/{{ request.object.metadata.namespace }}"
+            jmesPath: "metadata.annotations"
+        - name: envName
+          variable:
+            jmesPath: "notes.\"hosting.jarvis.io/env\""
+            default: ""
+        - name: override
+          variable:
+            jmesPath: "request.object.spec.envs.\"{{ envName }}\""
+            default: {}
+        # D30 small: 500m CPU and 512Mi memory unless the file (or its env override) says otherwise.
+        - name: cpu
+          variable:
+            jmesPath: "not_null(override.resources.cpu, request.object.spec.resources.cpu, '500m')"
+        - name: memory
+          variable:
+            jmesPath: "not_null(override.resources.memory, request.object.spec.resources.memory, '512Mi')"
+        - name: internet
+          variable:
+            jmesPath: "not_null(override.internet, request.object.spec.internet, `false`)"
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: v1
+        kind: ResourceQuota
+        name: app
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            hard:
+              limits.cpu: "{{ cpu }}"
+              limits.memory: "{{ memory }}"
+              requests.cpu: "{{ cpu }}"
+              requests.memory: "{{ memory }}"
+              services.loadbalancers: "{{ to_string(length(request.object.spec.ports[?lan] || `[]`)) }}"
+              services.nodeports: "0"
+    - name: web
+      match: *app-match
+      preconditions:
+        all:
+          - key: "{{ type(request.object.spec.webPort) }}"
+            operator: Equals
+            value: number
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-web
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: kube-system
+                    podSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: traefik
+                ports:
+                  - port: "{{ request.object.spec.webPort }}"
+                    protocol: TCP
+    # Internet: DNS (from the wiring) plus TCP 443, not to private, shared, link-local or the
+    # env's own pod and service ranges.
+    - name: internet
+      match: *app-match
+      context: *app-context
+      preconditions:
+        all:
+          - key: "{{ internet }}"
+            operator: Equals
+            value: true
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-internet
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Egress]
+            egress:
+              - to:
+                  - ipBlock:
+                      cidr: 0.0.0.0/0
+                      except:
+                        - 10.0.0.0/8
+                        - 172.16.0.0/12
+                        - 192.168.0.0/16
+                        - 100.64.0.0/10
+                        - 169.254.0.0/16
+                        - "{{ notes.\"hosting.jarvis.io/pod-cidr\" }}"
+                        - "{{ notes.\"hosting.jarvis.io/service-cidr\" }}"
+                ports:
+                  - port: 443
+                    protocol: TCP
+    # App to app: this side's half. Traffic flows only when the caller lists the callee under
+    # talksTo and the callee lists the caller under acceptsFrom.
+    - name: talks-to
+      match: *app-match
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.talksTo || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-talks-to
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Egress]
+            egress:
+              - to:
+                  - namespaceSelector:
+                      matchExpressions:
+                        - key: kubernetes.io/metadata.name
+                          operator: In
+                          values: "{{ map(&join('', ['app-', @]), request.object.spec.talksTo) }}"
+    - name: accepts-from
+      match: *app-match
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.acceptsFrom || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-accepts-from
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchExpressions:
+                        - key: kubernetes.io/metadata.name
+                          operator: In
+                          values: "{{ map(&join('', ['app-', @]), request.object.spec.acceptsFrom) }}"
+    # A port the file marks lan. Its LoadBalancer Service passes admission only with the env's
+    # lan-port exception, so without one nothing outside the cluster reaches it.
+    - name: lan
+      match: *app-match
+      preconditions:
+        all:
+          - key: "{{ length(request.object.spec.ports[?lan] || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-lan
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
+            ingress:
+              - from:
+                  - ipBlock:
+                      cidr: 0.0.0.0/0
+                ports: "{{ request.object.spec.ports[?lan].{port: port, protocol: protocol} }}"
+    # Backups: an app reaches the apps rest-server only once the env registers its credential
+    # (platform-backups/backups-restic-app-<name>). Removing the credential removes the allow.
+    - name: backups
+      match:
+        any:
+          - resources:
+              kinds:
+                - Secret
+              namespaces:
+                - platform-backups
+              names:
+                - backups-restic-app-*
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: app-backups
+        namespace: "{{ trim_prefix(request.object.metadata.name, 'backups-restic-') }}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Egress]
+            egress:
+              - to:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: platform-backups
+                    podSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: restic-apps
+                ports:
+                  - port: 8000
+                    protocol: TCP

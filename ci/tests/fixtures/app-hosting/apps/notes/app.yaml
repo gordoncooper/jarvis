@@ -1,0 +1,16 @@
+apiVersion: hosting.jarvis.io/v1alpha1
+kind: App
+metadata:
+  name: notes
+spec:
+  webPort: 3000
+  volumes:
+    - name: data
+      backup: true
+    - name: cache
+      backup: false
+  resources:
+    cpu: "1"
+    memory: 1Gi
+  internet: true
+  talksTo: [photos]

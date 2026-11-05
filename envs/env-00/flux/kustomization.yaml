@@ -9,3 +9,6 @@ resources:
   - kustomizations/platform-configs.yaml
   - kustomizations/services.yaml
   - kustomizations/apps.yaml
+  # One trusted wiring per app in values/apps.yaml, rendered by tools/lib/render_apps.py.
+  # An env that lists no app has neither this line nor the file.
+  - generated/apps.yaml

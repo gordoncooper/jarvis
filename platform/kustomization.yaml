@@ -8,3 +8,4 @@ resources:
   - kyverno
   - cert-manager/controller
   - app-dns
+  - app-hosting/crd

@@ -1,0 +1,10 @@
+apiVersion: hosting.jarvis.io/v1alpha1
+kind: App
+metadata:
+  name: web-demo
+spec:
+  webPort: 8080
+  volumes: []
+  envs:
+    env-00:
+      internet: false

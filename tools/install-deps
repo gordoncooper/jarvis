@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Install pinned sops, age, age-keygen, gitleaks, kustomize, kubeconform, kubectl, restic, and
-rest-server into ~/.local/bin."""
+"""Install pinned sops, age, age-keygen, gitleaks, kustomize, kubeconform, kubectl, restic,
+rest-server and the kyverno CLI into ~/.local/bin."""
 
 from __future__ import annotations
 
@@ -200,6 +200,18 @@ TARBALL_INSTALLS: dict[str, TarballSpec] = {
         ),
         member="rest-server_{v}_linux_{arch}/rest-server",
         sha_prefix="rest_server",
+    ),
+    # The offline admission evaluator for the app-hosting policy tests; the same release as
+    # the cluster's Kyverno.
+    "kyverno": TarballSpec(
+        version_key="kyverno_version",
+        version_args=("version",),
+        url=lambda v, arch: (
+            f"https://github.com/kyverno/kyverno/releases/download/v{v}/"
+            f"kyverno-cli_v{v}_linux_{arch}.tar.gz"
+        ),
+        member="kyverno",
+        tar_arch=lambda arch: "x86_64" if arch == "amd64" else arch,
     ),
 }
 

@@ -34,3 +34,25 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "update", "patch"]
+---
+# ClusterPolicy app-derive (platform/app-hosting) reads each hosted app's App and writes that
+# app's quota and NetworkPolicies in its own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:app-derive
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+  labels:
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups: ["hosting.jarvis.io"]
+    resources: ["apps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

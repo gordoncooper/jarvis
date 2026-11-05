@@ -1,0 +1,259 @@
+# Native admission for hosted apps. The API server runs these with no webhook, and each
+# policy fails closed: an expression that errors refuses the request.
+#
+# app-identity: a namespace is an app's namespace exactly when it is named app-<name> and
+# labelled hosting.jarvis.io/app: <name>; only those carry exception (grant) labels; an App
+# lives only in its own namespace and is named after it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-identity
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [namespaces]
+      - apiGroups: [hosting.jarvis.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [apps]
+  variables:
+    - name: labels
+      expression: "has(object.metadata.labels) ? object.metadata.labels : {}"
+    - name: isNamespace
+      expression: "object.kind == 'Namespace'"
+  validations:
+    - expression: >-
+        !variables.isNamespace ||
+        (object.metadata.name.startsWith('app-') ?
+          ('hosting.jarvis.io/app' in variables.labels && 'app-' + variables.labels['hosting.jarvis.io/app'] == object.metadata.name) :
+          !('hosting.jarvis.io/app' in variables.labels))
+      message: "a namespace is named app-<name> exactly when it carries label hosting.jarvis.io/app: <name>"
+    - expression: >-
+        !variables.isNamespace || object.metadata.name.startsWith('app-') ||
+        variables.labels.all(key, !key.startsWith('grants.hosting.jarvis.io/'))
+      message: "only an app namespace carries grants.hosting.jarvis.io labels"
+    - expression: >-
+        variables.isNamespace ||
+        (has(namespaceObject.metadata.labels) && 'hosting.jarvis.io/app' in namespaceObject.metadata.labels &&
+         namespaceObject.metadata.labels['hosting.jarvis.io/app'] == object.metadata.name)
+      message: "an App lives in its own namespace app-<name> and is named <name>"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-identity
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  policyName: app-identity
+  validationActions: [Deny]
+---
+# app-tenant: what an app's own Flux identity (flux-system/app-<name>, which
+# kustomize-controller impersonates) may write: only in namespace app-<name>, and only the
+# kinds an app ships. No Traefik CRD, NetworkPolicy, quota, RBAC, Flux, VolSync or
+# cluster-scoped object, whatever its Role says.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-tenant
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: ["*", "*/*"]
+        scope: "*"
+  matchConditions:
+    - name: app-tenant
+      expression: "request.userInfo.username.startsWith('system:serviceaccount:flux-system:app-')"
+  validations:
+    # The account flux-system/app-<name> writes only in namespace app-<name>.
+    - expression: "request.namespace == request.userInfo.username.substring(34)"
+      message: "an app writes only in its own namespace app-<name>"
+    - expression: >-
+        request.subResource == '' &&
+        (request.resource.group + '/' + request.resource.resource) in [
+          '/configmaps', '/secrets', '/services', '/persistentvolumeclaims',
+          'apps/deployments', 'apps/statefulsets', 'batch/jobs', 'batch/cronjobs',
+          'networking.k8s.io/ingresses', 'policy/poddisruptionbudgets',
+          'autoscaling/horizontalpodautoscalers', 'hosting.jarvis.io/apps']
+      message: >-
+        an app ships only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs,
+        CronJobs, Ingresses, PodDisruptionBudgets, HorizontalPodAutoscalers and its App
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: app-tenant
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  policyName: app-tenant
+  validationActions: [Deny]
+---
+# app-file: the objects in an app's namespace against the pod baseline, the app's own App
+# (the params) and the env's exception labels on the namespace. Each app's wiring binds it
+# once, to that app's App and namespace; a missing App refuses everything it matches.
+# A risky item passes only when the App asks for it and the namespace carries the matching
+# grants.hosting.jarvis.io label or annotation, which only the trusted wiring sets.
+# Carve-outs, keyed on identities a tenant cannot take: the VolSync controller's own Jobs
+# and claims (its privileged movers), and the pods the job controller makes for a Job, whose
+# template this policy already admitted unless VolSync made it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: app-file
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: hosting.jarvis.io/v1alpha1
+    kind: App
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods, persistentvolumeclaims, services]
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, statefulsets, daemonsets, replicasets]
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [jobs, cronjobs]
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [ingresses]
+  matchConditions:
+    - name: not-the-volsync-controller
+      expression: "request.userInfo.username != 'system:serviceaccount:volsync:volsync'"
+    - name: not-a-job-pod
+      expression: >-
+        !(object.kind == 'Pod' &&
+          request.userInfo.username in ['system:serviceaccount:kube-system:job-controller', 'system:kube-controller-manager'] &&
+          has(object.metadata.ownerReferences) &&
+          object.metadata.ownerReferences.exists(o, o.kind == 'Job' && has(o.controller) && o.controller))
+  variables:
+    - name: podSpec
+      expression: >-
+        object.kind == 'Pod' ? object.spec :
+        object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec :
+        object.kind in ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job'] ? object.spec.template.spec :
+        {}
+    - name: isWorkload
+      expression: "object.kind in ['Pod', 'Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'CronJob']"
+    - name: containers
+      expression: >-
+        !variables.isWorkload ? [] :
+        variables.podSpec.containers +
+        (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : []) +
+        (has(variables.podSpec.ephemeralContainers) ? variables.podSpec.ephemeralContainers : [])
+    - name: podSecurity
+      expression: "has(variables.podSpec.securityContext) ? variables.podSpec.securityContext : {}"
+    - name: grants
+      expression: "has(namespaceObject.metadata.labels) ? namespaceObject.metadata.labels : {}"
+    - name: notes
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: risky
+      expression: "has(params.spec.risky) ? params.spec.risky : {}"
+    - name: usesPrivileged
+      expression: >-
+        (has(variables.podSpec.hostPID) && variables.podSpec.hostPID) ||
+        (has(variables.podSpec.hostIPC) && variables.podSpec.hostIPC) ||
+        variables.containers.exists(c, has(c.securityContext) && (
+          (has(c.securityContext.privileged) && c.securityContext.privileged) ||
+          (has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation) ||
+          (has(c.securityContext.capabilities) && has(c.securityContext.capabilities.add) &&
+           c.securityContext.capabilities.add.exists(cap, cap != 'NET_BIND_SERVICE'))))
+    - name: usesHostNetwork
+      expression: >-
+        (has(variables.podSpec.hostNetwork) && variables.podSpec.hostNetwork) ||
+        variables.containers.exists(c, has(c.ports) && c.ports.exists(p, has(p.hostPort) && p.hostPort != 0))
+    - name: usesHostPath
+      expression: "has(variables.podSpec.volumes) && variables.podSpec.volumes.exists(v, has(v.hostPath))"
+    - name: usesRoot
+      expression: >-
+        (has(variables.podSecurity.runAsUser) && variables.podSecurity.runAsUser == 0) ||
+        variables.containers.exists(c, has(c.securityContext) && has(c.securityContext.runAsUser) && c.securityContext.runAsUser == 0) ||
+        !variables.containers.all(c,
+          (has(c.securityContext) && has(c.securityContext.runAsNonRoot)) ? c.securityContext.runAsNonRoot :
+          (has(variables.podSecurity.runAsNonRoot) && variables.podSecurity.runAsNonRoot))
+    - name: claims
+      expression: >-
+        object.kind == 'PersistentVolumeClaim' ? [object] :
+        object.kind == 'StatefulSet' && has(object.spec.volumeClaimTemplates) ? object.spec.volumeClaimTemplates : []
+    - name: appHost
+      expression: "'hosting.jarvis.io/host' in variables.notes ? variables.notes['hosting.jarvis.io/host'] : ''"
+    - name: grantedHostnames
+      expression: "'hosting.jarvis.io/hostnames' in variables.notes ? variables.notes['hosting.jarvis.io/hostnames'].split(',') : []"
+    - name: grantedLanPorts
+      expression: "'hosting.jarvis.io/lan-ports' in variables.notes ? variables.notes['hosting.jarvis.io/lan-ports'].split(',') : []"
+  validations:
+    - expression: "params.metadata.namespace == namespaceObject.metadata.name"
+      message: "the binding's App is not this namespace's"
+    - expression: >-
+        !variables.usesPrivileged ||
+        ((has(variables.risky.privileged) && variables.risky.privileged) &&
+         variables.grants[?'grants.hosting.jarvis.io/privileged'].orValue('') == 'true')
+      message: >-
+        privileged mode, host PID or IPC, privilege escalation and added capabilities need the
+        app file's risky.privileged and the env's '<app>: privileged' exception
+    - expression: >-
+        !variables.usesRoot ||
+        ((has(variables.risky.root) && variables.risky.root) &&
+         variables.grants[?'grants.hosting.jarvis.io/root'].orValue('') == 'true')
+      message: >-
+        every container runs with runAsNonRoot: true and no runAsUser 0, unless the app file
+        asks for risky.root and the env has '<app>: root'
+    - expression: >-
+        !variables.usesHostNetwork ||
+        ((has(variables.risky.hostNetwork) && variables.risky.hostNetwork) &&
+         variables.grants[?'grants.hosting.jarvis.io/host-network'].orValue('') == 'true')
+      message: >-
+        host network and host ports need the app file's risky.hostNetwork and the env's
+        '<app>: host-network' exception
+    - expression: >-
+        !variables.usesHostPath ||
+        ((has(variables.risky.hostPath) && variables.risky.hostPath) &&
+         variables.grants[?'grants.hosting.jarvis.io/host-path'].orValue('') == 'true')
+      message: "hostPath volumes need the app file's risky.hostPath and the env's '<app>: host-path' exception"
+    - expression: >-
+        variables.claims.all(claim, params.spec.volumes.exists(v, v.name == claim.metadata.name &&
+          v.backup == !(has(claim.metadata.annotations) && claim.metadata.annotations[?'backup'].orValue('') == 'none')))
+      message: >-
+        every PVC (and StatefulSet claim template) is a volume the app file declares; one declared
+        backup: false carries annotation backup: none, one declared backup: true does not
+    - expression: >-
+        object.kind != 'Ingress' ||
+        (!has(object.spec.defaultBackend) && !has(object.spec.tls) && has(object.spec.rules) &&
+         object.spec.rules.all(r, has(r.host) &&
+           (r.host == variables.appHost ||
+            (has(variables.risky.hostnames) && r.host in variables.risky.hostnames && r.host in variables.grantedHostnames))))
+      message: >-
+        an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the app file asks
+        for and the env grants; no default backend and no spec.tls (the wildcard serves it)
+    - expression: >-
+        object.kind != 'Service' || !has(object.spec.type) || object.spec.type == 'ClusterIP' ||
+        (object.spec.type == 'LoadBalancer' && object.spec.ports.all(p,
+          has(params.spec.ports) &&
+          params.spec.ports.exists(q, q.port == p.port && q.protocol == (has(p.protocol) ? p.protocol : 'TCP') && has(q.lan) && q.lan) &&
+          (string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) in variables.grantedLanPorts))
+      message: >-
+        an app's Services are ClusterIP; a LoadBalancer exposes only ports the app file marks lan
+        and the env grants as '<app>: lan-port <port>/<protocol>'; no NodePort or ExternalName
+    - expression: "object.kind != 'Service' || !has(object.spec.externalIPs)"
+      message: "an app's Service sets no externalIPs"

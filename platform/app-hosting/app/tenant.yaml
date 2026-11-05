@@ -1,0 +1,58 @@
+# The tenant identity. kustomize-controller impersonates it for the app's two Kustomizations;
+# no pod mounts its token. It holds rights only in app-<name>, on the kinds an app ships;
+# ValidatingAdmissionPolicy app-tenant holds it to the same list and namespace whatever this
+# Role says. prune: disabled keeps the account while those Kustomizations clean up after
+# the env drops the app; without it Flux skips that cleanup.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-${app_name}
+  namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app
+  namespace: app-${app_name}
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services, persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [hosting.jarvis.io]
+    resources: [apps]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app
+  namespace: app-${app_name}
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app
+subjects:
+  - kind: ServiceAccount
+    name: app-${app_name}
+    namespace: flux-system

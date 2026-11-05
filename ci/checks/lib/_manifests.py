@@ -173,6 +173,8 @@ def flux_paths(root: Path, env_rel: str, env_docs: list[dict]) -> list[FluxPath]
 
     A stage's spec.components are built with its path, as Flux adds them to it. A
     Kustomization on a stage's path gets the stage's postBuild values first, as on the cluster.
+    One that reads another source (a hosted app's, from the apps repository) is not in this
+    checkout: it is listed with no objects, as partial.
     """
     found: list[FluxPath] = []
     for doc in env_docs:
@@ -183,7 +185,12 @@ def flux_paths(root: Path, env_rel: str, env_docs: list[dict]) -> list[FluxPath]
         values = postbuild_values(doc, env_docs)
         for item in stage.docs:
             if is_flux_kustomization(item):
-                found.append(build_flux_path(root, env_rel, substitute(item, values), parent=doc))
+                item = substitute(item, values)
+                source = (item.get("spec") or {}).get("sourceRef") or {}
+                if source.get("name") != ROOT_SOURCE:
+                    found.append(FluxPath(item, doc, [], None, True))
+                    continue
+                found.append(build_flux_path(root, env_rel, item, parent=doc))
     return found
 
 

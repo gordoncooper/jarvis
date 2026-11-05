@@ -1,0 +1,6 @@
+# On the platform-controllers path, so the App kind exists before platform-configs applies
+# the policies that read it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - app-crd.yaml

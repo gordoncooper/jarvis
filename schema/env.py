@@ -20,6 +20,7 @@ if str(_TOOLS_LIB) not in sys.path:
 
 from _env import instance_root  # noqa: E402,F401  (the one INSTANCE resolver)
 import _app_backups  # noqa: E402
+import _apps  # noqa: E402
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
@@ -349,6 +350,7 @@ def _validate_env(
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
     errors.extend(_validate_app_backups(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_addons(env_dir, repo_root, env_name, bootstrapped))
+    errors.extend(_validate_apps(env_dir, repo_root, cluster_vars, pre_host=pre_host))
     errors.extend(_validate_flux_entry_files(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))
     errors.extend(
@@ -828,6 +830,44 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
             errors.append(
                 f"{rel}: add-ons {', '.join(names)} all fill slot {slot}; an env enables at most one per slot"
             )
+    return errors
+
+
+def _validate_apps(
+    env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any], *, pre_host: bool
+) -> list[str]:
+    """values/apps.yaml lists app names once each and valid exception lines; an env that lists
+    an app sets apps_git_repo_url, and its flux tree lists the committed render, which matches.
+    An env with no app has neither the render nor its line."""
+    rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+    data, errors = _apps.load_values(env_dir)
+    errors = [f"{rel}: {problem}" for problem in errors]
+    if errors:
+        return errors
+    dns_suffix = cluster_vars.get("dns_suffix")
+    errors.extend(f"{rel}: {problem}" for problem in _apps.validate(data, dns_suffix if isinstance(dns_suffix, str) else None))
+    apps = _apps.app_names(data)
+    if apps and not cluster_vars.get("apps_git_repo_url"):
+        errors.append(f"{rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
+    generated = env_dir / "flux" / _apps.GENERATED_REL
+    generated_rel = _display_path(generated, repo_root)
+    listing = env_dir / "flux" / "kustomization.yaml"
+    doc = yaml.safe_load(listing.read_text(encoding="utf-8")) if listing.is_file() else {}
+    listed = _apps.GENERATED_REL in ((doc or {}).get("resources") or [])
+    if not apps:
+        if generated.is_file() or listed:
+            errors.append(
+                f"{generated_rel}: the env lists no app; remove it and its line in flux/kustomization.yaml"
+            )
+        return errors
+    if not listed:
+        errors.append(f"{_display_path(listing, repo_root)}: lists apps in {rel}, so resources lists {_apps.GENERATED_REL}")
+    if errors or pre_host:
+        return errors
+    if not generated.is_file() or generated.read_text(encoding="utf-8") != _apps.render(
+        data, resolve_cluster_vars(cluster_vars)
+    ):
+        errors.append(f"{generated_rel}: missing or does not match {rel}; re-render with tools/lib/render_apps.py")
     return errors
 
 

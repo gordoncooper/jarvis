@@ -1,0 +1,13 @@
+# One hosted app's wiring. The env's generated apps file holds one Flux Kustomization per
+# listed app, app-<name>-wiring, which applies this directory as the platform account with
+# inline values from the env (the app's name and the env's exception lines) and the env's
+# published cluster-vars. Nothing here reads the apps repository: the app's own objects
+# come from it through the two tenant Kustomizations in flux.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - tenant.yaml
+  - baseline.yaml
+  - admission.yaml
+  - flux.yaml

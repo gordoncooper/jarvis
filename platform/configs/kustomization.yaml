@@ -5,3 +5,4 @@ resources:
   - ../backups
   - ../cert-manager/config
   - ../testapp
+  - ../app-hosting/policies
