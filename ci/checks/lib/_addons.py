@@ -25,7 +25,8 @@ Kustomization lists in spec.components:
 - The Namespaces are named <name> or <name>-<part>, so an add-on never adopts
   core's or another add-on's namespace.
 - Each Kustomization reads the root source and sets no patches, images,
-  components, name affixes or kubeConfig, so what this check builds is what
+  components, name affixes, kubeConfig or postBuild.substituteFrom (optional or
+  not; inline postBuild.substitute only), so what this check builds is what
   Flux applies. A decrypting one reads envs/<env>/secrets/<one of its
   namespaces>; any other reads under core/services/<name>/ (path normalised).
 - Every object an add-on Kustomization applies is namespaced, lands in the
@@ -283,6 +284,15 @@ def _kustomization_problems(name: str, doc: dict, tenant: str, namespaces: set[s
     # What this check builds is what Flux applies: no field that rewrites the objects or the target.
     for field in sorted({"patches", "images", "components", "kubeConfig", "namePrefix", "nameSuffix"} & set(spec)):
         yield f"sets spec.{field}; an add-on's objects are the files under its path, as they are"
+    # Tenant containment: substitution sources. The controller reads them with its own
+    # rights in flux-system, so an add-on names none; it takes inline values only.
+    sources = ((spec.get("postBuild") or {}).get("substituteFrom")) or []
+    for source in sources:
+        what = f"{source.get('kind')} {source.get('name')}" if isinstance(source, dict) else repr(source)
+        yield (
+            f"postBuild.substituteFrom names {what}; an add-on Kustomization takes no substitution "
+            "source, only inline postBuild.substitute values the services stage fills"
+        )
     raw = str(spec.get("path") or "")
     path = "./" + posixpath.normpath(raw.removeprefix("./"))
     home = f"./{CORE_SOURCE_DIR}/{ADDONS_DIR}/{name}"

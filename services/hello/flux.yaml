@@ -1,4 +1,5 @@
-# The add-on's objects, from core, as its tenant identity.
+# The add-on's objects, from core, as its tenant identity. postBuild takes inline
+# values only; the services stage fills ${dns_suffix} here from the env's published keys.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -15,9 +16,8 @@ spec:
     kind: GitRepository
     name: flux-system
   postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: cluster-vars
+    substitute:
+      dns_suffix: ${dns_suffix}
 ---
 # The add-on's sealed Secrets, from the env, as the same tenant identity. This object
 # lives in flux-system, so the controller reads sops-age there; the tenant cannot.

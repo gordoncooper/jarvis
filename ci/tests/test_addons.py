@@ -50,6 +50,8 @@ def _wiring() -> list[dict]:
                 "serviceAccountName": "addon-widget",
                 "targetNamespace": "widget",
                 "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
+                # Inline values only; the services stage fills them.
+                "postBuild": {"substitute": {"jarvis_env": "${jarvis_env}"}},
             },
         },
     ]
@@ -204,6 +206,14 @@ _PRIORITY = {"apiVersion": "scheduling.k8s.io/v1", "kind": "PriorityClass", "met
             "gone.yaml, which is not a file",
         ),
         ({"core_files": {"services/slots/widget/CONTRACT.md": "# slot\n"}}, "named like slot widget"),
+        (
+            {"wiring": _replace(_wiring(), "Kustomization", **{"spec.postBuild": {"substituteFrom": [{"kind": "ConfigMap", "name": "cluster-vars"}]}})},
+            "takes no substitution source",
+        ),
+        (
+            {"wiring": _replace(_wiring(), "Kustomization", **{"spec.postBuild": {"substituteFrom": [{"kind": "Secret", "name": "x", "optional": True}]}})},
+            "takes no substitution source",
+        ),
     ],
     ids=[
         "cluster-role-in-wiring",
@@ -242,6 +252,8 @@ _PRIORITY = {"apiVersion": "scheduling.k8s.io/v1", "kind": "PriorityClass", "met
         "not-a-component",
         "component-lists-missing-file",
         "named-like-a-slot",
+        "substitution-source-required",
+        "substitution-source-optional",
     ],
 )
 def test_addon_outside_the_seam_fails(tmp_path: Path, seed: dict, expected: str) -> None:
