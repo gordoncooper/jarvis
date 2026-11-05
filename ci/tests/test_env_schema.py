@@ -810,6 +810,11 @@ def _copy_flux_entry(env: Path) -> None:
     doc = yaml.safe_load(services.read_text(encoding="utf-8"))
     doc["spec"].pop("components", None)
     services.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    # And with no hosted app, so no rendered app wiring either.
+    listing = env / "flux" / "kustomization.yaml"
+    doc = yaml.safe_load(listing.read_text(encoding="utf-8"))
+    doc["resources"].remove("generated/apps.yaml")
+    listing.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
 def test_missing_flux_entry_file_fails(tmp_path: Path) -> None:

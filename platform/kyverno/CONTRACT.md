@@ -1,6 +1,6 @@
 # CONTRACT: kyverno
 
-Kyverno 1.19 admits and generates the backup policy (`ci/checks/pvc-backup`). Classic ClusterPolicy only.
+Kyverno 1.19 admits and generates the backup policy (`ci/checks/pvc-backup`) and, in an env with app hosting on, the hosted apps' derived objects (`app-derive`). Classic ClusterPolicy only. The hosted apps' admission rules are native ValidatingAdmissionPolicies and need no Kyverno.
 
 ## Offers
 
@@ -24,6 +24,7 @@ Deployment `kyverno-admission-controller` in `kyverno` is Ready. That is the gat
 - Chart `kubeVersion` is `>=1.25.0-0`. Upstream tests v1.19 on Kubernetes 1.33–1.35. The v1.19.2 module builds against `k8s.io/client-go` v0.36. The chart does not refuse 1.36.
 - Permissions are extra aggregated ClusterRoles. The chart's own roles are not edited.
 - The background controller's chart role can get Namespaces and cannot update them. `kyverno:backup-namespaces` adds `update` and `patch` so the enrollment policy can set `volsync.backube/privileged-movers`.
+- In an env that turns app hosting on, `kyverno:app-derive` (from the app-hosting Component) lets both controllers read hosted apps' Apps and manage NetworkPolicies and ResourceQuotas, for ClusterPolicy `app-derive` ([platform/app-hosting/CONTRACT.md](../app-hosting/CONTRACT.md)), which writes them only in an app's own namespace.
 
 ## Proven by
 

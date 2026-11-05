@@ -1,0 +1,10 @@
+apiVersion: hosting.jarvis.io/v1alpha1
+kind: App
+metadata:
+  name: photos
+spec:
+  webPort: 2283
+  volumes: []
+  acceptsFrom: [notes]
+  risky:
+    hostPath: true

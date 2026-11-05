@@ -6,7 +6,8 @@ Product rules, on this checkout:
   files only, so its objects are the same whether Flux adds it to the services
   stage or this check builds it alone.
 - The slot an add-on fills (label addons.jarvis.io/slot on its Flux
-  Kustomization) has a folder under services/slots/. No add-on is named like a slot.
+  Kustomization) has a folder under services/slots/. No add-on is named like a slot,
+  or apps, the hosted apps' hostname zone.
 - Core (CORE_DIRS) never names an add-on. It names slots and contracts.
 
 Env rules, for each env with a flux/ tree, on each add-on its services
@@ -73,6 +74,8 @@ SERVICES_STAGE = (FLUX_NAMESPACE, "services")
 # app-<name> is for hosted apps; the others are core's.
 RESERVED_PREFIXES = ("app-", "platform-", "kube-", "flux-")
 RESERVED_NAMESPACES = frozenset({"default"})
+# Hosted apps' hostnames are <name>.apps.<dns suffix>; an add-on named apps would claim them all.
+RESERVED_ADDON_NAMES = frozenset({"apps"})
 _WIRING_KINDS = frozenset({"Namespace", "ServiceAccount", "Role", "RoleBinding"})
 _RBAC_KINDS = frozenset({"Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding"})
 _FORBIDDEN_GROUPS = frozenset(
@@ -141,6 +144,8 @@ def _product_problems(core: Path) -> Iterator[AddonViolation]:
                 yield AddonViolation(rel, f"the Component lists {item}, which is not a file in {rel}/")
         if name in slots:
             yield AddonViolation(rel, f"an add-on is not named like slot {name}")
+        if name in RESERVED_ADDON_NAMES:
+            yield AddonViolation(rel, f"the add-on name {name} is reserved: hosted apps are <name>.apps.<dns suffix>")
         for slot in sorted(addon_slots(addon_documents(core, name)) - set(slots)):
             yield AddonViolation(rel, f"fills slot {slot}, which has no folder under {ADDONS_DIR}/slots/")
     if names:

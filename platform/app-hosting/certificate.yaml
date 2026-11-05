@@ -1,0 +1,15 @@
+# Hosted apps: one wildcard one level down, <name>.apps.${dns_suffix}, so no app has its own
+# certificate. A separate Certificate, so adding it leaves core's wildcard and its key alone.
+# The TLSStore patch in kustomization.yaml serves it for a name under .apps.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-apps
+  namespace: platform-cert-manager
+spec:
+  secretName: wildcard-apps-tls
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.apps.${dns_suffix}"

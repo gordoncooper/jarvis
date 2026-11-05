@@ -6,7 +6,8 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 
 - ClusterIssuer `internal-ca` signs from Secret `cert-manager-ca` in `platform-cert-manager`.
 - Certificate `wildcard` in that namespace, name `*.<dns_suffix>`, stored as Secret `wildcard-tls`.
-- TLSStore `default` in that namespace. `kube-system` holds the Traefik HelmChartConfig and ConfigMap `coredns-custom`.
+- TLSStore `default` in that namespace, with `wildcard-tls` as the default certificate.
+- Only in an env that turns app hosting on ([platform/app-hosting/CONTRACT.md](../app-hosting/CONTRACT.md)): Certificate `wildcard-apps`, name `*.apps.<dns_suffix>`, stored as Secret `wildcard-apps-tls`, which TLSStore `default` serves for a name under `.apps`. It is a separate Certificate, so it never reissues or re-keys `wildcard`. The CA's name constraint (`dns_suffix` and its subdomains) covers it. `kube-system` holds the Traefik HelmChartConfig and ConfigMap `coredns-custom`.
 
 ## Expects
 
@@ -16,7 +17,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 
 ## Health
 
-`Certificate/wildcard` is Ready and chains to the committed public root. The cert-manager controller, webhook, and cainjector are Ready. Each sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit. The chart's probes stay in place.
+`Certificate/wildcard` (and `Certificate/wildcard-apps` with app hosting on) is Ready and chains to the committed public root. The cert-manager controller, webhook, and cainjector are Ready. Each sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit. The chart's probes stay in place.
 
 ## Config
 
@@ -42,10 +43,11 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 2. From the repo root, run `make bootstrap-secrets ENV=<env>`.
 3. Commit the new secret and `envs/<env>/ca.crt`, and push to the branch `flux_git_ref` names. Flux syncs from that remote.
 4. Wait until Flux has applied Secret `platform-cert-manager/cert-manager-ca` and its `tls.crt` matches `ca.crt`.
-5. Secret `platform-cert-manager/wildcard-tls` keeps serving the old leaf until cert-manager renews it (about day 60, the default). That Secret is the only one this CA signs today. Delete it so cert-manager issues a new leaf. The default certificate is missing until that write finishes.
+5. Secret `platform-cert-manager/wildcard-tls` (and `wildcard-apps-tls` with app hosting on) keeps serving the old leaf until cert-manager renews it (about day 60, the default). Those are the only leaves this CA signs today. Delete them so cert-manager issues new leaves. Each certificate is missing until its write finishes.
 
 ```bash
 KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl delete secret -n platform-cert-manager wildcard-tls
+# with app hosting on, also: wildcard-apps-tls
 ```
 
 6. Confirm the served certificate chains to the new `ca.crt`. Exit 0. `<svc>.<dns_suffix>` is any name Traefik serves with that certificate.

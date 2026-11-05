@@ -22,6 +22,8 @@ from lib._env import (  # noqa: E402
     repository_values,
     validate_cluster,
 )
+from lib import _apps  # noqa: E402
+from verify import apps as _apps_checks  # noqa: E402, F401
 from verify import backups as _backups  # noqa: E402, F401
 from verify import platform as _platform  # noqa: E402, F401
 from verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE  # noqa: E402
@@ -100,6 +102,9 @@ def run(
         if enabled is None:
             # The env's add-on list; checks for an add-on it does not enable never load.
             enabled = load_addons(REPO_ROOT, enabled_addons(repo_root / "envs" / env))
+            # Hosted-app checks only for an env that lists an app.
+            if _apps.app_names(_apps.load_values(repo_root / "envs" / env)[0]):
+                enabled = (*enabled, "apps")
         names = enabled_components(enabled)
         checks = collect(names, ctx)
     except CheckError as exc:

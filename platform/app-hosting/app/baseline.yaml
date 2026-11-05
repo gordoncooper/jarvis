@@ -1,0 +1,70 @@
+# The network and size baseline every app namespace starts from, before its App is read:
+# deny all traffic, then allow the namespace to itself and to cluster DNS. The allows the
+# App asks for (web from Traefik, internet, other apps, LAN ports, backups) and the quota
+# come from ClusterPolicy app-derive.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: app-${app_name}
+  # Stays with the namespace when the env drops the app, so what is left there stays isolated.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: same-namespace
+  namespace: app-${app_name}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-dns
+  namespace: app-${app_name}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Per-container defaults, small, for a container that sets no requests or limits. The
+# namespace total is the quota app-derive sets from the App (500m and 512Mi by default), so
+# a rollout surge or a backup mover still fits beside a default pod.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: app
+  namespace: app-${app_name}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 100m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi

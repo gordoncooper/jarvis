@@ -6,6 +6,7 @@
 | --- | --- |
 | [deploy.md](deploy.md) | Fresh copy to a running, verified cluster |
 | [add-an-addon.md](add-an-addon.md) | Write an add-on, and turn it on or off in an env |
+| [add-a-hosted-app.md](add-a-hosted-app.md) | Write a hosted app's folder, and turn it on or off in an env |
 | [../ci/README.md](../ci/README.md) | What `ci/run-checks` and the test suite do before a push |
 | [../README.md](../README.md) | What this repo is, and the hardware limits |
 | [../infra/ansible/README.md](../infra/ansible/README.md) | Node bootstrap (`site.yml`) |
@@ -20,6 +21,7 @@
 | [code-delivery/CONTRACT.md](code-delivery/CONTRACT.md) | Code delivery provider (`github`) |
 | [../schema/CONTRACT.md](../schema/CONTRACT.md) | Env schema |
 | [../platform/app-dns/CONTRACT.md](../platform/app-dns/CONTRACT.md) | App DNS |
+| [../platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md) | Hosted apps: the app file, admission and network baseline |
 | [../platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md) | PVC backups and etcd snapshot copy |
 | [../platform/cert-manager/CONTRACT.md](../platform/cert-manager/CONTRACT.md) | Internal CA and wildcard |
 | [../platform/configs/CONTRACT.md](../platform/configs/CONTRACT.md) | platform-configs list |

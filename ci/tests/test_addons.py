@@ -262,6 +262,13 @@ def test_addon_outside_the_seam_fails(tmp_path: Path, seed: dict, expected: str)
     assert any(expected in item for item in messages), messages
 
 
+def test_addon_named_apps_fails(tmp_path: Path) -> None:
+    """Rule: no add-on is named apps, so none claims the hosted apps' *.apps.<dns suffix>."""
+    component = "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: []\n"
+    messages = _messages(*_tree(tmp_path, core_files={"services/apps/kustomization.yaml": component}))
+    assert any(item.startswith("services/apps: the add-on name apps is reserved") for item in messages), messages
+
+
 def test_addon_secrets_from_its_namespace_folder_pass(tmp_path: Path) -> None:
     """A decrypting Kustomization that reads envs/<env>/secrets/<its namespace> passes."""
     secrets = _replace(

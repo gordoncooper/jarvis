@@ -153,7 +153,9 @@ def _schema_errors(copy: ExampleCopy) -> str:
 def _set_components(copy: ExampleCopy, components: list[str], *, apps_server: bool = True) -> None:
     path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    doc["components"] = components
+    # The registrations change; the app-hosting switch the copy carries stays.
+    switch = [item for item in doc.get("components") or [] if item.endswith("core/platform/app-hosting")]
+    doc["components"] = [*switch, *components]
     if not apps_server:
         doc["resources"] = [item for item in doc["resources"] if not item.endswith("platform/backups/apps")]
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")

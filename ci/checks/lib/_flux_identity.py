@@ -13,8 +13,10 @@ Kustomization in it, then checks:
   applies that tree with the controller's own identity: the root Kustomization
   flux-system/flux-system names kustomize-controller, and its path (the tree
   itself) is not checked as a tenant path.
-- Only PLATFORM_KUSTOMIZATIONS run as PLATFORM_SERVICE_ACCOUNT, and of the
-  objects on their paths only those on PLATFORM_PATHS. No other account a Flux
+- Only PLATFORM_KUSTOMIZATIONS, and each hosted app's wiring (app-<name>-wiring
+  applying APP_WIRING_PATH from the root source, nothing more), run as
+  PLATFORM_SERVICE_ACCOUNT, and of the objects on their paths only those on
+  PLATFORM_PATHS. A Kustomization named like a wiring that is not one fails. No other account a Flux
   object runs as is bound by a ClusterRoleBinding, by a RoleBinding in the
   namespace the Flux objects live in, or to cluster-admin, admin or edit.
 - No Kustomization's path declares the account it runs as, or a binding for it.
@@ -32,11 +34,12 @@ add-on's own paths, which keeps the decryption rule complete.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
+from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, postbuild_values, ref_of, substitute
 
 PLATFORM_SERVICE_ACCOUNT = "flux-platform"
 FLUX_NAMESPACE = "flux-system"
@@ -49,6 +52,11 @@ PLATFORM_KUSTOMIZATIONS = frozenset(
 # Stages whose path's objects may run as the platform account too. The services
 # stage's path holds add-on Kustomizations, which run as their own tenant accounts.
 PLATFORM_PATHS = frozenset({(FLUX_NAMESPACE, "platform-controllers"), (FLUX_NAMESPACE, "platform-configs")})
+# A hosted app's wiring, app-<name>-wiring, applies core's app template as the platform
+# account and nothing else: it creates the app's namespace and tenant identity. The app's own
+# Kustomizations on that path run as the tenant.
+APP_WIRING_PATH = "./core/platform/app-hosting/app"
+_APP_WIRING_NAME = re.compile(r"^app-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?-wiring$")
 # The root Kustomization applies the env's flux tree, which declares every other
 # account, so it runs as the controller's own identity, which the FluxInstance creates.
 ROOT_KUSTOMIZATION = (FLUX_NAMESPACE, FLUX_NAMESPACE)
@@ -100,16 +108,22 @@ def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[st
             if cluster.get("multitenant") is not True:
                 yield f"{ref_of(doc)}: spec.cluster.multitenant is not true"
     paths = flux_paths(root, env_rel, env_docs)
-    # The services stage, as the platform account, declares each add-on's tenant
-    # account and its bindings.
+    # A stage's objects as the cluster gets them, with the stage's postBuild values.
+    stage_docs = {
+        id(path): substitute(path.docs, postbuild_values(path.kustomization, env_docs))
+        for path in paths
+        if path.parent is None
+    }
+    # The services stage and each app's wiring, as the platform account, declare each add-on's
+    # and each app's tenant account and its bindings.
     wiring = [
         item
         for path in paths
-        if path.parent is None and _wires_addons(path.kustomization)
-        for item in path.docs
+        if path.parent is None and (_wires_addons(path.kustomization) or _wires_app(path.kustomization))
+        for item in stage_docs[id(path)]
     ]
     accounts |= _accounts(wiring)
-    on_paths = [item for path in paths if path.parent is None for item in path.docs if _is_flux(item)]
+    on_paths = [item for path in paths if path.parent is None for item in stage_docs[id(path)] if _is_flux(item)]
     tenants = {
         (namespace_of(doc), account)
         for doc in [*flux_docs, *on_paths]
@@ -142,9 +156,16 @@ def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[st
             if account != CONTROLLER_SERVICE_ACCOUNT:
                 yield f"{ref_of(doc)}: spec.serviceAccountName is {account!r}, expected {CONTROLLER_SERVICE_ACCOUNT!r}"
             continue
-        yield from _object_problems(doc, accounts, may_run_as_platform=_is_platform_kustomization(doc))
+        yield from _object_problems(
+            doc, accounts, may_run_as_platform=_is_platform_kustomization(doc) or _wires_app(doc)
+        )
+        if _APP_WIRING_NAME.fullmatch(_name(doc)) and not _wires_app(doc):
+            yield (
+                f"{ref_of(doc)}: an app's wiring runs as {PLATFORM_SERVICE_ACCOUNT} in {FLUX_NAMESPACE} "
+                f"and applies {APP_WIRING_PATH} from the root source, with no components or patches"
+            )
     for path in paths:
-        yield from _path_problems(path, accounts)
+        yield from _path_problems(path, accounts, stage_docs.get(id(path), path.docs))
 
 
 def _object_problems(
@@ -171,7 +192,7 @@ def _object_problems(
             yield f"{ref}: {field} points to namespace {target}"
 
 
-def _path_problems(path: FluxPath, accounts: set[tuple[str, str]]) -> list[str]:
+def _path_problems(path: FluxPath, accounts: set[tuple[str, str]], docs: list[dict]) -> list[str]:
     kustomization = path.kustomization
     ref = ref_of(kustomization)
     if path.error:
@@ -182,7 +203,7 @@ def _path_problems(path: FluxPath, accounts: set[tuple[str, str]]) -> list[str]:
     own = f"{namespace}/{account}, the account it runs as"
     platform = (namespace, _name(kustomization)) in PLATFORM_PATHS
     problems: list[str] = []
-    for item in path.docs:
+    for item in docs:
         if _is_flux(item) and path.parent is None:
             problems.extend(
                 f"{ref} path: {problem}"
@@ -258,6 +279,21 @@ def _wires_addons(doc: dict) -> bool:
     return (namespace_of(doc), _name(doc)) == SERVICES_STAGE and _spec(doc).get(
         "serviceAccountName"
     ) == PLATFORM_SERVICE_ACCOUNT
+
+
+def _wires_app(doc: dict) -> bool:
+    """A hosted app's wiring: app-<name>-wiring in flux-system, as the platform account, applying
+    core's app template from the root source and nothing else."""
+    spec = _spec(doc)
+    return (
+        doc.get("kind") == "Kustomization"
+        and namespace_of(doc) == FLUX_NAMESPACE
+        and bool(_APP_WIRING_NAME.fullmatch(_name(doc)))
+        and spec.get("serviceAccountName") == PLATFORM_SERVICE_ACCOUNT
+        and spec.get("path") == APP_WIRING_PATH
+        and spec.get("sourceRef") == {"kind": "GitRepository", "name": FLUX_NAMESPACE}
+        and not {"components", "patches", "images", "namePrefix", "nameSuffix", "kubeConfig", "targetNamespace"} & set(spec)
+    )
 
 
 def _spec(doc: dict) -> dict:

@@ -138,7 +138,8 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
 def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
     """The layer Kustomizations the env entry applies, from its kustomize build.
 
-    The root Kustomization in sync.yaml is not a layer; the env schema checks it.
+    The root Kustomization in sync.yaml is not a layer; the env schema checks it. Nor is a hosted
+    app's wiring, which the env renders from its app list; ci/checks/app-hosting checks those.
     """
     return [
         doc
@@ -147,6 +148,7 @@ def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
         and doc.get("kind") == "Kustomization"
         and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION_API)
         and doc["metadata"]["name"] != "flux-system"
+        and not doc["metadata"]["name"].endswith("-wiring")
     ]
 
 
@@ -246,16 +248,17 @@ def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list
 
 def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     """The env's platform-configs path is platform/configs plus that env's SOPS secrets,
-    and the opt-in off-host copy."""
+    and the opt-in off-host copy. Its components (app hosting, app backup registrations) are
+    env-schema's."""
     from schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
 
     base = f"envs/{env}/flux/platform-configs"
     resources = [posixpath.normpath(posixpath.join(base, item)) for item in doc.get("resources") or []]
     configs = f"{CORE_SOURCE_DIR}/platform/configs"
     errors = []
-    keys = sorted(set(doc) - {"apiVersion", "kind", "resources"})
+    keys = sorted(set(doc) - {"apiVersion", "kind", "resources", "components"})
     if keys:
-        errors.append(f"keys other than resources: {keys}")
+        errors.append(f"keys other than resources and components: {keys}")
     if resources.count(configs) != 1:
         errors.append(f"{configs} is not listed exactly once")
     others = [
@@ -666,9 +669,10 @@ def validate_env_flux(root: Path, env: str) -> None:
     """Kustomize-build the env flux entry and each Flux path, then kubeconform.
 
     Each stage is built with its components, and each add-on Kustomization on the
-    services stage's path is built too, as on the cluster.
+    services stage's path is built too, as on the cluster, with its postBuild values. A hosted
+    app's own Kustomizations read the apps repository, which is not in this checkout.
     """
-    from _manifests import flux_paths
+    from _manifests import ROOT_SOURCE, flux_paths, postbuild_values, substitute
 
     env_rel = f"envs/{env}/flux"
     env_docs = [doc for doc in yaml.safe_load_all(_kustomize_build(env_rel, root=root)) if isinstance(doc, dict)]
@@ -681,8 +685,13 @@ def validate_env_flux(root: Path, env: str) -> None:
     seen: dict[tuple[str, str, str], str] = {}
     for path in paths:
         name = path.kustomization["metadata"]["name"]
+        source = (path.kustomization.get("spec") or {}).get("sourceRef") or {}
+        if source.get("name", ROOT_SOURCE) != ROOT_SOURCE:
+            continue
         assert path.error is None and not path.partial, f"{name}: {path.error or 'partial build'}"
-        output = yaml.safe_dump_all(path.docs, sort_keys=False)
+        output = yaml.safe_dump_all(
+            substitute(path.docs, postbuild_values(path.kustomization, env_docs)), sort_keys=False
+        )
         _record_object_identities(output, name, seen)
         if isinstance((path.kustomization.get("spec") or {}).get("decryption"), dict):
             _validate_platform_configs_without_sops_secrets(output, version)

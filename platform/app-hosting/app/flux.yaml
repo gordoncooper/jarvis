@@ -1,0 +1,78 @@
+# The app's own objects, from its folder in the apps repository, as its tenant identity.
+# Two sources, each holding only one part of that folder: the app file, and deploy/. Neither
+# carries another app's folder. The deploy Kustomization waits on the app file, because
+# admission reads the App and refuses the app's objects until it exists.
+# No substitution source and no decryption: the one value an app reads is ${app_host}.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: app-${app_name}-file
+  namespace: flux-system
+  # A source stays when the app leaves the env's list, as every Flux source does; delete it by hand.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  interval: 5m
+  url: ${apps_git_repo_url}
+  ref:
+    branch: main
+  ignore: |
+    /*
+    !/${app_name}/
+    /${app_name}/*
+    !/${app_name}/app.yaml
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: app-${app_name}
+  namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  interval: 5m
+  url: ${apps_git_repo_url}
+  ref:
+    branch: main
+  ignore: |
+    /*
+    !/${app_name}/
+    /${app_name}/*
+    !/${app_name}/deploy/
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app-${app_name}-file
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  path: ./${app_name}
+  prune: true
+  serviceAccountName: app-${app_name}
+  targetNamespace: app-${app_name}
+  sourceRef:
+    kind: GitRepository
+    name: app-${app_name}-file
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app-${app_name}
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  path: ./${app_name}/deploy
+  prune: true
+  serviceAccountName: app-${app_name}
+  targetNamespace: app-${app_name}
+  sourceRef:
+    kind: GitRepository
+    name: app-${app_name}
+  dependsOn:
+    - name: app-${app_name}-file
+  postBuild:
+    substitute:
+      app_host: ${app_name}.apps.${dns_suffix}

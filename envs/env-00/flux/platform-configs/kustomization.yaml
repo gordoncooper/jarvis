@@ -6,3 +6,7 @@ resources:
   - ../../secrets/cert-manager-ca.sops.yaml
   - ../../../../core/platform/backups/offsite
   - ../../secrets/backups-offsite.sops.yaml
+# App hosting (platform/app-hosting/CONTRACT.md), on in this example so CI renders it; a new
+# env removes these two lines with values/apps.yaml until it hosts an app.
+components:
+  - ../../../../core/platform/app-hosting

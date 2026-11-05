@@ -1,6 +1,6 @@
 # CONTRACT: add-ons
 
-Every add-on meets this contract. An add-on is anything Jarvis ships on top of core (k3s, Flux, certs, ingress, backups, secrets and CI). Add-ons are optional and off by default. Each env turns on the ones it wants, in its own repository. Core and add-ons form one trusted zone. Third-party apps in the `apps` stage are not add-ons.
+Every add-on meets this contract. An add-on is anything Jarvis ships on top of core (k3s, Flux, certs, ingress, backups, secrets and CI). Add-ons are optional and off by default. Each env turns on the ones it wants, in its own repository. Core and add-ons form one trusted zone. Hosted apps ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)) are not add-ons.
 
 How to write one: [docs/add-an-addon.md](../docs/add-an-addon.md).
 
@@ -9,6 +9,7 @@ How to write one: [docs/add-an-addon.md](../docs/add-an-addon.md).
 - One home per add-on: `services/<name>/`, holding its own `CONTRACT.md`. Nothing about the add-on lives anywhere else in core.
 - The services stage applies the add-on's wiring (below) as the platform account, so the add-on never creates its own namespace or the identity it runs as.
 - Slots. A slot is a named role one add-on fills, such as the chat bot. Each slot's contract lives at `services/slots/<slot>/CONTRACT.md`, not under any add-on. An env enables at most one add-on per slot. Core and other add-ons refer to the slot, never to the add-on that fills it.
+- The name `apps` is reserved: hosted apps are `<name>.apps.<dns suffix>`, so an add-on named `apps` would claim every app's host. `ci/checks/addons` refuses it.
 - The `${...}` keys the env's `cluster-vars` ConfigMap publishes, filled into the add-on's wiring by the services stage. The add-on's Kustomizations pass the ones they need on as inline `postBuild.substitute` values.
 
 ## Expects
@@ -40,7 +41,7 @@ The add-on's Flux Kustomizations are Ready; `make verify` already waits on every
 
 ## Proven by
 
-- `ci/checks/addons` (the Component lists files only, its slot exists, core never names an add-on, and per enabled add-on: a services stage that lists add-ons runs as the platform account, the wiring kinds, namespace names, `prune: disabled` on the wiring, the tenant's Roles and RoleBindings, each Kustomization's source, path, extra fields and `dependsOn`, and the objects its Kustomizations apply). `ci/tests/test_addons.py` seeds each failure.
+- `ci/checks/addons` (the Component lists files only, its slot exists, no add-on is named `apps`, core never names an add-on, and per enabled add-on: a services stage that lists add-ons runs as the platform account, the wiring kinds, namespace names, `prune: disabled` on the wiring, the tenant's Roles and RoleBindings, each Kustomization's source, path, extra fields and `dependsOn`, and the objects its Kustomizations apply). `ci/tests/test_addons.py` seeds each failure.
 - `ci/checks/flux-identity` (the services stage may run as the platform account, the add-on's Kustomizations run as their declared tenant and never as the platform account, no path declares its own account, and only `flux-system` decrypts).
 - `ci/checks/env-schema` (unknown add-on, duplicate, slot conflict, missing sealed folder), `ci/checks/contract-md` (each add-on and slot has a `CONTRACT.md`), `ci/checks/flux-prune` and `ci/checks/flux-substitute` on each add-on Kustomization's path.
 - `ci/tests/test_addons.py` runs every env-level check on a bootstrapped copy of the example env with no add-on, and on one with the sample add-on and its sealed Secret.
@@ -50,4 +51,4 @@ The add-on's Flux Kustomizations are Ready; `make verify` already waits on every
 - The wiring keeps `prune: disabled`, so a Role or RoleBinding renamed or removed while the add-on stays on is left on the cluster until deleted by hand. A RoleBinding's `roleRef` cannot change in place: give the new one a new name.
 - An enabled add-on's sealed-Secret folder must hold a file before its `-secrets` Kustomization can go Ready; Git keeps no empty folder.
 - An add-on cannot ship cluster-scoped objects (ClusterRoles, CRDs, webhooks, cluster policies). One that needs them is not admitted yet. The safe shape is a platform component under `platform/` that owns those objects, with a platform contract the add-on depends on.
-- Hosted apps are not add-ons: they use the `apps` stage and the `app-<name>` namespaces.
+- Hosted apps are not add-ons: each has its own wiring and an `app-<name>` namespace ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)). The app policies leave add-on namespaces alone.

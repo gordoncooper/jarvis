@@ -1,4 +1,5 @@
 addons
+app-hosting
 backup-isolation
 cli-deny
 contract-md

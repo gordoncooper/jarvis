@@ -20,6 +20,7 @@ if str(_TOOLS_LIB) not in sys.path:
 
 from _env import instance_root  # noqa: E402,F401  (the one INSTANCE resolver)
 import _app_backups  # noqa: E402
+import _apps  # noqa: E402
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
@@ -29,6 +30,8 @@ DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
 # An env turns the off-host copy on by listing this directory and its sealed secret in platform-configs.
 OFFSITE_COPY_DIR = "platform/backups/offsite"
 OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
+# An env turns app hosting on by listing this core Component in its platform-configs components.
+APP_HOSTING_DIR = "platform/app-hosting"
 # The root GitRepository includes the core source at this directory, so env files
 # reach core as <root>/core/... . In the product checkout, core is the checkout itself.
 CORE_SOURCE_DIR = "core"
@@ -99,7 +102,7 @@ _CLUSTER_VARS_REQUIRED = frozenset(
     }
 )
 
-# Optional until the step that consumes them (D45). A set value is still checked.
+# Optional. A set value is still checked. apps_git_repo_url is required once values/apps.yaml lists an app.
 _CLUSTER_VARS_OPTIONAL = frozenset(
     {
         "ssh_user",
@@ -349,6 +352,7 @@ def _validate_env(
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
     errors.extend(_validate_app_backups(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_addons(env_dir, repo_root, env_name, bootstrapped))
+    errors.extend(_validate_apps(env_dir, repo_root, cluster_vars, pre_host=pre_host))
     errors.extend(_validate_flux_entry_files(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))
     errors.extend(
@@ -646,19 +650,38 @@ def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
     return _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR)
 
 
-def app_registrations(env_dir: Path) -> list[object]:
-    """The app credentials an env registers: its platform-configs components, as
-    <registration dir>/<namespace>. An entry of another shape is returned as is for the check."""
+def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool:
+    path, _doc = _platform_configs(env_dir)
+    target = (Path(repo_root) / CORE_SOURCE_DIR / APP_HOSTING_DIR).resolve()
+    return isinstance(item, str) and (path.parent / item.strip()).resolve() == target
+
+
+def app_hosting_listed(env_dir: Path, repo_root: Path) -> bool:
+    """True when the env turns app hosting on: its platform-configs components list the core
+    app-hosting Component."""
+    _path, doc = _platform_configs(env_dir)
+    components = doc.get("components")
+    return isinstance(components, list) and any(
+        _app_hosting_component(env_dir, repo_root, item) for item in components
+    )
+
+
+def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[object]:
+    """The app credentials an env registers: its platform-configs components other than the
+    app-hosting switch, as <registration dir>/<namespace>. An entry of another shape is
+    returned as is for the check."""
     _path, doc = _platform_configs(env_dir)
     components = doc.get("components")
     if not isinstance(components, list):
         return []
+    root = Path(repo_root) if repo_root is not None else env_dir.parents[1]
     prefix = f"{_app_backups.REGISTRATION_DIR}/"
     return [
         item.strip().removeprefix("./").removeprefix(prefix)
         if isinstance(item, str) and item.strip().removeprefix("./").startswith(prefix)
         else item
         for item in components
+        if not _app_hosting_component(env_dir, root, item)
     ]
 
 
@@ -668,7 +691,7 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
     sealed only in its own namespace's folder."""
     rel = _display_path(env_dir / "flux" / "platform-configs" / "kustomization.yaml", repo_root)
     errors: list[str] = []
-    registered = app_registrations(env_dir)
+    registered = app_registrations(env_dir, repo_root)
     for item in registered:
         if not isinstance(item, str) or not _app_backups.APP_NAMESPACE.fullmatch(item):
             errors.append(
@@ -828,6 +851,49 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
             errors.append(
                 f"{rel}: add-ons {', '.join(names)} all fill slot {slot}; an env enables at most one per slot"
             )
+    return errors
+
+
+def _validate_apps(
+    env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any], *, pre_host: bool
+) -> list[str]:
+    """values/apps.yaml lists app names once each and valid exception lines; an env that lists
+    an app sets apps_git_repo_url, and its flux tree lists the committed render, which matches.
+    An env with no app has neither the render nor its line."""
+    rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+    data, errors = _apps.load_values(env_dir)
+    errors = [f"{rel}: {problem}" for problem in errors]
+    if errors:
+        return errors
+    dns_suffix = cluster_vars.get("dns_suffix")
+    errors.extend(f"{rel}: {problem}" for problem in _apps.validate(data, dns_suffix if isinstance(dns_suffix, str) else None))
+    apps = _apps.app_names(data)
+    if apps and not app_hosting_listed(env_dir, repo_root):
+        errors.append(
+            f"{rel}: lists apps, but app hosting is off; list ../../../../{CORE_SOURCE_DIR}/{APP_HOSTING_DIR} "
+            "under components in flux/platform-configs/kustomization.yaml, or remove the list"
+        )
+    if apps and not cluster_vars.get("apps_git_repo_url"):
+        errors.append(f"{rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
+    generated = env_dir / "flux" / _apps.GENERATED_REL
+    generated_rel = _display_path(generated, repo_root)
+    listing = env_dir / "flux" / "kustomization.yaml"
+    doc = yaml.safe_load(listing.read_text(encoding="utf-8")) if listing.is_file() else {}
+    listed = _apps.GENERATED_REL in ((doc or {}).get("resources") or [])
+    if not apps:
+        if generated.is_file() or listed:
+            errors.append(
+                f"{generated_rel}: the env lists no app; remove it and its line in flux/kustomization.yaml"
+            )
+        return errors
+    if not listed:
+        errors.append(f"{_display_path(listing, repo_root)}: lists apps in {rel}, so resources lists {_apps.GENERATED_REL}")
+    if errors or pre_host:
+        return errors
+    if not generated.is_file() or generated.read_text(encoding="utf-8") != _apps.render(
+        data, resolve_cluster_vars(cluster_vars)
+    ):
+        errors.append(f"{generated_rel}: missing or does not match {rel}; re-render with tools/lib/render_apps.py")
     return errors
 
 

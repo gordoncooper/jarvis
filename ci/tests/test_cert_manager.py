@@ -34,6 +34,19 @@ _TESTAPP = {
     ("Namespace", "", "platform-testapp"),
     ("Service", "platform-testapp", "testapp"),
 }
+# platform/app-hosting: only in an env that turns app hosting on.
+_APP_HOSTING = {
+    ("Certificate", "platform-cert-manager", "wildcard-apps"),
+    ("ClusterRole", "", "kyverno:app-derive"),
+    ("CustomResourceDefinition", "", "apps.hosting.jarvis.io"),
+    ("ClusterPolicy", "", "app-derive"),
+    ("ValidatingAdmissionPolicy", "", "app-file"),
+    ("ValidatingAdmissionPolicy", "", "app-grants"),
+    ("ValidatingAdmissionPolicy", "", "app-identity"),
+    ("ValidatingAdmissionPolicy", "", "app-tenant"),
+    ("ValidatingAdmissionPolicyBinding", "", "app-identity"),
+    ("ValidatingAdmissionPolicyBinding", "", "app-tenant"),
+}
 
 
 def _idents(path: str, *, root: Path | None = None) -> set[tuple[str, str, str]]:
@@ -179,7 +192,7 @@ def test_platform_configs_hold_the_issuer_wildcard_and_store(example_copy: Examp
 
 
 def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
-    from schema.env import offsite_copy_listed
+    from schema.env import app_hosting_listed, offsite_copy_listed
 
     offsite = (
         {
@@ -189,8 +202,9 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         if offsite_copy_listed(root / "envs" / env, root)
         else set()
     )
+    hosting = app_hosting_listed(root / "envs" / env, root)
     assert _idents(f"envs/{env}/flux/platform-configs", root=root) == (
-        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | offsite
+        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | (_APP_HOSTING if hosting else set()) | offsite
     )
     suffix = str(load_cluster_vars(root, env=env)["dns_suffix"])
     for path in (REPO_ROOT / "platform/cert-manager").rglob("*"):
@@ -212,3 +226,11 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
     store = docs[("TLSStore", "default")]
     assert store["metadata"]["namespace"] == "platform-cert-manager"
     assert store["spec"]["defaultCertificate"]["secretName"] == "wildcard-tls"
+    if not hosting:
+        assert "certificates" not in store["spec"]
+        return
+    # Hosted apps: a second wildcard, so core's certificate and key are not reissued for it.
+    apps = docs[("Certificate", "wildcard-apps")]
+    assert apps["spec"]["dnsNames"] == ["*.apps.${dns_suffix}"]
+    assert apps["spec"]["issuerRef"] == certificate["spec"]["issuerRef"]
+    assert store["spec"]["certificates"] == [{"secretName": apps["spec"]["secretName"]}]

@@ -1,0 +1,54 @@
+# Reads an existing photo library from the node, read-only: the hostPath the app file asks for.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: photos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: photos
+  template:
+    metadata:
+      labels:
+        app: photos
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: photos
+          image: registry.example/photos@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 2283
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: library
+              mountPath: /library
+              readOnly: true
+      volumes:
+        - name: library
+          hostPath:
+            path: /srv/photos
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: photos
+spec:
+  selector:
+    app: photos
+  ports:
+    - port: 80
+      targetPort: http
