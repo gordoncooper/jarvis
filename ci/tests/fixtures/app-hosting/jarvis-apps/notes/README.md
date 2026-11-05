@@ -4,7 +4,7 @@ A small file server (`sigoden/dufs`, pinned by digest) for plain-text notes, sto
 
 **Proves:** the per-app backup path. `app.yaml` declares one volume, `data`, with `backup: true`. `deploy/` ships a PVC with that name and no `backup: none` annotation, so the cluster backs it up. The backup runs with the app's **own** credential: the env registers it for `app-notes` (see the backups contract in Jarvis, "App credentials"). Only once that credential exists does the app get its egress to the apps backup server. Until it does, the volume is not backed up and the env's verify step fails it. No other app's credential, and no core credential, is involved.
 
-- `app.yaml`: `webPort: 5000`, `volumes: [{name: data, backup: true}]`, defaults otherwise.
+- `app.yaml`: `network.web` with `port: 5000` and `healthPath: /__dufs__/health` (the path its probes use), `volumes: [{name: data, backup: true}]`, defaults otherwise.
 - `deploy/`: the PVC `data`, a Deployment (non-root, read-only root filesystem, probes on `/__dufs__/health`), a Service and an Ingress on `${app_host}`.
 - Address: `https://notes.apps.<dns suffix>`.
 

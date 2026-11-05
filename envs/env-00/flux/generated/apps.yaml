@@ -26,8 +26,12 @@ spec:
       app_grant_host_path: 'false'
       app_grant_hostnames: ''
       app_grant_lan_ports: ''
+      app_grant_lan_all: 'false'
+      app_grant_lan_targets: ''
+      app_grant_no_uptime_check: 'false'
       app_pod_cidr: 10.80.0.0/16
       app_service_cidr: 10.81.0.0/16
+      app_lan_cidrs: 10.200.0.0/24
       apps_git_repo_url: https://github.com/example-owner/example-apps
     substituteFrom:
     - kind: ConfigMap
@@ -58,8 +62,12 @@ spec:
       app_grant_host_path: 'false'
       app_grant_hostnames: ''
       app_grant_lan_ports: ''
+      app_grant_lan_all: 'false'
+      app_grant_lan_targets: ''
+      app_grant_no_uptime_check: 'false'
       app_pod_cidr: 10.80.0.0/16
       app_service_cidr: 10.81.0.0/16
+      app_lan_cidrs: 10.200.0.0/24
       apps_git_repo_url: https://github.com/example-owner/example-apps
     substituteFrom:
     - kind: ConfigMap
@@ -90,8 +98,12 @@ spec:
       app_grant_host_path: 'false'
       app_grant_hostnames: ''
       app_grant_lan_ports: 8080/TCP
+      app_grant_lan_all: 'false'
+      app_grant_lan_targets: ''
+      app_grant_no_uptime_check: 'false'
       app_pod_cidr: 10.80.0.0/16
       app_service_cidr: 10.81.0.0/16
+      app_lan_cidrs: 10.200.0.0/24
       apps_git_repo_url: https://github.com/example-owner/example-apps
     substituteFrom:
     - kind: ConfigMap

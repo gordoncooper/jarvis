@@ -3,6 +3,9 @@ kind: App
 metadata:
   name: hello-web
 spec:
-  # Plain defaults: no volumes, no internet, 500m CPU and 512Mi for the whole app.
-  webPort: 8080
+  # Plain defaults: a web address (health path /), no volumes, no egress beyond DNS, no
+  # caller, 500m CPU and 512Mi for the whole app.
+  network:
+    web:
+      port: 8080
   volumes: []

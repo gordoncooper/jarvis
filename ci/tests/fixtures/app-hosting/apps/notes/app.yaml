@@ -3,7 +3,12 @@ kind: App
 metadata:
   name: notes
 spec:
-  webPort: 3000
+  network:
+    web:
+      port: 3000
+    egress:
+      internet: true
+      apps: [photos]
   volumes:
     - name: data
       backup: true
@@ -12,5 +17,3 @@ spec:
   resources:
     cpu: "1"
     memory: 1Gi
-  internet: true
-  talksTo: [photos]

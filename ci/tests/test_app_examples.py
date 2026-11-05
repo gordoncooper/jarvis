@@ -1,4 +1,5 @@
-"""The jarvis-apps examples (copied under fixtures/app-hosting/jarvis-apps) against jarvis's own tools.
+"""The jarvis-apps examples (copied under fixtures/app-hosting/jarvis-apps, held equal to the apps
+repository by its CI) against jarvis's own tools.
 
 env-00 lists hello-web, notes and lan-demo with lan-demo's exception line, so:
 - tools/app-check passes each folder;

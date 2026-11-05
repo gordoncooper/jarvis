@@ -33,14 +33,90 @@ spec:
               type: object
             spec:
               type: object
-              required: [webPort, volumes]
+              required: [volumes]
               properties:
-                webPort:
-                  description: The container port Traefik reaches, or none for an app with no web UI.
-                  x-kubernetes-int-or-string: true
-                  x-kubernetes-validations:
-                    - rule: "type(self) == int ? (self >= 1 && self <= 65535) : self == 'none'"
-                      message: webPort is a port number (1-65535) or none
+                network:
+                  description: >-
+                    What reaches the app and what it reaches. Absent or empty: no web address,
+                    no home-network port, no egress beyond DNS, no caller.
+                  type: object
+                  properties:
+                    web:
+                      description: >-
+                        The web address https://<name>.apps.<dns suffix> on 443, TLS from core.
+                        Absent: no web address.
+                      type: object
+                      required: [port]
+                      properties:
+                        port:
+                          description: The plain-HTTP container port Traefik reaches.
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        healthPath:
+                          description: The path the uptime check requests; healthy is any answer but a 5xx.
+                          type: string
+                          default: /
+                          maxLength: 1024
+                          pattern: "^/[!-~]*$"
+                    ports:
+                      description: >-
+                        Home-network ports, each a LoadBalancer port listen forwarding to container
+                        port target. Each needs the env's lan-port <listen>/<protocol> line.
+                      type: array
+                      maxItems: 16
+                      x-kubernetes-list-type: map
+                      x-kubernetes-list-map-keys: [listen, protocol]
+                      items:
+                        type: object
+                        required: [listen, target, protocol]
+                        properties:
+                          listen:
+                            type: integer
+                            minimum: 1
+                            maximum: 65535
+                          target:
+                            type: integer
+                            minimum: 1
+                            maximum: 65535
+                          protocol:
+                            type: string
+                            enum: [TCP, UDP]
+                    egress:
+                      description: What the app reaches beyond cluster DNS. Default nothing.
+                      type: object
+                      properties:
+                        internet: &internet
+                          description: >-
+                            Any port and protocol to the internet, never the LAN or the cluster.
+                            Default false.
+                          type: boolean
+                        lan:
+                          description: >-
+                            LAN targets by name, each needing the env's lan-target lines, or
+                            exactly [all] for the whole LAN, needing the env's lan-all.
+                          type: array
+                          maxItems: 32
+                          x-kubernetes-list-type: set
+                          x-kubernetes-validations:
+                            - rule: "!('all' in self) || self.size() == 1"
+                              message: lan is [all] or a list of target names
+                          items:
+                            type: string
+                            maxLength: 63
+                            pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                        apps: &app-names
+                          description: >-
+                            Other apps, by name. Traffic flows only when the caller lists the
+                            callee under egress.apps and the callee lists the caller under callers.
+                          type: array
+                          maxItems: 32
+                          x-kubernetes-list-type: set
+                          items:
+                            type: string
+                            maxLength: 59
+                            pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                    callers: *app-names
                 volumes:
                   description: Every PVC the app keeps, each backed up or not.
                   type: array
@@ -67,37 +143,6 @@ spec:
                     memory:
                       type: string
                       pattern: "^[0-9]+(Ki|Mi|Gi)$"
-                internet:
-                  description: Egress to TCP 443 on the internet. Default false.
-                  type: boolean
-                talksTo: &app-names
-                  description: Apps this app may call. The other app must list this one under acceptsFrom.
-                  type: array
-                  maxItems: 32
-                  x-kubernetes-list-type: set
-                  items:
-                    type: string
-                    maxLength: 59
-                    pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-                acceptsFrom: *app-names
-                ports:
-                  description: Extra container ports, cluster-internal unless lan is true.
-                  type: array
-                  maxItems: 16
-                  items:
-                    type: object
-                    required: [port, protocol]
-                    properties:
-                      port:
-                        type: integer
-                        minimum: 1
-                        maximum: 65535
-                      protocol:
-                        type: string
-                        enum: [TCP, UDP]
-                      lan:
-                        description: Ask for this port on the home network. Needs the env's lan-port exception.
-                        type: boolean
                 risky:
                   description: Items the app asks for. Each needs the env's matching exception line.
                   type: object
@@ -119,12 +164,17 @@ spec:
                         maxLength: 253
                         pattern: "^([a-z0-9]([-a-z0-9]*[a-z0-9])?\\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
                 envs:
-                  description: Per-env overrides of internet and resources, keyed by env name.
+                  description: Per-env overrides of network.egress.internet and resources, keyed by env name.
                   type: object
                   maxProperties: 16
                   additionalProperties:
                     type: object
                     properties:
-                      internet:
-                        type: boolean
+                      network:
+                        type: object
+                        properties:
+                          egress:
+                            type: object
+                            properties:
+                              internet: *internet
                       resources: *resources

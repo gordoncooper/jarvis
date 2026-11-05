@@ -10,7 +10,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import yaml
 
@@ -24,9 +24,17 @@ WIRING_PATH = "./core/platform/app-hosting/app"
 APP_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?$")
 _FQDN = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _LAN_PORT = re.compile(r"^([0-9]{1,5})/(TCP|UDP)$")
+# A LAN target's name, as an App's network.egress.lan lists it. "all" is reserved: [all] asks
+# for the whole LAN, which lan-all grants.
+_TARGET = re.compile(r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")
 # Exception lines: <app>: <grant>. A grant names exactly one item.
-FLAG_GRANTS = ("privileged", "root", "host-network", "host-path")
-VALUE_GRANTS = ("hostname", "lan-port")
+FLAG_GRANTS = ("privileged", "root", "host-network", "host-path", "lan-all", "no-uptime-check")
+VALUE_GRANTS = ("hostname", "lan-port", "lan-target")
+# Grants that open the LAN, so need the env's lan_cidrs.
+LAN_GRANTS = ("lan-all", "lan-target")
+# values/cluster-vars.yaml: the env's home-network ranges.
+LAN_CIDRS = "lan_cidrs"
+_PRIVATE = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 _KEYS = frozenset({"apps", "exceptions"})
 
 
@@ -50,9 +58,48 @@ def load_values(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
     return data, []
 
 
-def validate(data: dict[str, Any], dns_suffix: str | None) -> list[str]:
+def lan_cidrs_problems(value: Any, pod_cidr: Any, service_cidr: Any) -> list[str]:
+    """lan_cidrs is a list of IPv4 ranges, each inside RFC 1918 and clear of the cluster's own
+    ranges, so neither lan-all nor a lan-target inside them opens the internet or the cluster."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not value:
+        return [f"{LAN_CIDRS} must be a non-empty list of CIDRs"]
+    cluster = []
+    for cidr in (pod_cidr, service_cidr):
+        try:
+            cluster.append(ipaddress.ip_network(str(cidr), strict=True))
+        except ValueError:
+            pass  # reported as pod_cidr or service_cidr
+    errors: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        try:
+            network = ipaddress.ip_network(item, strict=True) if isinstance(item, str) else None
+        except ValueError:
+            network = None
+        if network is None or network.version != 4:
+            errors.append(f"{LAN_CIDRS}: {item!r} is not an IPv4 CIDR")
+        elif not any(network.subnet_of(private) for private in _PRIVATE):
+            errors.append(f"{LAN_CIDRS}: {item} is outside the private ranges 10/8, 172.16/12 and 192.168/16")
+        elif any(network.overlaps(other) for other in cluster):
+            errors.append(f"{LAN_CIDRS}: {item} overlaps pod_cidr or service_cidr")
+        elif item in seen:
+            errors.append(f"{LAN_CIDRS}: {item} is listed twice")
+        else:
+            seen.add(item)
+    return errors
+
+
+def lan_networks(cluster_vars: dict[str, Any]) -> list[str]:
+    value = cluster_vars.get(LAN_CIDRS)
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def validate(data: dict[str, Any], dns_suffix: str | None, lan_cidrs: list[str] | None = None) -> list[str]:
     """The app list holds names only, each once; each exception line names a listed app and
-    one known grant, once. A custom hostname stays outside the env's own zone."""
+    one known grant, once. A custom hostname stays outside the env's own zone; a LAN grant
+    needs the env's lan_cidrs, and a lan-target's range sits inside them."""
     errors = [f"unknown key {key!r} (allowed: apps, exceptions)" for key in sorted(set(data) - _KEYS)]
     apps = data.get("apps")
     if apps is None:
@@ -86,7 +133,7 @@ def validate(data: dict[str, Any], dns_suffix: str | None) -> list[str]:
             continue
         if app not in seen:
             errors.append(f"{where}: {app} is not on this env's app list")
-        problem = grant_problem(grant, dns_suffix)
+        problem = grant_problem(grant, dns_suffix, lan_cidrs or [])
         if problem:
             errors.append(f"{where}: {problem}")
         elif (app, grant) in granted:
@@ -95,12 +142,16 @@ def validate(data: dict[str, Any], dns_suffix: str | None) -> list[str]:
     return errors
 
 
-def grant_problem(grant: Any, dns_suffix: str | None) -> str | None:
+def grant_problem(grant: Any, dns_suffix: str | None, lan_cidrs: Sequence[str] = ()) -> str | None:
     if not isinstance(grant, str):
         return "a grant is a string"
+    kind, _, value = grant.partition(" ")
+    if kind in LAN_GRANTS and not lan_cidrs:
+        return f"a LAN grant needs the env's home-network ranges: set {LAN_CIDRS} in values/cluster-vars.yaml"
     if grant in FLAG_GRANTS:
         return None
-    kind, _, value = grant.partition(" ")
+    if kind == "lan-target":
+        return _lan_target_problem(value, lan_cidrs)
     if kind == "hostname":
         if not _FQDN.fullmatch(value):
             return "hostname takes one lowercase DNS name"
@@ -114,6 +165,26 @@ def grant_problem(grant: Any, dns_suffix: str | None) -> str | None:
         return None
     known = ", ".join([*FLAG_GRANTS, *(f"{name} <value>" for name in VALUE_GRANTS)])
     return f"unknown grant (known: {known})"
+
+
+def _lan_target_problem(value: str, lan_cidrs: Sequence[str]) -> str | None:
+    parts = value.split(" ")
+    usage = "lan-target takes <name> <cidr> <port>/<TCP|UDP>"
+    if len(parts) != 3:
+        return usage
+    name, cidr, port = parts
+    if not _TARGET.fullmatch(name) or name == "all":
+        return f"{usage}; the name is a DNS label other than all"
+    try:
+        network = ipaddress.ip_network(cidr, strict=True)
+    except ValueError:
+        return f"{usage}; {cidr!r} is not a CIDR"
+    match = _LAN_PORT.fullmatch(port)
+    if not match or not 1 <= int(match.group(1)) <= 65535:
+        return usage
+    if not any(network.version == 4 and network.subnet_of(ipaddress.ip_network(lan)) for lan in lan_cidrs):
+        return f"lan-target range {cidr} is outside the env's {LAN_CIDRS}"
+    return None
 
 
 def app_names(data: dict[str, Any]) -> list[str]:
@@ -136,12 +207,16 @@ def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) ->
     does not publish in cluster-vars."""
     for key in ("pod_cidr", "service_cidr"):
         ipaddress.ip_network(str(cluster_vars[key]), strict=True)
+    lan = lan_networks(cluster_vars)
+    for cidr in lan:
+        ipaddress.ip_network(cidr, strict=True)
     grants = grant_data(data, app, "")
     return {
         "app_name": app,
         **{f"app_grant_{key.replace('-', '_')}": value for key, value in grants.items() if key != "host"},
         "app_pod_cidr": str(cluster_vars["pod_cidr"]),
         "app_service_cidr": str(cluster_vars["service_cidr"]),
+        "app_lan_cidrs": ",".join(lan),
         "apps_git_repo_url": str(cluster_vars["apps_git_repo_url"]),
     }
 
@@ -161,6 +236,9 @@ def grant_data(data: dict[str, Any], app: str, dns_suffix: str) -> dict[str, str
         "host-path": _flag("host-path" in grants),
         "hostnames": values("hostname"),
         "lan-ports": values("lan-port"),
+        "lan-all": _flag("lan-all" in grants),
+        "lan-targets": values("lan-target"),
+        "no-uptime-check": _flag("no-uptime-check" in grants),
     }
 
 

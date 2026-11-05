@@ -3,8 +3,11 @@ kind: App
 metadata:
   name: photos
 spec:
-  webPort: 2283
+  network:
+    web:
+      port: 2283
+      healthPath: /api/server/ping
+    callers: [notes]
   volumes: []
-  acceptsFrom: [notes]
   risky:
     hostPath: true

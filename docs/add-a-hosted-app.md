@@ -1,6 +1,14 @@
 # Add a hosted app
 
-A hosted app lives in the apps repository, one folder per app, and is untrusted: core decides what it may do, and the cluster holds it to that. The rules are in [platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md). [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtures/app-hosting/jarvis-apps/) holds copies of the three examples in the apps repository (`hello-web`, `notes`, `lan-demo`), which CI checks: a plain web app, a stateful one, and one that asks for a risky item.
+A hosted app lives in the apps repository, one folder per app, and is untrusted: core decides what it may do, and the cluster holds it to that. The rules are in [platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md).
+
+Start from one of the three examples in the `jarvis-apps` apps repository:
+
+- [hello-web](../ci/tests/fixtures/app-hosting/jarvis-apps/hello-web/): a plain web app on defaults (`network.web.port`, health path `/`).
+- [notes](../ci/tests/fixtures/app-hosting/jarvis-apps/notes/): a stateful one, with a backed-up volume and its own `network.web.healthPath`.
+- [lan-demo](../ci/tests/fixtures/app-hosting/jarvis-apps/lan-demo/): one that asks for a risky item, a home-network port (`network.ports`), and no web address.
+
+The links are to [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtures/app-hosting/jarvis-apps/), which holds exact copies of those three folders for this repository's tests; the apps repository's CI fails when a folder there differs from its copy at the jarvis commit it pins.
 
 ## Write it
 
@@ -15,14 +23,32 @@ In the apps repository:
    metadata:
      name: <name>
    spec:
-     webPort: 8080          # the container port Traefik reaches, or none
+     network:
+       web:                 # absent = no web address
+         port: 8080         # plain-HTTP container port; served at https://<name>.apps.<dns suffix>
+         healthPath: /      # optional, default /; the uptime check counts any answer but a 5xx
      volumes:               # every PVC the app keeps; [] for none
        - name: data
          backup: true
    ```
 
-   Optional, with their defaults: `resources` (500m CPU, 512Mi memory for the whole app), `internet` (false), `talksTo` and `acceptsFrom` (no other app), `ports` (none), `risky` (nothing), and `envs.<env>` to change `internet` or `resources` in one env.
-3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, Ingresses, PodDisruptionBudgets and HorizontalPodAutoscalers. Each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false`, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. A PVC is named like a declared volume and carries annotation `backup: none` exactly when declared `backup: false`. The Ingress host is `${app_host}`, class `traefik`, entrypoint `websecure`, with no `tls` section.
+   The rest of `network`, all closed by default:
+
+   ```yaml
+   network:
+     ports:                 # home-network ports; each needs the env's lan-port line
+       - listen: 25565      # the LoadBalancer port
+         target: 25565      # the container port; the Service's targetPort, as a number
+         protocol: TCP      # or UDP
+     egress:
+       internet: true       # any port to the internet, never the LAN or the cluster; default false
+       lan: [nas]           # LAN targets the env names and grants, or [all]; default none
+       apps: [notes]        # apps this app calls at <service>.app-<other>.svc
+     callers: [web-ui]      # apps that may call this one; both sides list each other
+   ```
+
+   Also optional: `resources` (500m CPU, 512Mi memory for the whole app), `risky` (nothing), and `envs.<env>` to change `network.egress.internet` or `resources` in one env. Probes stay in `deploy/`.
+3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, Ingresses, PodDisruptionBudgets and HorizontalPodAutoscalers. Each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false`, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. A PVC is named like a declared volume and carries annotation `backup: none` exactly when declared `backup: false`. The Ingress host is `${app_host}`, class `traefik`, entrypoint `websecure`, with no `tls` section. A home-network port is a `LoadBalancer` Service with `allocateLoadBalancerNodePorts: false`, each port a `network.ports` entry: `port` its `listen`, `targetPort` its `target` as a number.
 4. Run `python3 <jarvis checkout>/tools/app-check <name>`. It reports every rule the folder breaks; the apps repository's CI runs the same tool from a pinned commit of this repository.
 
 ## Turn it on in an env
@@ -44,7 +70,7 @@ In the env's repository:
      - <name>
    ```
 
-3. If the app asks for a risky item in `spec.risky` or a `lan` port, add the matching exception line, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>` or `lan-port <port>/<TCP|UDP>`. Without it the cluster refuses the objects that use that item.
+3. If the app asks for a risky item in `spec.risky`, a home-network port or LAN egress, add the matching exception line, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>`, `lan-port <listen>/<TCP|UDP>`, `lan-all` (for `lan: [all]`) or `lan-target <target> <cidr> <port>/<TCP|UDP>` (one line per port of a named target). Without it the cluster refuses the objects that use that item, or opens no LAN path. A LAN grant needs the env's ranges, `lan_cidrs` in `values/cluster-vars.yaml`, and a `lan-target` range inside them. To keep a web app out of the uptime check, add `- <name>: no-uptime-check`.
 4. If a volume is `backup: true`, register the app's backup credential: `make bootstrap-secrets ENV=<env> APP=app-<name> INSTANCE=<path>` ([platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md), App credentials). Until then that volume gets no backup, and `make verify` fails it.
 5. Render the wiring: `INSTANCE=<path> python3 tools/lib/render_apps.py --env <env> --output <path>/envs/<env>/flux/generated/apps.yaml`. List `generated/apps.yaml` under `resources` in `envs/<env>/flux/kustomization.yaml` once.
 6. Run `INSTANCE=<path> bash ci/run-env-checks`, then commit and push. `make verify ENV=<env>` then checks the app's namespace, network baseline, grants and hosts.

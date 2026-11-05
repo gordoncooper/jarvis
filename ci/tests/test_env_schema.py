@@ -175,6 +175,27 @@ def test_cluster_cidrs_must_be_cidrs(tmp_path: Path):
     assert "service_cidr must be a CIDR" in msg
 
 
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("10.200.0.0/24", "lan_cidrs must be a non-empty list"),
+        (["10.200.0.1/24"], "is not an IPv4 CIDR"),
+        (["198.51.100.0/24"], "outside the private ranges"),
+        (["10.80.0.0/24"], "overlaps pod_cidr or service_cidr"),
+    ],
+    ids=["not-a-list", "host-bits", "public", "cluster-range"],
+)
+def test_lan_cidrs_are_private_ranges_clear_of_the_cluster(tmp_path: Path, value, message: str):
+    """Rule: the env's LAN ranges are private and outside its pod and service CIDRs, so a LAN
+    grant inside them opens neither the internet nor the cluster."""
+    cv = _valid_cluster_vars()
+    cv["lan_cidrs"] = value
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert message in "\n".join(excinfo.value.messages)
+
+
 def test_flux_paths_must_use_own_env_name(tmp_path: Path):
     env = _write_env(tmp_path, "env-test")
     cv = yaml.safe_load((env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
@@ -378,6 +399,7 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
 _OPTIONAL_CLUSTER_KEYS = (
     "apps_git_repo_url",
     "llm_provider_host",
+    "lan_cidrs",
 )
 
 

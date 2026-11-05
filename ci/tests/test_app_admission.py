@@ -8,6 +8,7 @@ The bindings and the grants ConfigMap are rendered from the real per-app wiring
 from __future__ import annotations
 
 import copy
+import ipaddress
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,7 +29,8 @@ SUFFIX = "env-00.example"
 TENANT = "system:serviceaccount:flux-system:app-{app}"
 VOLSYNC = "system:serviceaccount:volsync:volsync"
 JOB_CONTROLLER = "system:serviceaccount:kube-system:job-controller"
-CLUSTER_VARS = {"pod_cidr": "10.80.0.0/16", "service_cidr": "10.81.0.0/16", "apps_git_repo_url": "https://example.invalid/apps"}
+CLUSTER_VARS = {"pod_cidr": "10.80.0.0/16", "service_cidr": "10.81.0.0/16", "lan_cidrs": ["10.200.0.0/24"],
+                "apps_git_repo_url": "https://example.invalid/apps"}
 
 
 def _kyverno() -> str:
@@ -47,7 +49,7 @@ def _app(name: str, **spec: object) -> dict:
     path = APPS / name / "app.yaml"
     app = _docs(path)[0] if path.is_file() else {
         "apiVersion": "hosting.jarvis.io/v1alpha1", "kind": "App", "metadata": {"name": name},
-        "spec": {"webPort": 8080, "volumes": []},
+        "spec": {"network": {"web": {"port": 8080}}, "volumes": []},
     }
     app = copy.deepcopy(app)
     app["spec"].update(spec)
@@ -124,7 +126,9 @@ _ENV = {
     "photos": (_app("photos"), ["host-path"]),
     "granted": (_app("granted", risky={"privileged": True}), ["privileged"]),
     "ungranted": (_app("ungranted", risky={"privileged": True}), []),
-    "lan": (_app("lan", ports=[{"port": 8443, "protocol": "TCP", "lan": True}]), ["lan-port 8443/TCP"]),
+    "lan": (_app("lan", network={"ports": [{"listen": 8443, "target": 8443, "protocol": "TCP"},
+                                           {"listen": 443, "target": 8080, "protocol": "TCP"}]}),
+            ["lan-port 8443/TCP", "lan-port 443/TCP"]),
 }
 
 
@@ -232,10 +236,16 @@ def test_statefulset_controller_claims_of_a_declared_volume_pass(tmp_path: Path)
 
 def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -> None:
     """Rule: a PVC is a declared volume with the declared backup; an Ingress host is
-    <name>.apps.<suffix>; Services are ClusterIP or a granted lan LoadBalancer."""
+    <name>.apps.<suffix>; Services are ClusterIP, or a LoadBalancer on the file's network.ports
+    (listen, protocol, numeric target) that the env grants as lan-port."""
     lb = {"type": "LoadBalancer", "allocateLoadBalancerNodePorts": False,
           "ports": [{"port": 8443, "protocol": "TCP"}], "selector": {"app": "x"}}
     with_node_ports = {**lb, "allocateLoadBalancerNodePorts": True}
+    mapped = {**lb, "ports": [{"port": 443, "protocol": "TCP", "targetPort": 8080}]}
+    wrong_target = {**lb, "ports": [{"port": 443, "protocol": "TCP", "targetPort": 9090}]}
+    unset_target = {**lb, "ports": [{"port": 443, "protocol": "TCP"}]}
+    named_target = {**lb, "ports": [{"port": 443, "protocol": "TCP", "targetPort": "http"}]}
+    other_protocol = {**lb, "ports": [{"port": 8443, "protocol": "UDP"}]}
     cases = [
         (_pvc("undeclared", "notes"), FILE_FAILS),
         (_pvc("cache", "notes"), FILE_FAILS),
@@ -249,6 +259,11 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
         (_ingress("own-tls", "web-demo", f"web-demo.apps.{SUFFIX}", tls=[{"hosts": [f"web-demo.apps.{SUFFIX}"], "secretName": "x"}]), GRANT_FAILS),
         (_object("Service", "lb", "web-demo", **lb), BOTH_FAIL),
         (_object("Service", "lan", "lan", **lb), PASS),
+        (_object("Service", "lan-mapped", "lan", **mapped), PASS),
+        (_object("Service", "lan-wrong-target", "lan", **wrong_target), FILE_FAILS),
+        (_object("Service", "lan-unset-target", "lan", **unset_target), FILE_FAILS),
+        (_object("Service", "lan-named-target", "lan", **named_target), FILE_FAILS),
+        (_object("Service", "lan-other-protocol", "lan", **other_protocol), BOTH_FAIL),
         (_object("Service", "lan-node-ports", "lan", **with_node_ports), FILE_FAILS),
         (_object("Service", "nodeport", "web-demo", type="NodePort", ports=[{"port": 80}]), GRANT_FAILS),
         (_object("Service", "external-ips", "web-demo", ports=[{"port": 80}], externalIPs=["192.0.2.1"]), GRANT_FAILS),
@@ -372,14 +387,17 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("notes", _pvc("cache", "notes"), "carries annotation backup: none"),
         ("web-demo", _ingress("i", "web-demo", f"grafana.{SUFFIX}"), "is ${app_host}"),
         ("web-demo", _object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "type NodePort"),
-        ("web-demo", _object("Service", "s", "web-demo", type="LoadBalancer", allocateLoadBalancerNodePorts=False, ports=[{"port": 80}]), "not a lan port"),
+        ("web-demo", _object("Service", "s", "web-demo", type="LoadBalancer", allocateLoadBalancerNodePorts=False, ports=[{"port": 80}]), "not a listen port"),
+        ("lan", _object("Service", "s", "lan", type="LoadBalancer", allocateLoadBalancerNodePorts=False,
+                        ports=[{"port": 443, "protocol": "TCP", "targetPort": 9090}]), "the number network.ports gives as target"),
         ("lan", _object("Service", "s", "lan", type="LoadBalancer", ports=[{"port": 8443, "protocol": "TCP"}]), "allocateLoadBalancerNodePorts: false"),
         ("web-demo", _object("NetworkPolicy", "n", "web-demo", "networking.k8s.io/v1"), "an app ships only"),
         ("web-demo", _object("IngressRoute", "r", "web-demo", "traefik.io/v1alpha1"), "an app ships only"),
         ("web-demo", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "namespace": "flux-system"}}, "lands in namespace app-web-demo"),
     ],
     ids=["privileged", "bare-pod", "host-network", "root", "host-path", "undeclared-pvc", "unbacked-without-annotation",
-         "host-outside-apps", "nodeport", "loadbalancer-not-lan", "loadbalancer-node-ports", "networkpolicy", "ingressroute", "other-namespace"],
+         "host-outside-apps", "nodeport", "loadbalancer-not-listed", "loadbalancer-wrong-target", "loadbalancer-node-ports",
+         "networkpolicy", "ingressroute", "other-namespace"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
     """Rule: tools/app-check fails, on the folder alone, each object the cluster refuses for the
@@ -396,10 +414,15 @@ def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj:
         (lambda folder: folder.rename(folder.parent / "renamed") and None, "folder name"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"].update(colour="blue")), "unknown key 'colour'"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"].pop("volumes")), "spec.volumes: is required"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"].update(webPort="eighty")), "webPort is a port number"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"].update(port="eighty")), "spec.network.web.port: is a integer"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"].update(healthPath="health")), "does not match"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"].update(webPort=8080)), "unknown key 'webPort'"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(egress={"lan": ["all", "nas"]})), "lan is [all] or a list"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(ports=[{"listen": 80, "protocol": "TCP"}])), "target: is required"),
         (lambda folder: _edit_app(folder, lambda app: app["metadata"].update(namespace="kube-system")), "metadata holds the name only"),
     ],
-    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "namespace-set"],
+    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "health-path-not-a-path",
+         "old-web-port-key", "lan-all-and-names", "port-without-target", "namespace-set"],
 )
 def test_app_check_refuses_a_missing_invalid_or_misnamed_file(tmp_path: Path, change, expected: str) -> None:
     """Rule: nothing of an app deploys without a valid app file whose name is its folder's."""
@@ -470,50 +493,126 @@ def _network_policy(app: str, name: str, spec: dict) -> dict:
             "metadata": {"name": name, "namespace": f"app-{app}"}, "spec": {"podSelector": {}, **spec}}
 
 
+def _namespace_notes(apps: dict[str, list[str]]) -> dict:
+    """kyverno test values: each App's namespace annotations, as its wiring renders them with
+    the env's exception lines for it."""
+    return {"policies": [{"name": "app-derive", "resources": [
+        {"name": app, "values": {"notes": next(doc for doc in _wiring(app, grants) if doc["kind"] == "Namespace")["metadata"]["annotations"]}}
+        for app, grants in apps.items()]}]}
+
+
+def _quota(app: str, cpu: str, memory: str, lbs: str = "0") -> dict:
+    return {"apiVersion": "v1", "kind": "ResourceQuota", "metadata": {"name": "app", "namespace": f"app-{app}"},
+            "spec": {"hard": {"limits.cpu": cpu, "limits.memory": memory, "requests.cpu": cpu, "requests.memory": memory,
+                              "services.loadbalancers": lbs, "services.nodeports": "0"}}}
+
+
 def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
-    """Rule: the quota and each allow come from the App (with its env override); an allow the
-    file does not ask for is not made; app-to-app opens one side per file; the backups allow
-    follows the registered credential."""
-    notes, photos, web = _app("notes"), _app("photos"), _app("web-demo")
-    offline = _app("offline", internet=True, envs={"env-00": {"internet": False, "resources": {"memory": "256Mi"}}})
+    """Rule: the quota and each allow come from the App's network section (with its env
+    override); an allow the file does not ask for is not made; app-to-app opens one side per
+    file, so traffic flows only when both list each other; the backups allow follows the
+    registered credential."""
+    notes, photos, web, lan = _app("notes"), _app("photos"), _app("web-demo"), _ENV["lan"][0]
+    offline = _app("offline", network={"egress": {"internet": True}},
+                   envs={"env-00": {"network": {"egress": {"internet": False}}, "resources": {"memory": "256Mi"}}})
     credential = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "backups-restic-app-notes", "namespace": "platform-backups"}}
-    notes_ns = {"hosting.jarvis.io/env": "env-00", "hosting.jarvis.io/pod-cidr": "10.80.0.0/16", "hosting.jarvis.io/service-cidr": "10.81.0.0/16"}
-    rules = [{"name": rule, "values": {"notes": notes_ns}} for rule in ("quota", "internet")]
-    quota = lambda app, cpu, memory, lbs="0": {  # noqa: E731
-        "apiVersion": "v1", "kind": "ResourceQuota", "metadata": {"name": "app", "namespace": f"app-{app}"},
-        "spec": {"hard": {"limits.cpu": cpu, "limits.memory": memory, "requests.cpu": cpu, "requests.memory": memory,
-                          "services.loadbalancers": lbs, "services.nodeports": "0"}}}
     peers = lambda names: {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In", "values": [f"app-{n}" for n in names]}]}  # noqa: E731
-    internet = _network_policy("notes", "app-internet", {"policyTypes": ["Egress"], "egress": [{
-        "to": [{"ipBlock": {"cidr": "0.0.0.0/0", "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
-                                                         "169.254.0.0/16", "10.80.0.0/16", "10.81.0.0/16"]}}],
-        "ports": [{"port": 443, "protocol": "TCP"}]}]})
     web_allow = _network_policy("web-demo", "app-web", {"policyTypes": ["Ingress"], "ingress": [{
         "from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                   "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}],
         "ports": [{"port": 8080, "protocol": "TCP"}]}]})
+    ports = _network_policy("lan", "app-ports", {"policyTypes": ["Ingress"], "ingress": [{
+        "from": [{"ipBlock": {"cidr": "0.0.0.0/0"}}],
+        "ports": [{"port": 8443, "protocol": "TCP"}, {"port": 8080, "protocol": "TCP"}]}]})
     backups = _network_policy("notes", "app-backups", {"policyTypes": ["Egress"], "egress": [{
         "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "platform-backups"}},
                 "podSelector": {"matchLabels": {"app.kubernetes.io/name": "restic-apps"}}}],
         "ports": [{"port": 8000, "protocol": "TCP"}]}]})
-    _generate_test(tmp_path, POLICIES / "derive.yaml", [notes, photos, web, credential],
-                   {"policies": [{"name": "app-derive", "rules": rules}]}, [
-        ("quota", (notes, quota("notes", "1", "1Gi"))),
-        ("internet", (notes, internet)),
-        ("talks-to", (notes, _network_policy("notes", "app-talks-to", {"policyTypes": ["Egress"], "egress": [{"to": [{"namespaceSelector": peers(["photos"])}]}]}))),
-        ("accepts-from", (photos, _network_policy("photos", "app-accepts-from", {"policyTypes": ["Ingress"], "ingress": [{"from": [{"namespaceSelector": peers(["notes"])}]}]}))),
-        ("talks-to", (photos, None)),
-        ("accepts-from", (notes, None)),
+    _generate_test(tmp_path, POLICIES / "derive.yaml", [notes, photos, web, lan, offline, credential],
+                   _namespace_notes({"notes": [], "photos": [], "web-demo": [], "lan": _ENV["lan"][1], "offline": []}), [
+        ("quota", (notes, _quota("notes", "1", "1Gi"))),
+        ("quota", (lan, _quota("lan", "500m", "512Mi", "2"))),
+        ("apps", (notes, _network_policy("notes", "app-apps", {"policyTypes": ["Egress"], "egress": [{"to": [{"namespaceSelector": peers(["photos"])}]}]}))),
+        ("callers", (photos, _network_policy("photos", "app-callers", {"policyTypes": ["Ingress"], "ingress": [{"from": [{"namespaceSelector": peers(["notes"])}]}]}))),
+        ("apps", (photos, None)),
+        ("callers", (notes, None)),
         ("web", (web, web_allow)),
-        ("lan", (web, None)),
+        ("web", (lan, None)),
+        ("ports", (lan, ports)),
+        ("ports", (web, None)),
+        ("internet", (web, None)),
+        # The env override: no internet on env-00 for an app that asks for it elsewhere.
+        ("quota", (offline, _quota("offline", "500m", "256Mi"))),
+        ("internet", (offline, None)),
         ("backups", (credential, backups)),
     ])
-    # The env override: no internet on env-00 for an app that asks for it elsewhere.
-    _generate_test(tmp_path / "override", POLICIES / "derive.yaml", [offline],
-                   {"policies": [{"name": "app-derive", "rules": [{"name": rule, "values": {"notes": notes_ns}} for rule in ("quota", "internet")]}]}, [
-        ("quota", (offline, quota("offline", "500m", "256Mi"))),
-        ("internet", (offline, None)),
+
+
+def _allows(policy: dict, address: str, port: int, protocol: str) -> bool:
+    """Whether a NetworkPolicy's egress lets a pod reach address:port/protocol."""
+    ip = ipaddress.ip_address(address)
+    for rule in policy["spec"].get("egress") or []:
+        ports = rule.get("ports")
+        if ports and not any(p["port"] == port and p.get("protocol", "TCP") == protocol for p in ports):
+            continue
+        for peer in rule.get("to") or []:
+            block = peer.get("ipBlock")
+            if block and ip in ipaddress.ip_network(block["cidr"]) and not any(
+                    ip in ipaddress.ip_network(cidr) for cidr in block.get("except") or []):
+                return True
+    return False
+
+
+_LAN_TARGETS = ["lan-target nas 10.200.0.10/32 445/TCP", "lan-target nas 10.200.0.10/32 137/UDP",
+                "lan-target scanner 10.200.0.20/32 80/TCP"]
+
+
+def test_derive_opens_internet_and_lan_only_as_asked_and_granted(tmp_path: Path) -> None:
+    """Rule: internet is any port to a public address, never the LAN or the cluster; the whole
+    LAN opens only for lan: [all] with the env's lan-all; a named LAN target opens only on the
+    ports the env's lan-target lines give it, and only when the App lists it."""
+    surfer = _app("surfer", network={"egress": {"internet": True}})
+    whole, whole_ungranted = (_app(name, network={"egress": {"lan": ["all"]}}) for name in ("whole", "whole-ungranted"))
+    named = _app("named", network={"egress": {"lan": ["nas", "printer"]}})
+    named_ungranted = _app("named-ungranted", network={"egress": {"lan": ["nas"]}})
+    internet = _network_policy("surfer", "app-internet", {"policyTypes": ["Egress"], "egress": [{"to": [{"ipBlock": {
+        "cidr": "0.0.0.0/0", "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16",
+                                        "10.80.0.0/16", "10.81.0.0/16", "10.200.0.0/24"]}}]}]})
+    lan_all = _network_policy("whole", "app-lan-all", {"policyTypes": ["Egress"], "egress": [{"to": [{"ipBlock": {"cidr": "10.200.0.0/24"}}]}]})
+    nas = _network_policy("named", "app-lan", {"policyTypes": ["Egress"], "egress": [
+        {"to": [{"ipBlock": {"cidr": "10.200.0.10/32"}}], "ports": [{"port": 137, "protocol": "UDP"}]},
+        {"to": [{"ipBlock": {"cidr": "10.200.0.10/32"}}], "ports": [{"port": 445, "protocol": "TCP"}]}]})
+    _generate_test(tmp_path, POLICIES / "derive.yaml", [surfer, whole, whole_ungranted, named, named_ungranted],
+                   _namespace_notes({"surfer": [], "whole": ["lan-all"], "whole-ungranted": _LAN_TARGETS,
+                                     "named": _LAN_TARGETS, "named-ungranted": ["lan-all"]}), [
+        ("internet", (surfer, internet)),
+        ("lan-all", (surfer, None)),
+        ("lan", (surfer, None)),
+        ("lan-all", (whole, lan_all)),
+        ("lan-all", (whole_ungranted, None)),
+        ("lan", (whole_ungranted, None)),
+        ("lan", (named, nas)),
+        ("lan-all", (named, None)),
+        ("lan", (named_ungranted, None)),
+        ("lan-all", (named_ungranted, None)),
     ])
+    # What the generated allows let through (kyverno test held them equal to these).
+    assert _allows(internet, "203.0.113.7", 22, "TCP") and _allows(internet, "198.51.100.9", 5000, "UDP")
+    for address in ("10.200.0.10", "192.168.1.1", "10.80.0.5", "10.81.0.1", "169.254.169.254", "100.64.0.1"):
+        assert not _allows(internet, address, 443, "TCP"), address
+    assert _allows(lan_all, "10.200.0.99", 8123, "TCP") and not _allows(lan_all, "203.0.113.7", 443, "TCP")
+    assert _allows(nas, "10.200.0.10", 445, "TCP") and _allows(nas, "10.200.0.10", 137, "UDP")
+    assert not _allows(nas, "10.200.0.10", 22, "TCP") and not _allows(nas, "10.200.0.20", 80, "TCP")
+
+
+def test_uptime_opt_out_reaches_the_grants_the_uptime_check_reads() -> None:
+    """Rule: the uptime check is on unless the env has '<app>: no-uptime-check'; the line reaches
+    the app's grants ConfigMap, where the uptime check reads it."""
+    def grants(lines: list[str]) -> dict:
+        return next(doc for doc in _wiring("notes", lines) if doc["kind"] == "ConfigMap")["data"]
+
+    assert grants([])["no-uptime-check"] == "false"
+    assert grants(["no-uptime-check"])["no-uptime-check"] == "true"
 
 
 def test_privileged_movers_only_for_an_app_with_a_credential(tmp_path: Path) -> None:

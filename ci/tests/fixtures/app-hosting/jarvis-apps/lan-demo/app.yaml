@@ -3,13 +3,13 @@ kind: App
 metadata:
   name: lan-demo
 spec:
-  # No web address: reached only on its home-network port.
-  webPort: none
+  network:
+    # No web: section, so no web address: reached only on its home-network port.
+    # The risky item: TCP 8080 on the home network, forwarded to container port 8080.
+    # The cluster refuses the LoadBalancer Service for it unless the env holds the line
+    #   - lan-demo: lan-port 8080/TCP
+    ports:
+      - listen: 8080
+        target: 8080
+        protocol: TCP
   volumes: []
-  # The risky item: TCP 8080 open to the home network. The cluster refuses the
-  # LoadBalancer Service for it unless the env holds the line
-  #   - lan-demo: lan-port 8080/TCP
-  ports:
-    - port: 8080
-      protocol: TCP
-      lan: true

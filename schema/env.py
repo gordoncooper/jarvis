@@ -102,12 +102,14 @@ _CLUSTER_VARS_REQUIRED = frozenset(
     }
 )
 
-# Optional. A set value is still checked. apps_git_repo_url is required once values/apps.yaml lists an app.
+# Optional. A set value is still checked. apps_git_repo_url is required once values/apps.yaml lists an
+# app, and lan_cidrs once it grants lan-all or lan-target.
 _CLUSTER_VARS_OPTIONAL = frozenset(
     {
         "ssh_user",
         "age_key_file",
         "apps_git_repo_url",
+        "lan_cidrs",
         "llm_provider_host",
         "chrony_nts",
         "backup_check_schedule",
@@ -443,6 +445,10 @@ def _validate_cluster_vars(
     for key in ("pod_cidr", "service_cidr"):
         errors.extend(_validate_cidr(rel_path, key, data.get(key)))
     errors.extend(_validate_app_dns_cluster_ip(rel_path, data))
+    errors.extend(
+        f"{rel_path}: {problem}"
+        for problem in _apps.lan_cidrs_problems(data.get(_apps.LAN_CIDRS), data.get("pod_cidr"), data.get("service_cidr"))
+    )
 
     flux_errors, flux_owner = _validate_repo_url(
         rel_path, "flux_git_repo_url", data.get("flux_git_repo_url"), ssh=True
@@ -866,7 +872,12 @@ def _validate_apps(
     if errors:
         return errors
     dns_suffix = cluster_vars.get("dns_suffix")
-    errors.extend(f"{rel}: {problem}" for problem in _apps.validate(data, dns_suffix if isinstance(dns_suffix, str) else None))
+    errors.extend(
+        f"{rel}: {problem}"
+        for problem in _apps.validate(
+            data, dns_suffix if isinstance(dns_suffix, str) else None, _apps.lan_networks(cluster_vars)
+        )
+    )
     apps = _apps.app_names(data)
     if apps and not app_hosting_listed(env_dir, repo_root):
         errors.append(
