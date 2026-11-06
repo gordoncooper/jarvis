@@ -62,7 +62,7 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
     if not app_hosting_listed(env_dir, repo_root):
         raise SystemExit(f"{env_dir}: backups in apps.yaml but app hosting is off")
     apps_list = _apps.app_names(data)
-    apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
+    apps_root = _backup_selection.selection_apps_root(repo_root, env_dir, apps_list)
     problems = _backup_selection.validate_section(
         section,
         apps_list=apps_list,

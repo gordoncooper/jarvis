@@ -39,6 +39,7 @@ OVERRIDE_KEYS = frozenset(
 _CRON = re.compile(r"^(\S+\s+){4}\S+$")
 _RETENTION = re.compile(r"^[0-9]+$")
 _APPS_REPO_ENV = "APPS_REPO"
+_STALE_HINT = "; eligibility needs the live tip of apps_git_repo_url, so check the checkout is not stale"
 
 
 class AppsRepoError(Exception):
@@ -116,6 +117,12 @@ def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
     )
 
 
+def selection_apps_root(repo_root: Path, env_dir: Path, apps_list: Sequence[str]) -> Path | None:
+    """Where a selection reads app files, or None when the env lists no app: it then reads none,
+    so a core-only env passes with an empty or absent checkout. An env that lists one fails closed."""
+    return apps_repo_root(repo_root, env_dir) if apps_list else None
+
+
 def selection_problems(repo_root: Path, env_dir: Path, rel: str) -> list[str]:
     """Why the env's backups section cannot say which apps are enabled; empty when it can or is absent.
 
@@ -126,8 +133,9 @@ def selection_problems(repo_root: Path, env_dir: Path, rel: str) -> list[str]:
     if section is None:
         return []
     try:
-        apps_root = apps_repo_root(repo_root, env_dir)
-        return validate_section(section, apps_list=_apps.app_names(data), apps_root=apps_root, rel=rel)
+        apps_list = _apps.app_names(data)
+        apps_root = selection_apps_root(repo_root, env_dir, apps_list)
+        return validate_section(section, apps_list=apps_list, apps_root=apps_root, rel=rel)
     except AppsRepoError as exc:
         return [f"{rel}: {exc}"]
 
@@ -142,7 +150,7 @@ def backup_eligible(apps_root: Path, app_name: str) -> bool:
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise AppsRepoError(f"{path}: app file is missing or unreadable") from exc
+        raise AppsRepoError(f"{path}: app file is missing or unreadable{_STALE_HINT}") from exc
     spec = doc.get("spec") if isinstance(doc, dict) else None
     volumes = spec.get("volumes") or [] if isinstance(spec, dict) else None
     if not isinstance(volumes, list):
@@ -161,7 +169,7 @@ def validate_section(
     section: dict[str, Any],
     *,
     apps_list: Sequence[str],
-    apps_root: Path,
+    apps_root: Path | None,
     rel: str,
 ) -> list[str]:
     errors: list[str] = []
@@ -236,7 +244,7 @@ def validate_section(
             if not backup_eligible(apps_root, app):
                 errors.append(
                     f"{rel}.{BACKUPS_KEY}.selected: {app} has no backup-eligible volume "
-                    "(stateless apps belong off the list)"
+                    f"(stateless apps belong off the list{_STALE_HINT})"
                 )
     return errors
 
@@ -245,7 +253,7 @@ def enabled_app_names(
     section: dict[str, Any],
     *,
     apps_list: Sequence[str],
-    apps_root: Path,
+    apps_root: Path | None,
 ) -> list[str]:
     """App names that should have a registered backup credential, in apps list order."""
     mode = section.get("mode")
@@ -258,7 +266,7 @@ def enabled_app_names(
     return []
 
 
-def enabled_namespaces(section: dict[str, Any], *, apps_list: Sequence[str], apps_root: Path) -> list[str]:
+def enabled_namespaces(section: dict[str, Any], *, apps_list: Sequence[str], apps_root: Path | None) -> list[str]:
     return [f"app-{name}" for name in enabled_app_names(section, apps_list=apps_list, apps_root=apps_root)]
 
 
