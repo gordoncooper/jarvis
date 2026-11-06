@@ -671,9 +671,9 @@ def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
         return False
     if _backup_selection.selection_problems(repo_root, env_dir, _apps.APPS_VALUES):
         return False
-    if not _backup_selection.enabled_namespaces(
-        section, apps_list=_apps.app_names(data), apps_root=_backup_selection.apps_repo_root(repo_root, env_dir)
-    ):
+    apps_list = _apps.app_names(data)
+    apps_root = _backup_selection.selection_apps_root(repo_root, env_dir, apps_list)
+    if not _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root):
         return False
     _path, doc = _platform_configs(env_dir)
     return _backup_selection.WRAPPER_ENTRY in (doc.get("components") or [])
@@ -703,9 +703,9 @@ def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[obje
     section = _backup_selection.load_section(data or {})
     root = Path(repo_root) if repo_root is not None else env_dir.parents[1]
     if section is not None:
-        return _backup_selection.enabled_namespaces(
-            section, apps_list=_apps.app_names(data), apps_root=_backup_selection.apps_repo_root(root, env_dir)
-        )
+        apps_list = _apps.app_names(data)
+        apps_root = _backup_selection.selection_apps_root(root, env_dir, apps_list)
+        return _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
     _path, doc = _platform_configs(env_dir)
     components = doc.get("components")
     if not isinstance(components, list):
@@ -726,10 +726,9 @@ def backup_required_registrations(env_dir: Path, repo_root: Path) -> frozenset[s
     section = _backup_selection.load_section(data or {})
     if section is None:
         return None
-    apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
-    return frozenset(
-        _backup_selection.enabled_namespaces(section, apps_list=_apps.app_names(data), apps_root=apps_root)
-    )
+    apps_list = _apps.app_names(data)
+    apps_root = _backup_selection.selection_apps_root(repo_root, env_dir, apps_list)
+    return frozenset(_backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root))
 
 
 def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
@@ -1000,7 +999,7 @@ def _validate_backup_selection_render(
     errors = _backup_selection.selection_problems(repo_root, env_dir, rel)
     if errors or pre_host:
         return errors
-    apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
+    apps_root = _backup_selection.selection_apps_root(repo_root, env_dir, apps_list)
     generated = env_dir / _backup_selection.GENERATED_KUSTOMIZATION
     generated_rel = _display_path(generated, repo_root)
     enabled = _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
