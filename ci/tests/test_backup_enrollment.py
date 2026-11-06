@@ -88,6 +88,8 @@ def test_kyverno_roles_aggregate_secret_and_replicationsource_permissions() -> N
     by_resource = {tuple(rule["resources"]): rule for rule in generate["rules"]}
     assert "create" in by_resource[("secrets",)]["verbs"]
     assert "get" in by_resource[("secrets",)]["verbs"]
+    # A forbidden read silently means no override, so the role must name the ConfigMap the policy reads.
+    assert "backup-overrides" in by_resource[("configmaps",)]["resourceNames"]
     assert "create" in by_resource[("replicationsources",)]["verbs"]
     namespaces = roles["kyverno:backup-namespaces"]
     assert (

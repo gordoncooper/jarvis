@@ -3,6 +3,8 @@
 # A hosted app's PVC (namespace app-*) never gets core's credential: the -app rules build its
 # Secret from that app's own platform-backups/backups-restic-<namespace>, and an app with no
 # registered credential gets no Secret and no ReplicationSource.
+# Schedule and retention are the env's cluster-wide values unless platform-backups/backup-overrides,
+# which render_backup_selection.py writes from values/apps.yaml, has an entry for the namespace.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -76,6 +78,17 @@ spec:
             # String "true" / "false". to_boolean keeps spec.paused a bool.
             jmesPath: "((request.object.metadata.annotations.backup || '') == 'paused' || rebuildHold == 'true') && 'true' || 'false'"
             default: "false"
+        # Missing ConfigMap is no override. The value of each key is that namespace's overrides as JSON.
+        - &backup-overrides
+          name: backupOverrides
+          apiCall:
+            urlPath: /api/v1/namespaces/platform-backups/configmaps/backup-overrides
+            jmesPath: data
+            default: {}
+        - &backup-override
+          name: backupOverride
+          variable:
+            jmesPath: "parse_json(backupOverrides.\"{{ request.object.metadata.namespace }}\" || '{}')"
       generate: &replication-source-generate
         generateExisting: true
         synchronize: true
@@ -89,16 +102,16 @@ spec:
             paused: "{{ to_boolean(pauseBackup) }}"
             sourcePVC: "{{ request.object.metadata.name }}"
             trigger:
-              schedule: "${backup_schedule}"
+              schedule: "{{ backupOverride.backup_schedule || '${backup_schedule}' }}"
             restic:
               repository: "restic-{{ request.object.metadata.name }}"
               copyMethod: Direct
               cacheCapacity: 1Gi
               pruneIntervalDays: 7
               retain:
-                daily: ${backup_retention_daily}
-                weekly: ${backup_retention_weekly}
-                monthly: ${backup_retention_monthly}
+                daily: "{{ backupOverride.backup_retention_daily || to_number('${backup_retention_daily}') }}"
+                weekly: "{{ backupOverride.backup_retention_weekly || to_number('${backup_retention_weekly}') }}"
+                monthly: "{{ backupOverride.backup_retention_monthly || to_number('${backup_retention_monthly}') }}"
                 # Keeps every snapshot from the last 7 days, so one empty backup cannot forget that day's good snapshot yet.
                 within: 7d
     # A hosted app's PVC. Its Secret comes only from that app's own credential, which reaches
@@ -161,6 +174,8 @@ spec:
             default: "false"
         - *rebuild-hold
         - *pause-backup
+        - *backup-overrides
+        - *backup-override
       preconditions:
         all:
           - key: "{{ request.object.spec.volumeName || '' }}"

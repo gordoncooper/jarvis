@@ -76,7 +76,7 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
     _sync_components(env_dir, enabled)
     out_dir = env_dir / _backup_selection.GENERATED_COMPONENT
     out_file = env_dir / _backup_selection.GENERATED_KUSTOMIZATION
-    text = _backup_selection.render_wrapper_component(enabled)
+    text = _backup_selection.render_wrapper_component(enabled, section.get("overrides"))
     if text is None:
         if out_file.is_file():
             out_file.unlink()

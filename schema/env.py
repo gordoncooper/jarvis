@@ -1003,7 +1003,7 @@ def _validate_backup_selection_render(
     generated = env_dir / _backup_selection.GENERATED_KUSTOMIZATION
     generated_rel = _display_path(generated, repo_root)
     enabled = _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
-    expected = _backup_selection.render_wrapper_component(enabled)
+    expected = _backup_selection.render_wrapper_component(enabled, section.get("overrides"))
     if expected is None:
         if generated.is_file():
             errors.append(f"{generated_rel}: present but no app is backup-enabled; re-render backup selection")
