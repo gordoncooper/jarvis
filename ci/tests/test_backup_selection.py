@@ -326,13 +326,9 @@ def test_env_schema_check_fails_under_instance_without_apps_repo(
 ) -> None:
     """Rule: ci/checks/env-schema refuses INSTANCE without a real APPS_REPO."""
     instance = _instance_with_backups(tmp_path)
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in {"APPS_REPO", "INSTANCE"}
-    }
+    env = os.environ.copy()
+    env.pop("APPS_REPO", None)
     env["INSTANCE"] = str(instance)
-    env["OWNER_NAME"] = os.environ["OWNER_NAME"]
     proc = subprocess.run(
         ["bash", str(REPO_ROOT / "ci" / "checks" / "env-schema")],
         cwd=str(REPO_ROOT),

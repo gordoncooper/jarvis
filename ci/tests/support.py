@@ -20,6 +20,16 @@ from types import ModuleType
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
+
+
+def instance_apps_repo_for_checks(instance_root: Path) -> Path:
+    """Apps checkout beside a tmp instance — same content as CI fixtures, not the forbidden core path."""
+    dest = instance_root / "example-apps"
+    if not dest.is_dir():
+        shutil.copytree(_FIXTURE_APPS_REPO, dest)
+    return dest
+
 
 _RENOVATE_NAMED_GROUP = re.compile(r"\(\?<([A-Za-z_]\w*)>")
 
