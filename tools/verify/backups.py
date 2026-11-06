@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from lib._app_backups import APPS_SERVER, rest_username
 from lib._env import json_object, not_found, reason
-from schema.env import app_registrations, apps_server_listed, offsite_copy_listed
+from schema.env import app_registrations, apps_server_listed, backup_required_registrations, offsite_copy_listed
 
 from verify.common import (
     CheckError,
@@ -92,7 +92,12 @@ def _secret_names(pod: dict) -> set[str]:
 
 
 def check_backups(
-    kubectl: Kubectl, *, zone_name: str, now: datetime, registered: frozenset[str] = frozenset()
+    kubectl: Kubectl,
+    *,
+    zone_name: str,
+    now: datetime,
+    registered: frozenset[str] = frozenset(),
+    required: frozenset[str] | None = None,
 ) -> None:
     pvcs = items(kubectl(["get", "pvc", "-A", "-o", "json"]), "list PVCs")
     sources = items(
@@ -118,11 +123,15 @@ def check_backups(
         namespace, name = meta.get("namespace"), meta.get("name")
         if not namespace or not name:
             raise CheckError("PVC has no namespace or name")
+        if namespace.startswith("app-") and required is not None and namespace not in required:
+            continue
         source = indexed.get((namespace, name))
         if source is None and namespace.startswith("app-") and namespace not in registered:
-            raise CheckError(
-                f"{namespace}/{name}: not backed up; {namespace} has no registered backup credential"
-            )
+            if required is None or namespace in required:
+                raise CheckError(
+                    f"{namespace}/{name}: not backed up; {namespace} has no registered backup credential"
+                )
+            continue
         if source is None:
             raise CheckError(f"{namespace}/{name}: no ReplicationSource")
         status = source.get("status") or {}
@@ -193,6 +202,7 @@ def check_offsite_copy(kubectl: Kubectl, *, now: datetime) -> None:
 def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
     env_dir = ctx.repo_root / "envs" / ctx.env
     registered = frozenset(item for item in app_registrations(env_dir, ctx.repo_root) if isinstance(item, str))
+    required = backup_required_registrations(env_dir, ctx.repo_root)
     checks: list[tuple[int, str, object]] = [
         (20, "backups-restic present", lambda: check_secret(ctx.kubectl)),
         (
@@ -210,6 +220,7 @@ def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
                 zone_name=str(ctx.values["time_zone"]),
                 now=ctx.now,
                 registered=registered,
+                required=required,
             ),
         ),
         (

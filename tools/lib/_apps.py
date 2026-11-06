@@ -35,7 +35,7 @@ LAN_GRANTS = ("lan-all", "lan-target")
 # values/cluster-vars.yaml: the env's LAN ranges.
 LAN_CIDRS = "lan_cidrs"
 _PRIVATE = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
-_KEYS = frozenset({"apps", "exceptions"})
+_KEYS = frozenset({"apps", "exceptions", "backups"})
 
 
 def wiring_name(app: str) -> str:
@@ -100,7 +100,7 @@ def validate(data: dict[str, Any], dns_suffix: str | None, lan_cidrs: list[str] 
     """The app list holds names only, each once; each exception line names a listed app and
     one known grant, once. A custom hostname stays outside the env's own zone; a LAN grant
     needs the env's lan_cidrs, and a lan-target's range sits inside them."""
-    errors = [f"unknown key {key!r} (allowed: apps, exceptions)" for key in sorted(set(data) - _KEYS)]
+    errors = [f"unknown key {key!r} (allowed: apps, exceptions, backups)" for key in sorted(set(data) - _KEYS)]
     apps = data.get("apps")
     if apps is None:
         apps = []
