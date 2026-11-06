@@ -16,6 +16,7 @@ resources:
   - policies/admission.yaml
   - policies/derive.yaml
   - priority.yaml
+  - grant-revoke.yaml
   - certificate.yaml
 patches:
   - target:

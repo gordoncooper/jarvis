@@ -74,12 +74,13 @@ _POLICIES = "platform/app-hosting/policies/admission.yaml"
         (f"{_APP}/flux.yaml", "    name: app-${app_name}\n  dependsOn", "    name: flux-system\n  dependsOn", "reads its own source"),
         (f"{_APP}/tenant.yaml", "  name: app\n  namespace: app-${app_name}\n  annotations", "  name: app\n  namespace: kube-system\n  annotations", "lives in app-"),
         (f"{_APP}/kustomization.yaml", "  - flux.yaml", "  - flux.yaml\n  - extra.yaml", "holds no ClusterRole"),
+        (f"{_APP}/grant-revoke.yaml", "  name: app-grant-revoke\nsubjects", "  name: cluster-admin\nsubjects", "binds ClusterRole app-grant-revoke"),
     ],
     ids=["default-deny-ingress-only", "no-default-deny", "namespace-label", "namespace-prunable", "binding-allows-missing-params",
          "binding-names-one-app", "no-grants-binding",
          "grant-without-env-line", "grant-annotation-missing", "flag-a-boolean-after-substitution", "lan-grant-on-namespace-without-env-line", "lan-port-on-namespace-without-env-line",
          "role-grants-networkpolicies", "role-grants-traefik", "objects-outside-namespace",
-         "substitution-source", "decryption", "other-source", "role-elsewhere", "extra-kind"],
+         "substitution-source", "decryption", "other-source", "role-elsewhere", "extra-kind", "revoker-role"],
 )
 def test_app_wiring_outside_the_contract_fails(tmp_path: Path, file: str, old: str, new: str, expected: str) -> None:
     """Rule: each part of an app's wiring fails on its seeded breach."""
@@ -201,6 +202,13 @@ _APP_PIECES = {
     ("ClusterPolicy", "app-priority"),
     ("PriorityClass", "hosted-app"),
     ("Certificate", "wildcard-apps"),
+    ("Namespace", "platform-app-hosting"),
+    ("ServiceAccount", "app-grant-revoke"),
+    ("ClusterRole", "app-grant-revoke"),
+    ("ClusterRole", "app-grant-revoke-namespaces"),
+    ("ClusterRoleBinding", "app-grant-revoke-namespaces"),
+    ("ConfigMap", "app-grant-revoke"),
+    ("CronJob", "app-grant-revoke"),
 }
 
 

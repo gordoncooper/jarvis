@@ -1,0 +1,307 @@
+# Removing an exception line stops what already runs on it. Admission alone only refuses new
+# objects, so this asks the API server to re-admit each running Pod, Job, Service and Ingress in
+# an app's namespace (a dry run, nothing kept) and deletes the ones refused for a grant. A
+# Deployment or StatefulSet stays, and its controller's replacement pod is refused until the
+# grant is back; then it comes up with no other action. It holds no right on PVCs, so an app's
+# volumes and their backups stay.
+#
+# The verdict is the API server's: no copy of the grant rules here. Only a denial carrying the
+# marker in policies/admission.yaml counts, so an expression error, a not-yet-loaded policy or a
+# non-grant rule never stops an app. An App the API server says is gone refuses everything, so
+# then its "no params found" counts too: with no App there is no ask, and that denial can hide a
+# grant's.
+#
+# Prune stays off so a path move cannot drop the reconciler or its rights.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-app-hosting
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-grant-revoke
+  namespace: platform-app-hosting
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+# Finding the app namespaces is its only cluster-wide right.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: app-grant-revoke-namespaces
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: app-grant-revoke-namespaces
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: app-grant-revoke-namespaces
+subjects:
+  - kind: ServiceAccount
+    name: app-grant-revoke
+    namespace: platform-app-hosting
+---
+# Each listed app's wiring binds this in app-<name> only (app/grant-revoke.yaml). patch is for the
+# dry run; a real patch still passes app-file and app-grants.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: app-grant-revoke
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+rules:
+  - apiGroups: [""]
+    resources: [pods, services]
+    verbs: [list, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [list, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [list, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [list, delete]
+  - apiGroups: [hosting.jarvis.io]
+    resources: [apps]
+    verbs: [get]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-grant-revoke
+  namespace: platform-app-hosting
+data:
+  # Flux substitutes into this file, so the script holds no dollar sign.
+  revoke.py: |
+    import json
+    import os
+    import ssl
+    import sys
+    import urllib.error
+    import urllib.request
+
+    MARKER = "denied request: grant: "
+    ACCOUNT = os.environ.get("SERVICE_ACCOUNT_DIR", "/var/run/secrets/kubernetes.io/serviceaccount")
+    SERVER = "https://{KUBERNETES_SERVICE_HOST}:{KUBERNETES_SERVICE_PORT}".format(**os.environ)
+    NO_APP = "no params found"
+    # Jobs first, so the job controller is not left to replace a pod stopped below.
+    CHECKED = (("/apis/batch/v1", "jobs"), ("/api/v1", "pods"), ("/api/v1", "services"),
+               ("/apis/networking.k8s.io/v1", "ingresses"))
+    # The kubelet's own default, whatever the app's manifest asks for.
+    GRACE_SECONDS = 30
+    TLS = ssl.create_default_context(cafile=f"{ACCOUNT}/ca.crt")
+    # The cluster's own CA signs the API server; Python's stricter default wants extensions it may omit.
+    TLS.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=TLS))
+    with open(f"{ACCOUNT}/token", encoding="utf-8") as handle:
+        TOKEN = handle.read().strip()
+
+
+    def call(method, path, body=None):
+        """The status and answer. The API server's own refusal is an answer, not an error."""
+        headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/merge-patch+json"}
+        data = json.dumps(body).encode() if body else None
+        request = urllib.request.Request(SERVER + path, method=method, data=data, headers=headers)
+        try:
+            with OPENER.open(request, timeout=30) as response:
+                return response.status, json.load(response)
+        except urllib.error.HTTPError as error:
+            answer = error.read()
+            try:
+                return error.code, json.loads(answer)
+            except ValueError:
+                return error.code, {"message": answer.decode("utf-8", "replace")}
+
+
+    def listed(path):
+        status, answer = call("GET", path)
+        if status != 200:
+            raise RuntimeError(f"GET {path}: {status} {answer.get('message')}")
+        return answer.get("items") or []
+
+
+    def is_mover(job):
+        """VolSync's own Job. Admission refuses an owner on a tenant's Job, so an app cannot pose as one."""
+        return any(owner.get("apiVersion", "").startswith("volsync.backube/")
+                   for owner in job["metadata"].get("ownerReferences") or [])
+
+
+    def out_of_scope(resource, item, movers):
+        if resource == "pods":
+            # A pod already terminating is asked again: garbage collection or an earlier delete
+            # may have left it on the app's own grace period.
+            mover_pod = any(owner.get("kind") == "Job" and owner.get("name") in movers
+                            for owner in item["metadata"].get("ownerReferences") or [])
+            return mover_pod or item.get("status", {}).get("phase") in ("Succeeded", "Failed")
+        if item["metadata"].get("deletionTimestamp"):
+            return True
+        if resource == "jobs":
+            finished = any(c.get("type") in ("Complete", "Failed") and c.get("status") == "True"
+                           for c in item.get("status", {}).get("conditions") or [])
+            return finished or is_mover(item)
+        return False
+
+
+    def delete(path):
+        status, answer = call("DELETE", f"{path}?propagationPolicy=Background&gracePeriodSeconds={GRACE_SECONDS}")
+        if status not in (200, 202, 404):
+            raise RuntimeError(f"DELETE {path}: {status} {answer.get('message')}")
+
+
+    def stop_refused(namespace, app_gone):
+        probe = {"metadata": {"annotations": {"hosting.jarvis.io/grant-check": "dry-run"}}}
+        movers = {job["metadata"]["name"] for job in listed(f"/apis/batch/v1/namespaces/{namespace}/jobs") if is_mover(job)}
+        for prefix, resource in CHECKED:
+            base = f"{prefix}/namespaces/{namespace}/{resource}"
+            for item in listed(base):
+                if out_of_scope(resource, item, movers):
+                    continue
+                path = f"{base}/{item['metadata']['name']}"
+                status, answer = call("PATCH", f"{path}?dryRun=All", probe)
+                message = str(answer.get("message"))
+                if status in (200, 404):
+                    continue
+                if MARKER in message or (app_gone and NO_APP in message):
+                    print(f"stopping {path}: {message}", flush=True)
+                    delete(path)
+                elif "denied request" in message:
+                    print(f"leaving {path}: {message}", flush=True)
+                else:
+                    raise RuntimeError(f"PATCH {path}: {status} {message}")
+
+
+    def split(value):
+        return {entry for entry in (value or "").split(",") if entry}
+
+
+    def over_grant(name, rules, grants, app):
+        """Whether a derived LAN allow holds more than the env grants now. Kyverno re-derives it,
+        from the current grants, once deleted."""
+        if name == "app-lan-all":
+            return grants.get("hosting.jarvis.io/lan-all") != "true"
+        if name == "app-lan":
+            allowed = {tuple(line.split(" ")[1:]) for line in split(grants.get("hosting.jarvis.io/lan-targets"))}
+            return any((to["ipBlock"]["cidr"], f"{port['port']}/{port['protocol']}") not in allowed
+                       for rule in rules for to in rule.get("to") or [] for port in rule.get("ports") or [])
+        if name == "app-ports":
+            lan_ports = split(grants.get("hosting.jarvis.io/lan-ports"))
+            allowed = {f"{entry['target']}/{entry['protocol']}"
+                       for entry in app.get("spec", {}).get("network", {}).get("ports") or []
+                       if f"{entry['listen']}/{entry['protocol']}" in lan_ports}
+            return any(f"{port['port']}/{port['protocol']}" not in allowed
+                       for rule in rules for port in rule.get("ports") or [])
+        return False
+
+
+    def read_app(namespace):
+        """The App, or None once the API server says it is gone."""
+        name = namespace.removeprefix("app-")
+        status, app = call("GET", f"/apis/hosting.jarvis.io/v1alpha1/namespaces/{namespace}/apps/{name}")
+        if status == 404:
+            return None
+        if status != 200:
+            raise RuntimeError(f"GET App {namespace}/{name}: {status} {app.get('message')}")
+        return app
+
+
+    def close_network(namespace, grants, app):
+        base = f"/apis/networking.k8s.io/v1/namespaces/{namespace}/networkpolicies"
+        for policy in listed(base):
+            spec = policy["spec"]
+            if over_grant(policy["metadata"]["name"], spec.get("egress", []) + spec.get("ingress", []), grants, app):
+                print(f"closing {base}/{policy['metadata']['name']}", flush=True)
+                delete(f"{base}/{policy['metadata']['name']}")
+
+
+    def main():
+        failed = False
+        for namespace in listed("/api/v1/namespaces?labelSelector=hosting.jarvis.io/app"):
+            name = namespace["metadata"]["name"]
+            # The wiring binds this account only in a listed app's namespace; a dropped app's
+            # objects go with its Kustomizations, and the bindings refuse its new pods.
+            status, _answer = call("GET", f"/api/v1/namespaces/{name}/pods?limit=1")
+            if status == 403:
+                print(f"skipping {name}: not a listed app", flush=True)
+                continue
+            try:
+                app = read_app(name)
+                stop_refused(name, app is None)
+                close_network(name, namespace["metadata"].get("annotations") or {}, app or {})
+            except (RuntimeError, OSError, KeyError, ValueError) as error:
+                print(f"{name}: {error}", flush=True)
+                failed = True
+        return 1 if failed else 0
+
+
+    sys.exit(main())
+---
+# Every five minutes, level-triggered: a revoke that lands while the cluster or this job is down
+# is still acted on at the next run.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: app-grant-revoke
+  namespace: platform-app-hosting
+  labels:
+    app.kubernetes.io/name: app-grant-revoke
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 240
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: app-grant-revoke
+        spec:
+          serviceAccountName: app-grant-revoke
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: revoke
+              # renovate: datasource=docker depName=python
+              image: python:3.14.6-alpine3.23@sha256:b165067c5afc37fa5608a3c05609cc3d51aafd808a30fbfd822ee594fef55ad4
+              imagePullPolicy: IfNotPresent
+              command: [python3, /scripts/revoke.py]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 64Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: scripts
+              configMap:
+                name: app-grant-revoke
