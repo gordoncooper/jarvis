@@ -11,7 +11,7 @@ data:
         <h1>Hello from a hosted app</h1>
         <ul>
           <li><a href="/notes/__dufs__/health">/notes/</a>: calls the notes app (granted: egress.apps and callers)</li>
-          <li><a href="/blocked/">/blocked/</a>: calls lan-demo, which is not granted, so it times out (504)</li>
+          <li><a href="/blocked/">/blocked/</a>: calls lan-demo, which is not granted, so it is blocked (502)</li>
           <li><a href="/internet/">/internet/</a>: fetches a public page (granted: egress.internet)</li>
         </ul>
       </body>
@@ -43,8 +43,8 @@ data:
         proxy_connect_timeout 3s;
       }
 
-      # Not granted: lan-demo is not under egress.apps, so the default-deny egress drops
-      # the connection and nginx answers 504.
+      # Not granted: lan-demo is not under egress.apps, so the default-deny egress blocks
+      # the connection and nginx answers 502.
       location /blocked/ {
         set $upstream http://lan-demo.app-lan-demo.svc.cluster.local:8080;
         rewrite ^/blocked/(.*)$ /$1 break;
