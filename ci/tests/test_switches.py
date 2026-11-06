@@ -58,7 +58,7 @@ def test_a_listed_app_takes_one_name_and_no_other_env_file(tmp_path: Path) -> No
 
 @pytest.mark.parametrize(
     ("section", "bad"),
-    [("core", "grafana"), ("optional", "observability"), ("addons", "nope"), ("apps", "not-in-the-apps-repo")],
+    [("optional", "observability"), ("addons", "nope"), ("apps", "not-in-the-apps-repo")],
 )
 def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: str, bad: str) -> None:
     """Rule: a name core or the apps repository does not hold fails, before the render writes anything."""
@@ -72,12 +72,11 @@ def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: s
     assert _tree(copy) == before
 
 
-def test_a_core_component_cannot_be_left_out(tmp_path: Path) -> None:
-    """Rule: core is on in every env, so the file does not read as turning one off."""
+def test_core_has_no_switch(tmp_path: Path) -> None:
+    """Rule: core is on in every env, so a core section is an unknown key rather than a list that reads as a choice."""
     copy = bootstrap_example_copy(tmp_path)
-    data = yaml.safe_load((copy.env_dir / _switches.SWITCHES_FILE).read_text(encoding="utf-8"))
-    set_switches(copy.env_dir, core=[name for name in data["core"] if name != "traefik"])
-    assert "core: traefik is missing" in _errors(copy)
+    set_switches(copy.env_dir, core=["traefik"])
+    assert "unknown key 'core'" in _errors(copy)
 
 
 def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:

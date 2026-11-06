@@ -6,7 +6,7 @@ render_switches.py writes it. The file holds names only: an app's settings stay 
 
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Sequence
 
 import yaml
@@ -15,17 +15,14 @@ import _app_backups  # noqa: E402
 
 # envs/<env>/values/switches.yaml.
 SWITCHES_FILE = "values/switches.yaml"
-CORE = "core"
 OPTIONAL = "optional"
 ADDONS = "addons"
 APPS = "apps"
-SECTIONS = (CORE, OPTIONAL, ADDONS, APPS)
+SECTIONS = (OPTIONAL, ADDONS, APPS)
 # The rendered wiring, under envs/<env>/flux/.
 ROOT_REL = "kustomization.yaml"
 SERVICES_REL = "kustomizations/services.yaml"
 PLATFORM_CONFIGS_REL = "platform-configs/kustomization.yaml"
-# The two core lists that hold the always-on components, which every env lists under core.
-_CORE_LISTS = ("platform/kustomization.yaml", "platform/configs/kustomization.yaml")
 APP_HOSTING = "app-hosting"
 APP_HOSTING_DIR = "platform/app-hosting"
 OFFSITE_COPY = "offsite-copy"
@@ -69,22 +66,11 @@ def names(data: dict[str, Any], section: str) -> list[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
-def core_names(core: Path) -> list[str]:
-    """The always-on core components, read from core's own lists, so a new one needs no table here."""
-    found: dict[str, None] = {}
-    for rel in _CORE_LISTS:
-        path = core / rel
-        doc = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
-        for item in (doc or {}).get("resources") or []:
-            found[PurePosixPath(str(item).removeprefix("../")).parts[0]] = None
-    return list(found)
-
-
-def validate(data: dict[str, Any], core: Sequence[str], addons: Sequence[str]) -> list[str]:
-    """Each section is a list of names, each once. core names every always-on component and nothing
-    else, optional and addons only what core ships. _apps validates the shape of an app name."""
+def validate(data: dict[str, Any], addons: Sequence[str]) -> list[str]:
+    """Each section is a list of names, each once, optional and addons only what core ships. Core
+    itself is on in every env, so it has no section. _apps validates the shape of an app name."""
     errors = [f"unknown key {key!r} (allowed: {', '.join(SECTIONS)})" for key in sorted(set(data) - set(SECTIONS), key=str)]
-    known = {CORE: core, OPTIONAL: tuple(OPTIONAL_COMPONENTS), ADDONS: addons}
+    known = {OPTIONAL: tuple(OPTIONAL_COMPONENTS), ADDONS: addons}
     for section in SECTIONS:
         value = data.get(section)
         if value is None:
@@ -102,11 +88,6 @@ def validate(data: dict[str, Any], core: Sequence[str], addons: Sequence[str]) -
                 errors.append(f"{section}: {item} is listed twice")
             else:
                 seen.add(item)
-    errors.extend(
-        f"{CORE}: {name} is missing; a core component is on in every env, so this file names it"
-        for name in core
-        if name not in names(data, CORE)
-    )
     return errors
 
 

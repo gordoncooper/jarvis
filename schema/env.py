@@ -892,7 +892,7 @@ def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
     core = core_dir(repo_root)
     errors = [
         f"{rel}: {problem}"
-        for problem in _switches.validate(data, _switches.core_names(core), addon_names(core))
+        for problem in _switches.validate(data, addon_names(core))
     ]
     apps = [name for name in _switches.names(data, _switches.APPS) if _apps.APP_NAME.fullmatch(name)]
     if not apps:

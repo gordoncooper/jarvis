@@ -1,22 +1,15 @@
 # What this env enables, by name only. tools/lib/render_switches.py renders the Flux wiring from
 # it (schema/CONTRACT.md); an unknown name fails. Everything else about a piece is in its own file.
-# core is on in every env. optional is off until listed (app-hosting, offsite-copy, apps-backup-server).
+# Core is on in every env, so it is not listed. optional is off until listed (app-hosting, offsite-copy,
+# apps-backup-server).
 # This example lists the sample add-on and apps so CI renders them; a new env empties addons and apps
 # (docs/deploy.md).
-core:
-  - flux-operator
-  - traefik
-  - backups
-  - kyverno
-  - cert-manager
-  - app-dns
-  - testapp
 optional:
   - app-hosting
   - offsite-copy
 addons:
   - hello
-# Hosted apps: untrusted, held to their app file by the cluster. Add-ons and core above are the trusted zone.
+# Hosted apps: untrusted, held to their app file by the cluster. Add-ons and core are the trusted zone.
 apps:
   - hello-web
   - notes

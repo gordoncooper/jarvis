@@ -845,7 +845,7 @@ def _render_core_only(env: Path, *optional: str) -> None:
     import _apps
     import _switches
 
-    data = {"core": _switches.core_names(REPO_ROOT), "optional": list(optional), "addons": [], "apps": []}
+    data = {"optional": list(optional), "addons": [], "apps": []}
     (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     flux = env / "flux"
     (flux / _switches.ROOT_REL).write_text(

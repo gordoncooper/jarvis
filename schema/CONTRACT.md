@@ -22,7 +22,7 @@ A real env lives in a private instance checkout. `INSTANCE=<path>` points the sc
 ## Expects
 
 - One folder per env: `envs/<env>/` with the `cluster-vars.yaml` and `hosts.yml` above present when that env is active.
-- Once an env has a `flux/` folder or sealed files, it holds `values/switches.yaml`, and commits `flux/kustomization.yaml`, `flux/kustomizations/services.yaml` and `flux/platform-configs/kustomization.yaml` exactly as `tools/lib/render_switches.py` writes them from it. An unknown name, a name listed twice, a missing core name, or a hand-edited render fails, and the render refuses an unknown name before it writes.
+- Once an env has a `flux/` folder or sealed files, it holds `values/switches.yaml`, and commits `flux/kustomization.yaml`, `flux/kustomizations/services.yaml` and `flux/platform-configs/kustomization.yaml` exactly as `tools/lib/render_switches.py` writes them from it. An unknown name, a name listed twice, or a hand-edited render fails, and the render refuses an unknown name before it writes.
 - Once an env has a `flux/` folder or sealed files, `flux/` holds every Flux entry file: `sync.yaml`, `flux-instance.yaml`, `kustomization.yaml`, `identities.yaml`, the four `kustomizations/*.yaml` and `platform-configs/kustomization.yaml`. A missing one fails the schema. An env with neither yet (prep-node on a new env) needs none.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `cert-manager-ca.sops.yaml` and `backups-restic.sops.yaml`, which the env's platform-configs path applies.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
@@ -44,11 +44,10 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 ### `values/switches.yaml`
 
-One short file, names only, one per line. `tools/lib/render_switches.py --env <env>` turns it into the Flux wiring; `INSTANCE=<path>` points it at an instance. Settings stay where they were: an app's in its app file, an exception line or backup selection in `values/apps.yaml`, a sealed secret under `secrets/`.
+One short file, names only, one per line. Core is on in every env, so it has no section: `platform/kustomization.yaml` and `platform/configs/kustomization.yaml` list it. `tools/lib/render_switches.py --env <env>` turns it into the Flux wiring; `INSTANCE=<path>` points it at an instance. Settings stay where they were: an app's in its app file, an exception line or backup selection in `values/apps.yaml`, a sealed secret under `secrets/`.
 
 | Section | Names | Notes |
 | --- | --- | --- |
-| `core` | Every always-on core component: the top folder of each entry in `platform/kustomization.yaml` and `platform/configs/kustomization.yaml`. | On in every env; it turns nothing off, so a missing name fails. |
 | `optional` | `app-hosting`, `offsite-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `tools/lib/_switches.py` and no bundle to any env. Observability joins this list when it is built; it is not an add-on. |
 | `addons` | A folder under core's `services/`. | Limited-tenant swappable services ([services/CONTRACT.md](../services/CONTRACT.md)). At most one per slot. |
 | `apps` | A folder in the apps repository. | Hosted apps: untrusted, held to their app file by the cluster ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)). Listing a name switches an app on and grants it nothing; a new app in that repository never deploys until an env lists it. |
@@ -165,7 +164,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
 - A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
 - A behavior test accepts a new env that lists the off-host copy before bootstrap, rejects it once bootstrapped without `backups-offsite.sops.yaml`, and accepts it once the file is there.
-- `ci/tests/test_switches.py`: one name enables an app with no other env file and a second render changes nothing; an unknown name in each section fails and refuses the render; a missing core name, a missing file, a hand-edited render and `apps:` in `values/apps.yaml` fail; an unlisted optional component renders nothing; selected backups need the apps server switch.
+- `ci/tests/test_switches.py`: one name enables an app with no other env file and a second render changes nothing; an unknown name in each section fails and refuses the render; a `core` section, a missing file, a hand-edited render and `apps:` in `values/apps.yaml` fail; an unlisted optional component renders nothing; selected backups need the apps server switch.
 - `ci/tests/test_backup_isolation.py` accepts a bootstrapped copy with one registered app credential, and rejects a registration outside `app-`, an edited registration Component, a missing sealed file, a registration without the apps server, and an app credential sealed outside its own folder.
 - `ci/tests/test_backup_selection.py` rejects an ineligible app on `selected`, requires a sealed credential for a selected eligible app once bootstrapped, accepts an `all_except` exclusion without that sealed file, renders registration Components from selection, fails verify when a required app has no credential, rejects each malformed section and an unknown component, and fails closed on an unreadable app file or missing checkout.
 - `ci/tests/test_addons.py` accepts known add-ons, rejects an unknown add-on, a duplicate, and two add-ons for one slot, and rejects a bootstrapped env whose add-on Secret folder is empty.
