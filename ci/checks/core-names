@@ -5,6 +5,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
+# shellcheck source=lib/_apps_repo_env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/_apps_repo_env.sh"
+_apps_repo_prepare "$repo_root" || exit 1
+
 export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 
 python3 - <<'PY'

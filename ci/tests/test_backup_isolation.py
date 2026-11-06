@@ -170,7 +170,7 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     component = copy.env_dir / "flux" / "platform-configs" / "backups" / APP / "kustomization.yaml"
 
     _set_components(copy, [f"backups/{APP}", "backups/shop"])
-    assert "component 'shop' is not an app credential registration" in _schema_errors(copy)
+    assert "hand-copying registrations" in _schema_errors(copy)
     _set_components(copy, [f"backups/{APP}"])
 
     original = component.read_text(encoding="utf-8")
@@ -179,11 +179,17 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     component.write_text(original, encoding="utf-8")
 
     _set_components(copy, [f"backups/{APP}"], apps_server=False)
+    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc["components"] = [item for item in doc.get("components") or [] if "backup-selection" not in str(item)]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
     assert "registers app credentials but does not list platform/backups/apps" in _schema_errors(copy)
     _set_components(copy, [f"backups/{APP}"])
     path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    doc["resources"].append("../../../../core/platform/backups/apps")
+    wrapper = "../generated/backup-selection"
+    if wrapper not in (doc.get("components") or []):
+        doc.setdefault("components", []).append(wrapper)
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
     moved = secrets / f"backups-restic-{APP}.sops.yaml"
@@ -192,6 +198,14 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     assert f"registers {APP}, missing required file" in errors
     assert "an app credential is sealed only in its own folder" in errors
     shutil.move(moved, sealed)
+    import sys
+
+    lib = str(REPO_ROOT / "tools" / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    from render_backup_selection import render_env
+
+    render_env(copy.env_dir, copy.root)
     validate_one_env(copy.root, copy.name)
 
 

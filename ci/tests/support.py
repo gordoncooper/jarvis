@@ -20,6 +20,16 @@ from types import ModuleType
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
+
+
+def instance_apps_repo_for_checks(instance_root: Path) -> Path:
+    """Apps checkout beside a tmp instance — same content as CI fixtures, not the forbidden core path."""
+    dest = instance_root / "example-apps"
+    if not dest.is_dir():
+        shutil.copytree(_FIXTURE_APPS_REPO, dest)
+    return dest
+
 
 _RENOVATE_NAMED_GROUP = re.compile(r"\(\?<([A-Za-z_]\w*)>")
 
@@ -347,11 +357,27 @@ def _bootstrap_copy(root: Path, name: str) -> None:
 
 
 def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
-    """Turn on the apps server in the copy and register one app credential, as an owner would:
-    bootstrap-secrets --app seals it to the copy's throwaway key and writes the Component, then
-    the env lists the apps server and that Component."""
+    """Turn on backup for one app in the copy: selection, render, bootstrap-secrets, as an owner would."""
     import yaml
 
+    app = namespace.removeprefix("app-")
+    apps_path = copy.env_dir / "values" / "apps.yaml"
+    data = yaml.safe_load(apps_path.read_text(encoding="utf-8"))
+    names = data.setdefault("apps", [])
+    if app not in names:
+        names.append(app)
+    data["backups"] = {"mode": "selected", "selected": [app]}
+    apps_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    lib = str(REPO_ROOT / "tools" / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    from render_apps import render_env as render_apps_env
+    from render_backup_selection import render_env
+
+    rendered = render_apps_env(copy.env_dir)
+    if rendered is not None:
+        (copy.env_dir / "flux" / "generated" / "apps.yaml").write_text(rendered, encoding="utf-8")
+    render_env(copy.env_dir, copy.root)
     sops = shutil.which("sops")
     if not sops:
         raise RuntimeError("sops not found on PATH (run make deps)")
@@ -359,13 +385,6 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
     mod.REPO_ROOT = copy.root
     mod._repo_root = lambda: copy.root
     mod.bootstrap_app(copy.name, namespace, sops_bin=sops)
-    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    apps = "../../../../core/platform/backups/apps"
-    if apps not in doc["resources"]:
-        doc["resources"].append(apps)
-    doc.setdefault("components", []).append(f"backups/{namespace}")
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
 def _render_copy(env_dir: Path) -> None:

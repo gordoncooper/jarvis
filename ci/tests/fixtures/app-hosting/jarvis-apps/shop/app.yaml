@@ -1,0 +1,8 @@
+apiVersion: hosting.jarvis.io/v1alpha1
+kind: App
+metadata:
+  name: shop
+spec:
+  volumes:
+    - name: db
+      backup: true

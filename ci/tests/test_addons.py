@@ -12,7 +12,7 @@ import yaml
 
 from _addons import scan_addons
 from schema.env import ValidationError, validate_env_tree
-from support import REPO_ROOT, _write_env, bootstrap_example_copy
+from support import REPO_ROOT, _write_env, bootstrap_example_copy, instance_apps_repo_for_checks
 
 _TENANT = {"kind": "ServiceAccount", "name": "addon-widget", "namespace": "flux-system"}
 
@@ -333,12 +333,18 @@ def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
     subprocess.run([*git, "init", "-q"], cwd=root, check=True)
     subprocess.run([*git, "add", "-A"], cwd=root, check=True)
     subprocess.run([*git, "commit", "-q", "-m", "fixture"], cwd=root, check=True)
+    instance = root.resolve()
+    env = {
+        **os.environ,
+        "INSTANCE": str(instance),
+        "APPS_REPO": str(instance_apps_repo_for_checks(instance)),
+    }
     return subprocess.run(
         ["bash", str(REPO_ROOT / "ci" / "run-env-checks")],
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, "INSTANCE": str(root)},
+        env=env,
     )
 
 

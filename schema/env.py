@@ -21,6 +21,7 @@ if str(_TOOLS_LIB) not in sys.path:
 from _env import instance_root  # noqa: E402,F401  (the one INSTANCE resolver)
 import _app_backups  # noqa: E402
 import _apps  # noqa: E402
+import _backup_selection  # noqa: E402
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
@@ -661,8 +662,23 @@ def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
 
 
 def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
-    """True when the env runs the apps rest-server (its platform-configs list the directory)."""
-    return _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR)
+    """True when the env runs the apps rest-server (listed in platform-configs or via backup selection)."""
+    if _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR):
+        return True
+    data, _ = _apps.load_values(env_dir)
+    section = _backup_selection.load_section(data or {})
+    if section is None:
+        return False
+    if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
+        return False
+    if not _backup_selection.enabled_namespaces(
+        section, apps_list=_apps.app_names(data), apps_root=_backup_selection.apps_repo_root(repo_root, env_dir)
+    ):
+        return False
+    _path, doc = _platform_configs(env_dir)
+    components = doc.get("components") or []
+    wrapper = "../" + _backup_selection.GENERATED_COMPONENT_REL
+    return wrapper in components or _backup_selection.GENERATED_COMPONENT_REL in components
 
 
 def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool:
@@ -683,13 +699,19 @@ def app_hosting_listed(env_dir: Path, repo_root: Path) -> bool:
 
 def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[object]:
     """The app credentials an env registers: its platform-configs components other than the
-    app-hosting switch, as <registration dir>/<namespace>. An entry of another shape is
-    returned as is for the check."""
+    app-hosting switch, as <registration dir>/<namespace>. When values/apps.yaml declares
+    backups, the enabled set comes from that selection instead of hand-listed components."""
+    data, _ = _apps.load_values(env_dir)
+    section = _backup_selection.load_section(data or {})
+    root = Path(repo_root) if repo_root is not None else env_dir.parents[1]
+    if section is not None:
+        return _backup_selection.enabled_namespaces(
+            section, apps_list=_apps.app_names(data), apps_root=_backup_selection.apps_repo_root(root, env_dir)
+        )
     _path, doc = _platform_configs(env_dir)
     components = doc.get("components")
     if not isinstance(components, list):
         return []
-    root = Path(repo_root) if repo_root is not None else env_dir.parents[1]
     prefix = f"{_app_backups.REGISTRATION_DIR}/"
     return [
         item.strip().removeprefix("./").removeprefix(prefix)
@@ -700,13 +722,57 @@ def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[obje
     ]
 
 
+def backup_required_registrations(env_dir: Path, repo_root: Path) -> frozenset[str] | None:
+    """App namespaces that must have a backup credential for verify, or None when selection is off."""
+    data, _ = _apps.load_values(env_dir)
+    section = _backup_selection.load_section(data or {})
+    if section is None:
+        return None
+    apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
+    return frozenset(
+        _backup_selection.enabled_namespaces(section, apps_list=_apps.app_names(data), apps_root=apps_root)
+    )
+
+
 def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
     """Each registered app credential is an app- namespace's, in its exact registration Component,
     with the apps server on and, once bootstrapped, its sealed file present. An app credential is
-    sealed only in its own namespace's folder."""
+    sealed only in its own namespace's folder. With backups selection, registrations must match
+    the enabled set exactly."""
     rel = _display_path(env_dir / "flux" / "platform-configs" / "kustomization.yaml", repo_root)
     errors: list[str] = []
+    data, _ = _apps.load_values(env_dir)
+    section = _backup_selection.load_section(data or {})
+    if section is not None:
+        apps_rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+        if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
+            errors.append(f"{apps_rel}: {repo_problem}")
+            return errors
     registered = app_registrations(env_dir, repo_root)
+    if section is not None:
+        expected = set(item for item in registered if isinstance(item, str))
+        prefix = f"{_app_backups.REGISTRATION_DIR}/"
+        _path, doc = _platform_configs(env_dir)
+        components = doc.get("components") or []
+        manual = {
+            item.strip().removeprefix("./").removeprefix(prefix)
+            for item in components
+            if isinstance(item, str)
+            and item.strip().removeprefix("./").startswith(prefix)
+            and not _app_hosting_component(env_dir, repo_root, item)
+        }
+        if manual:
+            errors.append(
+                f"{rel}: lists {sorted(manual)!r} under components; with backups in values/apps.yaml, "
+                f"run tools/lib/render_backup_selection.py instead of hand-copying registrations"
+            )
+        wrapper = "../" + _backup_selection.GENERATED_COMPONENT_REL
+        if expected and wrapper not in components and _backup_selection.GENERATED_COMPONENT_REL not in components:
+            errors.append(
+                f"{rel}: backup-enabled apps need components entry {wrapper!r} from render_backup_selection.py"
+            )
+        if not expected and wrapper in components:
+            errors.append(f"{rel}: lists {wrapper!r} but no app is backup-enabled; re-render backup selection")
     for item in registered:
         if not isinstance(item, str) or not _app_backups.APP_NAMESPACE.fullmatch(item):
             errors.append(
@@ -908,12 +974,77 @@ def _validate_apps(
         return errors
     if not listed:
         errors.append(f"{_display_path(listing, repo_root)}: lists apps in {rel}, so resources lists {_apps.GENERATED_REL}")
+    errors.extend(_validate_backup_selection_render(env_dir, repo_root, env_dir.name, data, pre_host=pre_host))
     if errors or pre_host:
         return errors
     if not generated.is_file() or generated.read_text(encoding="utf-8") != _apps.render(
         data, resolve_cluster_vars(cluster_vars)
     ):
         errors.append(f"{generated_rel}: missing or does not match {rel}; re-render with tools/lib/render_apps.py")
+    return errors
+
+
+def _validate_backup_selection_render(
+    env_dir: Path,
+    repo_root: Path,
+    env_name: str,
+    data: dict[str, Any],
+    *,
+    pre_host: bool,
+) -> list[str]:
+    section = _backup_selection.load_section(data)
+    if section is None:
+        return []
+    rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+    apps_list = _apps.app_names(data)
+    if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
+        return [f"{rel}: {repo_problem}"]
+    apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
+    errors = [
+        f"{rel}: {problem}"
+        for problem in _backup_selection.validate_section(
+            section,
+            apps_list=apps_list,
+            apps_root=apps_root,
+            rel=rel,
+        )
+    ]
+    if errors or pre_host:
+        return errors
+    generated = env_dir / _backup_selection.GENERATED_KUSTOMIZATION
+    generated_rel = _display_path(generated, repo_root)
+    enabled = _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
+    expected = _backup_selection.render_wrapper_component(enabled)
+    if expected is None:
+        if generated.is_file():
+            errors.append(f"{generated_rel}: present but no app is backup-enabled; re-render backup selection")
+        return errors
+    for namespace in enabled:
+        component = repo_root / _app_backups.registration_rel(env_name, namespace)
+        if not component.is_file() or component.read_text(encoding="utf-8") != _app_backups.registration_component(
+            namespace
+        ):
+            errors.append(
+                f"{env_name}: {_display_path(component, repo_root)} is missing or differs; "
+                "re-render with tools/lib/render_backup_selection.py"
+            )
+    expected_components = [
+        f"../../platform-configs/{_app_backups.REGISTRATION_DIR}/{namespace}" for namespace in enabled
+    ]
+    if generated.is_file():
+        rendered = yaml.safe_load(generated.read_text(encoding="utf-8")) or {}
+        rendered_components = rendered.get("components") if isinstance(rendered, dict) else None
+        if rendered_components != expected_components:
+            errors.append(
+                f"{generated_rel}: stale wrapper lists {rendered_components!r}, expected {expected_components!r}; "
+                "re-render with tools/lib/render_backup_selection.py"
+            )
+            return errors
+    if not generated.is_file() or generated.read_text(encoding="utf-8") != expected:
+        errors.append(
+            f"{generated_rel}: missing or does not match {rel}; re-render with tools/lib/render_backup_selection.py"
+        )
+        return errors
     return errors
 
 

@@ -12,3 +12,9 @@ apps:
 # One line needs no ask: no-uptime-check takes the app's web address out of the uptime check.
 exceptions:
   - lan-demo: lan-port 8080/TCP
+# Backup selection (platform/backups/CONTRACT.md): default off until an app is listed here.
+# mode selected: only selected apps with backup-eligible volumes register a credential.
+# mode all_except: every eligible listed app registers except exclude.
+backups:
+  mode: selected
+  selected: []
