@@ -31,10 +31,12 @@ from test_app_admission import POLICIES, _app, _docs, _job, _pod, _wiring
 VOLSYNC = "system:serviceaccount:volsync:volsync"
 SCHEDULER = "system:kube-scheduler"
 BINDER = "system:serviceaccount:kube-system:persistent-volume-binder"
+PVC_PROTECTION = "system:serviceaccount:kube-system:pvc-protection-controller"
 TENANT_NOTES = "system:serviceaccount:flux-system:app-notes"
 RS_CONTROLLER = "system:serviceaccount:kube-system:replicaset-controller"
 REVOKER = "system:serviceaccount:platform-app-hosting:app-grant-revoke"
 SELECTED_NODE = "volume.kubernetes.io/selected-node"
+PVC_PROTECTION_FINALIZER = "kubernetes.io/pvc-protection"
 
 WORK = REPO_ROOT / ".scratch" / "apiserver"
 CRD = REPO_ROOT / "platform" / "app-hosting" / "crd" / "app-crd.yaml"
@@ -221,6 +223,7 @@ def _ensure_pvc_rbac(api: Api) -> None:
         {"kind": "User", "name": VOLSYNC, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": SCHEDULER, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": BINDER, "apiGroup": "rbac.authorization.k8s.io"},
+        {"kind": "User", "name": PVC_PROTECTION, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": TENANT_NOTES, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": RS_CONTROLLER, "apiGroup": "rbac.authorization.k8s.io"},
     ):
@@ -395,6 +398,86 @@ def test_scheduler_prebind_update_on_volsync_cache_pvc(api: Api) -> None:
     path = f"/api/v1/namespaces/{ns}/persistentvolumeclaims?dryRun=All"
     status, answer = api.request("POST", path, create, as_user=SCHEDULER)
     assert declare_msg in _status_message(answer)
+
+
+def _terminating_pvc(api: Api, name: str, *, owner: dict | None = None, hold: bool = False) -> dict:
+    """A claim the VolSync controller made, deleted: no controller runs here, so it stays
+    Terminating on the finalizer the API server added at CREATE (and hold's, if asked)."""
+    doc = _pvc(name, "app-notes", owner=owner)
+    if hold:
+        doc["metadata"]["finalizers"] = ["example.test/hold"]
+    api.create_as(doc, VOLSYNC)
+    status, answer = api.request("DELETE", f"/api/v1/namespaces/app-notes/persistentvolumeclaims/{name}")
+    assert status == 200, answer
+    live = api.get_pvc("app-notes", name)
+    assert "deletionTimestamp" in live["metadata"] and PVC_PROTECTION_FINALIZER in live["metadata"]["finalizers"]
+    return live
+
+
+def _without_protection(claim: dict) -> dict:
+    doc = json.loads(json.dumps(claim))
+    doc["metadata"]["finalizers"] = [f for f in doc["metadata"]["finalizers"] if f != PVC_PROTECTION_FINALIZER]
+    return doc
+
+
+def test_a_terminating_volsync_cache_pvc_can_finish_deleting(api: Api) -> None:
+    """Rule: removing only kubernetes.io/pvc-protection from a VolSync-owned undeclared claim that
+    is already terminating passes, so its delete finishes; it is keyed on the change, so the
+    protection controller's username does not matter and a tenant may make the same write."""
+    path = "/api/v1/namespaces/app-notes/persistentvolumeclaims/cache-finishes"
+    cache = _terminating_pvc(api, "cache-finishes", owner=_volsync_owner(uid="e5555555-5555-5555-5555-555555555555"))
+    stripped = _without_protection(cache)
+    assert not api.update_refusal(stripped, TENANT_NOTES), api.update_refusal(stripped, TENANT_NOTES)
+    status, answer = api.request("PUT", path, stripped, as_user=PVC_PROTECTION)
+    assert status == 200, answer
+    assert api.request("GET", path)[0] == 404
+
+
+def test_only_the_finalizer_on_a_terminating_volsync_claim_is_released(api: Api) -> None:
+    """Rule: the carve-out needs a claim already terminating, VolSync-owned before the write, and
+    a write that removes that one finalizer and changes nothing else. Each seeded write fails."""
+    declare_msg = "volume the app file declares"
+    owner = _volsync_owner(uid="f6666666-6666-6666-6666-666666666666")
+    tenant = lambda doc: api.update_refusal(doc, TENANT_NOTES)  # noqa: E731
+
+    # A live cache claim: same write, not terminating.
+    api.create_as(_pvc("cache-live", "app-notes", owner=owner), VOLSYNC)
+    assert declare_msg in tenant(_without_protection(api.get_pvc("app-notes", "cache-live")))
+
+    # Terminating but with no VolSync owner, as it is and with one forged in the same write.
+    unowned = _without_protection(_terminating_pvc(api, "cache-unowned"))
+    assert declare_msg in tenant(unowned)
+    unowned["metadata"]["ownerReferences"] = [owner]
+    assert declare_msg in tenant(unowned)
+
+    # Terminating with an owner that is not VolSync's.
+    other = {"apiVersion": "apps/v1", "kind": "Deployment", "name": "web", "uid": "a7777777-7777-7777-7777-777777777777"}
+    assert declare_msg in tenant(_without_protection(_terminating_pvc(api, "cache-other-owner", owner=other)))
+
+    cache = _terminating_pvc(api, "cache-seeded", owner=owner)
+    for field, value in (("labels", {"seeded": "x"}), ("annotations", {"seeded": "x"}),
+                         ("ownerReferences", [{**owner, "name": "other"}])):
+        changed = _without_protection(cache)
+        changed["metadata"][field] = value
+        assert declare_msg in tenant(changed), field
+    changed = _without_protection(cache)
+    changed["spec"]["volumeName"] = "pv-seeded"
+    assert declare_msg in tenant(changed)
+
+    # Other finalizers stay: one removed in the write is refused, with or without this one.
+    held = _terminating_pvc(api, "cache-held", owner=owner, hold=True)
+    other_gone = json.loads(json.dumps(held))
+    other_gone["metadata"]["finalizers"] = [PVC_PROTECTION_FINALIZER]
+    assert declare_msg in tenant(other_gone)
+    both_gone = json.loads(json.dumps(held))
+    both_gone["metadata"]["finalizers"] = []
+    assert declare_msg in tenant(both_gone)
+
+    # Removing just this one passes and keeps the other. With it gone there is nothing to release.
+    released = _without_protection(held)
+    status, answer = api.request("PUT", "/api/v1/namespaces/app-notes/persistentvolumeclaims/cache-held", released, as_user=TENANT_NOTES)
+    assert status == 200, answer
+    assert declare_msg in tenant(api.get_pvc("app-notes", "cache-held"))
 
 
 # Asked for and granted at first, then revoked.
