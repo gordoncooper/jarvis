@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT, instance_apps_repo_for_checks
+from support import REPO_ROOT, instance_apps_repo_for_checks, render_switches, set_switches
 
 _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
 
@@ -23,10 +23,8 @@ def _instance(tmp_path: Path, *, core_only: bool) -> Path:
     (instance / "core").symlink_to(REPO_ROOT)
     if core_only:
         (env_dir / "values" / "apps.yaml").write_text("backups:\n  mode: selected\n", encoding="utf-8")
-        (env_dir / "flux" / "generated" / "apps.yaml").unlink()
-        kustomization = env_dir / "flux" / "kustomization.yaml"
-        lines = kustomization.read_text(encoding="utf-8").splitlines(keepends=True)
-        kustomization.write_text("".join(line for line in lines if "generated/apps.yaml" not in line), encoding="utf-8")
+        set_switches(env_dir, apps=[])
+        render_switches(env_dir, instance)
     return instance
 
 
@@ -86,7 +84,7 @@ def _write_env(instance: Path, name: str, url: str, apps: list[str]) -> None:
     values = instance / "envs" / name / "values"
     values.mkdir(parents=True)
     (values / "cluster-vars.yaml").write_text(yaml.safe_dump({"apps_git_repo_url": url}), encoding="utf-8")
-    (values / "apps.yaml").write_text(yaml.safe_dump({"apps": apps}), encoding="utf-8")
+    (values / "switches.yaml").write_text(yaml.safe_dump({"apps": apps}), encoding="utf-8")
 
 
 def _helper(tmp_path: Path, instance: Path, *, branches: tuple[str, ...] = ("trunk",)) -> subprocess.CompletedProcess[str]:

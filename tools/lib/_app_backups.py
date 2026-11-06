@@ -13,7 +13,7 @@ APP_NAMESPACE = re.compile(r"^app-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?$")
 # The apps rest-server. Its users are confined to their own top-level folder (--private-repos).
 APPS_SERVER = "restic-apps"
 APPS_REPOSITORY = f"rest:http://{APPS_SERVER}.platform-backups.svc.cluster.local:8000/"
-# The opt-in core directory an env lists in its platform-configs to run the apps server.
+# The opt-in core directory the env's apps-backup-server switch lists in its platform-configs.
 APPS_SERVER_DIR = "platform/backups/apps"
 # Where a credential is mounted in the apps server, restic-check and restic-offsite.
 CREDENTIALS_MOUNT = "/credentials"

@@ -9,11 +9,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT
+from support import REPO_ROOT, set_switches
 
 from _app_hosting import scan_app_hosting
 from _flux_identity import scan_flux_identity
 import _apps
+import _switches
 from schema import env as env_schema
 
 EXAMPLE = REPO_ROOT / "envs" / "env-00"
@@ -96,12 +97,12 @@ def test_app_wiring_outside_the_contract_fails(tmp_path: Path, file: str, old: s
 def test_listed_app_without_wiring_and_wiring_without_listing_fail(tmp_path: Path) -> None:
     """Rule: the env runs exactly the apps it lists."""
     _product, instance = _tree(tmp_path)
-    values = instance / "envs" / "env-00" / _apps.APPS_VALUES
+    values = instance / "envs" / "env-00" / _switches.SWITCHES_FILE
     _edit(values, "  - lan-demo\n", "  - lan-demo\n  - extra\n")
     _edit(values, "  - hello-web\n", "")
     messages = _messages(instance)
     assert any("lists extra, and the flux tree has no app-extra-wiring" in item for item in messages), messages
-    assert any("wires app hello-web, which values/apps.yaml does not list" in item for item in messages), messages
+    assert any("wires app hello-web, which values/switches.yaml does not list" in item for item in messages), messages
 
 
 def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None:
@@ -179,9 +180,10 @@ def test_env_schema_requires_the_committed_render(tmp_path: Path) -> None:
     _edit(env_dir / _apps.APPS_VALUES, "  - lan-demo: lan-port 8080/TCP\n", "  - lan-demo: privileged\n")
     assert any("does not match" in error for error in _schema_errors(instance))
     _edit(env_dir / _apps.APPS_VALUES, "  - lan-demo: privileged\n", "  - lan-demo: lan-port 8080/TCP\n")
-    _edit(env_dir / "flux" / "kustomization.yaml", "  - generated/apps.yaml\n", "")
+    _edit(env_dir / "flux" / "kustomization.yaml", "- generated/apps.yaml\n", "")
     assert any("resources lists generated/apps.yaml" in error for error in _schema_errors(instance))
-    (env_dir / _apps.APPS_VALUES).write_text("apps: []\n", encoding="utf-8")
+    (env_dir / _apps.APPS_VALUES).write_text("exceptions: []\n", encoding="utf-8")
+    set_switches(env_dir, apps=[])
     assert any("the env lists no app; remove it" in error for error in _schema_errors(instance))
     (env_dir / "flux" / _apps.GENERATED_REL).unlink()
     assert _schema_errors(instance) == []
@@ -254,8 +256,7 @@ def test_app_hosting_on_renders_all_of_it(tmp_path: Path) -> None:
 def test_env_schema_rejects_apps_while_hosting_is_off(tmp_path: Path) -> None:
     """Rule: an env that lists apps turns app hosting on; the list is not silently ignored."""
     _product, instance = _tree(tmp_path)
-    configs = instance / "envs" / "env-00" / "flux" / "platform-configs" / "kustomization.yaml"
-    _edit(configs, "components:\n  - ../../../../core/platform/app-hosting\n", "")
+    _edit(instance / "envs" / "env-00" / _switches.SWITCHES_FILE, "  - app-hosting\n", "")
     assert any("app hosting is off" in error for error in _schema_errors(instance))
 
 

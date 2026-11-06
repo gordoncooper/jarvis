@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Render envs/<env>/flux/generated/apps.yaml from values/apps.yaml (platform/app-hosting/CONTRACT.md).
 
-With no app listed there is nothing to render: remove the file and its line in
-flux/kustomization.yaml instead.
+render_switches.py runs this with the rest of the env's wiring. With no app listed there is
+nothing to render, and it removes the file and its line in flux/kustomization.yaml.
 """
 
 from __future__ import annotations
@@ -26,13 +26,13 @@ def render_env(env_dir: Path) -> str | None:
     data, errors = _apps.load_values(env_dir)
     if errors:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(errors)}")
-    if not _apps.app_names(data):
-        return None
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
     problems = _apps.validate(data, cluster_vars.get("dns_suffix"), _apps.lan_networks(cluster_vars))
     if problems:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(problems)}")
-    if not app_hosting_listed(env_dir, env_dir.parents[1]):
+    if not _apps.app_names(data):
+        return None
+    if not app_hosting_listed(env_dir):
         raise SystemExit(f"{env_dir}: lists apps, but app hosting is off (platform/app-hosting/CONTRACT.md, Config)")
     if not cluster_vars.get("apps_git_repo_url"):
         raise SystemExit(f"{env_dir}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")

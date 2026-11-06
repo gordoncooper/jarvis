@@ -1,10 +1,5 @@
-# The hosted apps this env runs: names only, one per app. Everything else about an app is
-# in its own app file in the apps repository. No list, or an empty one, runs no app.
-# This example lists the three sample apps so CI renders their wiring; a new env removes them.
-apps:
-  - hello-web
-  - notes
-  - lan-demo
+# The names of the hosted apps this env runs are in values/switches.yaml. Everything else about
+# an app is in its own app file in the apps repository; this file holds what the env decides for it.
 # Exception lines, '<app>: <grant>', one grant each. A grant takes effect only for an app
 # whose app file asks for the same item. Grants: privileged, root, host-network,
 # host-path, hostname <name>, lan-port <port>/<TCP|UDP>, lan-all,

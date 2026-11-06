@@ -19,12 +19,11 @@ An add-on is an optional piece Jarvis ships on top of core. Each env turns it on
 
 In the env's repository:
 
-1. Add the add-on under `spec.components` of `envs/<env>/flux/kustomizations/services.yaml`:
+1. Add the add-on under `addons` in `envs/<env>/values/switches.yaml`, then run `INSTANCE=<path> python3 tools/lib/render_switches.py --env <env>`:
 
    ```yaml
-   spec:
-     components:
-       - <name>
+   addons:
+     - <name>
    ```
 
 2. Seal each Secret it reads, one folder per namespace, in the same commit: the add-on's `-secrets` Kustomization is not Ready until its folder holds a file. `make seal ENV=<env> NAMESPACE=<namespace> NAME=<name>-<purpose> FILE=<manifest> INSTANCE=<path>`. The manifest carries `kustomize.toolkit.fluxcd.io/prune: disabled`.
@@ -32,7 +31,7 @@ In the env's repository:
 
 ## Turn it off
 
-1. Remove the add-on's line from `spec.components`, commit and push. Flux prunes the add-on's Kustomizations, and each prunes the workloads it applied.
+1. Remove the add-on's line from `addons`, re-render, commit and push. Flux prunes the add-on's Kustomizations, and each prunes the workloads it applied.
 2. Wait until its Kustomizations are gone: `kubectl get kustomizations -n flux-system` lists no `addon-<name>` or `addon-<name>-*`. The tenant account must still exist while they finish, which is why it keeps `prune: disabled`.
 3. Delete what `prune: disabled` kept, as the cluster admin:
    - each of its Namespaces (`kubectl delete namespace <namespace>`), which also removes its Roles, RoleBindings, Secrets and any PVCs in them;

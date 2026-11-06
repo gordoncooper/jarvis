@@ -836,18 +836,23 @@ def _copy_flux_entry(env: Path) -> None:
     for path in (env / "flux").rglob("*.yaml"):
         text = path.read_text(encoding="utf-8")
         path.write_text(text.replace(f"envs/{EXAMPLE_ENV}/", f"envs/{env.name}/"), encoding="utf-8")
-    # No off-host copy unless a test lists it.
-    (env / "flux" / "platform-configs" / "kustomization.yaml").write_text("resources: []\n", encoding="utf-8")
-    # A new env starts core-only, as docs/deploy.md has a copy drop the example's add-on list.
-    services = env / "flux" / "kustomizations" / "services.yaml"
-    doc = yaml.safe_load(services.read_text(encoding="utf-8"))
-    doc["spec"].pop("components", None)
-    services.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
-    # And with no hosted app, so no rendered app wiring either.
-    listing = env / "flux" / "kustomization.yaml"
-    doc = yaml.safe_load(listing.read_text(encoding="utf-8"))
-    doc["resources"].remove("generated/apps.yaml")
-    listing.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    # A new env starts core-only, as docs/deploy.md has a copy empty the example's lists. No
+    # off-host copy unless a test lists it, and with no hosted app no rendered app wiring either.
+    _render_core_only(env)
+
+
+def _render_core_only(env: Path, *optional: str) -> None:
+    import _apps
+    import _switches
+
+    data = {"core": _switches.core_names(REPO_ROOT), "optional": list(optional), "addons": [], "apps": []}
+    (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    flux = env / "flux"
+    (flux / _switches.ROOT_REL).write_text(
+        _switches.root_kustomization(data, apps_generated=_apps.GENERATED_REL), encoding="utf-8"
+    )
+    (flux / _switches.SERVICES_REL).write_text(_switches.services(data), encoding="utf-8")
+    (flux / _switches.PLATFORM_CONFIGS_REL).write_text(_switches.platform_configs(data), encoding="utf-8")
 
 
 def test_missing_flux_entry_file_fails(tmp_path: Path) -> None:
@@ -864,10 +869,7 @@ def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Pa
     """Once bootstrapped, an env listing platform/backups/offsite requires backups-offsite.sops.yaml."""
     env = _write_env(tmp_path)
     _copy_flux_entry(env)
-    configs = env / "flux" / "platform-configs"
-    (configs / "kustomization.yaml").write_text(
-        "resources:\n  - ../../../../core/platform/backups/offsite\n", encoding="utf-8"
-    )
+    _render_core_only(env, "offsite-copy")
     validate_env_tree(tmp_path)
     (env / "secrets").mkdir(exist_ok=True)
     for name in ("k3s-token", "cert-manager-ca", "backups-restic"):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Render backup registration Components from values/apps.yaml (platform/backups/CONTRACT.md).
 
-When the env lists no backup-enabled app, remove flux/generated/backup-selection/ and its
-line in flux/platform-configs/kustomization.yaml instead.
+render_switches.py runs this with the rest of the env's wiring. With no backup-enabled app it
+removes flux/generated/backup-selection/ and its line in flux/platform-configs/kustomization.yaml.
 """
 
 from __future__ import annotations
@@ -11,45 +11,14 @@ import argparse
 import sys
 from pathlib import Path
 
-import yaml
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from schema.env import app_hosting_listed, instance_root  # noqa: E402
-import _app_backups  # noqa: E402
 import _apps  # noqa: E402
 import _backup_selection  # noqa: E402
-
-
-def _platform_configs(env_dir: Path) -> Path:
-    return env_dir / "flux" / "platform-configs" / "kustomization.yaml"
-
-
-def _sync_components(env_dir: Path, enabled_namespaces: list[str]) -> None:
-    """Drop hand-listed backups/* components; keep app-hosting and the generated wrapper."""
-    path = _platform_configs(env_dir)
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(doc, dict):
-        raise SystemExit(f"{path}: expected a Kustomization")
-    wrapper = _backup_selection.WRAPPER_ENTRY
-    prefix = f"{_app_backups.REGISTRATION_DIR}/"
-    kept: list[object] = []
-    for item in doc.get("components") or []:
-        if not isinstance(item, str):
-            kept.append(item)
-            continue
-        stripped = item.strip().removeprefix("./")
-        if stripped.startswith(prefix) or "backup-selection" in stripped:
-            continue
-        kept.append(item)
-    if enabled_namespaces and wrapper not in kept:
-        kept.append(wrapper)
-    if kept == (doc.get("components") or []):
-        return
-    doc["components"] = kept
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+import _switches  # noqa: E402
 
 
 def render_env(env_dir: Path, repo_root: Path) -> str | None:
@@ -58,8 +27,10 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(errors)}")
     section = _backup_selection.load_section(data)
     if section is None:
+        if (env_dir / _backup_selection.GENERATED_KUSTOMIZATION).is_file():
+            raise SystemExit(f"{env_dir}: {_backup_selection.SECTION_REMOVED}")
         return None
-    if not app_hosting_listed(env_dir, repo_root):
+    if not app_hosting_listed(env_dir):
         raise SystemExit(f"{env_dir}: backups in apps.yaml but app hosting is off")
     apps_list = _apps.app_names(data)
     apps_root = _backup_selection.selection_apps_root(repo_root, env_dir, apps_list)
@@ -72,8 +43,17 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
     if problems:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(problems)}")
     enabled = _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
+    switches, _ = _switches.load(env_dir)
+    if enabled and _switches.APPS_BACKUP_SERVER not in _switches.names(switches, _switches.OPTIONAL):
+        raise SystemExit(
+            f"{env_dir}: backups select {enabled}, so {_switches.SWITCHES_FILE} lists "
+            f"{_switches.APPS_BACKUP_SERVER} under {_switches.OPTIONAL}"
+        )
     _backup_selection.write_registration_files(env_dir, enabled)
-    _sync_components(env_dir, enabled)
+    wrapper = (_backup_selection.WRAPPER_ENTRY,) if enabled else ()
+    (env_dir / "flux" / _switches.PLATFORM_CONFIGS_REL).write_text(
+        _switches.platform_configs(switches, extra_components=wrapper), encoding="utf-8"
+    )
     out_dir = env_dir / _backup_selection.GENERATED_COMPONENT
     out_file = env_dir / _backup_selection.GENERATED_KUSTOMIZATION
     text = _backup_selection.render_wrapper_component(enabled, section.get("overrides"))

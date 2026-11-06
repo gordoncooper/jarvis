@@ -757,6 +757,17 @@ def test_offsite_copy_freshness_is_checked_when_the_env_lists_it(
     assert line in capsys.readouterr().out
 
 
+def test_unreadable_switches_fail_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rule: a switches file verify cannot read fails; it never reads as an env with no app."""
+    values = tmp_path / "envs" / "env-test" / "values"
+    values.mkdir(parents=True)
+    (values / "switches.yaml").write_text("apps: [\n", encoding="utf-8")
+    assert _run(tmp_path, Cluster(), monkeypatch, enabled=None) == 1
+    assert "FAIL verify components" in capsys.readouterr().out
+
+
 def _list_apps_server(root: Path, *registered: str) -> None:
     configs = root / "envs" / "env-test" / "flux" / "platform-configs"
     configs.mkdir(parents=True, exist_ok=True)
