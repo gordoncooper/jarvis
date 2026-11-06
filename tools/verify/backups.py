@@ -129,11 +129,9 @@ def check_backups(
             continue
         source = indexed.get((namespace, name))
         if source is None and namespace.startswith("app-") and namespace not in registered:
-            if required is None or namespace in required:
-                raise CheckError(
-                    f"{namespace}/{name}: not backed up; {namespace} has no registered backup credential"
-                )
-            continue
+            raise CheckError(
+                f"{namespace}/{name}: not backed up; {namespace} has no registered backup credential"
+            )
         if source is None:
             raise CheckError(f"{namespace}/{name}: no ReplicationSource")
         status = source.get("status") or {}
@@ -203,18 +201,16 @@ def check_offsite_copy(kubectl: Kubectl, *, now: datetime) -> None:
 @register("backups")
 def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
     env_dir = ctx.repo_root / "envs" / ctx.env
-    repo_problem = _backup_selection.apps_repo_problem(ctx.repo_root, env_dir)
-    registered = frozenset(item for item in app_registrations(env_dir, ctx.repo_root) if isinstance(item, str))
     required: frozenset[str] | None
-    if repo_problem and _backup_selection.load_section(_apps.load_values(env_dir)[0] or {}):
-        def fail_apps_repo() -> None:
-            raise CheckError(repo_problem)
+    checks: list[tuple[int, str, object]]
+    if problems := _backup_selection.selection_problems(ctx.repo_root, env_dir, _apps.APPS_VALUES):
+        def fail_selection() -> None:
+            raise CheckError("; ".join(problems))
 
-        required = frozenset()
-        checks: list[tuple[int, str, object]] = [
-            (19, "apps repository checkout", fail_apps_repo),
-        ]
+        registered = required = frozenset()
+        checks = [(19, "backup selection", fail_selection)]
     else:
+        registered = frozenset(item for item in app_registrations(env_dir, ctx.repo_root) if isinstance(item, str))
         required = backup_required_registrations(env_dir, ctx.repo_root)
         checks = []
     checks.extend(

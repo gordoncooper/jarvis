@@ -6,7 +6,9 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -20,11 +22,11 @@ if str(REPO_ROOT / "tools" / "lib") not in sys.path:
 import _backup_selection
 from schema.env import ValidationError, validate_env_tree, validate_one_env
 from support import ExampleCopy, bootstrap_example_copy, register_copy_app
-from verify.backups import check_backups
+from verify.backups import backups_checks, check_backups
 from verify.common import CheckError
 
 NOTES = "app-notes"
-SHOP = "app-shop"
+FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 
 
 def _write_apps(copy: ExampleCopy, section: dict) -> None:
@@ -60,24 +62,14 @@ def test_excluded_app_does_not_require_credential(tmp_path: Path) -> None:
     validate_one_env(copy.root, copy.name)
 
 
-def test_all_except_exclusion_guard_requires_notes_credential_when_broken(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Rule: ignoring all_except exclude leaves notes enabled and env-schema requires its credential."""
+def test_all_except_requires_credential_for_unexcluded_app(tmp_path: Path) -> None:
+    """Rule: all_except enables an eligible app that exclude does not name, so its credential is required."""
     copy = bootstrap_example_copy(tmp_path)
-    _write_apps(copy, {"mode": "all_except", "exclude": ["notes"]})
-    real = _backup_selection.enabled_app_names
-
-    def ignore_exclude(section, *, apps_list, apps_root):
-        if section.get("mode") == _backup_selection.MODE_ALL_EXCEPT:
-            return [app for app in apps_list if _backup_selection.backup_eligible(apps_root, app)]
-        return real(section, apps_list=apps_list, apps_root=apps_root)
-
-    monkeypatch.setattr(_backup_selection, "enabled_app_names", ignore_exclude)
+    _write_apps(copy, {"mode": "all_except", "exclude": []})
     _render_selection(copy)
     with pytest.raises(ValidationError) as exc:
         validate_one_env(copy.root, copy.name)
-    assert "app-notes" in "\n".join(exc.value.messages)
+    assert "bootstrap-secrets APP=app-notes" in "\n".join(exc.value.messages)
 
 
 def test_overrides_on_disabled_app_rejected(tmp_path: Path) -> None:
@@ -109,16 +101,14 @@ def test_stale_wrapper_rejected(tmp_path: Path) -> None:
     assert "stale wrapper" in "\n".join(exc.value.messages)
 
 
-def test_eligibility_reads_apps_repo_not_product_fixtures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rule: backup eligibility comes from APPS_REPO / apps_git_repo_url checkout, not jarvis fixtures by default."""
-    apps = tmp_path / "apps-checkout"
-    (apps / "only-app").mkdir(parents=True)
-    (apps / "only-app" / "app.yaml").write_text(
-        "spec:\n  volumes:\n  - name: data\n    backup: true\n", encoding="utf-8"
-    )
-    monkeypatch.setenv("APPS_REPO", str(apps))
-    assert _backup_selection.backup_eligible(apps, "only-app")
-    assert not _backup_selection.backup_eligible(apps, "notes")
+def test_apps_repo_resolves_checkout_beside_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: without APPS_REPO, eligibility reads the checkout of apps_git_repo_url beside the instance."""
+    copy = bootstrap_example_copy(tmp_path)
+    values = yaml.safe_load((copy.env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
+    beside = tmp_path / values["apps_git_repo_url"].rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+    shutil.copytree(FIXTURE_APPS, beside)
+    monkeypatch.delenv("APPS_REPO", raising=False)
+    assert _backup_selection.apps_repo_root(copy.root, copy.env_dir) == beside.resolve()
 
 
 def test_verify_skips_excluded_eligible_app_pvc() -> None:
@@ -204,45 +194,12 @@ def test_verify_guard_fails_when_excluded_app_still_required() -> None:
 
 
 def test_selected_ineligible_app_rejected(tmp_path: Path) -> None:
-    """Rule: stateless apps cannot appear on selected or exclude lists."""
+    """Rule: stateless apps cannot appear on the selected list."""
     copy = bootstrap_example_copy(tmp_path)
     _write_apps(copy, {"mode": "selected", "selected": ["hello-web"]})
     with pytest.raises(ValidationError) as exc:
         validate_one_env(copy.root, copy.name, pre_host=True)
     assert "no backup-eligible volume" in "\n".join(exc.value.messages)
-
-
-def test_verify_selected_eligible_without_credential_fails() -> None:
-    """Rule: a required app namespace without a credential fails verify visibly."""
-
-    def fake(cmd, **_k):
-        if "pvc" in cmd:
-            return type("P", (), {
-                "returncode": 0,
-                "stdout": __import__("json").dumps(
-                    {
-                        "items": [
-                            {
-                                "metadata": {"namespace": SHOP, "name": "db", "annotations": {}},
-                                "spec": {"volumeName": "pv-1"},
-                            }
-                        ]
-                    }
-                ),
-                "stderr": "",
-            })()
-        if "replicationsource" in cmd:
-            return type("P", (), {"returncode": 0, "stdout": '{"items": []}', "stderr": ""})()
-        raise AssertionError(cmd)
-
-    with pytest.raises(CheckError, match="no registered backup credential"):
-        check_backups(
-            fake,
-            zone_name="UTC",
-            now=__import__("datetime").datetime(2020, 1, 1, tzinfo=__import__("datetime").timezone.utc),
-            registered=frozenset(),
-            required=frozenset({SHOP}),
-        )
 
 
 def test_render_writes_registration_components(tmp_path: Path) -> None:
@@ -339,3 +296,178 @@ def test_env_schema_check_fails_under_instance_without_apps_repo(
     )
     assert proc.returncode != 0
     assert "APPS_REPO" in proc.stdout + proc.stderr
+
+
+def test_env_schema_check_refuses_fixture_apps_repo_under_instance(tmp_path: Path) -> None:
+    """Rule: ci/checks/env-schema refuses INSTANCE with APPS_REPO pointed at core's own fixtures."""
+    instance = _instance_with_backups(tmp_path)
+    proc = subprocess.run(
+        ["bash", str(REPO_ROOT / "ci" / "checks" / "env-schema")],
+        cwd=str(REPO_ROOT),
+        env={**os.environ, "INSTANCE": str(instance), "APPS_REPO": str(FIXTURE_APPS)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "must not point at core test fixtures" in proc.stderr
+
+
+_OVERRIDES = {"mode": "selected", "selected": ["notes"]}
+
+
+@pytest.mark.parametrize(
+    ("section", "message"),
+    [
+        ({"mode": "bogus"}, "mode must be"),
+        ({"mode": "selected", "junk": 1}, "unknown key 'junk'"),
+        ({"mode": "selected", "exclude": []}, "exclude is only valid"),
+        ({"mode": "all_except", "selected": []}, "selected is only valid"),
+        ({"mode": "selected", "selected": 5}, "must be a list"),
+        ({"mode": "selected", "selected": "notes"}, "must be a list"),
+        ({"mode": "all_except", "exclude": 5}, "must be a list"),
+        ({"mode": "all_except", "exclude": [["notes"]]}, "is not an app name"),
+        ({"mode": "selected", "selected": ["Bad_Name"]}, "is not an app name"),
+        ({"mode": "selected", "selected": ["unlisted"]}, "not on this env's app list"),
+        ({"mode": "selected", "selected": ["notes", "notes"]}, "listed twice"),
+        ({"mode": ["selected"]}, "mode must be"),
+        ({"mode": "selected", 1: "x", "junk": "y"}, "unknown key 'junk'"),
+        ({**_OVERRIDES, "overrides": 5}, "must be a mapping of app name"),
+        ({**_OVERRIDES, "overrides": {"Bad_Name": {}}}, "not an app name"),
+        ({**_OVERRIDES, "overrides": {"unlisted": {}}}, "not on this env's app list"),
+        ({**_OVERRIDES, "overrides": {"notes": 5}}, "must be a mapping"),
+        ({**_OVERRIDES, "overrides": {"notes": {1: 2, "junk": 3}}}, "unknown key 1"),
+        ({**_OVERRIDES, "overrides": {"notes": {"backup_schedule": "daily"}}}, "five-field cron"),
+        ({**_OVERRIDES, "overrides": {"notes": {"backup_retention_daily": -1}}}, "non-negative integer"),
+    ],
+)
+def test_env_schema_rejects_bad_selection(tmp_path: Path, section: dict, message: str) -> None:
+    """Rule: each malformed backups section is a schema error, never a crash on the way there."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, section)
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name, pre_host=True)
+    assert message in "\n".join(exc.value.messages)
+
+
+def test_env_schema_validates_selection_with_no_apps(tmp_path: Path) -> None:
+    """Rule: a backups section is validated even when the env lists no app."""
+    copy = bootstrap_example_copy(tmp_path)
+    path = copy.env_dir / "values" / "apps.yaml"
+    path.write_text(yaml.safe_dump({"apps": [], "backups": {"mode": "bogus"}}), encoding="utf-8")
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name, pre_host=True)
+    assert "mode must be" in "\n".join(exc.value.messages)
+
+
+def test_env_schema_rejects_unknown_component_with_selection(tmp_path: Path) -> None:
+    """Rule: with backups declared, components holds only app hosting and the generated wrapper."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "selected", "selected": []})
+    validate_one_env(copy.root, copy.name, pre_host=True)
+    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc["components"].append("../unknown")
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name, pre_host=True)
+    assert "'../unknown' is not an app credential registration" in "\n".join(exc.value.messages)
+
+
+def test_exclusion_never_reads_the_excluded_app_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: an intentional exclusion fails neither env-schema nor verify, whatever its app file now says."""
+    apps = tmp_path / "apps-checkout"
+    shutil.copytree(FIXTURE_APPS, apps)
+    monkeypatch.setenv("APPS_REPO", str(apps))
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "all_except", "exclude": ["notes", "hello-web"]})
+    shutil.rmtree(apps / "notes")
+    validate_one_env(copy.root, copy.name, pre_host=True)
+    assert "backup selection" not in _verify_checks(copy)
+
+
+@pytest.mark.parametrize("damage", ["malformed", "undecodable", "missing"])
+def test_unreadable_app_file_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str) -> None:
+    """Rule: an app file the checkout cannot answer for fails; it never reads as stateless and drops the backup."""
+    apps = tmp_path / "apps-checkout"
+    shutil.copytree(FIXTURE_APPS, apps)
+    monkeypatch.setenv("APPS_REPO", str(apps))
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "all_except", "exclude": []})
+    _render_selection(copy)
+    if damage == "malformed":
+        (apps / "notes" / "app.yaml").write_text("spec: [\n", encoding="utf-8")
+    elif damage == "undecodable":
+        (apps / "notes" / "app.yaml").write_bytes(b"\xff\xfe")
+    else:
+        shutil.rmtree(apps / "notes")
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name, pre_host=True)
+    assert "app file is missing or unreadable" in "\n".join(exc.value.messages)
+    with pytest.raises(_backup_selection.AppsRepoError):
+        _render_selection(copy)
+    assert (copy.env_dir / "flux" / "platform-configs" / "backups" / NOTES / "kustomization.yaml").is_file()
+
+
+def _verify_checks(copy: ExampleCopy) -> dict[str, object]:
+    ctx = SimpleNamespace(
+        repo_root=copy.root, env=copy.name, kubectl=None, values={}, now=datetime.now(timezone.utc)
+    )
+    return {label: check for _order, label, check in backups_checks(ctx)}
+
+
+def test_verify_builds_no_selection_failure_for_valid_selection(tmp_path: Path) -> None:
+    """Rule: a valid selection adds no failing check to make verify."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "selected", "selected": ["notes"]})
+    assert "backup selection" not in _verify_checks(copy)
+
+
+@pytest.mark.parametrize(
+    ("section", "message"),
+    [({"mode": "selected", "selected": ["notes"]}, "APPS_REPO"), ({"mode": "bogus"}, "mode must be")],
+)
+def test_verify_reports_unusable_selection_as_a_failed_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: dict, message: str
+) -> None:
+    """Rule: no apps checkout or a bad section is one failed verify line, and the other checks still run."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, section)
+    if message == "APPS_REPO":
+        monkeypatch.delenv("APPS_REPO", raising=False)
+    checks = _verify_checks(copy)
+    assert "backups-restic present" in checks
+    with pytest.raises(CheckError, match=message):
+        checks["backup selection"]()
+
+
+def test_render_cli_on_empty_selection_succeeds_and_keeps_env_comments(tmp_path: Path) -> None:
+    """Rule: intentionally selecting nothing is success, and a render with nothing to change edits no env file."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "selected", "selected": []})
+    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
+    before = path.read_text(encoding="utf-8")
+    proc = _render_cli(copy, APPS_REPO=str(FIXTURE_APPS))
+    assert proc.returncode == 0, proc.stderr
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_render_cli_without_checkout_refuses_cleanly(tmp_path: Path) -> None:
+    """Rule: render without an apps checkout refuses with the reason, not a traceback."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "selected", "selected": ["notes"]})
+    proc = _render_cli(copy)
+    assert proc.returncode != 0
+    assert "APPS_REPO" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def _render_cli(copy: ExampleCopy, **env: str) -> subprocess.CompletedProcess[str]:
+    clean = {key: value for key, value in os.environ.items() if key != "APPS_REPO"}
+    return subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tools" / "lib" / "render_backup_selection.py"), "--env", copy.name],
+        env={**clean, "INSTANCE": str(copy.root), **env},
+        capture_output=True,
+        text=True,
+        check=False,
+    )

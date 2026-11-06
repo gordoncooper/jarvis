@@ -33,7 +33,7 @@ def _sync_components(env_dir: Path, enabled_namespaces: list[str]) -> None:
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(doc, dict):
         raise SystemExit(f"{path}: expected a Kustomization")
-    wrapper = "../" + _backup_selection.GENERATED_COMPONENT_REL
+    wrapper = _backup_selection.WRAPPER_ENTRY
     prefix = f"{_app_backups.REGISTRATION_DIR}/"
     kept: list[object] = []
     for item in doc.get("components") or []:
@@ -46,6 +46,8 @@ def _sync_components(env_dir: Path, enabled_namespaces: list[str]) -> None:
         kept.append(item)
     if enabled_namespaces and wrapper not in kept:
         kept.append(wrapper)
+    if kept == (doc.get("components") or []):
+        return
     doc["components"] = kept
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
@@ -92,9 +94,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     repo_root = instance_root(REPO_ROOT)
     env_dir = repo_root / "envs" / args.env
-    text = render_env(env_dir, repo_root)
+    try:
+        text = render_env(env_dir, repo_root)
+    except _backup_selection.AppsRepoError as exc:
+        raise SystemExit(f"{env_dir}: {exc}") from exc
     if text is None:
-        raise SystemExit(f"{env_dir}: no backup-enabled app; removed generated backup selection")
+        print(f"{env_dir}: no backup-enabled app; no backup selection to generate", file=sys.stderr)
+        return
     sys.stdout.write(text)
 
 

@@ -23,6 +23,8 @@ BACKUPS_KEY = "backups"
 GENERATED_COMPONENT_REL = "generated/backup-selection"
 GENERATED_COMPONENT = Path("flux") / GENERATED_COMPONENT_REL
 GENERATED_KUSTOMIZATION = GENERATED_COMPONENT / "kustomization.yaml"
+# The entry the env's platform-configs lists under components.
+WRAPPER_ENTRY = "../" + GENERATED_COMPONENT_REL
 MODES = frozenset({"selected", "all_except"})
 MODE_SELECTED = "selected"
 MODE_ALL_EXCEPT = "all_except"
@@ -114,32 +116,38 @@ def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
     )
 
 
-def apps_repo_problem(repo_root: Path, env_dir: Path) -> str | None:
+def selection_problems(repo_root: Path, env_dir: Path, rel: str) -> list[str]:
+    """Why the env's backups section cannot say which apps are enabled; empty when it can or is absent.
+
+    Read this before enabled_app_names: that assumes a valid section and a readable checkout.
+    """
+    data, _ = _apps.load_values(env_dir)
+    section = load_section(data)
+    if section is None:
+        return []
     try:
-        apps_repo_root(repo_root, env_dir)
+        apps_root = apps_repo_root(repo_root, env_dir)
+        return validate_section(section, apps_list=_apps.app_names(data), apps_root=apps_root, rel=rel)
     except AppsRepoError as exc:
-        return str(exc)
-    return None
+        return [f"{rel}: {exc}"]
 
 
 def backup_eligible(apps_root: Path, app_name: str) -> bool:
-    """True when the app file declares at least one volume with backup: true."""
+    """True when the app file declares at least one volume with backup: true.
+
+    A missing or unreadable file raises AppsRepoError: the checkout cannot answer, which must
+    not read as stateless and silently drop the app's backup.
+    """
     path = apps_root / app_name / "app.yaml"
-    if not path.is_file():
-        return False
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return False
-    if not isinstance(doc, dict):
-        return False
-    spec = doc.get("spec")
-    if not isinstance(spec, dict):
-        return False
-    for volume in spec.get("volumes") or []:
-        if isinstance(volume, dict) and volume.get("backup") is True:
-            return True
-    return False
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise AppsRepoError(f"{path}: app file is missing or unreadable") from exc
+    spec = doc.get("spec") if isinstance(doc, dict) else None
+    volumes = spec.get("volumes") or [] if isinstance(spec, dict) else None
+    if not isinstance(volumes, list):
+        raise AppsRepoError(f"{path}: not an app file (spec.volumes)")
+    return any(isinstance(volume, dict) and volume.get("backup") is True for volume in volumes)
 
 
 def load_section(data: dict[str, Any]) -> dict[str, Any] | None:
@@ -158,9 +166,9 @@ def validate_section(
 ) -> list[str]:
     errors: list[str] = []
     allowed = {"mode", "selected", "exclude", "overrides"}
-    errors.extend(f"{rel}.{BACKUPS_KEY}: unknown key {key!r}" for key in sorted(set(section) - allowed))
+    errors.extend(f"{rel}.{BACKUPS_KEY}: unknown key {key!r}" for key in sorted(set(section) - allowed, key=str))
     mode = section.get("mode")
-    if mode not in MODES:
+    if not isinstance(mode, str) or mode not in MODES:
         errors.append(f"{rel}.{BACKUPS_KEY}: mode must be {MODE_SELECTED!r} or {MODE_ALL_EXCEPT!r}")
         return errors
     listed = set(apps_list)
@@ -208,27 +216,24 @@ def validate_section(
             continue
         errors.extend(
             f"{where}: unknown key {key!r} (allowed: {', '.join(sorted(OVERRIDE_KEYS))})"
-            for key in sorted(set(values) - OVERRIDE_KEYS)
+            for key in sorted(set(values) - OVERRIDE_KEYS, key=str)
         )
         for key, value in values.items():
             if key == "backup_schedule" and (not isinstance(value, str) or not _CRON.fullmatch(value.strip())):
                 errors.append(f"{where}: backup_schedule must be a five-field cron")
-            if key.startswith("backup_retention") and (
+            if str(key).startswith("backup_retention") and (
                 not isinstance(value, int) or value < 0 or not _RETENTION.fullmatch(str(value))
             ):
                 errors.append(f"{where}: {key} must be a non-negative integer")
     if errors:
         return errors
     enabled = enabled_app_names(section, apps_list=apps_list, apps_root=apps_root)
-    for app in enabled:
-        if app not in (overrides or {}):
-            continue
     for app in overrides:
         if app not in enabled:
             errors.append(f"{rel}.{BACKUPS_KEY}.overrides.{app}: overrides apply only to backup-enabled apps")
     if mode == MODE_SELECTED:
-        for app in selected or []:
-            if isinstance(app, str) and app in listed and not backup_eligible(apps_root, app):
+        for app in selected:
+            if not backup_eligible(apps_root, app):
                 errors.append(
                     f"{rel}.{BACKUPS_KEY}.selected: {app} has no backup-eligible volume "
                     "(stateless apps belong off the list)"
@@ -244,23 +249,17 @@ def enabled_app_names(
 ) -> list[str]:
     """App names that should have a registered backup credential, in apps list order."""
     mode = section.get("mode")
-    eligible = [app for app in apps_list if backup_eligible(apps_root, app)]
     if mode == MODE_SELECTED:
         chosen = section.get("selected") or []
-        return [app for app in apps_list if app in chosen and app in eligible]
+        return [app for app in apps_list if app in chosen and backup_eligible(apps_root, app)]
     if mode == MODE_ALL_EXCEPT:
-        excluded = set(section.get("exclude") or [])
-        return [app for app in eligible if app not in excluded]
+        excluded = section.get("exclude") or []
+        return [app for app in apps_list if app not in excluded and backup_eligible(apps_root, app)]
     return []
 
 
 def enabled_namespaces(section: dict[str, Any], *, apps_list: Sequence[str], apps_root: Path) -> list[str]:
     return [f"app-{name}" for name in enabled_app_names(section, apps_list=apps_list, apps_root=apps_root)]
-
-
-def registration_component_paths(enabled_namespaces: Sequence[str]) -> list[str]:
-    """platform-configs components entries (backups/app-<name>)."""
-    return [f"{_app_backups.REGISTRATION_DIR}/{namespace}" for namespace in enabled_namespaces]
 
 
 def write_registration_files(env_dir: Path, enabled_namespaces: Sequence[str]) -> None:
@@ -297,23 +296,3 @@ def render_wrapper_component(enabled_namespaces: Sequence[str]) -> str | None:
         f"  - ../../platform-configs/{_app_backups.REGISTRATION_DIR}/{namespace}" for namespace in enabled_namespaces
     )
     return "\n".join(lines) + "\n"
-
-
-def render_env(env_dir: Path, repo_root: Path) -> str | None:
-    data, _ = _apps.load_values(env_dir)
-    section = load_section(data)
-    if section is None:
-        return None
-    apps_list = _apps.app_names(data)
-    apps_root = apps_repo_root(repo_root, env_dir)
-    problems = validate_section(
-        section,
-        apps_list=apps_list,
-        apps_root=apps_root,
-        rel=str(env_dir / _apps.APPS_VALUES),
-    )
-    if problems:
-        raise ValueError("; ".join(problems))
-    enabled = enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
-    write_registration_files(env_dir, enabled)
-    return render_wrapper_component(enabled)
