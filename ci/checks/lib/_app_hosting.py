@@ -3,7 +3,7 @@
 For each env with a flux/ tree, on each app wiring Kustomization (app-<name>-wiring), this
 builds its path with its postBuild values and checks what the cluster gets:
 
-- The wiring is for an app the env lists in values/switches.yaml, and the env lists no app
+- The wiring is for a hosted app on the apps list in values/switches.yaml, and the env lists no app
   without one.
 - Namespace app-<name>, labelled hosting.jarvis.io/app: <name>, kept by prune: disabled, its
   grant annotations equal to the env's exception lines for the app, and its host annotation
@@ -112,7 +112,7 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         app = name.removeprefix("app-").removesuffix("-wiring")
         wired.add(app)
         if app not in listed:
-            yield f"{ref_of(path.kustomization)}: wires app {app}, which values/switches.yaml does not list"
+            yield f"{ref_of(path.kustomization)}: wires app {app}, which the apps list in values/switches.yaml does not hold"
         if path.error:
             yield f"{ref_of(path.kustomization)}: {path.error}"
             continue
@@ -121,7 +121,7 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         yield from (f"app {app}: {problem}" for problem in wiring_problems(app, docs, grants))
     for app in listed:
         if app not in wired:
-            yield f"values/switches.yaml lists {app}, and the flux tree has no {_apps.wiring_name(app)}"
+            yield f"the apps list in values/switches.yaml holds {app}, and the flux tree has no {_apps.wiring_name(app)}"
 
 
 def binding_problems(docs: list[dict]) -> Iterator[str]:

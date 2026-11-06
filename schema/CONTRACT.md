@@ -51,7 +51,7 @@ One short file, names only, one per line. `tools/lib/render_switches.py --env <e
 | `core` | Every always-on core component: the top folder of each entry in `platform/kustomization.yaml` and `platform/configs/kustomization.yaml`. | On in every env; it turns nothing off, so a missing name fails. |
 | `optional` | `app-hosting`, `offsite-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `tools/lib/_switches.py` and no bundle to any env. Observability joins this list when it is built; it is not an add-on. |
 | `addons` | A folder under core's `services/`. | Limited-tenant swappable services ([services/CONTRACT.md](../services/CONTRACT.md)). At most one per slot. |
-| `apps` | A folder in the apps repository. | A new app in that repository never deploys until an env lists it. |
+| `apps` | A folder in the apps repository. | Hosted apps: untrusted, held to their app file by the cluster ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)). Listing a name switches an app on and grants it nothing; a new app in that repository never deploys until an env lists it. |
 
 ### `values/cluster-vars.yaml`
 

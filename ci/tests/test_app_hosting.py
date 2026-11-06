@@ -101,8 +101,8 @@ def test_listed_app_without_wiring_and_wiring_without_listing_fail(tmp_path: Pat
     _edit(values, "  - lan-demo\n", "  - lan-demo\n  - extra\n")
     _edit(values, "  - hello-web\n", "")
     messages = _messages(instance)
-    assert any("lists extra, and the flux tree has no app-extra-wiring" in item for item in messages), messages
-    assert any("wires app hello-web, which values/switches.yaml does not list" in item for item in messages), messages
+    assert any("holds extra, and the flux tree has no app-extra-wiring" in item for item in messages), messages
+    assert any("wires app hello-web, which the apps list in values/switches.yaml does not hold" in item for item in messages), messages
 
 
 def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None:

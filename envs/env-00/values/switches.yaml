@@ -16,6 +16,7 @@ optional:
   - offsite-copy
 addons:
   - hello
+# Hosted apps: untrusted, held to their app file by the cluster. Add-ons and core above are the trusted zone.
 apps:
   - hello-web
   - notes
