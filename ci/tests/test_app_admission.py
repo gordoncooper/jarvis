@@ -703,6 +703,8 @@ def _generate_test(tmp_path: Path, policy: Path, resources: list[dict], values: 
     proc = subprocess.run([_kyverno(), "test", str(work), "--remove-color", "--detailed-results"],
                           capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    # The CLI skips a policy with a bad variable and still counts that as a pass.
+    assert "Invalid Policy" not in proc.stdout, proc.stdout
 
 
 def _network_policy(app: str, name: str, spec: dict) -> dict:

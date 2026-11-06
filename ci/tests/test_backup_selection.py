@@ -21,7 +21,7 @@ if str(REPO_ROOT / "tools" / "lib") not in sys.path:
 
 import _backup_selection
 from schema.env import ValidationError, validate_env_tree, validate_one_env
-from support import ExampleCopy, bootstrap_example_copy, register_copy_app
+from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app
 from verify.backups import backups_checks, check_backups
 from verify.common import CheckError
 
@@ -212,6 +212,76 @@ def test_render_writes_registration_components(tmp_path: Path) -> None:
     wrapper = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
     assert wrapper.is_file()
     assert "app-notes" in wrapper.read_text(encoding="utf-8")
+
+
+def _override_copy(tmp_path: Path, overrides: dict) -> ExampleCopy:
+    """A copy of the example env with notes selected and these overrides, rendered as an owner would."""
+    copy = bootstrap_example_copy(tmp_path)
+    register_copy_app(copy, NOTES)
+    _write_apps(copy, {"mode": "selected", "selected": ["notes"], "overrides": overrides})
+    _render_selection(copy)
+    return copy
+
+
+def test_overrides_land_on_the_replication_source(tmp_path: Path) -> None:
+    """Rule: an app's override reaches its ReplicationSource, one the override leaves out stays the
+    env's value, and an enabled app with no override and a core PVC keep every cluster-wide value.
+    The objects platform-configs renders, with the kyverno CLI standing in only for the API read."""
+    from test_app_admission import _generate_test, _pvc
+
+    copy = _override_copy(tmp_path, {"notes": {"backup_schedule": "15 4 * * *", "backup_retention_daily": 0, "backup_retention_weekly": 9}})
+    validate_one_env(copy.root, copy.name)
+    rendered = _kustomize_build(f"envs/{copy.name}/flux/platform-configs", root=copy.root)
+    docs = [doc for doc in yaml.safe_load_all(rendered) if isinstance(doc, dict)]
+    data = next(doc for doc in docs if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "backup-overrides")["data"]
+    policy = next(doc for doc in docs if doc["kind"] == "ClusterPolicy" and doc["metadata"]["name"] == "pvc-backup")
+    env = yaml.safe_load((copy.env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
+    text = yaml.safe_dump(policy)
+    for key in ("backup_schedule", "backup_retention_daily", "backup_retention_weekly", "backup_retention_monthly"):
+        text = text.replace("${" + key + "}", str(env[key]))
+    enrollment = tmp_path / "pvc-backup.yaml"
+    enrollment.write_text(text, encoding="utf-8")
+
+    def source(claim: dict, schedule: str, daily: int, weekly: int, monthly: int) -> dict:
+        name, namespace = claim["metadata"]["name"], claim["metadata"]["namespace"]
+        return {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "metadata": {"name": name, "namespace": namespace},
+                "spec": {"paused": False, "sourcePVC": name, "trigger": {"schedule": schedule},
+                         "restic": {"repository": f"restic-{name}", "copyMethod": "Direct", "cacheCapacity": "1Gi", "pruneIntervalDays": 7,
+                                    "retain": {"daily": daily, "weekly": weekly, "monthly": monthly, "within": "7d"}}}}
+
+    overridden, plain, core = _pvc("data", "notes"), _pvc("data", "web-demo"), _pvc("data", "x")
+    core["metadata"]["namespace"] = "monitoring"
+    for claim in (overridden, plain, core):
+        claim["metadata"]["name"] = f"data-{claim['metadata']['namespace']}"
+        claim["spec"]["volumeName"] = "pv-1"
+    defaults = (env["backup_schedule"], env["backup_retention_daily"], env["backup_retention_weekly"], env["backup_retention_monthly"])
+    # plain reads what a missing ConfigMap gives (the apiCall default); core reads one with no entry for it.
+    values = {"policies": [{"name": "pvc-backup", "resources": [
+        {"name": claim["metadata"]["name"], "values": {"appCredential": "true", "rebuildHold": "false", "backupOverrides": read}}
+        for claim, read in ((overridden, data), (plain, {}), (core, data))
+    ]}]}
+    namespaces = [{"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": claim["metadata"]["namespace"]}} for claim in (overridden, plain, core)]
+    _generate_test(tmp_path, enrollment, [overridden, plain, core, *namespaces], values, [
+        ("replication-source-app", (overridden, source(overridden, "15 4 * * *", 0, 9, env["backup_retention_monthly"]))),
+        ("replication-source-app", (plain, source(plain, *defaults))),
+        ("replication-source", (core, source(core, *defaults))),
+    ])
+
+
+def test_no_override_renders_no_configmap(tmp_path: Path) -> None:
+    """Rule: an env with no override renders no overrides ConfigMap, so existing wrappers stay byte-identical."""
+    copy = _override_copy(tmp_path, {})
+    assert "configMapGenerator" not in (copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION).read_text(encoding="utf-8")
+
+
+def test_wrapper_without_the_override_is_stale(tmp_path: Path) -> None:
+    """Rule: env-schema refuses a committed wrapper that does not carry the env's overrides."""
+    copy = _override_copy(tmp_path, {"notes": {"backup_schedule": "15 4 * * *"}})
+    path = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
+    path.write_text(path.read_text(encoding="utf-8").replace("15 4", "16 4"), encoding="utf-8")
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name)
+    assert "does not match" in "\n".join(exc.value.messages)
 
 
 def _instance_with_backups(tmp_path: Path) -> Path:

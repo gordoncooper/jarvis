@@ -7,6 +7,7 @@ registration Components and the platform-configs wrapper from this intent.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -287,7 +288,34 @@ def write_registration_files(env_dir: Path, enabled_namespaces: Sequence[str]) -
         path.write_text(_app_backups.registration_component(namespace), encoding="utf-8")
 
 
-def render_wrapper_component(enabled_namespaces: Sequence[str]) -> str | None:
+def _overrides_generator(overrides: dict[str, Any]) -> str:
+    """The generated ConfigMap ClusterPolicy pvc-backup reads: one key per namespace with an override."""
+    literals = [
+        "app-" + app + "=" + json.dumps(
+            {key: value.strip() if isinstance(value, str) else value for key, value in values.items()},
+            sort_keys=True,
+        )
+        for app, values in sorted(overrides.items())
+        if values
+    ]
+    if not literals:
+        return ""
+    return yaml.safe_dump(
+        {
+            "configMapGenerator": [
+                {
+                    "name": _app_backups.OVERRIDES_CONFIGMAP,
+                    "namespace": "platform-backups",
+                    "options": {"disableNameSuffixHash": True},
+                    "literals": literals,
+                }
+            ]
+        },
+        sort_keys=False,
+    )
+
+
+def render_wrapper_component(enabled_namespaces: Sequence[str], overrides: dict[str, Any] | None = None) -> str | None:
     """The Component platform-configs lists, or None when nothing is backup-enabled."""
     if not enabled_namespaces:
         return None
@@ -303,4 +331,4 @@ def render_wrapper_component(enabled_namespaces: Sequence[str]) -> str | None:
     lines.extend(
         f"  - ../../platform-configs/{_app_backups.REGISTRATION_DIR}/{namespace}" for namespace in enabled_namespaces
     )
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" + _overrides_generator(overrides or {})
