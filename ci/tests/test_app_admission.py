@@ -398,6 +398,20 @@ def test_claims_bind_only_to_what_the_cluster_provisions(tmp_path: Path) -> None
     _run(tmp_path, "volsync-claim", VOLSYNC, [(restored, {"app-file": "skip", "app-grants": "skip"})])
 
 
+def test_binder_updates_volsync_cache_pvcs(tmp_path: Path) -> None:
+    """Rule: tenant CREATE of an undeclared PVC (with or without a forged VolSync ownerReference)
+    fails under app-file. True PreBind UPDATE allow/deny for scheduler and binder is proven in
+    test_app_admission_apiserver.py (kyverno test sends no request.operation)."""
+    forged = _pvc("forged-volsync", "notes")
+    forged["metadata"]["ownerReferences"] = [
+        {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "name": "fake", "uid": "3"}
+    ]
+    undeclared = _pvc("undeclared", "notes")
+    tenant = TENANT.format(app="notes")
+    _run(tmp_path, "tenant-forged-owner", tenant, [(forged, FILE_FAILS)])
+    _run(tmp_path, "tenant-undeclared", tenant, [(undeclared, FILE_FAILS)])
+
+
 def test_volsync_mover_passes_and_a_look_alike_does_not(tmp_path: Path) -> None:
     """Rule: the VolSync controller's privileged mover Job, and the job controller's pod for it,
     pass; the same Job or Pod from the app's own identity is refused."""
