@@ -10,10 +10,14 @@ import pytest
 
 from support import REPO_ROOT as _ROOT
 
-# Test/CI only: default APPS_REPO for pytest when unset. Production eligibility uses
-# apps_repo_root() — real checkout or explicit APPS_REPO; never core fixtures.
+# Test/CI only: default APPS_REPO for pytest when unset and not simulating an instance.
+# Production eligibility uses apps_repo_root() — real checkout or explicit APPS_REPO.
 _FIXTURE_APPS = _ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
-if "APPS_REPO" not in os.environ and _FIXTURE_APPS.is_dir():
+if (
+    not os.environ.get("INSTANCE")
+    and "APPS_REPO" not in os.environ
+    and _FIXTURE_APPS.is_dir()
+):
     os.environ["APPS_REPO"] = str(_FIXTURE_APPS)
 
 _TOOLS_LIB = _ROOT / "tools" / "lib"

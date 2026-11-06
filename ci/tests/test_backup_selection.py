@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,7 +18,7 @@ if str(REPO_ROOT / "tools" / "lib") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "tools" / "lib"))
 
 import _backup_selection
-from schema.env import ValidationError, validate_one_env
+from schema.env import ValidationError, validate_env_tree, validate_one_env
 from support import ExampleCopy, bootstrap_example_copy, register_copy_app
 from verify.backups import check_backups
 from verify.common import CheckError
@@ -252,3 +255,91 @@ def test_render_writes_registration_components(tmp_path: Path) -> None:
     wrapper = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
     assert wrapper.is_file()
     assert "app-notes" in wrapper.read_text(encoding="utf-8")
+
+
+def _instance_with_backups(tmp_path: Path) -> Path:
+    """Instance checkout (core → product) with env-00 copy and backups all_except excluding notes."""
+    product, instance = tmp_path / "product", tmp_path / "instance"
+    for name in ("platform", "services", "apps"):
+        shutil.copytree(REPO_ROOT / name, product / name)
+    (instance / "envs").mkdir(parents=True)
+    shutil.copytree(REPO_ROOT / "envs" / "env-00", instance / "envs" / "env-00")
+    (instance / "core").symlink_to(product)
+    apps_path = instance / "envs" / "env-00" / "values" / "apps.yaml"
+    data = yaml.safe_load(apps_path.read_text(encoding="utf-8"))
+    data["backups"] = {"mode": "all_except", "exclude": ["notes"]}
+    apps_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return instance
+
+
+def test_m9_apps_repo_resolver_fails_without_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: without APPS_REPO or a local apps_git_repo_url checkout, eligibility resolution fails."""
+    copy = bootstrap_example_copy(tmp_path)
+    monkeypatch.delenv("APPS_REPO", raising=False)
+    with pytest.raises(_backup_selection.AppsRepoError, match="APPS_REPO"):
+        _backup_selection.apps_repo_root(copy.root, copy.env_dir)
+
+
+def test_m10_rejects_invalid_apps_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: APPS_REPO must point at a directory of app folders with app.yaml files."""
+    copy = bootstrap_example_copy(tmp_path)
+    bad = tmp_path / "not-apps"
+    bad.mkdir()
+    monkeypatch.setenv("APPS_REPO", str(bad))
+    with pytest.raises(_backup_selection.AppsRepoError, match="not an apps repository"):
+        _backup_selection.apps_repo_root(copy.root, copy.env_dir)
+
+
+def test_m7b_wrapper_rejected_when_no_app_enabled(tmp_path: Path) -> None:
+    """Rule: generated backup-selection must not remain when no app is backup-enabled."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "all_except", "exclude": ["notes"]})
+    _render_selection(copy)
+    wrapper = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_text(
+        "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\ncomponents: []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name)
+    assert "no app is backup-enabled" in "\n".join(exc.value.messages)
+
+
+def test_instance_env_schema_without_apps_repo_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: INSTANCE validation with backups must not use core fixtures or pass without APPS_REPO."""
+    instance = _instance_with_backups(tmp_path)
+    monkeypatch.setenv("INSTANCE", str(instance))
+    monkeypatch.delenv("APPS_REPO", raising=False)
+    with pytest.raises(ValidationError) as exc:
+        validate_env_tree(instance)
+    joined = "\n".join(exc.value.messages).lower()
+    assert "apps_repo" in joined or "checkout" in joined or "apps_git_repo_url" in joined
+
+
+def test_env_schema_check_fails_under_instance_without_apps_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: ci/checks/env-schema refuses INSTANCE without a real APPS_REPO."""
+    instance = _instance_with_backups(tmp_path)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"APPS_REPO", "INSTANCE"}
+    }
+    env["INSTANCE"] = str(instance)
+    env["OWNER_NAME"] = os.environ["OWNER_NAME"]
+    proc = subprocess.run(
+        ["bash", str(REPO_ROOT / "ci" / "checks" / "env-schema")],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "APPS_REPO" in proc.stdout + proc.stderr

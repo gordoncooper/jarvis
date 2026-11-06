@@ -669,6 +669,8 @@ def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
     section = _backup_selection.load_section(data or {})
     if section is None:
         return False
+    if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
+        return False
     if not _backup_selection.enabled_namespaces(
         section, apps_list=_apps.app_names(data), apps_root=_backup_selection.apps_repo_root(repo_root, env_dir)
     ):
@@ -741,6 +743,11 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
     errors: list[str] = []
     data, _ = _apps.load_values(env_dir)
     section = _backup_selection.load_section(data or {})
+    if section is not None:
+        apps_rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+        if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
+            errors.append(f"{apps_rel}: {repo_problem}")
+            return errors
     registered = app_registrations(env_dir, repo_root)
     if section is not None:
         expected = set(item for item in registered if isinstance(item, str))
