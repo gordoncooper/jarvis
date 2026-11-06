@@ -1,12 +1,46 @@
-"""Pytest defaults for this repository's CI suite."""
+"""Test harness: repo root on sys.path for imports from services/."""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
+import shutil
+import sys
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_FIXTURE_APPS = _REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
+import pytest
 
+from support import REPO_ROOT as _ROOT
+
+# Test/CI only: default APPS_REPO for pytest when unset. Production eligibility uses
+# apps_repo_root() — real checkout or explicit APPS_REPO; never core fixtures.
+_FIXTURE_APPS = _ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 if "APPS_REPO" not in os.environ and _FIXTURE_APPS.is_dir():
     os.environ["APPS_REPO"] = str(_FIXTURE_APPS)
+
+_TOOLS_LIB = _ROOT / "tools" / "lib"
+_CHECKS_LIB = _ROOT / "ci" / "checks" / "lib"
+for _entry in (_ROOT, _TOOLS_LIB, _CHECKS_LIB):
+    if str(_entry) not in sys.path:
+        sys.path.insert(0, str(_entry))
+
+
+@pytest.fixture(scope="session")
+def example_copy(tmp_path_factory: pytest.TempPathFactory):
+    """One bootstrapped copy of env-00 for the structural env rules."""
+    from support import bootstrap_example_copy
+
+    return bootstrap_example_copy(tmp_path_factory.mktemp("example-copy"))
+
+
+def ci_mode() -> bool:
+    return os.environ.get("CI", "").lower() in {"1", "true", "yes"}
+
+
+def require_cli(name: str, *, hint: str = "run make deps") -> str:
+    path = shutil.which(name)
+    if path:
+        return path
+    message = f"{name} not found on PATH ({hint})"
+    if ci_mode():
+        pytest.fail(f"{message} — required in CI")
+    pytest.skip(message)
+    raise AssertionError("unreachable")
