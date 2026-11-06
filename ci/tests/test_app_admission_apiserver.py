@@ -26,16 +26,20 @@ import pytest
 
 from conftest import ci_mode
 from support import REPO_ROOT
-from test_app_admission import POLICIES, _app, _docs, _pod, _wiring
+from test_app_admission import POLICIES, _app, _docs, _job, _pod, _wiring
 
 VOLSYNC = "system:serviceaccount:volsync:volsync"
 SCHEDULER = "system:kube-scheduler"
 BINDER = "system:serviceaccount:kube-system:persistent-volume-binder"
 TENANT_NOTES = "system:serviceaccount:flux-system:app-notes"
+RS_CONTROLLER = "system:serviceaccount:kube-system:replicaset-controller"
+REVOKER = "system:serviceaccount:platform-app-hosting:app-grant-revoke"
 SELECTED_NODE = "volume.kubernetes.io/selected-node"
 
 WORK = REPO_ROOT / ".scratch" / "apiserver"
 CRD = REPO_ROOT / "platform" / "app-hosting" / "crd" / "app-crd.yaml"
+GRANT_REVOKE = REPO_ROOT / "platform" / "app-hosting" / "grant-revoke.yaml"
+WIRING_BINDING = REPO_ROOT / "platform" / "app-hosting" / "app" / "grant-revoke.yaml"
 PRIVILEGED = {"containers": [{"name": "c", "image": "x", "securityContext": {"privileged": True}}]}
 PATHS = {
     "Namespace": "/api/v1/namespaces",
@@ -46,6 +50,14 @@ PATHS = {
     "Deployment": "/apis/apps/v1/namespaces/{namespace}/deployments",
     "ClusterRole": "/apis/rbac.authorization.k8s.io/v1/clusterroles",
     "ClusterRoleBinding": "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings",
+    "PriorityClass": "/apis/scheduling.k8s.io/v1/priorityclasses",
+    "RoleBinding": "/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/rolebindings",
+    "Pod": "/api/v1/namespaces/{namespace}/pods",
+    "Job": "/apis/batch/v1/namespaces/{namespace}/jobs",
+    "Service": "/api/v1/namespaces/{namespace}/services",
+    "Ingress": "/apis/networking.k8s.io/v1/namespaces/{namespace}/ingresses",
+    "NetworkPolicy": "/apis/networking.k8s.io/v1/namespaces/{namespace}/networkpolicies",
+    "PersistentVolumeClaim": "/api/v1/namespaces/{namespace}/persistentvolumeclaims",
 }
 
 
@@ -80,7 +92,7 @@ def _eventually(check, what: str, seconds: int = 60):
 
 class Api:
     def __init__(self, port: int, token: str) -> None:
-        self.url, self.token = f"https://127.0.0.1:{port}", token
+        self.port, self.url, self.token = port, f"https://127.0.0.1:{port}", token
         # Its own self-signed certificate, on loopback. No proxy, whatever the environment says.
         context = ssl.create_default_context()
         context.check_hostname = False
@@ -116,10 +128,7 @@ class Api:
         return "" if status == 201 else _status_message(answer)
 
     def create_as(self, doc: dict, user: str) -> None:
-        if doc["kind"] == "PersistentVolumeClaim":
-            path = f"/api/v1/namespaces/{doc['metadata']['namespace']}/persistentvolumeclaims"
-        else:
-            path = PATHS[doc["kind"]].format(namespace=doc["metadata"]["namespace"])
+        path = PATHS[doc["kind"]].format(namespace=doc["metadata"]["namespace"])
         status, answer = self.request("POST", path, doc, as_user=user)
         assert status == 201, answer
 
@@ -134,6 +143,20 @@ class Api:
         path = f"/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}?dryRun=All"
         status, answer = self.request("PUT", path, doc, as_user=user)
         return "" if status == 200 else _status_message(answer)
+
+
+    def names(self, kind: str, namespace: str) -> set[str]:
+        status, answer = self.request("GET", PATHS[kind].format(namespace=namespace))
+        assert status == 200, answer
+        return {item["metadata"]["name"] for item in json.loads(answer)["items"]}
+
+    def replace(self, path: str, change) -> None:
+        status, answer = self.request("GET", path)
+        assert status == 200, answer
+        doc = json.loads(answer)
+        change(doc)
+        status, answer = self.request("PUT", path, doc)
+        assert status == 200, answer
 
 
 def _status_message(answer: bytes) -> str:
@@ -189,7 +212,9 @@ def _ensure_pvc_rbac(api: Api) -> None:
     role = {
         "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
         "metadata": {"name": "app-hosting-admission-test-pvc"},
-        "rules": [{"apiGroups": [""], "resources": ["persistentvolumeclaims"], "verbs": ["create", "get", "update", "patch"]}],
+        "rules": [{"apiGroups": [""], "resources": ["persistentvolumeclaims"], "verbs": ["create", "get", "update", "patch"]},
+                  {"apiGroups": [""], "resources": ["pods"], "verbs": ["create"]},
+                  {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["create"]}],
     }
     api.create(role)
     for subject in (
@@ -197,6 +222,7 @@ def _ensure_pvc_rbac(api: Api) -> None:
         {"kind": "User", "name": SCHEDULER, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": BINDER, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": TENANT_NOTES, "apiGroup": "rbac.authorization.k8s.io"},
+        {"kind": "User", "name": RS_CONTROLLER, "apiGroup": "rbac.authorization.k8s.io"},
     ):
         api.create({
             "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding",
@@ -212,7 +238,10 @@ def api():
     WORK.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="run-", dir=WORK))
     token = secrets.token_urlsafe(24)
-    (work / "tokens.csv").write_text(f"{token},test-admin,test-admin,system:masters\n", encoding="utf-8")
+    revoke_token = secrets.token_urlsafe(24)
+    (work / "tokens.csv").write_text(
+        f"{token},test-admin,test-admin,system:masters\n{revoke_token},{REVOKER},app-grant-revoke\n", encoding="utf-8"
+    )
     subprocess.run(["openssl", "genrsa", "-out", str(work / "sa.key"), "2048"], check=True, capture_output=True)
     client, peer, secure = _free_port(), _free_port(), _free_port()
     log = (work / "server.log").open("wb")
@@ -232,6 +261,10 @@ def api():
     ]
     try:
         server = Api(secure, token)
+        server.account = work / "account"
+        server.account.mkdir()
+        (server.account / "token").write_text(revoke_token, encoding="utf-8")
+        server.certs = work / "certs"
 
         def ready() -> bool:
             assert all(proc.poll() is None for proc in servers), (work / "server.log").read_text(encoding="utf-8")[-4000:]
@@ -242,6 +275,7 @@ def api():
 
         _eventually(ready, "the API server to be ready", seconds=120)
         server.create(_docs(CRD)[0])
+        server.create(_docs(CRD.parents[1] / "priority.yaml")[0])
         _ensure_pvc_rbac(server)
         # The old bindings go first: once the cases below see the new ones refuse, the server
         # has loaded these too. The grants one names a ConfigMap that does not exist, as one the
@@ -361,3 +395,198 @@ def test_scheduler_prebind_update_on_volsync_cache_pvc(api: Api) -> None:
     path = f"/api/v1/namespaces/{ns}/persistentvolumeclaims?dryRun=All"
     status, answer = api.request("POST", path, create, as_user=SCHEDULER)
     assert declare_msg in _status_message(answer)
+
+
+# Asked for and granted at first, then revoked.
+REVOCABLE = ["privileged", "hostname custom.example.test", "lan-port 8443/TCP", "lan-all", "lan-target nas 10.200.0.10/32 445/TCP"]
+ASKS = {"risky": {"privileged": True, "hostnames": ["custom.example.test"]}, "volumes": [{"name": "data", "backup": False}],
+        "network": {"web": {"port": 8080}, "ports": [{"listen": 8443, "target": 8443, "protocol": "TCP"}]}}
+
+
+def _reconcile(api: Api, *, succeeds: bool = True) -> str:
+    """One run of the script the CronJob runs, as its account, against this server. Its output."""
+    script = next(doc for doc in _docs(GRANT_REVOKE) if doc["kind"] == "ConfigMap")["data"]["revoke.py"]
+    shutil.copy(api.certs / "apiserver.crt", api.account / "ca.crt")
+    env = {"PATH": os.environ["PATH"], "KUBERNETES_SERVICE_HOST": "127.0.0.1", "KUBERNETES_SERVICE_PORT": str(api.port),
+           "SERVICE_ACCOUNT_DIR": str(api.account)}
+    run = subprocess.run(["python3", "-c", script], env=env, capture_output=True, text=True, timeout=120)
+    assert (run.returncode == 0) == succeeds, run.stdout + run.stderr
+    return run.stdout
+
+
+def _wire_revoker(api: Api, app: str) -> None:
+    """The cluster-wide rights once, and the binding the app's wiring holds."""
+    if api.request("GET", PATHS["ClusterRoleBinding"] + "/app-grant-revoke-namespaces")[0] == 404:
+        for doc in _docs(GRANT_REVOKE):
+            if doc["kind"] in ("ClusterRole", "ClusterRoleBinding"):
+                api.create(doc)
+    binding = _docs(WIRING_BINDING)[0]
+    binding["metadata"]["namespace"] = f"app-{app}"
+    api.create(binding)
+    _eventually(lambda: f"skipping app-{app}" not in _reconcile(api), f"the reconciler's rights in app-{app}")
+
+
+def _revoke(api: Api, app: str) -> None:
+    """What the wiring does when the env drops the app's exception lines."""
+    wanted = _namespace(app, [])["metadata"]["annotations"]
+    api.replace(f"/api/v1/namespaces/app-{app}", lambda doc: doc["metadata"]["annotations"].update(wanted))
+
+
+def _lan_policy(namespace: str, name: str, **spec: object) -> dict:
+    return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": name, "namespace": namespace},
+            "spec": {"podSelector": {}, **spec}}
+
+
+def test_a_revoked_grant_stops_what_runs_on_it_and_keeps_the_data(api: Api) -> None:
+    """Rule: once the env drops the exception lines, a run stops each running object that needs
+    them and closes the LAN allows; the workload, a clean pod, VolSync's mover and the volume stay.
+    The controller's replacement is refused until the grant is back. A second run changes nothing."""
+    app, ns = "revoked", "app-revoked"
+    api.create(_namespace(app, REVOCABLE))
+    api.create(_app(app, **ASKS))
+    replicas = [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "web-1", "uid": "1", "controller": True}]
+    risky = _pod("web-1-a", app, **PRIVILEGED)
+    risky["metadata"]["ownerReferences"] = replicas
+    replacement = _pod("web-1-b", app, **PRIVILEGED)
+    replacement["metadata"]["ownerReferences"] = replicas
+    _eventually(lambda: not api.refusal(risky), "the App and grants to admit the pod")
+    mover = _job("volsync-src-data", app, restartPolicy="Never", **PRIVILEGED)
+    mover["metadata"]["ownerReferences"] = [_volsync_owner()]
+    # Refused by a rule no grant decides, so a run leaves it: only a grant's denial stops anything.
+    odd = _pod("odd-memory", app, containers=[{
+        "name": "c", "image": "x", "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+        "resources": {"requests": {"memory": "64Mi"}, "limits": {"memory": "128Mi"}}}])
+    api.create_as(odd, VOLSYNC)
+    task_pod = _pod("task-pod", app, owner_job=True, **PRIVILEGED)
+    task_pod["metadata"]["ownerReferences"][0]["name"] = "task"
+    service = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "lan", "namespace": ns},
+               "spec": {"type": "LoadBalancer", "allocateLoadBalancerNodePorts": False, "selector": {"a": "b"},
+                        "ports": [{"port": 8443, "targetPort": 8443, "protocol": "TCP"}]}}
+    backend = {"service": {"name": "lan", "port": {"number": 8443}}}
+    ingress = {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
+               "metadata": {"name": "custom", "namespace": ns, "annotations": {"traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}},
+               "spec": {"ingressClassName": "traefik", "rules": [{"host": "custom.example.test", "http": {
+                   "paths": [{"path": "/", "pathType": "Prefix", "backend": backend}]}}]}}
+    lan_range = [{"ipBlock": {"cidr": "10.200.0.0/24"}}]
+    for doc in (_deployment(app, **PRIVILEGED), risky, _pod("clean", app), _pvc("data", ns, annotations={"backup": "none"}),
+                _job("task", app, restartPolicy="Never", **PRIVILEGED), mover,
+                _pod("mover-pod", app, owner_job=True, **PRIVILEGED), task_pod, service, ingress,
+                _lan_policy(ns, "app-web", policyTypes=["Ingress"], ingress=[{"ports": [{"port": 8080, "protocol": "TCP"}]}]),
+                _lan_policy(ns, "app-lan-all", policyTypes=["Egress"], egress=[{"to": lan_range}]),
+                _lan_policy(ns, "app-lan", policyTypes=["Egress"], egress=[
+                    {"to": [{"ipBlock": {"cidr": "10.200.0.10/32"}}], "ports": [{"port": 445, "protocol": "TCP"}]}]),
+                _lan_policy(ns, "app-ports", policyTypes=["Ingress"], ingress=[{"ports": [{"port": 8443, "protocol": "TCP"}]}])):
+        api.create(doc)
+    _wire_revoker(api, app)
+
+    assert "stopping" not in (out := _reconcile(api)) and "closing" not in out, out
+    assert {"web-1-a", "clean", "mover-pod", "task-pod", "odd-memory"} == api.names("Pod", ns)
+
+    _revoke(api, app)
+    _eventually(lambda: "exception" in api.refusal(replacement, as_user=RS_CONTROLLER), "the revoke to refuse the replacement")
+    _reconcile(api)
+    assert api.names("Pod", ns) == {"clean", "mover-pod", "odd-memory"}
+    assert api.names("Job", ns) == {"volsync-src-data"}
+    assert api.names("Service", ns) == api.names("Ingress", ns) == set()
+    assert api.names("NetworkPolicy", ns) == {"app-web"}
+    assert api.names("Deployment", ns) == {"web"}
+    assert api.names("PersistentVolumeClaim", ns) == {"data"}
+    assert "stopping" not in (out := _reconcile(api)) and "closing" not in out, out
+
+    restored = _namespace(app, REVOCABLE)["metadata"]["annotations"]
+    api.replace(f"/api/v1/namespaces/{ns}", lambda doc: doc["metadata"]["annotations"].update(restored))
+    _eventually(lambda: not api.refusal(replacement, as_user=RS_CONTROLLER), "the restored grant to admit the replacement")
+
+
+def test_an_app_cannot_keep_a_grant_by_dropping_its_ask(api: Api) -> None:
+    """Rule: a risky item needs both the ask and the grant, and a denial from either stops the
+    running pod. Dropping the ask first, so only app-file refuses, keeps nothing."""
+    app, ns = "retracted", "app-retracted"
+    api.create(_namespace(app, ["privileged"]))
+    api.create(_app(app, risky={"privileged": True}))
+    pod = _pod("web", app, **PRIVILEGED)
+    _eventually(lambda: not api.refusal(pod), "the App and grant to admit the pod")
+    api.create(pod)
+    _wire_revoker(api, app)
+    path = PATHS["App"].format(namespace=ns) + f"/{app}"
+    api.replace(path, lambda doc: doc["spec"].pop("risky"))
+    _eventually(lambda: "risky.privileged" in api.refusal({**pod, "metadata": {"name": "next", "namespace": ns}}), "app-file to refuse")
+    _reconcile(api)
+    assert api.names("Pod", ns) == set()
+
+
+def test_a_tenant_job_cannot_pose_as_a_volsync_mover(api: Api) -> None:
+    """Rule: the reconciler leaves a Job owned by a VolSync object alone, so a tenant's Job names no owner."""
+    job = _job("mover-look-alike", "notes", restartPolicy="Never")
+    job["metadata"]["ownerReferences"] = [_volsync_owner()]
+    _eventually(lambda: "names no owner" in api.refusal(job, as_user=TENANT_NOTES), "app-tenant to refuse the forged owner")
+    del job["metadata"]["ownerReferences"]
+    assert "names no owner" not in api.refusal(job, as_user=TENANT_NOTES)
+
+
+def test_a_tenant_adds_no_finalizer_to_what_the_reconciler_deletes(api: Api) -> None:
+    """Rule: a finalizer would leave a deleted Job or Ingress in place, so app-tenant refuses one."""
+    job = _job("held", "notes", restartPolicy="Never")
+    job["metadata"]["finalizers"] = ["example.test/hold"]
+    _eventually(lambda: "adds no finalizer" in api.refusal(job, as_user=TENANT_NOTES), "app-tenant to refuse the finalizer")
+    del job["metadata"]["finalizers"]
+    assert "adds no finalizer" not in api.refusal(job, as_user=TENANT_NOTES)
+
+
+def test_a_pods_own_grace_period_does_not_outlast_the_revoke(api: Api) -> None:
+    """Rule: a stopped pod gets the reconciler's grace period, not the one its manifest asks for,
+    also when its deletion has already begun on the long one, as garbage collection's does."""
+    app, ns = "slow", "app-slow"
+    api.create(_namespace(app, ["privileged"]))
+    api.create(_app(app, risky={"privileged": True}))
+    decade = 315360000
+    pods = [_pod(name, app, nodeName="node-1", terminationGracePeriodSeconds=decade, **PRIVILEGED) for name in ("fresh", "begun")]
+    _eventually(lambda: not api.refusal(pods[0]), "the App and grant to admit the pod")
+    for pod in pods:
+        api.create(pod)
+    _wire_revoker(api, app)
+    path = PATHS["Pod"].format(namespace=ns)
+    assert api.request("DELETE", f"{path}/begun")[0] == 200
+    _revoke(api, app)
+    _eventually(lambda: "exception" in api.refusal({**pods[0], "metadata": {"name": "next", "namespace": ns}}), "the revoke to refuse")
+    _reconcile(api)
+    for name in ("fresh", "begun"):
+        assert json.loads(api.request("GET", f"{path}/{name}")[1])["metadata"]["deletionGracePeriodSeconds"] == 30
+
+
+def test_a_deleted_app_keeps_nothing_running(api: Api) -> None:
+    """Rule: with the App gone app-file refuses for no params. The server reports one denial and
+    promises no order, so that one stops the pod too, or deleting the App could hide a revoke. The
+    grant stays here so app-file is the only refusal."""
+    app, ns = "app-gone", "app-app-gone"
+    api.create(_namespace(app, ["privileged"]))
+    api.create(_app(app, risky={"privileged": True}))
+    pod = _pod("web", app, **PRIVILEGED)
+    _eventually(lambda: not api.refusal(pod), "the App and grant to admit the pod")
+    api.create(pod)
+    _wire_revoker(api, app)
+    assert api.request("DELETE", PATHS["App"].format(namespace=ns) + f"/{app}")[0] == 200
+    _eventually(lambda: api.refusal({**pod, "metadata": {"name": "next", "namespace": ns}}), "the bindings to refuse")
+    _reconcile(api)
+    assert api.names("Pod", ns) == set()
+
+
+def test_a_probe_with_no_policy_answer_fails_the_run(api: Api) -> None:
+    """Rule: a run that cannot ask the API server about an object reports failure; it neither
+    stops the object nor passes as healthy."""
+    app, ns = "unasked", "app-unasked"
+    api.create(_namespace(app, []))
+    api.create(_app(app))
+    pod = _pod("web", app)
+    _eventually(lambda: not api.refusal(pod), "the App to admit the pod")
+    api.create(pod)
+    api.create({"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": {"name": "revoke-test-read-only"},
+                "rules": [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["get", "list"]}]})
+    binding = _docs(WIRING_BINDING)[0]
+    binding["metadata"]["namespace"] = ns
+    binding["roleRef"]["name"] = "revoke-test-read-only"
+    api.create(binding)
+    _eventually(lambda: "skipping app-unasked" not in _reconcile(api, succeeds=False), "the read-only rights to reach the reconciler")
+    assert api.names("Pod", ns) == {"web"}
+    assert api.request("DELETE", PATHS["RoleBinding"].format(namespace=ns) + "/app-grant-revoke")[0] == 200
+    _eventually(lambda: "skipping app-unasked" in _reconcile(api), "the binding to go")

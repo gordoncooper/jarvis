@@ -82,6 +82,15 @@ spec:
       message: >-
         an app ships only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs,
         CronJobs, Ingresses, PodDisruptionBudgets, HorizontalPodAutoscalers and its App
+    # The grant reconciler leaves VolSync's movers running, knowing them by their owner.
+    - expression: "request.resource.resource != 'jobs' || request.operation == 'DELETE' || !has(object.metadata.ownerReferences)"
+      message: "an app's Job names no owner"
+    # Nor may a finalizer hold up what the reconciler deletes. Controllers set their own; a tenant adds none.
+    - expression: >-
+        !(request.resource.resource in ['jobs', 'services', 'ingresses']) || request.operation == 'DELETE' ||
+        (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
+        (oldObject != null && has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : [])
+      message: "an app adds no finalizer to its Jobs, Services and Ingresses"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -105,6 +114,8 @@ spec:
 # and claims (its privileged movers), and the pods the job controller makes for a Job, whose
 # template these policies already admitted unless VolSync made it.
 # The two policies share their match, carve-outs and variables word for word; a test holds them equal.
+# A message that starts "grant: " marks a rule a grant or the file's ask for one decides. The
+# grant reconciler (../grant-revoke.yaml) stops a running object refused by such a rule, and only those.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -246,18 +257,18 @@ spec:
       message: "the binding's App is not this namespace's"
     - expression: "!variables.usesPrivileged || (has(params.spec.risky) && has(params.spec.risky.privileged) && params.spec.risky.privileged)"
       message: >-
-        anything beyond Pod Security restricted (privileged mode, host PID or IPC, sysctls,
+        grant: anything beyond Pod Security restricted (privileged mode, host PID or IPC, sysctls,
         allowPrivilegeEscalation not false, capabilities not dropping ALL or adding more than
         NET_BIND_SERVICE, a seccomp profile not RuntimeDefault or Localhost, procMount Unmasked,
         AppArmor unconfined, SELinux options beyond a container type) needs the app file's risky.privileged
     - expression: "!variables.usesOtherVolume"
       message: "a pod's volumes are configMap, secret, emptyDir, persistentVolumeClaim, projected, downwardAPI, csi or ephemeral"
     - expression: "!variables.usesRoot || (has(params.spec.risky) && has(params.spec.risky.root) && params.spec.risky.root)"
-      message: "every container runs with runAsNonRoot: true and no runAsUser 0, unless the app file asks for risky.root"
+      message: "grant: every container runs with runAsNonRoot: true and no runAsUser 0, unless the app file asks for risky.root"
     - expression: "!variables.usesHostNetwork || (has(params.spec.risky) && has(params.spec.risky.hostNetwork) && params.spec.risky.hostNetwork)"
-      message: "host network and host ports need the app file's risky.hostNetwork"
+      message: "grant: host network and host ports need the app file's risky.hostNetwork"
     - expression: "!variables.usesHostPath || (has(params.spec.risky) && has(params.spec.risky.hostPath) && params.spec.risky.hostPath)"
-      message: "hostPath volumes need the app file's risky.hostPath"
+      message: "grant: hostPath volumes need the app file's risky.hostPath"
     - expression: >-
         (object.kind == 'PersistentVolumeClaim' ? [object] :
          object.kind == 'StatefulSet' && has(object.spec.volumeClaimTemplates) ? object.spec.volumeClaimTemplates : []
@@ -277,7 +288,7 @@ spec:
     - expression: >-
         variables.hosts.all(h, h.startsWith(params.metadata.name + '.apps.') ||
           (has(params.spec.risky) && has(params.spec.risky.hostnames) && h in params.spec.risky.hostnames))
-      message: "an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the app file asks for"
+      message: "grant: an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the app file asks for"
     # A LoadBalancer port is a network.ports entry: listen as its port, the same protocol, and
     # target as its targetPort (a number; the API server defaults an unset one to the port).
     - expression: >-
@@ -286,7 +297,7 @@ spec:
           params.spec.network.ports.exists(q, q.listen == p.port &&
             q.protocol == (has(p.protocol) ? p.protocol : 'TCP') &&
             (has(p.targetPort) ? p.targetPort : p.port) == q.target))
-      message: "a LoadBalancer port is one of the app file's network.ports: listen as port, its protocol, and target as a numeric targetPort"
+      message: "grant: a LoadBalancer port is one of the app file's network.ports: listen as port, its protocol, and target as a numeric targetPort"
     # ServiceLB publishes on the edge nodes with no node port; one would open the port on every node.
     - expression: >-
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type != 'LoadBalancer' ||
@@ -497,20 +508,20 @@ spec:
           o.kind in ['ReplicationSource', 'ReplicationDestination'])
   validations:
     - expression: "!variables.usesPrivileged || variables.grants[?'hosting.jarvis.io/privileged'].orValue('') == 'true'"
-      message: "anything beyond Pod Security restricted (see app-file) needs the env's '<app>: privileged' exception"
+      message: "grant: anything beyond Pod Security restricted (see app-file) needs the env's '<app>: privileged' exception"
     - expression: "!variables.usesRoot || variables.grants[?'hosting.jarvis.io/root'].orValue('') == 'true'"
-      message: "every container runs with runAsNonRoot: true and no runAsUser 0, unless the env has '<app>: root'"
+      message: "grant: every container runs with runAsNonRoot: true and no runAsUser 0, unless the env has '<app>: root'"
     - expression: "!variables.usesHostNetwork || variables.grants[?'hosting.jarvis.io/host-network'].orValue('') == 'true'"
-      message: "host network and host ports need the env's '<app>: host-network' exception"
+      message: "grant: host network and host ports need the env's '<app>: host-network' exception"
     - expression: "!variables.usesHostPath || variables.grants[?'hosting.jarvis.io/host-path'].orValue('') == 'true'"
-      message: "hostPath volumes need the env's '<app>: host-path' exception"
+      message: "grant: hostPath volumes need the env's '<app>: host-path' exception"
     - expression: >-
         object.kind != 'Ingress' ||
         (!has(object.spec.defaultBackend) && !has(object.spec.tls) && has(object.spec.rules) &&
          variables.hosts.all(h, h == variables.grants[?'hosting.jarvis.io/host'].orValue('-') ||
            h in variables.grants[?'hosting.jarvis.io/hostnames'].orValue('').split(',')))
       message: >-
-        an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the env grants as
+        grant: an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the env grants as
         '<app>: hostname <name>'; no default backend and no spec.tls (the apps wildcard serves it)
     - expression: >-
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type in ['ClusterIP', 'LoadBalancer']
@@ -518,7 +529,7 @@ spec:
     - expression: "object.kind != 'Service' || !has(object.spec.externalIPs)"
       message: "an app's Service sets no externalIPs"
     - expression: "variables.lanPorts.all(p, p in variables.grants[?'hosting.jarvis.io/lan-ports'].orValue('').split(','))"
-      message: "a LoadBalancer exposes only ports the env grants as '<app>: lan-port <port>/<protocol>'"
+      message: "grant: a LoadBalancer exposes only ports the env grants as '<app>: lan-port <port>/<protocol>'"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

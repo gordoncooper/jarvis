@@ -11,7 +11,7 @@ builds its path with its postBuild values and checks what the cluster gets:
 - The network baseline: default-deny (both directions, no allow), cluster-dns and
   same-namespace, and LimitRange app, all in app-<name>.
 - The tenant flux-system/app-<name> holds one Role in app-<name>, on the kinds an app ships
-  only, bound to it alone.
+  only, bound to it alone. The one other binding there gives the grant reconciler its role.
 - The app's two Kustomizations run as that tenant, target app-<name>, read only the app's
   own sources, decrypt nothing and take no substitution source, only app_host.
 - Nothing else: the wiring's kinds are these.
@@ -48,6 +48,9 @@ _KINDS = frozenset(
         "Kustomization",
     }
 )
+GRANT_REVOKE = "app-grant-revoke"
+_REVOKE_ROLE = {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": GRANT_REVOKE}
+_REVOKE_SUBJECTS = [{"kind": "ServiceAccount", "name": GRANT_REVOKE, "namespace": "platform-app-hosting"}]
 _LABELLED = {"namespaceSelector": {"matchExpressions": [{"key": "hosting.jarvis.io/app", "operator": "Exists"}]}}
 _BINDINGS = {
     "app-file": {"policyName": "app-file", "validationActions": ["Deny"], "matchResources": _LABELLED,
@@ -185,6 +188,9 @@ def _tenant_problems(app: str, docs: list[dict], namespace: str, tenant: str) ->
                     yield f"{ref_of(doc)}: grants {', '.join(extra)}, which an app does not ship"
                 if "*" in (rule.get("verbs") or []):
                     yield f"{ref_of(doc)}: grants every verb"
+        elif kind == "RoleBinding" and _name(doc) == GRANT_REVOKE:
+            if namespace_of(doc) != namespace or doc.get("roleRef") != _REVOKE_ROLE or doc.get("subjects") != _REVOKE_SUBJECTS:
+                yield f"{ref_of(doc)}: binds ClusterRole {GRANT_REVOKE} to platform-app-hosting/{GRANT_REVOKE}, in {namespace} only"
         elif kind == "RoleBinding":
             if namespace_of(doc) != namespace or (doc.get("roleRef") or {}).get("kind") != "Role":
                 yield f"{ref_of(doc)}: binds a Role in {namespace} only"
