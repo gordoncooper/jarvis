@@ -408,6 +408,10 @@ def test_binder_updates_volsync_cache_pvcs(tmp_path: Path) -> None:
     ]
     undeclared = _pvc("undeclared", "notes")
     tenant = TENANT.format(app="notes")
+    terminating = copy.deepcopy(forged)
+    terminating["metadata"]["name"] = "forged-terminating"
+    terminating["metadata"]["deletionTimestamp"] = "2026-01-01T00:00:00Z"
+    _run(tmp_path, "tenant-forged-terminating", tenant, [(terminating, FILE_FAILS)])
     _run(tmp_path, "tenant-forged-owner", tenant, [(forged, FILE_FAILS)])
     _run(tmp_path, "tenant-undeclared", tenant, [(undeclared, FILE_FAILS)])
 

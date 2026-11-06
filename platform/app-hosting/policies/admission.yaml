@@ -112,7 +112,8 @@ spec:
 # passes only both.
 # Carve-outs, keyed on identities a tenant cannot take: the VolSync controller's own Jobs
 # and claims (its privileged movers), and the pods the job controller makes for a Job, whose
-# template these policies already admitted unless VolSync made it.
+# template these policies already admitted unless VolSync made it. One write is keyed on the
+# change instead: finishesVolsyncClaimDelete lets a terminating VolSync claim finish deleting.
 # The two policies share their match, carve-outs and variables word for word; a test holds them equal.
 # A message that starts "grant: " marks a rule a grant or the file's ask for one decides. The
 # grant reconciler (../grant-revoke.yaml) stops a running object refused by such a rule, and only those.
@@ -252,6 +253,21 @@ spec:
         object.metadata.ownerReferences.exists(o,
           o.apiVersion.startsWith('volsync.backube/') &&
           o.kind in ['ReplicationSource', 'ReplicationDestination'])
+    # A VolSync claim already being deleted may lose the PVC protection finalizer, and nothing
+    # else may change in that write. Keyed on the change, whoever makes it.
+    - name: finishesVolsyncClaimDelete
+      expression: >-
+        request.operation == 'UPDATE' && variables.volsyncOwned &&
+        has(oldObject.metadata.deletionTimestamp) && has(oldObject.metadata.finalizers) &&
+        'kubernetes.io/pvc-protection' in oldObject.metadata.finalizers &&
+        (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
+          oldObject.metadata.finalizers.filter(f, f != 'kubernetes.io/pvc-protection') &&
+        has(oldObject.metadata.ownerReferences) && object.metadata.ownerReferences == oldObject.metadata.ownerReferences &&
+        object.spec == oldObject.spec &&
+        (has(object.metadata.labels) ? object.metadata.labels : {}) ==
+          (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {}) &&
+        (has(object.metadata.annotations) ? object.metadata.annotations : {}) ==
+          (has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {})
   validations:
     - expression: "params.metadata.namespace == namespaceObject.metadata.name"
       message: "the binding's App is not this namespace's"
@@ -276,6 +292,7 @@ spec:
           (object.kind == 'PersistentVolumeClaim' && request.operation == 'UPDATE' &&
            request.userInfo.username in ['system:serviceaccount:kube-system:persistent-volume-binder', 'system:kube-controller-manager', 'system:kube-scheduler'] &&
            variables.volsyncOwned) ||
+          variables.finishesVolsyncClaimDelete ||
           (params.spec.volumes.exists(v,
             (v.name == claim.metadata.name ||
              (object.kind == 'PersistentVolumeClaim' && claim.metadata.name.startsWith(v.name + '-') &&
@@ -506,6 +523,21 @@ spec:
         object.metadata.ownerReferences.exists(o,
           o.apiVersion.startsWith('volsync.backube/') &&
           o.kind in ['ReplicationSource', 'ReplicationDestination'])
+    # A VolSync claim already being deleted may lose the PVC protection finalizer, and nothing
+    # else may change in that write. Keyed on the change, whoever makes it.
+    - name: finishesVolsyncClaimDelete
+      expression: >-
+        request.operation == 'UPDATE' && variables.volsyncOwned &&
+        has(oldObject.metadata.deletionTimestamp) && has(oldObject.metadata.finalizers) &&
+        'kubernetes.io/pvc-protection' in oldObject.metadata.finalizers &&
+        (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
+          oldObject.metadata.finalizers.filter(f, f != 'kubernetes.io/pvc-protection') &&
+        has(oldObject.metadata.ownerReferences) && object.metadata.ownerReferences == oldObject.metadata.ownerReferences &&
+        object.spec == oldObject.spec &&
+        (has(object.metadata.labels) ? object.metadata.labels : {}) ==
+          (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {}) &&
+        (has(object.metadata.annotations) ? object.metadata.annotations : {}) ==
+          (has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {})
   validations:
     - expression: "!variables.usesPrivileged || variables.grants[?'hosting.jarvis.io/privileged'].orValue('') == 'true'"
       message: "grant: anything beyond Pod Security restricted (see app-file) needs the env's '<app>: privileged' exception"
