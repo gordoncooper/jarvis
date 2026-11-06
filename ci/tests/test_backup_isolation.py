@@ -18,7 +18,7 @@ from _backup_isolation import _render_violations, scan_backup_isolation
 from schema.env import ValidationError, validate_one_env
 from support import REPO_ROOT, ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app
 
-APP = "app-shop"
+APP = "app-notes"
 
 
 def _app_copy(tmp_path: Path) -> ExampleCopy:
@@ -128,12 +128,12 @@ def _no_apps_server(docs: list[dict]) -> None:
     [
         (_drop_app_exclude, "rule restic-secret generates a Secret in an app- namespace"),
         (_app_rule_reads_core, "rule restic-secret-app generates a Secret in an app- namespace"),
-        (_app_secret_in_core_server, "core's rest-server mounts Secret backups-restic-app-shop"),
+        (_app_secret_in_core_server, "core's rest-server mounts Secret backups-restic-app-notes"),
         (_core_secret_in_apps_server, "the apps server mounts Secret backups-restic;"),
-        (_app_password_in_apps_server, "the apps server mounts backups-restic-app-shop keys None; only htpasswd"),
-        (_app_secret_in_core_env, "core's rest-server mounts Secret backups-restic-app-shop"),
+        (_app_password_in_apps_server, "the apps server mounts backups-restic-app-notes keys None; only htpasswd"),
+        (_app_secret_in_core_env, "core's rest-server mounts Secret backups-restic-app-notes"),
         (_no_private_repos, "the apps server runs without --private-repos"),
-        (_no_apps_server, "Secret backups-restic-app-shop is an app credential, but platform/backups/apps is not listed"),
+        (_no_apps_server, "Secret backups-restic-app-notes is an app credential, but platform/backups/apps is not listed"),
     ],
 )
 def test_isolation_check_fails_each_seeded_leak(app_copy: ExampleCopy, seed, reason: str) -> None:
@@ -169,13 +169,13 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     sealed = secrets / APP / f"backups-restic-{APP}.sops.yaml"
     component = copy.env_dir / "flux" / "platform-configs" / "backups" / APP / "kustomization.yaml"
 
-    _set_components(copy, [f"backups/{APP}", "backups/shop"])
+    _set_components(copy, [f"backups/{APP}", "backups/notes"])
     assert "hand-copying registrations" in _schema_errors(copy)
     _set_components(copy, [f"backups/{APP}"])
 
     original = component.read_text(encoding="utf-8")
     component.write_text(original.replace("name: restic-apps", "name: restic"), encoding="utf-8")
-    assert "differs from the registration make bootstrap-secrets APP=app-shop writes" in _schema_errors(copy)
+    assert "differs from the registration make bootstrap-secrets APP=app-notes writes" in _schema_errors(copy)
     component.write_text(original, encoding="utf-8")
 
     _set_components(copy, [f"backups/{APP}"], apps_server=False)
@@ -220,7 +220,7 @@ def test_bootstrap_app_mints_once_and_refuses_a_non_app_name(app_copy: ExampleCo
     before = sealed.read_bytes()
     assert mod.bootstrap_app(app_copy.name, APP, sops_bin=shutil.which("sops")) == []
     assert sealed.read_bytes() == before
-    for bad in ("shop", "platform-backups", "app-", "app-Shop"):
+    for bad in ("notes", "platform-backups", "app-", "app-Notes"):
         with pytest.raises(SystemExit, match="hosted app namespace"):
             mod.bootstrap_app(app_copy.name, bad, sops_bin=shutil.which("sops"))
-    assert not (app_copy.env_dir / "secrets" / "shop").exists()
+    assert not (app_copy.env_dir / "secrets" / "notes").exists()

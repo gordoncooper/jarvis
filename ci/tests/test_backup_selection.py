@@ -95,7 +95,7 @@ def test_stale_wrapper_rejected(tmp_path: Path) -> None:
     _render_selection(copy)
     register_copy_app(copy, NOTES)
     path = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
-    path.write_text(path.read_text(encoding="utf-8").replace("app-notes", "app-shop"), encoding="utf-8")
+    path.write_text(path.read_text(encoding="utf-8").replace("app-notes", "app-stale"), encoding="utf-8")
     with pytest.raises(ValidationError) as exc:
         validate_one_env(copy.root, copy.name)
     assert "stale wrapper" in "\n".join(exc.value.messages)
