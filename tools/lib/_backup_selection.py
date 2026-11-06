@@ -11,11 +11,13 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.parse import urlparse
 
 import yaml
 
 import _app_backups  # noqa: E402
 import _apps  # noqa: E402
+from _env import instance_root  # noqa: E402
 
 BACKUPS_KEY = "backups"
 GENERATED_COMPONENT_REL = "generated/backup-selection"
@@ -34,18 +36,90 @@ OVERRIDE_KEYS = frozenset(
 )
 _CRON = re.compile(r"^(\S+\s+){4}\S+$")
 _RETENTION = re.compile(r"^[0-9]+$")
+_APPS_REPO_ENV = "APPS_REPO"
 
 
-def apps_repo_root(repo_root: Path) -> Path:
-    """Directory of app folders (<name>/app.yaml). APPS_REPO overrides the test fixture."""
-    override = os.environ.get("APPS_REPO")
+class AppsRepoError(Exception):
+    """The apps repository checkout is missing or unreadable."""
+
+
+def _repo_basename(url: str) -> str | None:
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if not parts:
+        return None
+    return parts[-1].removesuffix(".git")
+
+
+def _looks_like_apps_repo(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    return any((path / child / "app.yaml").is_file() for child in path.iterdir() if child.is_dir())
+
+
+def _resolve_apps_checkout(repo_root: Path, env_dir: Path) -> Path | None:
+    cv_path = env_dir / "values" / "cluster-vars.yaml"
+    if not cv_path.is_file():
+        return None
+    try:
+        cluster_vars = yaml.safe_load(cv_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return None
+    url = cluster_vars.get("apps_git_repo_url")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    name = _repo_basename(url)
+    if not name:
+        return None
+    roots = {instance_root(repo_root), repo_root.resolve()}
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.extend((root.parent / name, root / name))
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if _looks_like_apps_repo(resolved):
+            return resolved
+    return None
+
+
+def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
+    """Directory of app folders (<name>/app.yaml).
+
+    APPS_REPO overrides for tests and operators. Otherwise resolve a local checkout of
+    apps_git_repo_url beside the instance or product checkout.
+    """
+    override = os.environ.get(_APPS_REPO_ENV)
     if override:
-        return Path(override)
-    fixture = repo_root / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
-    if fixture.is_dir():
-        return fixture
-    product = Path(__file__).resolve().parents[2]
-    return product / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
+        path = Path(override).expanduser().resolve()
+        if not _looks_like_apps_repo(path):
+            raise AppsRepoError(f"{_APPS_REPO_ENV}={override!r} is not an apps repository checkout")
+        return path
+    if env_dir is None:
+        raise AppsRepoError(
+            f"set {_APPS_REPO_ENV} to a checkout of the env's apps_git_repo_url, "
+            "or clone that repository beside this checkout"
+        )
+    resolved = _resolve_apps_checkout(repo_root, env_dir)
+    if resolved is not None:
+        return resolved
+    raise AppsRepoError(
+        f"set {_APPS_REPO_ENV} to a checkout of apps_git_repo_url, "
+        "or clone the apps repository beside this checkout"
+    )
+
+
+def apps_repo_problem(repo_root: Path, env_dir: Path) -> str | None:
+    try:
+        apps_repo_root(repo_root, env_dir)
+    except AppsRepoError as exc:
+        return str(exc)
+    return None
 
 
 def backup_eligible(apps_root: Path, app_name: str) -> bool:
@@ -231,7 +305,7 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
     if section is None:
         return None
     apps_list = _apps.app_names(data)
-    apps_root = apps_repo_root(repo_root)
+    apps_root = apps_repo_root(repo_root, env_dir)
     problems = validate_section(
         section,
         apps_list=apps_list,

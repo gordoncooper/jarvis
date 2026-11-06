@@ -49,12 +49,155 @@ def test_selected_mode_requires_credential_for_eligible_app(tmp_path: Path) -> N
 
 
 def test_excluded_app_does_not_require_credential(tmp_path: Path) -> None:
-    """Rule: all_except exclusions are not backup-enabled; env-schema does not require their sealed file."""
+    """Rule: all_except excluding a backup-eligible app does not register it or require its sealed file."""
     copy = bootstrap_example_copy(tmp_path)
-    _write_apps(copy, {"mode": "all_except", "exclude": ["hello-web", "lan-demo"]})
+    _write_apps(copy, {"mode": "all_except", "exclude": ["notes"]})
+    _render_selection(copy)
+    assert not (copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION).is_file()
+    validate_one_env(copy.root, copy.name)
+
+
+def test_all_except_exclusion_guard_requires_notes_credential_when_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: ignoring all_except exclude leaves notes enabled and env-schema requires its credential."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "all_except", "exclude": ["notes"]})
+    real = _backup_selection.enabled_app_names
+
+    def ignore_exclude(section, *, apps_list, apps_root):
+        if section.get("mode") == _backup_selection.MODE_ALL_EXCEPT:
+            return [app for app in apps_list if _backup_selection.backup_eligible(apps_root, app)]
+        return real(section, apps_list=apps_list, apps_root=apps_root)
+
+    monkeypatch.setattr(_backup_selection, "enabled_app_names", ignore_exclude)
+    _render_selection(copy)
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name)
+    assert "app-notes" in "\n".join(exc.value.messages)
+
+
+def test_overrides_on_disabled_app_rejected(tmp_path: Path) -> None:
+    """Rule: overrides apply only to backup-enabled apps."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(
+        copy,
+        {
+            "mode": "selected",
+            "selected": [],
+            "overrides": {"notes": {"backup_schedule": "0 4 * * *"}},
+        },
+    )
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name, pre_host=True)
+    assert "overrides apply only to backup-enabled apps" in "\n".join(exc.value.messages)
+
+
+def test_stale_wrapper_rejected(tmp_path: Path) -> None:
+    """Rule: generated backup-selection must list exactly the enabled registration Components."""
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "selected", "selected": ["notes"]})
     _render_selection(copy)
     register_copy_app(copy, NOTES)
-    validate_one_env(copy.root, copy.name)
+    path = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
+    path.write_text(path.read_text(encoding="utf-8").replace("app-notes", "app-shop"), encoding="utf-8")
+    with pytest.raises(ValidationError) as exc:
+        validate_one_env(copy.root, copy.name)
+    assert "stale wrapper" in "\n".join(exc.value.messages)
+
+
+def test_eligibility_reads_apps_repo_not_product_fixtures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: backup eligibility comes from APPS_REPO / apps_git_repo_url checkout, not jarvis fixtures by default."""
+    apps = tmp_path / "apps-checkout"
+    (apps / "only-app").mkdir(parents=True)
+    (apps / "only-app" / "app.yaml").write_text(
+        "spec:\n  volumes:\n  - name: data\n    backup: true\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("APPS_REPO", str(apps))
+    assert _backup_selection.backup_eligible(apps, "only-app")
+    assert not _backup_selection.backup_eligible(apps, "notes")
+
+
+def test_verify_skips_excluded_eligible_app_pvc() -> None:
+    """Rule: verify does not fail an excluded backup-eligible app for a missing credential."""
+    import json
+    from datetime import datetime, timezone
+
+    def fake(cmd, **_k):
+        if "pvc" in cmd:
+            return type("P", (), {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"namespace": NOTES, "name": "data", "annotations": {}},
+                                "spec": {"volumeName": "pv-1"},
+                            }
+                        ]
+                    }
+                ),
+                "stderr": "",
+            })()
+        if "replicationsource" in cmd:
+            return type("P", (), {"returncode": 0, "stdout": '{"items": []}', "stderr": ""})()
+        if "etcd-snapshots" in cmd:
+            return type("P", (), {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    {
+                        "spec": {"schedule": "5 */12 * * *", "timeZone": "UTC"},
+                        "status": {"lastSuccessfulTime": "2020-01-02T11:00:00Z"},
+                    }
+                ),
+                "stderr": "",
+            })()
+        if "backup-rebuild-hold" in cmd:
+            return type("P", (), {"returncode": 1, "stdout": "", "stderr": "not found"})()
+        raise AssertionError(cmd)
+
+    check_backups(
+        fake,
+        zone_name="UTC",
+        now=datetime(2020, 1, 2, tzinfo=timezone.utc),
+        registered=frozenset(),
+        required=frozenset(),
+    )
+
+
+def test_verify_guard_fails_when_excluded_app_still_required() -> None:
+    """Rule: treating an excluded app as required fails verify on its PVC."""
+    import json
+    from datetime import datetime, timezone
+
+    def fake(cmd, **_k):
+        if "pvc" in cmd:
+            return type("P", (), {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"namespace": NOTES, "name": "data", "annotations": {}},
+                                "spec": {"volumeName": "pv-1"},
+                            }
+                        ]
+                    }
+                ),
+                "stderr": "",
+            })()
+        if "replicationsource" in cmd:
+            return type("P", (), {"returncode": 0, "stdout": '{"items": []}', "stderr": ""})()
+        raise AssertionError(cmd)
+
+    with pytest.raises(CheckError, match="no registered backup credential"):
+        check_backups(
+            fake,
+            zone_name="UTC",
+            now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            registered=frozenset(),
+            required=frozenset({NOTES}),
+        )
 
 
 def test_selected_ineligible_app_rejected(tmp_path: Path) -> None:

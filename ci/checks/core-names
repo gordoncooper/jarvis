@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+export APPS_REPO="${APPS_REPO:-${repo_root}/ci/tests/fixtures/app-hosting/jarvis-apps}"
 
 python3 - <<'PY'
 from pathlib import Path
