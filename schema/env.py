@@ -669,16 +669,14 @@ def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
     section = _backup_selection.load_section(data or {})
     if section is None:
         return False
-    if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
+    if _backup_selection.selection_problems(repo_root, env_dir, _apps.APPS_VALUES):
         return False
     if not _backup_selection.enabled_namespaces(
         section, apps_list=_apps.app_names(data), apps_root=_backup_selection.apps_repo_root(repo_root, env_dir)
     ):
         return False
     _path, doc = _platform_configs(env_dir)
-    components = doc.get("components") or []
-    wrapper = "../" + _backup_selection.GENERATED_COMPONENT_REL
-    return wrapper in components or _backup_selection.GENERATED_COMPONENT_REL in components
+    return _backup_selection.WRAPPER_ENTRY in (doc.get("components") or [])
 
 
 def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool:
@@ -743,31 +741,33 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
     errors: list[str] = []
     data, _ = _apps.load_values(env_dir)
     section = _backup_selection.load_section(data or {})
-    if section is not None:
-        apps_rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
-        if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
-            errors.append(f"{apps_rel}: {repo_problem}")
-            return errors
+    if section is not None and _backup_selection.selection_problems(repo_root, env_dir, _apps.APPS_VALUES):
+        # _validate_apps reports these; without a valid selection there is nothing to compare.
+        return errors
     registered = app_registrations(env_dir, repo_root)
     if section is not None:
         expected = set(item for item in registered if isinstance(item, str))
         prefix = f"{_app_backups.REGISTRATION_DIR}/"
         _path, doc = _platform_configs(env_dir)
         components = doc.get("components") or []
-        manual = {
-            item.strip().removeprefix("./").removeprefix(prefix)
-            for item in components
-            if isinstance(item, str)
-            and item.strip().removeprefix("./").startswith(prefix)
-            and not _app_hosting_component(env_dir, repo_root, item)
-        }
+        wrapper = _backup_selection.WRAPPER_ENTRY
+        manual: set[str] = set()
+        for item in components:
+            if item == wrapper or _app_hosting_component(env_dir, repo_root, item):
+                continue
+            if isinstance(item, str) and item.strip().removeprefix("./").startswith(prefix):
+                manual.add(item.strip().removeprefix("./").removeprefix(prefix))
+            else:
+                errors.append(
+                    f"{rel}: component {item!r} is not an app credential registration "
+                    f"or {wrapper!r}; with backups in values/apps.yaml nothing else belongs there"
+                )
         if manual:
             errors.append(
                 f"{rel}: lists {sorted(manual)!r} under components; with backups in values/apps.yaml, "
                 f"run tools/lib/render_backup_selection.py instead of hand-copying registrations"
             )
-        wrapper = "../" + _backup_selection.GENERATED_COMPONENT_REL
-        if expected and wrapper not in components and _backup_selection.GENERATED_COMPONENT_REL not in components:
+        if expected and wrapper not in components:
             errors.append(
                 f"{rel}: backup-enabled apps need components entry {wrapper!r} from render_backup_selection.py"
             )
@@ -966,6 +966,7 @@ def _validate_apps(
     listing = env_dir / "flux" / "kustomization.yaml"
     doc = yaml.safe_load(listing.read_text(encoding="utf-8")) if listing.is_file() else {}
     listed = _apps.GENERATED_REL in ((doc or {}).get("resources") or [])
+    errors.extend(_validate_backup_selection_render(env_dir, repo_root, env_dir.name, data, pre_host=pre_host))
     if not apps:
         if generated.is_file() or listed:
             errors.append(
@@ -974,7 +975,6 @@ def _validate_apps(
         return errors
     if not listed:
         errors.append(f"{_display_path(listing, repo_root)}: lists apps in {rel}, so resources lists {_apps.GENERATED_REL}")
-    errors.extend(_validate_backup_selection_render(env_dir, repo_root, env_dir.name, data, pre_host=pre_host))
     if errors or pre_host:
         return errors
     if not generated.is_file() or generated.read_text(encoding="utf-8") != _apps.render(
@@ -997,20 +997,10 @@ def _validate_backup_selection_render(
         return []
     rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
     apps_list = _apps.app_names(data)
-    if repo_problem := _backup_selection.apps_repo_problem(repo_root, env_dir):
-        return [f"{rel}: {repo_problem}"]
-    apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
-    errors = [
-        f"{rel}: {problem}"
-        for problem in _backup_selection.validate_section(
-            section,
-            apps_list=apps_list,
-            apps_root=apps_root,
-            rel=rel,
-        )
-    ]
+    errors = _backup_selection.selection_problems(repo_root, env_dir, rel)
     if errors or pre_host:
         return errors
+    apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
     generated = env_dir / _backup_selection.GENERATED_KUSTOMIZATION
     generated_rel = _display_path(generated, repo_root)
     enabled = _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
