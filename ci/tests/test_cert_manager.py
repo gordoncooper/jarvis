@@ -36,6 +36,13 @@ _TESTAPP = {
 }
 # platform/app-hosting: only in an env that turns app hosting on.
 _APP_HOSTING = {
+    ("Namespace", "", "platform-app-hosting"),
+    ("ServiceAccount", "platform-app-hosting", "app-grant-revoke"),
+    ("ClusterRole", "", "app-grant-revoke"),
+    ("ClusterRole", "", "app-grant-revoke-namespaces"),
+    ("ClusterRoleBinding", "", "app-grant-revoke-namespaces"),
+    ("ConfigMap", "platform-app-hosting", "app-grant-revoke"),
+    ("CronJob", "platform-app-hosting", "app-grant-revoke"),
     ("Certificate", "platform-cert-manager", "wildcard-apps"),
     ("ClusterRole", "", "kyverno:app-derive"),
     ("CustomResourceDefinition", "", "apps.hosting.jarvis.io"),
