@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: each §6 component root must have CONTRACT.md (R2, D8).
+# CI rule check: each component root must have CONTRACT.md.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

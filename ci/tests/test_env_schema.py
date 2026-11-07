@@ -1,4 +1,4 @@
-"""Env schema validator (p0a-05)."""
+"""Env schema validator."""
 
 from __future__ import annotations
 
@@ -416,7 +416,7 @@ _OPTIONAL_CLUSTER_KEYS = (
 
 @pytest.mark.parametrize("key", _OPTIONAL_CLUSTER_KEYS)
 def test_optional_cluster_key_may_be_omitted(tmp_path: Path, key: str):
-    """D45: an unused key may be omitted."""
+    """An unused key may be omitted."""
     cv = _valid_cluster_vars()
     assert key in cv
     del cv[key]
@@ -426,7 +426,7 @@ def test_optional_cluster_key_may_be_omitted(tmp_path: Path, key: str):
 
 
 def test_optional_cluster_keys_may_all_be_omitted(tmp_path: Path):
-    """An env can deploy with no AI vendor, apps repo, or LLM host (D45)."""
+    """An env can deploy with no AI vendor, apps repo, or LLM host."""
     cv = _valid_cluster_vars()
     for key in _OPTIONAL_CLUSTER_KEYS:
         del cv[key]
@@ -627,7 +627,7 @@ def test_data_paths_reject_dot_segments(tmp_path: Path, key: str, value: str) ->
 
 
 def test_data_disk_true_passes(tmp_path: Path) -> None:
-    """data_disk: true is the only accepted value (p0a-11a)."""
+    """data_disk: true is the only accepted value."""
     _write_env(
         tmp_path,
         hosts_yml=_hosts(
@@ -654,7 +654,7 @@ def test_data_disk_true_passes(tmp_path: Path) -> None:
     ],
 )
 def test_data_disk_other_than_true_fails(tmp_path: Path, disk_yml: str) -> None:
-    """Any value other than true, including the old mapping, fails (p0a-11a)."""
+    """Any value other than true, including the old mapping, fails."""
     _write_env(
         tmp_path,
         hosts_yml=_hosts(

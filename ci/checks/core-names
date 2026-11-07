@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: core must not name envs or identity values (R3, D44).
+# CI rule check: core must not name envs or identity values.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

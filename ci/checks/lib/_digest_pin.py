@@ -1,4 +1,4 @@
-"""R33: container images the repo adds are pinned by digest.
+"""Container images the repo adds are pinned by digest.
 
 Pod image fields, HelmRelease values and HelmChartConfig valuesContent are
 checked. A pin is `@sha256:` on the reference, `tag: <version>@sha256:...`,

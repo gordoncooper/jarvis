@@ -1,4 +1,4 @@
-"""base-os Ansible role: template rules and site syntax (p0a-11)."""
+"""base-os Ansible role: template rules and site syntax."""
 
 from __future__ import annotations
 

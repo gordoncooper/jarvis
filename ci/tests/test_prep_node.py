@@ -535,14 +535,14 @@ def test_missing_sops_file_is_created_once(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_env_schema_accepts_the_real_env_tree() -> None:
-    """prep-node schema step accepts the real env tree, including env-00 (J5)."""
+    """prep-node schema step accepts the real env tree, including env-00."""
     module = _load()
     assert (REPO_ROOT / "envs" / "env-00").is_dir()
     module.run_env_schema(REPO_ROOT)
 
 
 def test_env_schema_rejects_a_seeded_bad_copy(tmp_path: Path) -> None:
-    """A seeded invalid copy of env-00 fails as PrepError, not a traceback (J5)."""
+    """A seeded invalid copy of env-00 fails as PrepError, not a traceback."""
     module = _load()
     dest = tmp_path / "envs" / "env-00"
     shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
@@ -561,7 +561,7 @@ def test_env_schema_rejects_a_seeded_bad_copy(tmp_path: Path) -> None:
 
 
 def test_env_schema_oserror_is_prep_error(tmp_path: Path) -> None:
-    """An unreadable env tree is a PrepError message, not a traceback (J5)."""
+    """An unreadable env tree is a PrepError message, not a traceback."""
     if os.geteuid() == 0:
         pytest.skip("root bypasses directory mode 000")
     module = _load()

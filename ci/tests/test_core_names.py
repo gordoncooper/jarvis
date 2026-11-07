@@ -1,4 +1,4 @@
-"""core-names CI check (p0a-07)."""
+"""core-names CI check."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _owner_name(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_owner_name_unset_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset OWNER_NAME fails with a message that names it and carries no value (D44)."""
+    """Unset OWNER_NAME fails with a message that names it and carries no value."""
     monkeypatch.delenv("OWNER_NAME", raising=False)
     with pytest.raises(OwnerNameUnset) as unset:
         scan_core_names(tmp_path)

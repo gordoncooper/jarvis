@@ -1,4 +1,4 @@
-"""Opening play fails before any change (J12, D42, D46)."""
+"""Opening play fails before any change."""
 
 from __future__ import annotations
 
@@ -250,7 +250,7 @@ def test_readable_memory_threshold_passes_preflight(tmp_path: Path, value: str) 
 
 
 def test_missing_env_flux_instance_fails_before_any_change(tmp_path: Path) -> None:
-    """R1: site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
+    """site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
     result = _run_site(tmp_path, jarvis_env="env-absent", flux_instance=False)
     _stopped_before_base_os(result, "envs/env-absent/flux/flux-instance.yaml or sync.yaml is missing")
 

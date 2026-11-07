@@ -1,4 +1,4 @@
-"""k3s Ansible role: config render and guard proof (p0a-12)."""
+"""k3s Ansible role: config render and guard proof."""
 
 from __future__ import annotations
 

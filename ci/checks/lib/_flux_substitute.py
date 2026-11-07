@@ -1,4 +1,4 @@
-"""R4 / D45: every ${name} a Flux Kustomization substitutes is a key its env publishes.
+"""Every ${name} a Flux Kustomization substitutes is a key its env publishes.
 
 kustomize-controller runs with StrictPostBuildSubstitutions, so an unknown
 key fails only at reconcile. For each env with a flux/ tree, this builds that

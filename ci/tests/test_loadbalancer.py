@@ -1,4 +1,4 @@
-"""loadbalancer CI check (p0b-06, R28)."""
+"""loadbalancer CI check."""
 
 from __future__ import annotations
 

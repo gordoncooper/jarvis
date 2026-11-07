@@ -1,4 +1,4 @@
-"""seal and bootstrap-secrets refuse a path that is not envs/<env>/secrets (J11)."""
+"""seal and bootstrap-secrets refuse a path that is not envs/<env>/secrets."""
 
 from __future__ import annotations
 
