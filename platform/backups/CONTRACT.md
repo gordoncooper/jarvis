@@ -153,7 +153,7 @@ Each hosted app that keeps data gets its own restic password, its own apps-serve
 
 To change one: edit the override, re-render, commit and push. Generate does not re-run on a ConfigMap change, so a PVC that already exists takes the new values on its next update; annotate it once (`kubectl annotate pvc -n app-<name> <pvc> backup-overrides=<date> --overwrite`). Check with `kubectl get replicationsource -n app-<name> <pvc> -o yaml`. A new PVC takes them when it binds.
 
-Turn the apps server on and add an app: list `apps-backup-server` under `optional` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `tools/lib/render_switches.py --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
+Turn the apps server on and add an app: list `apps-backup-server` under `optional` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
 
 1. `make bootstrap-secrets ENV=<env> APP=app-<name>`. It seals `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` and writes `envs/<env>/flux/platform-configs/backups/app-<name>/kustomization.yaml`, the Component that applies that Secret and mounts it in `restic-apps`, `restic-check` and `restic-offsite`. Nothing is printed but the created paths. A second run changes nothing. If that app's sealed file is missing and git already records it, it refuses: the app's repositories open only with the first password.
 2. The render lists `../../../../core/platform/optional/apps-backup-server` under `resources:` of `envs/<env>/flux/platform-configs/kustomization.yaml`, and the generated wrapper carries the registration.
@@ -164,7 +164,7 @@ How to tell it worked: `restic-apps` has a ready endpoint, the app's Replication
 
 Retire an app (after its app is removed and its data is no longer wanted):
 
-1. Take the app off the selection and re-run `tools/lib/render_switches.py`. Commit and push. `restic-apps` restarts without that user, so its login stops working. Flux keeps Secret `backups-restic-app-<name>` (prune disabled); delete it with `kubectl -n platform-backups delete secret backups-restic-app-<name>`.
+1. Take the app off the selection and re-run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`. Commit and push. `restic-apps` restarts without that user, so its login stops working. Flux keeps Secret `backups-restic-app-<name>` (prune disabled); delete it with `kubectl -n platform-backups delete secret backups-restic-app-<name>`.
 2. The repositories stay on disk, and `restic-check` and `restic-offsite` print `FAIL ns-app-<name>/...: no backup credential registered for its app` until they are removed. Remove `<backup_path>/restic/ns-app-<name>` as root on the backup-role node once the data is not needed. The off-host copy keeps its copy until the owner removes it there.
 3. Leave `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` in place. Re-adding that app name later reuses it (step 1 of adding writes only the Component), so any repositories still on disk open again. Once Git has recorded that file, `make bootstrap-secrets` never mints a new one for that name.
 
@@ -397,7 +397,7 @@ Turn it on (owner-run, needs the age public key only):
 1. Set up the target: an empty bucket or a rest-server that only this env writes, and a login for it.
 2. Write a mode `0600` Secret manifest outside the repo: `kind: Secret`, `metadata.name: backups-offsite`, `metadata.namespace: platform-backups`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, and the `stringData` keys above. Generate the off-host password new (`openssl rand -base64 32`).
 3. `make seal ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
-4. List `offsite-backup-copy` under `optional` in `envs/<env>/values/switches.yaml`, run `tools/lib/render_switches.py --env <env>`, commit, and push.
+4. List `offsite-backup-copy` under `optional` in `envs/<env>/values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`, commit, and push.
 5. After Flux applies it: `kubectl -n platform-backups create job --from=cronjob/restic-offsite restic-offsite-first`, wait for it to complete, and read its log: one `PASS` line per repository. `restic snapshots` against the target lists each repository.
 
 Keep-safe: the off-host restic password goes on the owner's offline keep-safe list (`envs/<env>/secrets/README.md`). The sealed copy needs the age key, so a lost controller and a lost age key otherwise lose the off-host copy too.
