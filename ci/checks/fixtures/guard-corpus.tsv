@@ -13,6 +13,7 @@ block	secret-read	shell	kubectl get secret.v1,configmap -A
 block	secret-read	wrapped	kubectl get --raw /api/v1/namespaces
 block	secret-read	wrapped	kubectl get {any:-f,-k,--filename,--kustomize} envs/env-00/secrets
 block	secret-read	shell	{any:,watch }kubectl proxy --port 8001
+block	secret-read	shell	kubectl {any:,--context demo }proxy
 block	secret-read	shell	watch kubectl get secret -A
 block	secret-read	shell	helm {any:,--kube-context demo }{any:get values,get manifest,history,hist,list,ls,status} demo
 block	secret-read	shell	bash -c 'helm list'
@@ -46,7 +47,8 @@ block	age-key	read	{any:/tmp/,keys/}host.agekey
 # admin-kubeconfig: k3s's own kubeconfig and the per-env controller kubeconfig.
 block	admin-kubeconfig	shell	{any:cat,sudo cat,head -n1,tail -n1,ls} {any:~/.kube/jarvis-env-00.yaml,/etc/rancher/k3s/k3s.yaml}
 block	admin-kubeconfig	shell	ls {any:/etc/rancher/k3s,/var/lib/rancher/k3s/server}
-block	admin-kubeconfig	shell	kubectl --kubeconfig ~/.kube/jarvis-env-00.yaml get nodes
+block	admin-kubeconfig	shell	{any:less,more,grep x,rg x,sed -n 1p,awk 1,base64,strings} ~/.kube/jarvis-env-00.yaml
+block	admin-kubeconfig	shell	cp ~/.kube/jarvis-env-00.yaml demo.yaml
 block	admin-kubeconfig	shell	export KUBECONFIG=$HOME/.kube/jarvis-env-00.yaml
 block	admin-kubeconfig	wrapped	kubectl config view --raw
 block	admin-kubeconfig	read	{any:~/,}.kube/jarvis-env-00.yaml
@@ -55,6 +57,7 @@ block	admin-kubeconfig	read	{any:/etc/rancher/k3s/k3s.yaml,/var/lib/rancher/k3s/
 block	cluster-write	wrapped	kubectl {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon} demo
 block	cluster-write	shell	kubectl --context demo {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon} demo
 block	cluster-write	wrapped	kubectl {any:,-n kube-system }{any:rollout restart,rollout undo,rollout pause,rollout resume,certificate approve,certificate deny,auth reconcile -f} demo
+block	cluster-write	shell	kubectl {any:-n demo,--context=demo,--request-timeout=5s} {any:apply,create,delete,edit,patch,replace,scale,annotate,label,exec,cp,port-forward,run,attach,debug,drain,taint,cordon,uncordon,set,expose,autoscale} demo
 block	cluster-write	shell	cat demo.yaml | kubectl apply -f -
 block	cluster-write	shell	kubectl get pods -o name | xargs kubectl {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon,rollout restart,rollout undo,rollout pause,rollout resume}
 block	cluster-write	wrapped	helm {any:,--kube-context demo }{any:install,upgrade,uninstall,delete,del,un,rollback,test} demo
@@ -64,6 +67,9 @@ block	cluster-write	wrapped	flux reconcile {any:kustomization,source git,helmrel
 block	cluster-write	shell	flux reconcile kustomization demo --with-source
 block	cluster-write	shell	{any:time,watch,eval,exec,command,/usr/bin/env,/usr/bin/sudo,/usr/bin/timeout 5} {any:kubectl delete ns demo,helm upgrade demo ./chart,flux delete kustomization demo}
 block	cluster-write	shell	zsh -c 'flux suspend kustomization demo'
+# Naming a kubeconfig is allowed for reads, so every write and Secret read stays blocked behind the flag.
+block	cluster-write	shell	kubectl --kubeconfig ~/.kube/jarvis-env-00.yaml {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon,rollout restart,rollout undo} demo
+block	secret-read	shell	kubectl --kubeconfig ~/.kube/jarvis-env-00.yaml {any:get secret -A,describe secret demo,get --raw /api/v1/namespaces,proxy,config view --raw}
 # cluster-entrypoint: repo make targets and tools that change cluster or node state.
 block	cluster-entrypoint	shell	make {any:,-C . }{any:drill,drill-cleanup,restore,restore-all} ENV=env-00
 block	cluster-entrypoint	shell	{any:bash,sh} -c 'make {any:drill,restore} ENV=env-00'
@@ -142,6 +148,13 @@ allow	cluster-read	shell	kubectl get {any:pods -A,nodes --show-labels,statefulse
 allow	cluster-read	shell	kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'
 allow	cluster-read	shell	kubectl {any:describe pod demo -n default,describe certificate "<name>",logs deploy/demo -n default --tail=20}
 allow	cluster-read	shell	kubectl {any:,--context demo }{any:api-resources,api-versions,auth can-i get pods,cluster-info,config get-contexts,diff -f demo.yaml,events,explain pods,kustomize platform,top pods,version,wait --for=condition=Ready pod/demo}
+# Reads may name a kubeconfig. What they can reach is that kubeconfig's identity, not this list.
+allow	cluster-read	shell	kubectl --kubeconfig ~/.kube/jarvis-env-00.yaml {any:get pods -A -o wide,get daemonset -A,describe pod demo -n default,logs deploy/demo -n default --tail=20,top pods,events,auth can-i get pods,rollout status deploy/demo}
+allow	cluster-read	shell	flux --kubeconfig ~/.kube/jarvis-env-00.yaml {any:get kustomizations -A,logs,tree kustomization demo}
+# A write verb is a whole word: a resource kind or object name that ends in one stays readable.
+allow	cluster-read	shell	kubectl {any:,--context demo ,-n demo }{any:get,describe} {any:daemonset,statefulset,replicaset}{any:, demo}
+allow	cluster-read	shell	kubectl get pod demo-{any:apply,create,delete,edit,patch,replace,scale,annotate,label,exec,cp,port-forward,run,attach,debug,drain,taint,cordon,uncordon,set,expose,autoscale,proxy} -n demo
+allow	cluster-read	shell	kubectl logs deploy/demo-{any:proxy,run,set} -n demo --tail=20
 allow	cluster-read	shell	flux {any:get kustomizations -A,get sources git -A,logs kustomization demo,tree kustomization demo,events --for Kustomization/demo}
 allow	cluster-read	shell	flux {any:,--context demo }{any:build,check,diff,envsubst,export,get,list,logs,pull,push,stats,tag,trace,tree,version} demo
 allow	render	shell	{any:kustomize build platform,helm template demo ./chart,helm --debug template demo ./chart,helm template cm jetstack/cert-manager --set installCRDs=true}

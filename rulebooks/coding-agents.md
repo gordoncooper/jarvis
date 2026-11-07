@@ -4,7 +4,7 @@ Rules here are prose only for what `ci/checks/`, `.cursor/cli.json`, and `.claud
 
 ## Automated guards (do not duplicate)
 
-- **Git is the source of truth; no direct cluster or secret tooling:** `ci/checks/cli-deny`, `.cursor/cli.json`, and `.claude/settings.json`.
+- **Git is the source of truth; cluster reads only, and no secret tooling:** `ci/checks/cli-deny`, `.cursor/cli.json`, and `.claude/settings.json`.
 - **Probes, memory and CPU, stdout:** `ci/checks/manifest-lint`. Gatus stays a later check.
 - **Core stays env-agnostic and identity-free:** `ci/checks/core-names`. Its spec is the identity section of `schema/CONTRACT.md`; read it there, not here. LoadBalancer Services are `ci/checks/loadbalancer`.
 - **Images the repo adds are digest-pinned:** `ci/checks/digest-pin`.
