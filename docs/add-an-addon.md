@@ -19,7 +19,7 @@ An add-on is an optional piece Jarvis ships on top of core. Each env turns it on
 
 In the env's repository:
 
-1. Add the add-on under `addons` in `envs/<env>/values/switches.yaml`, then run `INSTANCE=<path> python3 tools/lib/render_switches.py --env <env>`:
+1. Add the add-on under `addons` in `envs/<env>/values/switches.yaml`, then run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`:
 
    ```yaml
    addons:
