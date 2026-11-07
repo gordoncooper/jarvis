@@ -1,4 +1,4 @@
-"""GPU fact assert: PCI vendor files live behind symlinks (p0a-11b)."""
+"""GPU fact assert: PCI vendor files live behind symlinks."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Flux Git entry (p0a-14): kustomize render, schema validation, and policy checks."""
+"""Flux Git entry: kustomize render, schema validation, and policy checks."""
 
 from __future__ import annotations
 
@@ -283,7 +283,7 @@ def test_cluster_vars_configmap_matches_render_script(example_copy: ExampleCopy)
 
 
 def test_cluster_vars_configmap_publishes_only_the_allow_list() -> None:
-    """R4: the live ConfigMap is the allow-list. Host-only keys stay in the values file."""
+    """The live ConfigMap is the allow-list. Host-only keys stay in the values file."""
     raw = load_cluster_vars()
     data = cluster_vars_configmap(raw)["data"]
     assert isinstance(data, dict)
@@ -305,7 +305,7 @@ def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
 
 
 def test_flux_instance_syncs_its_env_from_cluster_vars(example_copy: ExampleCopy) -> None:
-    """R1, D45: the committed FluxInstance is the one Ansible applies."""
+    """The committed FluxInstance is the one Ansible applies."""
     for root, env in real_and_copy_envs(example_copy):
         assert _flux_instance_errors(_flux_instance(env, root), env, root) == []
 
@@ -333,7 +333,7 @@ def test_flux_instance_drift_from_cluster_vars_fails(
 
 
 def test_flux_entry_has_the_four_standard_kustomizations(example_copy: ExampleCopy) -> None:
-    """R1: four layers, one path each, chained with dependsOn, HelmRelease health checks on platform-controllers."""
+    """Four layers, one path each, chained with dependsOn, HelmRelease health checks on platform-controllers."""
     for root, env in real_and_copy_envs(example_copy):
         assert _flux_kustomization_errors(_flux_kustomizations(env, root=root), env) == []
 
@@ -411,7 +411,7 @@ def _health_check_on_platform_configs(docs: list[dict]) -> None:
     ],
 )
 def test_health_checks_are_exactly_the_listed_helmreleases(tmp_path: Path, mutate) -> None:
-    """R1: platform-controllers waits for cert-manager, Kyverno and VolSync, and only those."""
+    """platform-controllers waits for cert-manager, Kyverno and VolSync, and only those."""
     entry = example_flux_entry(tmp_path)
     assert _flux_kustomization_errors(entry.kustomizations, entry.env) == []
     docs = copy.deepcopy(entry.kustomizations)
@@ -442,7 +442,7 @@ def test_env_00_deployment_health_check_fails() -> None:
 
 
 def test_env_platform_configs_adds_only_its_secrets(example_copy: ExampleCopy) -> None:
-    """R3: core components join platform/configs, not each env's list."""
+    """Core components join platform/configs, not each env's list."""
     for root, env in real_and_copy_envs(example_copy):
         path = root / "envs" / env / "flux" / "platform-configs" / "kustomization.yaml"
         assert _platform_configs_errors(yaml.safe_load(path.read_text(encoding="utf-8")), env) == []

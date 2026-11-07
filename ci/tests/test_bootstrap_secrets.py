@@ -1,4 +1,4 @@
-"""bootstrap-secrets idempotency and no-overwrite behaviour (D33)."""
+"""bootstrap-secrets idempotency and no-overwrite behaviour."""
 
 from __future__ import annotations
 

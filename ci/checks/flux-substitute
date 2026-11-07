@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: every ${name} Flux substitutes is a key the env publishes (R4, D45).
+# CI rule check: every ${name} Flux substitutes is a key the env publishes.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

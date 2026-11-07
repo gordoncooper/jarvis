@@ -1,4 +1,4 @@
-"""R33: requirements-dev.txt pins each Python package with ==."""
+"""requirements-dev.txt pins each Python package with ==."""
 
 from __future__ import annotations
 

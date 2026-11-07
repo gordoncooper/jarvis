@@ -1,4 +1,4 @@
-"""p0b-08 fixture: known file at testapp.${dns_suffix}, no per-Ingress TLS secret (R28).
+"""Fixture: known file at testapp.${dns_suffix}, no per-Ingress TLS secret.
 
 The pod uses RuntimeDefault seccomp and a read-only root. /tmp is the only emptyDir.
 """

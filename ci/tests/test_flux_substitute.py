@@ -1,4 +1,4 @@
-"""flux-substitute CI check (R4, D45): a ${name} Flux substitutes must be a published key."""
+"""flux-substitute CI check: a ${name} Flux substitutes must be a published key."""
 
 from __future__ import annotations
 

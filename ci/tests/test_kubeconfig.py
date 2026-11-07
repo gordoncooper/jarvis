@@ -1,4 +1,4 @@
-"""Per-env kubeconfig rewrite stays check-mode safe and leaves ~/.kube/config alone (p0a-13)."""
+"""Per-env kubeconfig rewrite stays check-mode safe and leaves ~/.kube/config alone."""
 
 from __future__ import annotations
 

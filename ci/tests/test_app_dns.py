@@ -1,4 +1,4 @@
-"""App DNS (p0b-05): k8s_gateway chart and the coredns-custom forward."""
+"""App DNS: k8s_gateway chart and the coredns-custom forward."""
 
 from __future__ import annotations
 

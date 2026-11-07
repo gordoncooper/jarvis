@@ -1,4 +1,4 @@
-"""R5: memory and CPU requests, a memory limit, no CPU limit on long-running containers, probes, stdout.
+"""Memory and CPU requests, a memory limit, no CPU limit on long-running containers, probes, stdout.
 
 Plain pod specs are checked as written. HelmRelease values and HelmChartConfig
 valuesContent are checked where they set resources, probes, or args. Every
@@ -129,7 +129,7 @@ def _walk_values(
 
 
 def _contains_passing_resources(node: object) -> bool:
-    """True when some resources block at any depth passes the R5 resource checks."""
+    """True when some resources block at any depth passes the resource checks."""
     if isinstance(node, dict):
         for key, value in node.items():
             if (

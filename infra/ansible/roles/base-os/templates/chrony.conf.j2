@@ -1,4 +1,5 @@
-# Managed by Ansible (base-os): chrony{% if chrony_nts | bool %} with NTS (framework §4){% endif %}.
+{# Chrony, with NTS while chrony_nts is on. #}
+# Managed by Ansible (base-os).
 {% if chrony_nts | bool %}
 # Outbound 123/udp and 4460/tcp must remain available for NTS; no node firewall changes here.
 {% endif %}

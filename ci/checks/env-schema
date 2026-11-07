@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: env schema validation (R4, framework §5 Env schema).
+# CI rule check: env schema validation.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

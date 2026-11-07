@@ -1,4 +1,4 @@
-"""Flux Operator Ansible helm bootstrap aligns with Git HelmRelease (p0a-14)."""
+"""Flux Operator Ansible helm bootstrap aligns with Git HelmRelease."""
 
 from __future__ import annotations
 
