@@ -1,6 +1,6 @@
 # CI
 
-`ci/run-checks` runs every check listed in `ci/rule-checks.txt` and reports each one that fails. Any failure makes the run fail. `ci/tests/` holds the pytest suite. CI runs both twice, once on the full tree and once with every env except the `env-00` sample removed.
+`ci/run-checks` runs every check listed in `ci/rule-checks.txt` and reports each one that fails. Any failure makes the run fail. `ci/tests/` holds the pytest suite. CI runs both once; the product holds only the `env-00` sample.
 
 Run `bash ci/run-checks` and the tests near your change before pushing. CI at the head SHA is the test record.
 

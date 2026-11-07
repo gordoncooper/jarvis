@@ -1,4 +1,4 @@
-"""product-ci: product trees do not use ci/, except the verify read."""
+"""product-ci: product trees do not use ci/."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from _product_ci import scan_product_ci
 
 
-def test_product_file_referencing_ci_fails_and_verify_read_passes(tmp_path: Path) -> None:
+def test_product_file_referencing_ci_fails(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     leak = tmp_path / "tools" / "leak.py"
     leak.parent.mkdir(parents=True)
@@ -25,6 +25,7 @@ def test_product_file_referencing_ci_fails_and_verify_read_passes(tmp_path: Path
     violations = scan_product_ci(tmp_path)
     assert [(item.path, item.line, item.reference) for item in violations] == [
         ("tools/leak.py", 1, "ci/checks/secret-scan"),
+        ("tools/verify/run", 1, "ci/rule-checks.txt"),
         ("tools/verify/run", 2, "import ci"),
     ]
 
