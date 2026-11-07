@@ -5,7 +5,6 @@ flux_operator_rollout_wait_timeout: 300s
 flux_operator_helm_timeout: 5m
 flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
-flux_instance_name: flux
 # sync.yaml's root GitRepository. Its presence marks a cluster Flux already syncs.
 flux_root_source_name: flux-system
 helm_binary_path: /usr/local/bin/helm

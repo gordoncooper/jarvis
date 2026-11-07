@@ -10,12 +10,6 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "Group Flux Operator chart pin (platform/flux-operator/oci-repository.yaml).",
-      "groupName": "flux-operator-chart",
-      "matchManagers": ["custom.regex"],
-      "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"]
-    },
-    {
       "description": "Mover image stays on the VolSync chart minor. The backups contract depends on that minor's behaviour. Raise the cap in the same PR that bumps the chart to the next minor. One PR still updates every mover pin.",
       "groupName": "volsync-image",
       "matchManagers": ["custom.regex"],
@@ -29,33 +23,29 @@
       "matchDepNames": ["restic/restic", "restic/rest-server"]
     },
     {
-      "description": "One PR updates every Kyverno image digest pin.",
-      "groupName": "kyverno-image",
+      "description": "One PR updates the Kyverno chart, every Kyverno image digest pin and the matching CLI pin in tools/versions.env. Bump the CLI sha256 line by hand in that PR.",
+      "groupName": "kyverno",
       "matchManagers": ["custom.regex"],
       "matchDepNames": [
+        "kyverno",
+        "kyverno/kyverno",
         "ghcr.io/kyverno/kyverno",
         "ghcr.io/kyverno/kyvernopre",
         "ghcr.io/kyverno/background-controller"
       ]
     },
     {
-      "description": "One PR updates every cert-manager image digest pin.",
-      "groupName": "cert-manager-image",
+      "description": "One PR updates the cert-manager chart and every cert-manager image digest pin.",
+      "groupName": "cert-manager",
       "matchManagers": ["custom.regex"],
       "matchDepNames": [
+        "cert-manager",
         "quay.io/jetstack/cert-manager-controller",
         "quay.io/jetstack/cert-manager-webhook",
         "quay.io/jetstack/cert-manager-cainjector",
         "quay.io/jetstack/cert-manager-startupapicheck",
         "quay.io/jetstack/cert-manager-acmesolver"
       ]
-    },
-    {
-      "description": "Flux distribution version is one pin per env, in that env's FluxInstance. Auto-merge stays off. A bump merges only after the Flux Operator version that supports it is live, because the operator ships the manifests for each Flux version.",
-      "groupName": "flux-distribution",
-      "matchManagers": ["custom.regex"],
-      "matchDepNames": ["fluxcd/flux2"],
-      "automerge": false
     },
     {
       "description": "Helm host CLI version and sha256 are bumped together by PR, opened after approval in the dependency dashboard.",
@@ -99,7 +89,7 @@
     },
     {
       "customType": "regex",
-      "description": "k3s version in each env's cluster-vars.yaml. k3s_sha256 is bumped by hand in the same PR.",
+      "description": "k3s version in an env's cluster-vars.yaml. k3s_sha256 is bumped by hand in the same PR.",
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "k3s-io/k3s",
       "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$",
@@ -120,7 +110,7 @@
     },
     {
       "customType": "regex",
-      "description": "Flux distribution version in each env FluxInstance.",
+      "description": "Flux distribution version in an env's FluxInstance. A bump merges only after the Flux Operator version that supports it is live, because the operator ships the manifests for each Flux version.",
       "managerFilePatterns": ["/^envs\\/[^/]+\\/flux\\/flux-instance\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
@@ -192,7 +182,7 @@
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
-        "image: (?<depName>quay.io/backube/volsync):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "# renovate: datasource=docker depName=(?<depName>quay.io/backube/volsync)\\n\\s*image: quay.io/backube/volsync:(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     },
     {
@@ -201,7 +191,7 @@
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^platform\\/(backups\\/rest-server|optional\\/apps-backup-server\\/rest-server-apps)\\.yaml$/"],
       "matchStrings": [
-        "image: (?<depName>restic/rest-server):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "# renovate: datasource=docker depName=(?<depName>restic/rest-server)\\n\\s*image: restic/rest-server:(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     },
     {
@@ -210,7 +200,16 @@
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^platform\\/(backups\\/(etcd-snapshots|restic-check)|optional\\/offsite-backup-copy\\/restic-offsite)\\.yaml$/"],
       "matchStrings": [
-        "image: (?<depName>restic/restic):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "# renovate: datasource=docker depName=(?<depName>restic/restic)\\n\\s*image: restic/restic:(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Grant reconciler python image tag and digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/optional\\/app-hosting\\/grant-revoke\\.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=docker depName=(?<depName>python)\\n\\s*image: python:(?<currentValue>\\d+\\.\\d+\\.\\d+-alpine\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     },
     {

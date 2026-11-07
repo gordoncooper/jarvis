@@ -176,10 +176,6 @@ def destination_body(namespace: str, pvc: str, as_of: str, manual: str) -> dict:
     }
 
 
-def _repo_id(namespace: str, pvc: str) -> str:
-    return f"ns-{namespace}/pvc-{pvc}"
-
-
 def parse_repo(repo: str) -> tuple[str, str] | None:
     if "/" not in repo:
         return None
