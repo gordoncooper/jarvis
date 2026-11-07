@@ -184,6 +184,62 @@ def test_seal_refuses_a_bad_or_mismatched_namespace_before_sops(
     assert not marker.exists()
 
 
+def _app_credential(namespace: str = "platform-backups") -> str:
+    return _secret("backups-restic-app-demo").replace("namespace: demo", f"namespace: {namespace}")
+
+
+def test_seal_writes_an_app_credential_where_the_schema_expects_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An app's credential sits in its app's folder, and its Secret stays in platform-backups."""
+    mod = _load_seal()
+    public, _keyfile = _age_keypair(tmp_path)
+    _sops_rules(tmp_path, public)
+    _bind_repo(monkeypatch, mod, tmp_path)
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    out = mod.seal_app_credential("env-test", "app-demo", _app_credential(), sops_bin=_require_tool("sops"))
+    assert out == tmp_path / mod._app_backups.sealed_rel("env-test", "app-demo")
+    assert yaml.safe_load(out.read_text(encoding="utf-8"))["metadata"]["namespace"] == "platform-backups"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda mod, sops: mod.seal_app_credential("env-test", "demo", _app_credential(), sops_bin=sops), id="not-an-app"),
+        pytest.param(
+            lambda mod, sops: mod.seal_app_credential("env-test", "app-demo", _app_credential("app-demo"), sops_bin=sops),
+            id="secret-in-the-app-namespace",
+        ),
+        pytest.param(
+            lambda mod, sops: mod.seal(
+                "env-test", "backups-restic-app-demo", _secret("backups-restic-app-demo").replace("  namespace: demo\n", ""), sops_bin=sops, namespace="app-demo"
+            ),
+            id="namespace-flag-names-an-app",
+        ),
+    ],
+)
+def test_seal_refuses_an_app_credential_that_would_land_wrong_before_sops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, call
+) -> None:
+    mod = _load_seal()
+    _bind_repo(monkeypatch, mod, tmp_path)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    wrapper, marker = _marker_sops(tmp_path)
+    with pytest.raises(SystemExit):
+        call(mod, str(wrapper))
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--app", "app-demo", "--name", "other"], ["--app", "app-demo", "--namespace", "demo"], []],
+)
+def test_seal_takes_either_name_or_app(extra: list[str]) -> None:
+    with pytest.raises(SystemExit):
+        _load_seal().main(["--env", "env-test", *extra])
+
+
 def test_seal_refuses_to_overwrite_a_sealed_secret_without_force(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
