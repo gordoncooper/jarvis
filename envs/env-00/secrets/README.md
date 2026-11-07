@@ -57,6 +57,8 @@ Add a line here when a later change creates something else that must survive tha
    - Add-on secret, `secrets/<namespace>/<name>.sops.yaml`: `INSTANCE=<path> .venv/bin/python tools/seal --env <env> --name <name> --namespace <namespace> --force <file>`. Only `--namespace` chooses the folder, not `metadata.namespace`. Without it, the tool writes a new top-level file and leaves the nested one encrypted to the lost key. The manifest's `metadata.namespace` must match `--namespace`.
    - App credential, `secrets/app-<name>/backups-restic-app-<name>.sops.yaml`: `INSTANCE=<path> .venv/bin/python tools/seal --env <env> --app app-<name> --force <file>`. The tool names the file and keeps the Secret in `platform-backups`, where the backup policy reads it. Any other form for this file is refused.
 
+   Build each manifest rather than copying a live Secret. It holds `apiVersion`, `kind`, `type`, `metadata.name`, `metadata.namespace`, any annotations the sealed file already carries, and the decoded values under `stringData`. Leave out the live Secret's `uid`, `resourceVersion`, `creationTimestamp`, `managedFields` and Flux labels. Delete the manifest once it is sealed.
+
    Do not print Secret values. Prove the new key with `make age-key-check` before replacing `flux-system/sops-age`. Do not run `make bootstrap-secrets`.
 3. The cluster is gone as well. Regenerate with `make bootstrap-secrets`. The new files are new values. Follow the restic rotation and the CA rotation before treating them as the live credentials.
 
