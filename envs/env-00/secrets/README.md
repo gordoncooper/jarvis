@@ -20,11 +20,11 @@ A new CA permits only that env's `dns_suffix` and its subdomains. The public cer
 
 If `k3s-token` is missing and any other file above is present, bootstrap refuses: that env's cluster already has a token, and the owner seals it (`platform/backups/CONTRACT.md`, Rebuild a dead node). Keep the sealed token as long as any etcd snapshot it encrypts.
 
-If git already records `backups-restic`, bootstrap refuses to recreate it. `make bootstrap-secrets ENV=<env> ROTATE_RESTIC=1` mints a new password anyway. That flag does not add the password to existing repositories. Rotating a live password is in `platform/backups/CONTRACT.md`.
+If `backups-restic` is missing and git already records it, bootstrap refuses to recreate it. `make bootstrap-secrets ENV=<env> ROTATE_RESTIC=1` then mints a new password anyway; a file that exists stays as it is. That flag does not add the password to existing repositories. Rotating a live password is in `platform/backups/CONTRACT.md`.
 
-A hosted app that keeps data gets its own credential: `make bootstrap-secrets ENV=<env> APP=app-<name>` seals `app-<name>/backups-restic-app-<name>.sops.yaml` (a restic password, an apps-server login `ns-app-<name>`, and its bcrypt `htpasswd` line) and writes the Component that registers it. It mints nothing else, and refuses when git already records that app's file. Registering it, and retiring it, is in `platform/backups/CONTRACT.md`, App credentials. This example env registers no app.
+A hosted app that keeps data gets its own credential: `make bootstrap-secrets ENV=<env> APP=app-<name>` seals `app-<name>/backups-restic-app-<name>.sops.yaml` (a restic password, an apps-server login `ns-app-<name>`, and its bcrypt `htpasswd` line) and writes the Component that registers it. It mints nothing else, and refuses when that app's file is missing and git already records it. Registering it, and retiring it, is in `platform/backups/CONTRACT.md`, App credentials. This example env registers no app.
 
-`backups-offsite` is not generated: the owner sets up the off-host target and seals it with `make seal` (`platform/backups/CONTRACT.md`, Off-host copy). This example env lists it in `flux/platform-configs/kustomization.yaml` to show the copy turned on; a copy that does not want it removes those two lines.
+`backups-offsite` is not generated: the owner sets up the off-host target and seals it with `make seal` (`platform/backups/CONTRACT.md`, Off-host copy). This example env lists `offsite-backup-copy` under `optional` in `values/switches.yaml` to show the copy turned on; a copy that does not want it takes it off that list and re-renders.
 
 ## Age-key custody
 
@@ -52,7 +52,12 @@ Add a line here when a later change creates something else that must survive tha
 ## Recovery
 
 1. The cluster is up and a copy of the key still exists, including Secret `flux-system/sops-age` key `age.agekey`. Put that key back at `age_key_file`, mode `0600`. Do not delete sealed files and do not run `make bootstrap-secrets`. Prove the restored copy with `make age-key-check`.
-2. The cluster is up and every copy of the key is gone. Reseal the live Secrets to a new key: write a new age key, put its public key on the env's creation rule, and replace each sealed file with `make seal --force` from a mode `0600` manifest the owner holds. Do not print Secret values. Prove the new key with `make age-key-check` before replacing `flux-system/sops-age`. Do not run `make bootstrap-secrets`.
+2. The cluster is up and every copy of the key is gone. Reseal the live Secrets to a new key: write a new age key, put its public key on the env's creation rule, and replace each sealed file from a mode `0600` manifest the owner holds. For a real env, set `INSTANCE=<path>` on each command as shown, so encryption uses that checkout's `.sops.yaml`.
+   - Top-level secret, `secrets/<name>.sops.yaml` (such as `k3s-token`, `backups-restic`, `cert-manager-ca` or `backups-offsite`): `INSTANCE=<path> .venv/bin/python tools/seal --env <env> --name <name> --force <file>`.
+   - Add-on secret, `secrets/<namespace>/<name>.sops.yaml`: `INSTANCE=<path> .venv/bin/python tools/seal --env <env> --name <name> --namespace <namespace> --force <file>`. Only `--namespace` chooses the folder, not `metadata.namespace`. Without it, the tool writes a new top-level file and leaves the nested one encrypted to the lost key. The manifest's `metadata.namespace` must match `--namespace`.
+   - App credential, `secrets/app-<name>/backups-restic-app-<name>.sops.yaml`: `tools/seal` cannot replace this file. Its folder is `app-<name>` but its Secret's namespace is `platform-backups`, and the tool requires the two to match. A manifest in `platform-backups` is refused, and one with no namespace would be sealed for namespace `app-<name>`, where the backup policy cannot read it.
+
+   Do not print Secret values. Prove the new key with `make age-key-check` before replacing `flux-system/sops-age`. Do not run `make bootstrap-secrets`.
 3. The cluster is gone as well. Regenerate with `make bootstrap-secrets`. The new files are new values. Follow the restic rotation and the CA rotation before treating them as the live credentials.
 
 prep-node writes a missing `.sops.yaml`, or a missing rule for this env, once. A second run changes nothing. A key that does not match the existing recipient changes nothing and points back at this section.

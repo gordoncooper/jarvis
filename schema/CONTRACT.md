@@ -10,7 +10,7 @@ A real env lives in a private instance checkout. `INSTANCE=<path>` points the sc
   - `values/switches.yaml` — what the env enables, by name only (below).
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
-- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `lan_cidrs`, `llm_provider_host`, `chrony_nts`, and `backup_check_schedule`.
+- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `lan_cidrs`, `llm_provider_host`, `chrony_nts`, `backup_check_schedule`, and `node_memory_reserve_percent`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
 - Default `backup_check_schedule: 30 6 * * 3` when omitted. The example env still sets `backup_check_schedule`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.

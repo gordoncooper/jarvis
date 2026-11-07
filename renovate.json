@@ -17,6 +17,14 @@
       "allowedVersions": "<0.18"
     },
     {
+      "description": "The VolumeSnapshot CRD is vendored and nothing updates it. Put the re-check where the reviewer of a VolSync chart bump sees it.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["volsync"],
+      "prBodyNotes": [
+        "Re-check `platform/backups/controller/volumesnapshot-crd.yaml` against the external-snapshotter client this VolSync release imports."
+      ]
+    },
+    {
       "description": "The restic and rest-server images and the matching CLI pins in tools/versions.env move in one PR, because the rest-server isolation test requires them equal. Bump the CLI sha256 lines by hand in that PR.",
       "groupName": "restic",
       "matchManagers": ["custom.regex"],

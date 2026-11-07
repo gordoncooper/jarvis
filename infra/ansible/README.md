@@ -9,7 +9,7 @@
 `tools/prep-node` takes a freshly installed Ubuntu Server node to that state, then records the host name and `ssh_user` in the env. Run it from a checkout on the machine that drives the build. Omitted flags are prompted.
 
 ```bash
-tools/prep-node --env <env> --host <hostname> --login-user <user>
+.venv/bin/python tools/prep-node --env <env> --host <hostname> --login-user <user>
 ```
 
 The host name must already be an inventory key and must resolve with `getent hosts` before the node is changed. Before it touches the host it settles the Ansible user: the example placeholder defaults to the login user, a recorded user is kept, and a different user is refused. Login may differ from the Ansible user. The script confirms the host key, installs your public key, and asks before changing the short hostname. A new short hostname is recorded as `<short>.<same domain as --host>` and must resolve first. It prints the node's primary address and whether that address came from DHCP. On DHCP it warns that the address must stay stable (for example, a router DHCP reservation), because k3s breaks when the address changes. It does not write or rename netplan files, and it does not write the address into the repo. It installs only `openssh-server`, `python3`, and `sudo` if they are missing, and grants the chosen user passwordless sudo. It checks that key login works, then can turn off SSH password login. If the clock is not synced, it warns and asks before recording the env. If the age key file is missing it can create one. It adds a missing `.sops.yaml` rule for this env and leaves a mismatched recipient unchanged. It shows `git diff` and does not commit.

@@ -2,7 +2,8 @@
 """Print one make target's recipe. make -n does not run it.
 
 Only documented variable names are forwarded. A value make would expand
-is refused, because dry-run still expands it.
+is refused, because dry-run still expands it. INSTANCE from the environment
+is refused too, because a plan that ignored it would show the wrong checkout.
 """
 
 from __future__ import annotations
@@ -27,11 +28,13 @@ _NAMES = frozenset(
         "KEY",
         "LIMIT",
         "NAME",
+        "NAMESPACE",
         "NODE",
         "OWNER_NAME",
         "RETIRE",
         "ROTATE_RESTIC",
         "TAGS",
+        "VENV",
     }
 )
 _TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -48,6 +51,9 @@ def main(argv: list[str]) -> int:
         if not sep or name not in _NAMES or _EXPAND.search(value) or "\n" in value:
             print(_USAGE, file=sys.stderr)
             return 2
+    if os.environ.get("INSTANCE") and not any(item.startswith("INSTANCE=") for item in argv[2:]):
+        print("make-plan: pass INSTANCE=<path> as an argument, not from the environment", file=sys.stderr)
+        return 2
     env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")}
     return subprocess.run(["make", "-n", "--", *argv[1:]], cwd=ROOT, env=env).returncode
 

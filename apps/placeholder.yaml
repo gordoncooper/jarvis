@@ -1,4 +1,4 @@
-# D9: placeholder until app hosting (jarvis-apps) is wired in P4a.
+# Placeholder for the apps Flux stage. Hosted apps have their own wiring.
 apiVersion: v1
 kind: ConfigMap
 metadata:
