@@ -37,8 +37,9 @@ def seal(
     """Write name.sops.yaml under envs/<env>/secrets/, or under secrets/<namespace>/ for an
     add-on's Secret, or under secrets/<folder>/ when the two differ. Fails if present unless force."""
     if folder is None:
-        if namespace is not None and _app_backups.APP_NAMESPACE.fullmatch(namespace):
-            raise SystemExit(f"refusing --namespace {namespace}: an app's credential Secret is not in it; use --app")
+        in_app = namespace is not None and _app_backups.APP_NAMESPACE.fullmatch(namespace)
+        if in_app or _app_backups.is_secret_name(name):
+            raise SystemExit(f"refusing {name}: seal an app's backup credential with --app")
         folder = namespace
     out = _sops.secret_path(_repo_root(), env, name, folder)
     doc = yaml.safe_load(plaintext)
