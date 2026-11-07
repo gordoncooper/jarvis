@@ -12,7 +12,7 @@ import yaml
 
 from _addons import scan_addons
 from schema.env import ValidationError, validate_env_tree
-from support import REPO_ROOT, _write_env, bootstrap_example_copy, instance_apps_repo_for_checks
+from support import REPO_ROOT, _write_env, bootstrap_example_copy, instance_apps_repo_for_checks, render_switches
 
 _TENANT = {"kind": "ServiceAccount", "name": "addon-widget", "namespace": "flux-system"}
 
@@ -325,6 +325,17 @@ def test_env_addon_list_breaking_the_rules_fails(
     """env-schema rejects an unknown add-on, a duplicate, and two add-ons for one slot."""
     errors = _schema_errors(_schema_env(tmp_path, components, slots=slots))
     assert any(expected in item for item in errors), errors
+
+
+def test_render_refuses_two_addons_for_one_slot(tmp_path: Path) -> None:
+    """Rule: the render checks slots before it writes, so a conflict never reaches the env's wiring."""
+    root = _schema_env(tmp_path, [], slots={"widget": "chat-bot", "gadget": "chat-bot"})
+    env = root / "envs" / "env-test"
+    _write(env / "values" / "switches.yaml", yaml.safe_dump({"addons": ["widget", "gadget"]}))
+    before = (env / "flux" / "kustomizations" / "services.yaml").read_text(encoding="utf-8")
+    with pytest.raises(SystemExit, match="all fill slot chat-bot"):
+        render_switches(env, root)
+    assert (env / "flux" / "kustomizations" / "services.yaml").read_text(encoding="utf-8") == before
 
 
 def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:

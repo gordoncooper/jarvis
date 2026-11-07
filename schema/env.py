@@ -680,29 +680,17 @@ def app_hosting_listed(env_dir: Path) -> bool:
     return _switches.APP_HOSTING in _switches.names(data, _switches.OPTIONAL)
 
 
-def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[object]:
-    """The app credentials an env registers: its platform-configs components other than the
-    app-hosting switch, as <registration dir>/<namespace>. When values/apps.yaml declares
-    backups, the enabled set comes from that selection instead of hand-listed components."""
+def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[str]:
+    """The app namespaces an env registers a credential for: the backups selection in
+    values/apps.yaml. With no selection it registers none."""
     data, _ = _apps.load_values(env_dir)
     section = _backup_selection.load_section(data or {})
-    root = Path(repo_root) if repo_root is not None else env_dir.parents[1]
-    if section is not None:
-        apps_list = _apps.app_names(data)
-        apps_root = _backup_selection.selection_apps_root(root, env_dir, apps_list)
-        return _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
-    _path, doc = _platform_configs(env_dir)
-    components = doc.get("components")
-    if not isinstance(components, list):
+    if section is None:
         return []
-    prefix = f"{_app_backups.REGISTRATION_DIR}/"
-    return [
-        item.strip().removeprefix("./").removeprefix(prefix)
-        if isinstance(item, str) and item.strip().removeprefix("./").startswith(prefix)
-        else item
-        for item in components
-        if not _app_hosting_component(env_dir, root, item)
-    ]
+    root = Path(repo_root) if repo_root is not None else env_dir.parents[1]
+    apps_list = _apps.app_names(data)
+    apps_root = _backup_selection.selection_apps_root(root, env_dir, apps_list)
+    return _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
 
 
 def backup_required_registrations(env_dir: Path, repo_root: Path) -> frozenset[str] | None:
@@ -730,7 +718,7 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
         return errors
     registered = app_registrations(env_dir, repo_root)
     if section is not None:
-        expected = set(item for item in registered if isinstance(item, str))
+        expected = set(registered)
         prefix = f"{_app_backups.REGISTRATION_DIR}/"
         _path, doc = _platform_configs(env_dir)
         components = doc.get("components") or []
@@ -758,12 +746,6 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
         if not expected and wrapper in components:
             errors.append(f"{rel}: lists {wrapper!r} but no app is backup-enabled; re-render backup selection")
     for item in registered:
-        if not isinstance(item, str) or not _app_backups.APP_NAMESPACE.fullmatch(item):
-            errors.append(
-                f"{rel}: component {item!r} is not an app credential registration "
-                f"({_app_backups.REGISTRATION_DIR}/app-<name>); only hosted apps register one"
-            )
-            continue
         component = repo_root / _app_backups.registration_rel(env_name, item)
         if not component.is_file() or component.read_text(encoding="utf-8") != _app_backups.registration_component(item):
             errors.append(
@@ -894,6 +876,7 @@ def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
         f"{rel}: {problem}"
         for problem in _switches.validate(data, addon_names(core))
     ]
+    errors.extend(_slot_conflicts(rel, _switches.names(data, _switches.ADDONS), core))
     apps = [name for name in _switches.names(data, _switches.APPS) if _apps.APP_NAME.fullmatch(name)]
     if not apps:
         return errors
@@ -941,6 +924,20 @@ def _validate_switches(env_dir: Path, repo_root: Path, env_name: str, bootstrapp
     return errors
 
 
+def _slot_conflicts(rel: str, listed: list[str], core: Path) -> list[str]:
+    """Two listed add-ons that fill one slot; an env enables at most one per slot."""
+    known = addon_names(core)
+    by_slot: dict[str, list[str]] = {}
+    for name in dict.fromkeys(item for item in listed if isinstance(item, str) and item in known):
+        for slot in sorted(addon_slots(addon_documents(core, name))):
+            by_slot.setdefault(slot, []).append(name)
+    return [
+        f"{rel}: add-ons {', '.join(names)} all fill slot {slot}; an env enables at most one per slot"
+        for slot, names in sorted(by_slot.items())
+        if len(names) > 1
+    ]
+
+
 def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
     """Each listed add-on exists in core, once; at most one per slot; its sealed Secrets exist once
     the env is bootstrapped. Like the off-host copy, a new env before bootstrap needs no secret."""
@@ -950,7 +947,6 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
     known = addon_names(core)
     errors: list[str] = []
     seen: set[str] = set()
-    by_slot: dict[str, list[str]] = {}
     for name in listed:
         if not isinstance(name, str) or name not in known:
             errors.append(f"{rel}: unknown add-on {name!r} in spec.components (known: {', '.join(known) or 'none'})")
@@ -960,8 +956,6 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
             continue
         seen.add(name)
         docs = addon_documents(core, name)
-        for slot in sorted(addon_slots(docs)):
-            by_slot.setdefault(slot, []).append(name)
         if not bootstrapped or is_example_env(env_name):
             continue
         for namespace in addon_secret_namespaces(docs):
@@ -971,11 +965,7 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
                     f"{env_name}: add-on {name} decrypts {_display_path(folder, repo_root)}, "
                     "which holds no sealed file; seal one with make seal NAMESPACE=" + namespace
                 )
-    for slot, names in sorted(by_slot.items()):
-        if len(names) > 1:
-            errors.append(
-                f"{rel}: add-ons {', '.join(names)} all fill slot {slot}; an env enables at most one per slot"
-            )
+    errors.extend(_slot_conflicts(rel, listed, core))
     return errors
 
 

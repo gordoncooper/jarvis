@@ -3,8 +3,8 @@
 
 Writes flux/kustomization.yaml, flux/kustomizations/services.yaml,
 flux/platform-configs/kustomization.yaml, flux/generated/apps.yaml and the backup selection.
-Names, app lines and the backup selection are checked before the first write; env-schema then
-checks what needs the whole env, such as slots and sealed files. A second run changes nothing.
+Names, slots, app lines and the backup selection are checked before the first write; env-schema
+then checks what needs the whole env, such as sealed files. A second run changes nothing.
 """
 
 from __future__ import annotations
