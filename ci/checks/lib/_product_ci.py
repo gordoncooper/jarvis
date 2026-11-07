@@ -1,8 +1,4 @@
-"""Product trees must not import, execute, source, or read ci/.
-
-The only exception: tools/verify may read ci/rule-checks.txt.
-That read is not an import, an execute, or a source.
-"""
+"""Product trees must not import, execute, source, or read ci/."""
 
 from __future__ import annotations
 
@@ -10,10 +6,6 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-
-# tools/verify may read this file. Nothing else under ci/ is allowed.
-ALLOWED_READ_PREFIX = "tools/verify/"
-ALLOWED_READ_PATH = "ci/rule-checks.txt"
 
 _PRODUCT_ROOTS = (
     "tools/",
@@ -27,9 +19,6 @@ _PRODUCT_ROOTS = (
 
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _IMPORT = re.compile(r"(?:^|\s)(?:import\s+ci\b|from\s+ci\b)")
-_EXEC = re.compile(
-    r"(?:^|[\s;|&])(?:python3?|bash|sh|exec|source|\.)\s+['\"]?ci/\S+"
-)
 # ci/ as its own path. A preceding word character (pci/) does not match.
 _CI_PATH = re.compile(r"(?<![A-Za-z0-9_])ci/[A-Za-z0-9_./-]*")
 
@@ -70,20 +59,9 @@ def format_violations(violations: list[ProductCiViolation]) -> list[str]:
 def _line_violations(rel_path: str, line_no: int, line: str) -> list[ProductCiViolation]:
     text = _INLINE_CODE.sub(" ", line) if rel_path.endswith(".md") else line
     found: list[str] = []
-    imported = _IMPORT.search(text) is not None
-    executed = _EXEC.search(text) is not None
-    if imported:
+    if _IMPORT.search(text) is not None:
         found.append("import ci")
-    for match in _CI_PATH.finditer(text):
-        ref = match.group(0)
-        if (
-            not imported
-            and not executed
-            and rel_path.startswith(ALLOWED_READ_PREFIX)
-            and ref == ALLOWED_READ_PATH
-        ):
-            continue
-        found.append(ref)
+    found.extend(match.group(0) for match in _CI_PATH.finditer(text))
     unique: list[str] = []
     for ref in found:
         if ref not in unique:
