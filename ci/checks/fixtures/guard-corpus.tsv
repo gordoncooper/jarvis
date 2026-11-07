@@ -13,6 +13,7 @@ block	secret-read	shell	kubectl get secret.v1,configmap -A
 block	secret-read	wrapped	kubectl get --raw /api/v1/namespaces
 block	secret-read	wrapped	kubectl get {any:-f,-k,--filename,--kustomize} envs/env-00/secrets
 block	secret-read	shell	{any:,watch }kubectl proxy --port 8001
+block	secret-read	shell	kubectl {any:,--context demo }proxy
 block	secret-read	shell	watch kubectl get secret -A
 block	secret-read	shell	helm {any:,--kube-context demo }{any:get values,get manifest,history,hist,list,ls,status} demo
 block	secret-read	shell	bash -c 'helm list'
@@ -55,6 +56,7 @@ block	admin-kubeconfig	read	{any:/etc/rancher/k3s/k3s.yaml,/var/lib/rancher/k3s/
 block	cluster-write	wrapped	kubectl {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon} demo
 block	cluster-write	shell	kubectl --context demo {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon} demo
 block	cluster-write	wrapped	kubectl {any:,-n kube-system }{any:rollout restart,rollout undo,rollout pause,rollout resume,certificate approve,certificate deny,auth reconcile -f} demo
+block	cluster-write	shell	kubectl {any:-n demo,--context=demo,--request-timeout=5s} {any:apply,create,delete,edit,patch,replace,scale,annotate,label,exec,cp,port-forward,run,attach,debug,drain,taint,cordon,uncordon,set,expose,autoscale} demo
 block	cluster-write	shell	cat demo.yaml | kubectl apply -f -
 block	cluster-write	shell	kubectl get pods -o name | xargs kubectl {any:apply,annotate,attach,autoscale,cordon,cp,create,debug,delete,drain,edit,exec,expose,label,patch,port-forward,replace,run,scale,set,taint,uncordon,rollout restart,rollout undo,rollout pause,rollout resume}
 block	cluster-write	wrapped	helm {any:,--kube-context demo }{any:install,upgrade,uninstall,delete,del,un,rollback,test} demo
@@ -142,6 +144,10 @@ allow	cluster-read	shell	kubectl get {any:pods -A,nodes --show-labels,statefulse
 allow	cluster-read	shell	kubectl get nodes -o jsonpath='{.items[*].status.capacity.cpu}'
 allow	cluster-read	shell	kubectl {any:describe pod demo -n default,describe certificate "<name>",logs deploy/demo -n default --tail=20}
 allow	cluster-read	shell	kubectl {any:,--context demo }{any:api-resources,api-versions,auth can-i get pods,cluster-info,config get-contexts,diff -f demo.yaml,events,explain pods,kustomize platform,top pods,version,wait --for=condition=Ready pod/demo}
+# A write verb is a whole word: a resource kind or object name that ends in one stays readable.
+allow	cluster-read	shell	kubectl {any:,--context demo ,-n demo }{any:get,describe} {any:daemonset,statefulset,replicaset}{any:, demo}
+allow	cluster-read	shell	kubectl get pod demo-{any:apply,create,delete,edit,patch,replace,scale,annotate,label,exec,cp,port-forward,run,attach,debug,drain,taint,cordon,uncordon,set,expose,autoscale,proxy} -n demo
+allow	cluster-read	shell	kubectl logs deploy/demo-{any:proxy,run,set} -n demo --tail=20
 allow	cluster-read	shell	flux {any:get kustomizations -A,get sources git -A,logs kustomization demo,tree kustomization demo,events --for Kustomization/demo}
 allow	cluster-read	shell	flux {any:,--context demo }{any:build,check,diff,envsubst,export,get,list,logs,pull,push,stats,tag,trace,tree,version} demo
 allow	render	shell	{any:kustomize build platform,helm template demo ./chart,helm --debug template demo ./chart,helm template cm jetstack/cert-manager --set installCRDs=true}
