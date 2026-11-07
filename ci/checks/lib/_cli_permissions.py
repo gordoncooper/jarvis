@@ -4,8 +4,9 @@
 block every `block` row and allow every `allow` row of
 `fixtures/guard-corpus.tsv`. The check proves the checked-in lists against
 this model of each client. It does not prove the clients. The lists are
-best-effort defence in depth; the boundary is that workers hold no kubeconfig
-and no age key.
+best-effort defence in depth. Workers hold no age key. A worker may name a
+kubeconfig for cluster reads, so what it can reach is that kubeconfig's identity:
+these lists do not stop a form they cannot see.
 
 Both clients split a line into commands at && || ; | & newlines, $( ),
 backticks and subshells, drop leading FOO=1 assignments, and match each
