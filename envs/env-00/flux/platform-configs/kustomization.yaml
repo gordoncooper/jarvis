@@ -5,7 +5,7 @@ resources:
 - ../../../../core/platform/configs
 - ../../secrets/backups-restic.sops.yaml
 - ../../secrets/cert-manager-ca.sops.yaml
-- ../../../../core/platform/optional/offsite-copy
+- ../../../../core/platform/optional/offsite-backup-copy
 - ../../secrets/backups-offsite.sops.yaml
 components:
 - ../../../../core/platform/optional/app-hosting

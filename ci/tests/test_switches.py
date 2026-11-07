@@ -132,7 +132,7 @@ def test_selected_backups_need_the_apps_server_switch(tmp_path: Path) -> None:
     """Rule: the render refuses a backup selection with the apps server off, before it writes."""
     copy = bootstrap_example_copy(tmp_path)
     register_copy_app(copy, "app-notes")
-    set_switches(copy.env_dir, optional=["app-hosting", "offsite-copy"])
+    set_switches(copy.env_dir, optional=["app-hosting", "offsite-backup-copy"])
     before = _tree(copy)
     with pytest.raises(SystemExit, match="apps-backup-server"):
         render_switches(copy.env_dir, copy.root)

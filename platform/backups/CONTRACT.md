@@ -14,7 +14,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - Opt-in apps rest-server (`platform/optional/apps-backup-server`): Deployment and ClusterIP Service `restic-apps` on port 8000, with `--private-repos`. Off by default; nothing for apps runs until an env lists it.
 - One credential per hosted app that keeps data (Secret `platform-backups/backups-restic-app-<name>`), minted by `make bootstrap-secrets APP=app-<name>`. It opens only `ns-app-<name>/` on the apps server.
 - A StatefulSet volume gets one `ReplicationSource` per PVC Kubernetes creates (`<template>-<statefulset>-<ordinal>`). Git does not list the ordinals.
-- Opt-in CronJob `restic-offsite` (`platform/optional/offsite-copy`): a nightly `restic copy` of every local repository to the env's off-host restic backend (Operations, Off-host copy).
+- Opt-in CronJob `restic-offsite` (`platform/optional/offsite-backup-copy`): a nightly `restic copy` of every local repository to the env's off-host restic backend (Operations, Off-host copy).
 - Opt-out for rebuildable observability data: the unprefixed annotation `backup: none` on a PVC, or on a `volumeClaimTemplate`'s `metadata`. Allowed only under `services/observability/victoria-metrics/` and `services/observability/victoria-logs/`.
 
 ## Expects
@@ -25,7 +25,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - The backup-role node (`node-role.jarvis.io/backup=true`) for the rest-server hostPath.
 - The control-plane node (`node-role.jarvis.io/control_plane=true`), where k3s writes the snapshot files.
 - rest-server, CronJob `etcd-snapshots`, and CronJob `restic-check` each match their role with required node affinity: `node-role.jarvis.io/<role>=true`, or, until that term is removed, `role.<dns_suffix>/<role>=true`. Each tolerates `node-role.jarvis.io/dedicated=true:NoSchedule`. Drill pods copy that affinity and toleration.
-- An env that lists `offsite-copy` in `values/switches.yaml` also holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`, without the transitional term.
+- An env that lists `offsite-backup-copy` in `values/switches.yaml` also holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`, without the transitional term.
 - An env that registers an app credential lists `apps-backup-server` in `values/switches.yaml`, selects the app under `backups:` in `values/apps.yaml`, holds the generated `flux/generated/backup-selection/`, and holds `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` (`ci/checks/env-schema`, App credentials below). `restic-apps` has the rest-server's backup-role affinity and dedicated toleration.
 - A mover needs egress to the server its volume uses, TCP 8000, plus cluster DNS: a core or add-on namespace to Service `restic.platform-backups.svc.cluster.local`, an `app-<name>` namespace to Service `restic-apps.platform-backups.svc.cluster.local` only. A network policy that blocks this fails that namespace's backups. With app hosting on, an app namespace is default-deny; its NetworkPolicy `app-backups` (ClusterPolicy `app-derive`, [platform/optional/app-hosting/CONTRACT.md](../optional/app-hosting/CONTRACT.md)) allows exactly this while Secret `backups-restic-app-<name>` exists, and its `cluster-dns` the DNS.
 - A hosted app's PVC is one its app file declares. A volume declared `backup: false` carries annotation `backup: none` (admission refuses it otherwise), is never enrolled, and `make verify` reports it as declared rather than failing it. This is the third case of `backup: none`, besides the observability allow-list below; it holds only in `app-` namespaces and only for a declared volume.
@@ -397,7 +397,7 @@ Turn it on (owner-run, needs the age public key only):
 1. Set up the target: an empty bucket or a rest-server that only this env writes, and a login for it.
 2. Write a mode `0600` Secret manifest outside the repo: `kind: Secret`, `metadata.name: backups-offsite`, `metadata.namespace: platform-backups`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, and the `stringData` keys above. Generate the off-host password new (`openssl rand -base64 32`).
 3. `make seal ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
-4. List `offsite-copy` under `optional` in `envs/<env>/values/switches.yaml`, run `tools/lib/render_switches.py --env <env>`, commit, and push.
+4. List `offsite-backup-copy` under `optional` in `envs/<env>/values/switches.yaml`, run `tools/lib/render_switches.py --env <env>`, commit, and push.
 5. After Flux applies it: `kubectl -n platform-backups create job --from=cronjob/restic-offsite restic-offsite-first`, wait for it to complete, and read its log: one `PASS` line per repository. `restic snapshots` against the target lists each repository.
 
 Keep-safe: the off-host restic password goes on the owner's offline keep-safe list (`envs/<env>/secrets/README.md`). The sealed copy needs the age key, so a lost controller and a lost age key otherwise lose the off-host copy too.
