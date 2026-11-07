@@ -1,4 +1,4 @@
-"""manifest-lint CI check (p0b-06, R5)."""
+"""manifest-lint CI check."""
 
 from __future__ import annotations
 
@@ -252,7 +252,7 @@ spec:
     ],
 )
 def test_r5_chart_values_need_a_passing_resources_block(tmp_path: Path, rel: str, text: str) -> None:
-    """R5: HelmRelease values and HelmChartConfig valuesContent need a resources block."""
+    """HelmRelease values and HelmChartConfig valuesContent need a resources block."""
     _write(tmp_path, rel, text)
     violations = scan_manifest_lint(tmp_path)
     assert len(violations) == 1

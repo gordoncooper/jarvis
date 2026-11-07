@@ -1,4 +1,4 @@
-"""python-pins CI check (R33)."""
+"""python-pins CI check."""
 
 from __future__ import annotations
 

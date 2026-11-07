@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: workloads set probes, resources, and stdout logs (R5, D30).
+# CI rule check: workloads set probes, resources, and stdout logs.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -1,4 +1,4 @@
-"""digest-pin CI check (p0b-07, R33)."""
+"""digest-pin CI check."""
 
 from __future__ import annotations
 

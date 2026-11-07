@@ -11,7 +11,7 @@ Rules here are prose only for what `ci/checks/`, `.cursor/cli.json`, and `.claud
 - **Env schema (values under `envs/<env>/`):** `ci/checks/env-schema`.
 - **Every Flux Kustomization and HelmRelease names a service account the root sync applies, only the platform layer runs as the platform account, and refs stay in-namespace:** `ci/checks/flux-identity`.
 - **Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
-- **Plan codes stay out of Markdown docs, READMEs and `docs/` (not `AGENTS.md` or `.github/`):** `ci/checks/plan-codes`.
+- **Plan codes stay out of Markdown docs, READMEs and `docs/` (not `AGENTS.md` or `.github/`):** `ci/checks/plan-codes`. Code and comments carry none either; no check enforces that.
 - **No plaintext secrets in Git:** `ci/checks/secret-scan`.
 - **Product trees do not use `ci/`:** `ci/checks/product-ci`. `tools/verify` may read `ci/rule-checks.txt`.
 - **The backup ClusterPolicy enrolls every PVC, or the PVC is `backup: none`:** `ci/checks/pvc-backup`.

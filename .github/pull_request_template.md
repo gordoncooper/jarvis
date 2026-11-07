@@ -12,7 +12,7 @@
 
 ## Evidence
 
-Attach command output, links, or logs that prove the done checks (R35).
+Attach command output, links, or logs that prove the done checks.
 
 ## Ready to merge
 

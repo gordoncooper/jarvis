@@ -1,4 +1,4 @@
-"""R31: enrollment is the ClusterPolicy. Git does not carry per-PVC backup objects."""
+"""Enrollment is the ClusterPolicy. Git does not carry per-PVC backup objects."""
 
 from __future__ import annotations
 

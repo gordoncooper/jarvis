@@ -1,4 +1,4 @@
-"""Role groups from the constructed inventory (p0a-11a)."""
+"""Role groups from the constructed inventory."""
 
 from __future__ import annotations
 

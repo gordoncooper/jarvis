@@ -14,7 +14,7 @@ from support import renovate_python_pattern as _js_to_python
 
 
 def test_each_env_flux_instance_version_is_a_renovate_pin(example_copy: ExampleCopy) -> None:
-    """R33: Renovate reads each env FluxInstance's Flux version, its only pin."""
+    """Renovate reads each env FluxInstance's Flux version, its only pin."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     paths = sorted(ROOT.glob("envs/*/flux/flux-instance.yaml"))
     tracked = set(paths)
@@ -368,7 +368,7 @@ def test_volsync_chart_prs_name_the_vendored_crd() -> None:
 
 @pytest.mark.parametrize("rel", ["platform/testapp/testapp.yaml", "services/hello/app/hello.yaml"])
 def test_testapp_image_tag_and_digest_are_a_custom_manager(rel: str) -> None:
-    """R33: the canary image pins, and the sample add-on's copy, are one file-scoped regex manager."""
+    """The canary image pins, and the sample add-on's copy, are one file-scoped regex manager."""
     source = (ROOT / rel).read_text(encoding="utf-8")
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI rule check: LoadBalancer Services are only Traefik and App DNS (R28).
+# CI rule check: LoadBalancer Services are only Traefik and App DNS.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

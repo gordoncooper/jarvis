@@ -1,4 +1,4 @@
-"""R28: the only LoadBalancer Services are Traefik and App DNS.
+"""The only LoadBalancer Services are Traefik and App DNS.
 
 Traefik is the HelmChartConfig under platform/traefik/. App DNS is the
 HelmRelease under platform/app-dns/. The allow-list is those two objects by

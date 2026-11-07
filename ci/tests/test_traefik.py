@@ -1,4 +1,4 @@
-"""Traefik HelmChartConfig (p0b-03): plain Ingress on the edge Service."""
+"""Traefik HelmChartConfig: plain Ingress on the edge Service."""
 
 from __future__ import annotations
 

@@ -595,7 +595,7 @@ def _mutation_at(calls: list[list[str]]) -> int:
 
 
 def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
-    """R33: the binder uses the live etcd-snapshots image, read once before any change."""
+    """The binder uses the live etcd-snapshots image, read once before any change."""
     image = "restic/restic@sha256:" + ("b" * 64)
     assert image != _FAKE_RESTIC_IMAGE
     cluster = _Cluster(
@@ -773,7 +773,7 @@ def test_bad_etcd_image_fails_before_any_change(
     message: str,
     capsys,
 ) -> None:
-    """J1/J2: a missing CronJob, missing image, or non-digest restic image changes nothing."""
+    """A missing CronJob, missing image, or non-digest restic image changes nothing."""
     cluster = _Cluster(
         [_pvc("demo", "pending", volume="")],
         will_pause=True,

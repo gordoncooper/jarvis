@@ -1,4 +1,4 @@
-"""Identity scan for core (D44).
+"""Identity scan for core.
 
 Sources are non-example envs plus OWNER_NAME. Repo slugs are not sources:
 a repo URL outside envs/<env>/ already contains the owner handle, and the

@@ -1,4 +1,4 @@
-"""flux-operator Ansible role: template rules and check-mode proof (p0a-13)."""
+"""flux-operator Ansible role: template rules and check-mode proof."""
 
 from __future__ import annotations
 

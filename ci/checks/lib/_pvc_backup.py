@@ -1,4 +1,4 @@
-"""R31: the backup ClusterPolicy enrolls PVCs. Git does not write ReplicationSources."""
+"""The backup ClusterPolicy enrolls PVCs. Git does not write ReplicationSources."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from _manifests import load_documents
 BACKUP_NONE_ANNOTATION = "backup"
 BACKUP_NONE_VALUE = "none"
 
-# Observability volumes may opt out (R31). Anywhere else, backup: none fails.
+# Observability volumes may opt out. Anywhere else, backup: none fails.
 BACKUP_NONE_ALLOWED_PREFIXES: tuple[str, ...] = (
     "services/observability/victoria-metrics/",
     "services/observability/victoria-logs/",

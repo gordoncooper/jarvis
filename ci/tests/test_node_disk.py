@@ -1,4 +1,4 @@
-"""node-disk only checks a declared data disk (p0a-11b)."""
+"""node-disk only checks a declared data disk."""
 
 from __future__ import annotations
 
