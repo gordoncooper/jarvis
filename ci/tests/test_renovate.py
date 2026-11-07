@@ -358,6 +358,14 @@ def _manager_files(manager: dict) -> list[Path]:
     return files
 
 
+def test_volsync_chart_prs_name_the_vendored_crd() -> None:
+    """Nothing updates the vendored VolumeSnapshot CRD, so a chart bump's PR says to re-check it."""
+    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    rule = next(item for item in renovate["packageRules"] if item.get("matchDepNames") == ["volsync"])
+    crd = next(word.strip("`") for word in rule["prBodyNotes"][0].split() if word.endswith("crd.yaml`"))
+    assert (ROOT / crd).is_file()
+
+
 @pytest.mark.parametrize("rel", ["platform/testapp/testapp.yaml", "services/hello/app/hello.yaml"])
 def test_testapp_image_tag_and_digest_are_a_custom_manager(rel: str) -> None:
     """R33: the canary image pins, and the sample add-on's copy, are one file-scoped regex manager."""

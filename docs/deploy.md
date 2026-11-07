@@ -26,20 +26,22 @@ curl -fsSL "https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256
 make deps
 ```
 
-Installs the pinned `sops`, `age`, `age-keygen`, `kubectl`, `kustomize`, `kubeconform`, and `gitleaks` binaries into `~/.local/bin`, and creates `.venv`. Put `~/.local/bin` on `PATH`.
+Installs the pinned `sops`, `age`, `age-keygen`, `kubectl`, `kustomize`, `kubeconform`, `gitleaks`, `restic`, `rest-server`, and `kyverno` binaries into `~/.local/bin`, and creates `.venv`. Put `~/.local/bin` on `PATH`.
+
+The Python tools need PyYAML, which `make deps` installs only in `.venv`. `make` targets already use it. When a step runs a tool directly, use `.venv/bin/python` as written, or the tool can fail with `No module named 'yaml'`.
 
 ## New env
 
 A real env lives in its own private instance repository, made from `envs/env-00`. This repository keeps only the example. Copy that example only, never a real env and never its secrets.
 
 1. Create an empty private repository and clone it next to this checkout. Copy `envs/env-00` into it as `envs/<env>`.
-2. Point every env command at that checkout with `INSTANCE=<path>`, for example `make site ENV=<env> INSTANCE=../<instance>`. `INSTANCE` covers `site`, `verify`, `drill`, `restore`, `restore-all`, `seal`, `bootstrap-secrets`, `age-key-check`, `tools/make-plan`, `tools/prep-node`, the env schema and the env-level checks. They read `<instance>/envs/<env>` and `<instance>/.sops.yaml`. Unset, they read this checkout.
-3. Replace the values in `envs/<env>/values/` and the hosts in `envs/<env>/inventory/hosts.yml`. Set `jarvis_env` to `<env>`. Every `envs/env-00/` path under `flux/` must name `<env>`. Set `flux_git_repo_url` and `flux_git_ref` to the instance repository, and `core_git_repo_url` and `core_git_ref` to this repository, and copy all four into `flux/sync.yaml`. Empty `addons` and `apps` in `values/switches.yaml`, take `app-hosting` off `optional`, delete `values/apps.yaml`, and run `INSTANCE=<path> python3 tools/lib/render_switches.py --env <env>`: the example lists the sample add-on so CI renders it, and a new env starts core-only. Turn add-ons on later ([add-an-addon.md](add-an-addon.md#turn-it-on-in-an-env)).
+2. Point every env command at that checkout with `INSTANCE=<path>`, for example `make site ENV=<env> INSTANCE=../<instance>`. `INSTANCE` covers `site`, `verify`, `drill`, `restore`, `restore-all`, `seal`, `bootstrap-secrets`, `age-key-check`, `tools/make-plan`, `tools/prep-node`, the env schema and the env-level checks. They read `<instance>/envs/<env>` and `<instance>/.sops.yaml`. Unset, they read this checkout. `tools/make-plan` takes it only as an argument, `INSTANCE=<path>` after the target, and refuses it from the environment.
+3. Replace the values in `envs/<env>/values/` and the hosts in `envs/<env>/inventory/hosts.yml`. Set `jarvis_env` to `<env>`. Every `envs/env-00/` path under `flux/` must name `<env>`. Set `flux_git_repo_url` and `flux_git_ref` to the instance repository, and `core_git_repo_url` and `core_git_ref` to this repository, and copy all four into `flux/sync.yaml`. Empty `addons` and `apps` in `values/switches.yaml`, take `app-hosting` off `optional`, delete `values/apps.yaml`, and run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`: the example lists the sample add-on so CI renders it, and a new env starts core-only. Turn add-ons on later ([add-an-addon.md](add-an-addon.md#turn-it-on-in-an-env)).
 4. Run `tools/prep-node` for the first host ([Prepare a node](#prepare-a-node)). It validates the env before it changes a host. It can create the age private key, or read one that is already there, and it prints the public key. It adds a missing age creation rule to the instance's `.sops.yaml`. It does not change a recipient that already exists.
 5. Check that the instance's `.sops.yaml` has one age creation rule for `envs/<env>/secrets/`.
 6. `make bootstrap-secrets ENV=<env> INSTANCE=<path>`
 7. Make the deploy key ([Deploy key](#deploy-key)) when `flux_git_repo_url` is `ssh://`.
-8. Render the ConfigMap with `INSTANCE=<path> python3 tools/lib/render_cluster_vars_configmap.py --env <env> --output <path>/envs/<env>/flux/generated/cluster-vars-configmap.yaml`. prep-node also rewrites that file when it already exists.
+8. Render the ConfigMap with `INSTANCE=<path> .venv/bin/python tools/lib/render_cluster_vars_configmap.py --env <env> --output <path>/envs/<env>/flux/generated/cluster-vars-configmap.yaml`. prep-node also rewrites that file when it already exists.
 9. Commit `envs/<env>/` and `.sops.yaml` in the instance repository. Do not commit the age private key. Push to the branch `flux_git_ref` names, then run `site.yml` as below.
 
 An instance checkout with no `.git` counts as "not recorded" for prep-node and bootstrap-secrets, so neither refuses on the ground that git already records a file. Run them from a real clone when that refusal matters.
@@ -85,7 +87,7 @@ Node setup after that is `tools/prep-node` and `site.yml` (`infra/ansible/README
 ## Prepare a node
 
 ```bash
-tools/prep-node --env <env> --host <hostname> --login-user <user>
+.venv/bin/python tools/prep-node --env <env> --host <hostname> --login-user <user>
 ```
 
 Run it from a checkout on the machine that drives the build. Omitted flags are prompted. The Ansible user is settled before the host is touched; a recorded `ssh_user` is kept even when login differs. Produces a node that accepts key login and passwordless sudo, with the host name and `ssh_user` recorded in the env. What the script changes, and what it refuses to change, is in [infra/ansible/README.md](../infra/ansible/README.md).
@@ -100,7 +102,7 @@ make bootstrap-secrets ENV=<env>
 
 Commit all of `envs/<env>/` in the instance repository: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit its `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md).
 
-A core-only env stops here. To host an app, follow [add-a-hosted-app.md](add-a-hosted-app.md). An env that will host an app that keeps data gives that app its own backup credential before the app stores anything: `make bootstrap-secrets ENV=<env> APP=app-<name>`, then the two lines in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md#app-credentials). An app volume without one is never backed up, and `make verify` fails it.
+A core-only env stops here. To host an app, follow [add-a-hosted-app.md](add-a-hosted-app.md). An env that will host an app that keeps data gives that app its own backup credential before the app stores anything: `make bootstrap-secrets ENV=<env> APP=app-<name>`, then the two lines in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md#app-credentials). An app volume without one is never backed up, and `make verify` fails it, unless the env's `backups:` section leaves that app unselected.
 
 ## Bootstrap the cluster
 

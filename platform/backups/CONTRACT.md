@@ -24,8 +24,8 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - Target path, retention counts, `backup_schedule`, `backup_check_schedule`, and `time_zone` come from `envs/<env>/values/cluster-vars.yaml`.
 - The backup-role node (`node-role.jarvis.io/backup=true`) for the rest-server hostPath.
 - The control-plane node (`node-role.jarvis.io/control_plane=true`), where k3s writes the snapshot files.
-- rest-server, CronJob `etcd-snapshots`, and CronJob `restic-check` each match their role with required node affinity: `node-role.jarvis.io/<role>=true`, or, until that term is removed, `role.<dns_suffix>/<role>=true`. Each tolerates `node-role.jarvis.io/dedicated=true:NoSchedule`. Drill pods copy that affinity and toleration.
-- An env that lists `offsite-backup-copy` in `values/switches.yaml` also holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`, without the transitional term.
+- rest-server, CronJob `etcd-snapshots`, and CronJob `restic-check` each match their role with required node affinity: `node-role.jarvis.io/<role>=true`. Each tolerates `node-role.jarvis.io/dedicated=true:NoSchedule`. Drill pods copy that affinity and toleration.
+- An env that lists `offsite-backup-copy` in `values/switches.yaml` also holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`.
 - An env that registers an app credential lists `apps-backup-server` in `values/switches.yaml`, selects the app under `backups:` in `values/apps.yaml`, holds the generated `flux/generated/backup-selection/`, and holds `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` (`ci/checks/env-schema`, App credentials below). `restic-apps` has the rest-server's backup-role affinity and dedicated toleration.
 - A mover needs egress to the server its volume uses, TCP 8000, plus cluster DNS: a core or add-on namespace to Service `restic.platform-backups.svc.cluster.local`, an `app-<name>` namespace to Service `restic-apps.platform-backups.svc.cluster.local` only. A network policy that blocks this fails that namespace's backups. With app hosting on, an app namespace is default-deny; its NetworkPolicy `app-backups` (ClusterPolicy `app-derive`, [platform/optional/app-hosting/CONTRACT.md](../optional/app-hosting/CONTRACT.md)) allows exactly this while Secret `backups-restic-app-<name>` exists, and its `cluster-dns` the DNS.
 - A hosted app's PVC is one its app file declares. A volume declared `backup: false` carries annotation `backup: none` (admission refuses it otherwise), is never enrolled, and `make verify` reports it as declared rather than failing it. This is the third case of `backup: none`, besides the observability allow-list below; it holds only in `app-` namespaces and only for a declared volume.
@@ -51,7 +51,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 
 ## Config
 
-- VolSync 0.17, restic mover, `copyMethod: Direct`. The controller installs the VolumeSnapshot CRD and no snapshot controller.
+- VolSync 0.17, restic mover, `copyMethod: Direct`. The controller installs the VolumeSnapshot CRD and no snapshot controller. That CRD is vendored and nothing updates it, so each VolSync bump re-checks it against the external-snapshotter client that release imports; Renovate says so in the chart's PR.
 - k3s keeps writing etcd snapshots to `backup_path/etcd-snapshots`. The snapshot settings in the k3s config do not change. Those files are the same-node rollback copy.
 - rest-server data is the hostPath `backup_path/restic`, pinned to the backup-role node.
 - One repository per PVC is the directory `backup_path/restic/ns-<namespace>/pvc-<pvc>`.
@@ -78,7 +78,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - For every PVC that is not annotated `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`, it generates Secret `restic-<pvc>` and ReplicationSource `<pvc>` in that namespace.
 - `RESTIC_REPOSITORY` is Secret `backups-restic` key `RESTIC_REPOSITORY` plus `ns-<namespace>/pvc-<pvc>`.
 - `RESTIC_PASSWORD`, `RESTIC_REST_USERNAME`, and `RESTIC_REST_PASSWORD` are copied from that Secret with a data generate and an apiCall lookup.
-- Rules `restic-secret` and `replication-source` exclude namespaces `app-*`. Rules `restic-secret-app` and `replication-source-app` match only `app-*`. They read `platform-backups/backups-restic-<namespace>` and nothing else. Their apiCall defaults are empty, so a missing credential skips the claim (precondition) instead of erroring. The app Secret is built like the core one from that app's Secret. The app ReplicationSource is the same generate block as the core one, hold and `backup: paused` included.
+- Rules `restic-secret` and `replication-source` exclude namespaces `app-*`. Rules `restic-secret-app` and `replication-source-app` match only `app-*`. They read `platform-backups/backups-restic-<namespace>` and nothing else. Their apiCall defaults hold no credential (`{}` and `"false"`), so a missing credential skips the claim (precondition) instead of erroring. The app Secret is built like the core one from that app's Secret. The app ReplicationSource is the same generate block as the core one, hold and `backup: paused` included.
 - Generate runs on PVC events and policy changes, not on a new Secret. A credential registered after the app's PVC already exists enrolls it on the PVC's next update (App credentials, below).
 - Rule `privileged-movers` covers every enrolled namespace, `app-*` included: local-path ignores `fsGroup`, so an app's mover runs privileged too, but only in an `app-*` namespace with a registered credential (the same test as the `-app` rules), whether app hosting is on or off, so a namespace app hosting left behind never gets privileged movers without its credential. App admission lets those movers through on the VolSync controller's identity only ([platform/optional/app-hosting/CONTRACT.md](../optional/app-hosting/CONTRACT.md)).
 - The ReplicationSource uses the restic mover, `copyMethod: Direct`, `cacheCapacity: 1Gi`, and `trigger.schedule` from `backup_schedule` or a hosted app's own override.
@@ -87,7 +87,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - `platform-backups` does not set `volsync.backube/privileged-movers`. No mover in this namespace mounts a hostPath.
 - The rest-server runs as root so it can write its hostPath.
 - The etcd CronJob runs as root so it can read the snapshot files (mode 0600). It is not a mover.
-- CronJob `etcd-snapshots` schedules on `node-role.jarvis.io/control_plane=true`, and still matches `role.<dns_suffix>/control_plane=true` until that affinity term is removed.
+- CronJob `etcd-snapshots` schedules on `node-role.jarvis.io/control_plane=true`.
 - It mounts `backup_path/etcd-snapshots` read-only (`hostPath` type `Directory`) and runs `restic backup` of that mount into `host-etcd-snapshots`.
 - That repository is the `RESTIC_REPOSITORY` prefix from Secret `backups-restic` plus the path segment `host-etcd-snapshots`.
 - `restic init` runs only when `restic cat config` exits 10 (repository missing). Any other error stops the run.
@@ -130,7 +130,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 
 ### Role labels and the dedicated taint
 
-Merge first and let Flux roll the new pod spec before Ansible removes `role.<dns_suffix>/` labels. rest-server is `Recreate`, and the new spec still matches the old label. The label play reads rest-server and both CronJobs and stops if one exists without the new affinity term and the dedicated toleration. A missing object does not stop it: this play runs before Flux.
+Merge first and let Flux roll the new pod spec before Ansible removes `role.<dns_suffix>/` labels. rest-server is `Recreate`. The label play reads rest-server and both CronJobs and stops if one exists without the new affinity term and the dedicated toleration. A missing object does not stop it: this play runs before Flux.
 
 1. Merge. Wait until `platform-configs` is Ready, rest-server is Running, and both CronJob templates show the new affinity and toleration.
 2. `make site ENV=<env> TAGS=labels CHECK=1`, then the same without `CHECK=1`, then once more (`changed=0`). (`TAGS=labels` runs only the label play and needs no age key; `TAGS=k3s` also runs it but reads the sealed tokens.)
@@ -153,9 +153,9 @@ Each hosted app that keeps data gets its own restic password, its own apps-serve
 
 To change one: edit the override, re-render, commit and push. Generate does not re-run on a ConfigMap change, so a PVC that already exists takes the new values on its next update; annotate it once (`kubectl annotate pvc -n app-<name> <pvc> backup-overrides=<date> --overwrite`). Check with `kubectl get replicationsource -n app-<name> <pvc> -o yaml`. A new PVC takes them when it binds.
 
-Turn the apps server on and add an app: list `apps-backup-server` under `optional` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `tools/lib/render_switches.py --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
+Turn the apps server on and add an app: list `apps-backup-server` under `optional` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
 
-1. `make bootstrap-secrets ENV=<env> APP=app-<name>`. It seals `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` and writes `envs/<env>/flux/platform-configs/backups/app-<name>/kustomization.yaml`, the Component that applies that Secret and mounts it in `restic-apps`, `restic-check` and `restic-offsite`. Nothing is printed but the created paths. A second run changes nothing. If git already records that app's sealed file, it refuses: the app's repositories open only with the first password.
+1. `make bootstrap-secrets ENV=<env> APP=app-<name>`. It seals `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` and writes `envs/<env>/flux/platform-configs/backups/app-<name>/kustomization.yaml`, the Component that applies that Secret and mounts it in `restic-apps`, `restic-check` and `restic-offsite`. Nothing is printed but the created paths. A second run changes nothing. If that app's sealed file is missing and git already records it, it refuses: the app's repositories open only with the first password.
 2. The render lists `../../../../core/platform/optional/apps-backup-server` under `resources:` of `envs/<env>/flux/platform-configs/kustomization.yaml`, and the generated wrapper carries the registration.
 3. After Flux applies it: `restic-apps` restarts with the new user (`app users: <n>`). The app's PVCs get Secret `restic-<pvc>` and ReplicationSource `<pvc>` when they bind. A PVC that existed before step 2 is enrolled on its next update; annotate it once (`kubectl annotate pvc -n app-<name> <pvc> backup-credential=registered --overwrite`).
 4. `make verify ENV=<env>` passes, with no `not backed up` line for that app.
@@ -164,11 +164,11 @@ How to tell it worked: `restic-apps` has a ready endpoint, the app's Replication
 
 Retire an app (after its app is removed and its data is no longer wanted):
 
-1. Take the app off the selection and re-run `tools/lib/render_switches.py`. Commit and push. `restic-apps` restarts without that user, so its login stops working. Flux keeps Secret `backups-restic-app-<name>` (prune disabled); delete it with `kubectl -n platform-backups delete secret backups-restic-app-<name>`.
+1. Take the app off the selection and re-run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`. Commit and push. `restic-apps` restarts without that user, so its login stops working. Flux keeps Secret `backups-restic-app-<name>` (prune disabled); delete it with `kubectl -n platform-backups delete secret backups-restic-app-<name>`.
 2. The repositories stay on disk, and `restic-check` and `restic-offsite` print `FAIL ns-app-<name>/...: no backup credential registered for its app` until they are removed. Remove `<backup_path>/restic/ns-app-<name>` as root on the backup-role node once the data is not needed. The off-host copy keeps its copy until the owner removes it there.
 3. Leave `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` in place. Re-adding that app name later reuses it (step 1 of adding writes only the Component), so any repositories still on disk open again. Once Git has recorded that file, `make bootstrap-secrets` never mints a new one for that name.
 
-When the last app is retired, remove `apps-backup-server` from `values/switches.yaml` too and re-render. Flux keeps Deployment `restic-apps` (prune disabled); delete it and Service `restic-apps` by hand.
+When the last app is retired, remove `apps-backup-server` from `values/switches.yaml` too and re-render. Flux prunes Service `restic-apps` and keeps Deployment `restic-apps` (prune disabled); delete the Deployment by hand.
 
 ### Restore one namespace
 
@@ -285,7 +285,7 @@ This rotation covers core repositories only. Wherever a step below lists reposit
 
 Every core repository uses the one password in Secret `platform-backups/backups-restic`. Kyverno copies it into each `restic-<pvc>` Secret (`synchronize: true` on an apiCall). CronJob `etcd-snapshots` reads that same Secret and writes repository `host-etcd-snapshots`. Changing the Secret changes every repository at once.
 
-`make bootstrap-secrets` does not replace a `backups-restic` file git already records unless `ROTATE_RESTIC=1`. That flag mints a new password and does not add it to existing repositories. A live rotation is the steps below. Do not point them at the drill repository: `make drill` creates and deletes `ns-platform-drill/pvc-drill` in the same run, and this rotation does not run `make drill`. Keep the old key until the last step. While any Secret still holds the old password, that key still opens every repository.
+`make bootstrap-secrets` never replaces a `backups-restic` file that exists, with or without `ROTATE_RESTIC=1`. If the file is missing and git already records it, the tool refuses unless `ROTATE_RESTIC=1`. That flag mints a new password and does not add it to existing repositories. A live rotation is the steps below. Do not point them at the drill repository: `make drill` creates and deletes `ns-platform-drill/pvc-drill` in the same run, and this rotation does not run `make drill`. Keep the old key until the last step. While any Secret still holds the old password, that key still opens every repository.
 
 Run the `restic` and `find` commands as root on the backup-role node. `restic` must be installed there. The rest-server data is the hostPath `backup_path/restic`, and that hostPath is root-owned. `<backup_path>` is the env setting `backup_path`. Password files are mode `0600` and are not printed. `sops` decrypts with `SOPS_AGE_KEY_FILE` when that is set, otherwise with the default age key path.
 
@@ -397,7 +397,7 @@ Turn it on (owner-run, needs the age public key only):
 1. Set up the target: an empty bucket or a rest-server that only this env writes, and a login for it.
 2. Write a mode `0600` Secret manifest outside the repo: `kind: Secret`, `metadata.name: backups-offsite`, `metadata.namespace: platform-backups`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, and the `stringData` keys above. Generate the off-host password new (`openssl rand -base64 32`).
 3. `make seal ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
-4. List `offsite-backup-copy` under `optional` in `envs/<env>/values/switches.yaml`, run `tools/lib/render_switches.py --env <env>`, commit, and push.
+4. List `offsite-backup-copy` under `optional` in `envs/<env>/values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`, commit, and push.
 5. After Flux applies it: `kubectl -n platform-backups create job --from=cronjob/restic-offsite restic-offsite-first`, wait for it to complete, and read its log: one `PASS` line per repository. `restic snapshots` against the target lists each repository.
 
 Keep-safe: the off-host restic password goes on the owner's offline keep-safe list (`envs/<env>/secrets/README.md`). The sealed copy needs the age key, so a lost controller and a lost age key otherwise lose the off-host copy too.

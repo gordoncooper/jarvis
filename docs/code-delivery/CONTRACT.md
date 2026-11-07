@@ -13,7 +13,7 @@ Callers may rely on these six capabilities from the active provider. Rows marked
 | **Repo hosting** | Authoritative Git remotes for `jarvis` and `jarvis-apps`. Flux `GitRepository` sources read only from here. |
 | **CI** | Workflow runs on the provider's hosted runners. The default branch requires a green `ci` check. The planned `admin-gate` check will also be required on protected paths. |
 | **Issue and label queue** | Planned. Issues and labels on `jarvis-apps` for the code-factory work protocol (`code-factory:ready`, `code-factory:hard`, `code-factory:failed`). |
-| **PR open and merge** | Pull requests for all changes. Routine jarvis work: coding agents open and merge via a user token when checks pass. Planned: the code-factory lane job never opens PRs; a publish job opens a **draft** PR with a short-lived App token. A human admin merges code-factory PRs. |
+| **PR open and merge** | Pull requests for all changes. Routine jarvis work: coding agents open them via a user token, and the repo owner merges them unless a task brief explicitly lets the agent. Planned: the code-factory lane job never opens PRs; a publish job opens a **draft** PR with a short-lived App token. A human admin merges code-factory PRs. |
 | **Approval-label check** | Planned. `ci/checks/admin-gate` as a required check. It fails risky PRs unless the `admin-approved` label was added by the human admin's own account. Every push strips that label. It runs on `pull_request_target`, reads metadata only, and never checks out PR code. A label added by the coding-agent account fails. |
 | **Image registry** | Planned. An OCI registry for images CI builds. App images are public packages so clusters pull without a registry secret. The workflow is `build.yml`. |
 
@@ -22,7 +22,7 @@ Callers may rely on these six capabilities from the active provider. Rows marked
 | Capability | GitHub surface |
 | --- | --- |
 | Repo hosting | Repos under the account that owns `jarvis` and `jarvis-apps`. |
-| CI | GitHub Actions (`.github/workflows/ci.yml`). The `fast` job runs the checks. The `ci` job requires `fast`. The required check is `ci`. |
+| CI | GitHub Actions (`.github/workflows/ci.yml`). The `ci` job runs the checks and pytest. The required check is `ci`. |
 | Issue and label queue | Planned. GitHub Issues and the labels API on `jarvis-apps`. |
 | PR open and merge | GitHub Pull Requests. A coding-agent user token for agent PRs. Planned: a code-factory GitHub App for draft PRs and checker check runs. |
 | Approval-label check | Planned. Branch protection plus the required check `admin-gate`. |
@@ -48,7 +48,7 @@ There is no env setting. No core manifest branches on the provider until a secon
 
 ## Proven by
 
-- `.github/workflows/ci.yml`: the `fast` job runs every `ci/checks/` rule and pytest. The `ci` job requires `fast`. The required check name is `ci`.
+- `.github/workflows/ci.yml`: the `ci` job runs every `ci/checks/` rule and pytest. The required check name is `ci`.
 - Planned: `admin-gate` fails a protected-path PR without `admin-approved` from the human admin account, passes after that label, and fails for a bot, an App, or the coding-agent account.
 - Planned: `build.yml` publishes the demo app as a public package, and the cluster pulls it by digest.
 - Planned: a `code-factory:ready` issue becomes a draft PR with a green `ci` check and a `checker` check run.

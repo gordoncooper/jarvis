@@ -76,6 +76,21 @@ def test_make_plan_forwards_only_documented_names():
         assert "usage:" in proc.stderr
 
 
+def test_make_plan_forwards_the_documented_namespace_and_venv():
+    """NAMESPACE and VENV are in the Makefile help, so a plan can show them."""
+    proc = _run("seal", "ENV=env-00", "NAME=demo", "NAMESPACE=hello", "VENV=/demo-venv")
+    assert proc.returncode == 0, proc.stderr
+    assert '--namespace "hello"' in proc.stdout and "/demo-venv/bin/python" in proc.stdout
+
+
+def test_make_plan_refuses_instance_from_the_environment(monkeypatch):
+    """A plan never silently ignores INSTANCE and shows this checkout instead."""
+    monkeypatch.setenv("INSTANCE", "/demo-instance")
+    proc = _run("site", "ENV=env-00")
+    assert proc.returncode == 2 and "as an argument" in proc.stderr
+    assert "/other-instance" in _run("site", "ENV=env-00", "INSTANCE=/other-instance").stdout
+
+
 def test_makefile_dry_run_has_no_parse_time_execution():
     """A shell call, forced recipe, sub-make, or makefile remake would run under make -n."""
     lines = [

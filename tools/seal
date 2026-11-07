@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Encrypt a plaintext Kubernetes Secret manifest into envs/<env>/secrets/ (R25)."""
+"""Encrypt a plaintext Kubernetes Secret manifest into envs/<env>/secrets/."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 ---
-# journald cap (framework §7); cluster-vars supplies time_zone and other env keys.
+# journald cap; cluster-vars supplies time_zone and other env keys.
 jarvis_journald_system_max_use: "2G"
 # chronyd's AppArmor profile reads only this directory. The play runs as root.
 chrony_config_dir: /etc/chrony

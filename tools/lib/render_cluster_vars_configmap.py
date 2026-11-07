@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render flux-system/cluster-vars from an allow-list of cluster keys (R4).
+"""Render flux-system/cluster-vars from an allow-list of cluster keys.
 
 Ansible keeps reading values/cluster-vars.yaml. Host-only keys are not published.
 Lists and maps are JSON-encoded strings so postBuild substitution can reference them.
