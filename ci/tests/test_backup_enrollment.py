@@ -228,7 +228,7 @@ def _assert_enrollment_on_platform_configs(root, env: str) -> None:
     # it on); they make no backup object.
     from schema.env import app_hosting_listed
 
-    hosting = ["app-derive", "app-priority"] if app_hosting_listed(root / "envs" / env, root) else []
+    hosting = ["app-derive", "app-priority"] if app_hosting_listed(root / "envs" / env) else []
     assert sorted(doc["metadata"]["name"] for doc in policies) == [*hosting, "pvc-backup"]
     assert not any(doc.get("kind") == "ReplicationSource" for doc in docs)
     controllers = [

@@ -1,5 +1,5 @@
 # The services stage base. Add-ons are not listed here: each env lists the ones it
-# enables under spec.components of its services Kustomization.
+# enables in values/switches.yaml, rendered under spec.components of its services Kustomization.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

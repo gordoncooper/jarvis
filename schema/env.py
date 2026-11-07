@@ -22,6 +22,7 @@ from _env import instance_root  # noqa: E402,F401  (the one INSTANCE resolver)
 import _app_backups  # noqa: E402
 import _apps  # noqa: E402
 import _backup_selection  # noqa: E402
+import _switches  # noqa: E402
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
@@ -30,11 +31,11 @@ DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
 # The share of each node's memory no pod is scheduled into (the k3s role's eviction-hard).
 DEFAULT_NODE_MEMORY_RESERVE_PERCENT = 10
-# An env turns the off-host copy on by listing this directory and its sealed secret in platform-configs.
-OFFSITE_COPY_DIR = "platform/backups/offsite"
-OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
-# An env turns app hosting on by listing this core Component in its platform-configs components.
-APP_HOSTING_DIR = "platform/app-hosting"
+# An env turns the off-host copy and app hosting on by name in values/switches.yaml; the render
+# lists these in its platform-configs.
+OFFSITE_COPY_DIR = _switches.OFFSITE_COPY_DIR
+OFFSITE_SECRET_FILE = _switches.OFFSITE_SECRET_FILE
+APP_HOSTING_DIR = _switches.APP_HOSTING_DIR
 # The root GitRepository includes the core source at this directory, so env files
 # reach core as <root>/core/... . In the product checkout, core is the checkout itself.
 CORE_SOURCE_DIR = "core"
@@ -62,7 +63,7 @@ _BOOTSTRAP_SEALED = ("k3s-token", "cert-manager-ca", "backups-restic")
 # Kustomization lists in spec.components. Slot contracts live under services/slots/.
 ADDONS_DIR = "services"
 SLOTS_DIR = "slots"
-SERVICES_KUSTOMIZATION = "kustomizations/services.yaml"
+SERVICES_KUSTOMIZATION = _switches.SERVICES_REL
 # On an add-on's Flux Kustomization: the slot it fills.
 SLOT_LABEL = "addons.jarvis.io/slot"
 # An add-on's sealed Secrets are under envs/<env>/secrets/<namespace>/.
@@ -105,8 +106,8 @@ _CLUSTER_VARS_REQUIRED = frozenset(
     }
 )
 
-# Optional. A set value is still checked. apps_git_repo_url is required once values/apps.yaml lists an
-# app, and lan_cidrs once it grants lan-all or lan-target.
+# Optional. A set value is still checked. apps_git_repo_url is required once values/switches.yaml lists an
+# app, and lan_cidrs once values/apps.yaml grants lan-all or lan-target.
 _CLUSTER_VARS_OPTIONAL = frozenset(
     {
         "ssh_user",
@@ -357,6 +358,7 @@ def _validate_env(
     errors.extend(cluster_errors)
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
+    errors.extend(_validate_switches(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
     errors.extend(_validate_app_backups(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_addons(env_dir, repo_root, env_name, bootstrapped))
@@ -662,21 +664,8 @@ def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
 
 
 def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
-    """True when the env runs the apps rest-server (listed in platform-configs or via backup selection)."""
-    if _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR):
-        return True
-    data, _ = _apps.load_values(env_dir)
-    section = _backup_selection.load_section(data or {})
-    if section is None:
-        return False
-    if _backup_selection.selection_problems(repo_root, env_dir, _apps.APPS_VALUES):
-        return False
-    apps_list = _apps.app_names(data)
-    apps_root = _backup_selection.selection_apps_root(repo_root, env_dir, apps_list)
-    if not _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root):
-        return False
-    _path, doc = _platform_configs(env_dir)
-    return _backup_selection.WRAPPER_ENTRY in (doc.get("components") or [])
+    """True when the env's platform-configs list includes the apps rest-server."""
+    return _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR)
 
 
 def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool:
@@ -685,14 +674,10 @@ def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool
     return isinstance(item, str) and (path.parent / item.strip()).resolve() == target
 
 
-def app_hosting_listed(env_dir: Path, repo_root: Path) -> bool:
-    """True when the env turns app hosting on: its platform-configs components list the core
-    app-hosting Component."""
-    _path, doc = _platform_configs(env_dir)
-    components = doc.get("components")
-    return isinstance(components, list) and any(
-        _app_hosting_component(env_dir, repo_root, item) for item in components
-    )
+def app_hosting_listed(env_dir: Path) -> bool:
+    """True when the env turns app hosting on: its switches list it under optional."""
+    data, _ = _switches.load(env_dir)
+    return _switches.APP_HOSTING in _switches.names(data, _switches.OPTIONAL)
 
 
 def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[object]:
@@ -793,8 +778,8 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
             )
     if registered and not apps_server_listed(env_dir, repo_root):
         errors.append(
-            f"{rel}: registers app credentials but does not list "
-            f"{_app_backups.APPS_SERVER_DIR}; an app's backups need the apps server"
+            f"{rel}: registers app credentials but does not list {_app_backups.APPS_SERVER_DIR}; "
+            f"an app's backups need the apps server, so list {_switches.APPS_BACKUP_SERVER} in {_switches.SWITCHES_FILE}"
         )
     secrets = env_dir / "secrets"
     for path in sorted(secrets.rglob(f"{_app_backups.secret_name('app-')}*.sops.yaml")):
@@ -896,6 +881,66 @@ def addon_secret_namespaces(docs: list[dict]) -> list[str]:
     return found
 
 
+def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
+    """Why the env's switches cannot render: a section that is not a list of names, or a name core
+    does not ship or the apps repository does not hold. A new app deploys only once listed, and a
+    listed app must exist; a missing checkout fails, like backup eligibility."""
+    rel = _display_path(env_dir / _switches.SWITCHES_FILE, repo_root)
+    data, errors = _switches.load(env_dir)
+    if errors:
+        return [f"{rel}: {problem}" for problem in errors]
+    core = core_dir(repo_root)
+    errors = [
+        f"{rel}: {problem}"
+        for problem in _switches.validate(data, addon_names(core))
+    ]
+    apps = [name for name in _switches.names(data, _switches.APPS) if _apps.APP_NAME.fullmatch(name)]
+    if not apps:
+        return errors
+    try:
+        apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
+    except _backup_selection.AppsRepoError as exc:
+        return [*errors, f"{rel}: {exc}"]
+    errors.extend(
+        f"{rel}: {_switches.APPS}: unknown name {name!r}, no {name}/app.yaml in the apps repository"
+        f"{_backup_selection.STALE_HINT}"
+        for name in dict.fromkeys(apps)
+        if not (apps_root / name / "app.yaml").is_file()
+    )
+    return errors
+
+
+def _validate_switches(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
+    """An env with a flux tree or sealed files has a switches file with valid names, and commits
+    the wiring exactly as render_switches.py writes it from them."""
+    if not (env_dir / _switches.SWITCHES_FILE).is_file():
+        if not (env_dir / "flux").is_dir() and not bootstrapped:
+            return []
+        return [f"{env_name}: missing required file {_display_path(env_dir / _switches.SWITCHES_FILE, repo_root)}"]
+    errors = switches_problems(env_dir, repo_root)
+    rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+    flux = env_dir / "flux"
+    # The other validators report a bad selection; without a valid one the wiring has no expected form.
+    if errors or not flux.is_dir() or _apps.load_values(env_dir)[1] or _backup_selection.selection_problems(
+        repo_root, env_dir, rel
+    ):
+        return errors
+    data, _ = _switches.load(env_dir)
+    wrapper = (_backup_selection.WRAPPER_ENTRY,) if backup_required_registrations(env_dir, repo_root) else ()
+    for name, expected in (
+        (_switches.ROOT_REL, _switches.root_kustomization(data, apps_generated=_apps.GENERATED_REL)),
+        (_switches.SERVICES_REL, _switches.services(data)),
+        (_switches.PLATFORM_CONFIGS_REL, _switches.platform_configs(data, extra_components=wrapper)),
+    ):
+        path = flux / name
+        if path.is_file() and path.read_text(encoding="utf-8") != expected:
+            errors.append(
+                f"{_display_path(path, repo_root)}: does not match {_switches.SWITCHES_FILE}; "
+                f"re-render with tools/lib/render_switches.py --env {env_name}"
+            )
+    return errors
+
+
 def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
     """Each listed add-on exists in core, once; at most one per slot; its sealed Secrets exist once
     the env is bootstrapped. Like the off-host copy, a new env before bootstrap needs no secret."""
@@ -941,25 +986,26 @@ def _validate_apps(
     an app sets apps_git_repo_url, and its flux tree lists the committed render, which matches.
     An env with no app has neither the render nor its line."""
     rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+    switches_rel = _display_path(env_dir / _switches.SWITCHES_FILE, repo_root)
     data, errors = _apps.load_values(env_dir)
     errors = [f"{rel}: {problem}" for problem in errors]
     if errors:
         return errors
     dns_suffix = cluster_vars.get("dns_suffix")
     errors.extend(
-        f"{rel}: {problem}"
+        f"{switches_rel if problem.startswith(_switches.APPS) else rel}: {problem}"
         for problem in _apps.validate(
             data, dns_suffix if isinstance(dns_suffix, str) else None, _apps.lan_networks(cluster_vars)
         )
     )
     apps = _apps.app_names(data)
-    if apps and not app_hosting_listed(env_dir, repo_root):
+    if apps and not app_hosting_listed(env_dir):
         errors.append(
-            f"{rel}: lists apps, but app hosting is off; list ../../../../{CORE_SOURCE_DIR}/{APP_HOSTING_DIR} "
-            "under components in flux/platform-configs/kustomization.yaml, or remove the list"
+            f"{switches_rel}: lists apps, but app hosting is off; list {_switches.APP_HOSTING} "
+            f"under {_switches.OPTIONAL}, or remove the list"
         )
     if apps and not cluster_vars.get("apps_git_repo_url"):
-        errors.append(f"{rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
+        errors.append(f"{switches_rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
     generated = env_dir / "flux" / _apps.GENERATED_REL
     generated_rel = _display_path(generated, repo_root)
     listing = env_dir / "flux" / "kustomization.yaml"
@@ -973,7 +1019,7 @@ def _validate_apps(
             )
         return errors
     if not listed:
-        errors.append(f"{_display_path(listing, repo_root)}: lists apps in {rel}, so resources lists {_apps.GENERATED_REL}")
+        errors.append(f"{_display_path(listing, repo_root)}: lists apps in {switches_rel}, so resources lists {_apps.GENERATED_REL}")
     if errors or pre_host:
         return errors
     if not generated.is_file() or generated.read_text(encoding="utf-8") != _apps.render(
@@ -992,9 +1038,11 @@ def _validate_backup_selection_render(
     pre_host: bool,
 ) -> list[str]:
     section = _backup_selection.load_section(data)
-    if section is None:
-        return []
     rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
+    if section is None:
+        if (env_dir / _backup_selection.GENERATED_KUSTOMIZATION).is_file():
+            return [f"{rel}: {_backup_selection.SECTION_REMOVED}"]
+        return []
     apps_list = _apps.app_names(data)
     errors = _backup_selection.selection_problems(repo_root, env_dir, rel)
     if errors or pre_host:

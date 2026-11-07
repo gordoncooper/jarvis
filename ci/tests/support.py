@@ -227,14 +227,29 @@ def bootstrap_example_copy(
     return ExampleCopy(root, name)
 
 
-def _drop_addons(env_dir: Path) -> None:
+def set_switches(env_dir: Path, **sections: list[str]) -> None:
+    """Replace these sections of the env's values/switches.yaml, as an owner edits the file."""
     import yaml
+
+    path = env_dir / "values" / "switches.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    data.update(sections)
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def render_switches(env_dir: Path, root: Path) -> None:
+    """Render the env's Flux wiring from its switches, as an owner would."""
+    from render_switches import render_env
+
+    render_env(env_dir, root)
+
+
+def _drop_addons(env_dir: Path) -> None:
+    import _switches
     from schema.env import SERVICES_KUSTOMIZATION
 
-    path = env_dir / "flux" / SERVICES_KUSTOMIZATION
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    doc["spec"].pop("components", None)
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    set_switches(env_dir, addons=[])
+    (env_dir / "flux" / SERVICES_KUSTOMIZATION).write_text(_switches.services({}), encoding="utf-8")
 
 
 def _seal_copy_addons(root: Path, name: str) -> None:
@@ -363,21 +378,18 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
     app = namespace.removeprefix("app-")
     apps_path = copy.env_dir / "values" / "apps.yaml"
     data = yaml.safe_load(apps_path.read_text(encoding="utf-8"))
-    names = data.setdefault("apps", [])
-    if app not in names:
-        names.append(app)
     data["backups"] = {"mode": "selected", "selected": [app]}
     apps_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    switches = yaml.safe_load((copy.env_dir / "values" / "switches.yaml").read_text(encoding="utf-8"))
+    set_switches(
+        copy.env_dir,
+        apps=list(dict.fromkeys([*switches["apps"], app])),
+        optional=list(dict.fromkeys([*switches["optional"], "apps-backup-server"])),
+    )
     lib = str(REPO_ROOT / "tools" / "lib")
     if lib not in sys.path:
         sys.path.insert(0, lib)
-    from render_apps import render_env as render_apps_env
-    from render_backup_selection import render_env
-
-    rendered = render_apps_env(copy.env_dir)
-    if rendered is not None:
-        (copy.env_dir / "flux" / "generated" / "apps.yaml").write_text(rendered, encoding="utf-8")
-    render_env(copy.env_dir, copy.root)
+    render_switches(copy.env_dir, copy.root)
     sops = shutil.which("sops")
     if not sops:
         raise RuntimeError("sops not found on PATH (run make deps)")

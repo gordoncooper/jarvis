@@ -1,6 +1,6 @@
 """Hosted-app standing checks (platform/app-hosting/CONTRACT.md, Health). Read-only.
 
-make verify runs this component only for an env whose values/apps.yaml lists an app.
+make verify runs this component only for an env whose values/switches.yaml lists an app.
 """
 
 from __future__ import annotations

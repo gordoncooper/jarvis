@@ -55,30 +55,30 @@ In the apps repository:
 
 In the env's repository:
 
-1. Once per env, turn app hosting on (it is off by default): add to `envs/<env>/flux/platform-configs/kustomization.yaml`
+1. Once per env, turn app hosting on (it is off by default): add to `envs/<env>/values/switches.yaml`
 
    ```yaml
-   components:
-     - ../../../../core/platform/app-hosting
+   optional:
+     - app-hosting
    ```
 
-   next to any `backups/app-<name>` registrations already there. Without it, env-schema refuses an app list. The first time, `platform-configs` may fail one apply while the new App CRD becomes known to the API server and Kyverno; its next retry, about a minute later, passes on its own.
-2. Add the name to `envs/<env>/values/apps.yaml` (names only), and `apps_git_repo_url` to `values/cluster-vars.yaml` if it is not there yet:
+   Without it, env-schema refuses an app list. The first time, `platform-configs` may fail one apply while the new App CRD becomes known to the API server and Kyverno; its next retry, about a minute later, passes on its own.
+2. Add the name to `envs/<env>/values/switches.yaml` (names only, one line), and `apps_git_repo_url` to `values/cluster-vars.yaml` if it is not there yet:
 
    ```yaml
    apps:
      - <name>
    ```
 
-3. If the app asks for a risky item in `spec.risky`, a LAN port or LAN egress, add the matching exception line, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>`, `lan-port <listen>/<TCP|UDP>`, `lan-all` (for `lan: [all]`) or `lan-target <target> <cidr> <port>/<TCP|UDP>` (one line per port of a named target). Without it the cluster refuses the objects that use that item, or opens no LAN path. A LAN grant needs the env's ranges, `lan_cidrs` in `values/cluster-vars.yaml`, and a `lan-target` range inside them. To keep a web app out of the uptime check, add `- <name>: no-uptime-check`. Removing a line stops what runs on it within minutes (pods, Jobs, Services and Ingresses that need it, and its LAN allows), and keeps the app's volumes; adding it back restores them.
-4. If a volume is `backup: true`, register the app's backup credential: `make bootstrap-secrets ENV=<env> APP=app-<name> INSTANCE=<path>` ([platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md), App credentials). Until then that volume gets no backup, and `make verify` fails it.
-5. Render the wiring: `INSTANCE=<path> python3 tools/lib/render_apps.py --env <env> --output <path>/envs/<env>/flux/generated/apps.yaml`. List `generated/apps.yaml` under `resources` in `envs/<env>/flux/kustomization.yaml` once.
+3. If the app asks for a risky item in `spec.risky`, a LAN port or LAN egress, add the matching exception line under `exceptions:` in `envs/<env>/values/apps.yaml`, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>`, `lan-port <listen>/<TCP|UDP>`, `lan-all` (for `lan: [all]`) or `lan-target <target> <cidr> <port>/<TCP|UDP>` (one line per port of a named target). Without it the cluster refuses the objects that use that item, or opens no LAN path. A LAN grant needs the env's ranges, `lan_cidrs` in `values/cluster-vars.yaml`, and a `lan-target` range inside them. To keep a web app out of the uptime check, add `- <name>: no-uptime-check`. Removing a line stops what runs on it within minutes (pods, Jobs, Services and Ingresses that need it, and its LAN allows), and keeps the app's volumes; adding it back restores them.
+4. If a volume is `backup: true`, select it under `backups:` in `values/apps.yaml`, list `apps-backup-server` under `optional`, and register the app's backup credential: `make bootstrap-secrets ENV=<env> APP=app-<name> INSTANCE=<path>` ([platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md), App credentials). Until then that volume gets no backup, and `make verify` fails it.
+5. Render the wiring: `INSTANCE=<path> python3 tools/lib/render_switches.py --env <env>`.
 6. Run `INSTANCE=<path> bash ci/run-env-checks`, then commit and push. `make verify ENV=<env>` then checks the app's namespace, network baseline, grants and hosts.
 
 Changing the app later needs nothing in the env: its file and `deploy/` reach the cluster from the apps repository.
 
 ## Turn it off
 
-1. Remove its name (and its exception lines) from `values/apps.yaml` and render again. With no app left, delete `generated/apps.yaml` and its line instead. Commit and push. Flux prunes the app's Kustomizations, which prune its objects.
+1. Remove its name from `values/switches.yaml` (and its exception lines from `values/apps.yaml`) and render again. Commit and push. Flux prunes the app's Kustomizations, which prune its objects.
 2. Delete what `prune: disabled` kept, as the cluster admin: namespace `app-<name>` (its volumes go with it), ServiceAccount `flux-system/app-<name>` and GitRepositories `flux-system/app-<name>` and `app-<name>-file`. Retire its backup credential as the backups contract says.
-3. With no app left, the env may turn app hosting off: remove the `components:` line for `core/platform/app-hosting`. The CRD keeps `prune: disabled`; delete it by hand once no App is left.
+3. With no app left, the env may turn app hosting off: remove `app-hosting` from `values/switches.yaml` and render again. The CRD keeps `prune: disabled`; delete it by hand once no App is left.

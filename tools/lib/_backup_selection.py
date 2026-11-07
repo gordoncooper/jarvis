@@ -39,8 +39,10 @@ OVERRIDE_KEYS = frozenset(
 )
 _CRON = re.compile(r"^(\S+\s+){4}\S+$")
 _RETENTION = re.compile(r"^[0-9]+$")
+# Deleting the section must not read as turning an app's backups off.
+SECTION_REMOVED = "backups is gone from values/apps.yaml but apps still register; set mode: selected with selected: [] and re-render first"
 _APPS_REPO_ENV = "APPS_REPO"
-_STALE_HINT = "; eligibility needs the live tip of apps_git_repo_url, so check the checkout is not stale"
+STALE_HINT = "; eligibility needs the live tip of apps_git_repo_url, so check the checkout is not stale"
 
 
 class AppsRepoError(Exception):
@@ -129,7 +131,9 @@ def selection_problems(repo_root: Path, env_dir: Path, rel: str) -> list[str]:
 
     Read this before enabled_app_names: that assumes a valid section and a readable checkout.
     """
-    data, _ = _apps.load_values(env_dir)
+    data, errors = _apps.load_values(env_dir)
+    if errors:
+        return [f"{rel}: {problem}" for problem in errors]
     section = load_section(data)
     if section is None:
         return []
@@ -151,7 +155,7 @@ def backup_eligible(apps_root: Path, app_name: str) -> bool:
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise AppsRepoError(f"{path}: app file is missing or unreadable{_STALE_HINT}") from exc
+        raise AppsRepoError(f"{path}: app file is missing or unreadable{STALE_HINT}") from exc
     spec = doc.get("spec") if isinstance(doc, dict) else None
     volumes = spec.get("volumes") or [] if isinstance(spec, dict) else None
     if not isinstance(volumes, list):
@@ -245,7 +249,7 @@ def validate_section(
             if not backup_eligible(apps_root, app):
                 errors.append(
                     f"{rel}.{BACKUPS_KEY}.selected: {app} has no backup-eligible volume "
-                    f"(stateless apps belong off the list{_STALE_HINT})"
+                    f"(stateless apps belong off the list{STALE_HINT})"
                 )
     return errors
 
@@ -324,8 +328,6 @@ def render_wrapper_component(enabled_namespaces: Sequence[str], overrides: dict[
         "# Registers backup credentials for apps the env selects (platform/backups/CONTRACT.md).",
         "apiVersion: kustomize.config.k8s.io/v1alpha1",
         "kind: Component",
-        "resources:",
-        f"  - ../../../../../core/{_app_backups.APPS_SERVER_DIR}",
         "components:",
     ]
     lines.extend(

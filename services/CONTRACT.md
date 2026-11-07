@@ -1,6 +1,6 @@
 # CONTRACT: add-ons
 
-Every add-on meets this contract. An add-on is anything Jarvis ships on top of core (k3s, Flux, certs, ingress, backups, secrets and CI). Add-ons are optional and off by default. Each env turns on the ones it wants, in its own repository. Core and add-ons form one trusted zone. Hosted apps ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)) are not add-ons.
+Every add-on meets this contract. An add-on is a limited-tenant swappable service on top of core (the chat bot slot, the code factory and similar), not an optional core component such as app hosting, the off-host copy or observability ([schema/CONTRACT.md](../schema/CONTRACT.md), `values/switches.yaml`). Add-ons are optional and off by default. Each env turns on the ones it wants, in its own repository. Core and add-ons form one trusted zone. Hosted apps ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)) are not add-ons.
 
 How to write one: [docs/add-an-addon.md](../docs/add-an-addon.md).
 
@@ -16,7 +16,7 @@ How to write one: [docs/add-an-addon.md](../docs/add-an-addon.md).
 
 An add-on's folder holds:
 
-- `kustomization.yaml`: a kustomize `Component` that lists files only. An env lists the folder name under `spec.components` of its services Kustomization. The listed files are its wiring:
+- `kustomization.yaml`: a kustomize `Component` that lists files only. An env lists the folder name under `addons` in `values/switches.yaml`, and the render writes it under `spec.components` of its services Kustomization. The listed files are its wiring:
   - **Namespaces.** One or more, named `<name>` or `<name>-<part>`, each labelled `addons.jarvis.io/name: <name>` and annotated `kustomize.toolkit.fluxcd.io/prune: disabled`. A name may not start with `app-` (reserved for hosted apps), `platform-`, `kube-` or `flux-`, and may not be `default`.
   - **Tenant identity.** Exactly one ServiceAccount, `addon-<name>` in `flux-system`, plus Roles and RoleBindings in the add-on's own namespaces only, each annotated `kustomize.toolkit.fluxcd.io/prune: disabled`: kustomize-controller skips a Kustomization's cleanup when the account it impersonates is gone, so the account must outlive the add-on's Kustomizations. A RoleBinding binds only that account, to a Role the add-on ships in the same namespace. A Role grants nothing on RBAC, Flux, admission or CRD APIs, nothing on `namespaces`, and no wildcard. No pod mounts the tenant's token; kustomize-controller impersonates it.
   - **Flux Kustomizations.** In `flux-system`, named `addon-<name>` or `addon-<name>-<part>`, each running as the tenant account and reading the root source `flux-system`, with no `patches`, `images`, `components`, name prefix or suffix, or `kubeConfig`. It names no substitution source (`postBuild.substituteFrom`, optional or not): kustomize-controller reads those in `flux-system` with its own rights. A value the add-on needs is an inline `postBuild.substitute` entry such as `dns_suffix: ${dns_suffix}`, which the services stage fills from the env's published `cluster-vars` keys. A Kustomization's path is under `./core/services/<name>/`, or for sealed Secrets `./envs/${jarvis_env}/secrets/<namespace>` for one of its namespaces. `dependsOn` names only the add-on's own Kustomizations.
@@ -35,7 +35,7 @@ The add-on's Flux Kustomizations are Ready; `make verify` already waits on every
 
 ## Config
 
-- Turn on: add `- <name>` under `spec.components` in `envs/<env>/flux/kustomizations/services.yaml`. Turn off: remove the line. No list means core-only. `ci/checks/env-schema` rejects an unknown add-on, the same add-on twice, and two add-ons for one slot. Once the env is bootstrapped, it requires each sealed-Secret folder the add-on decrypts.
+- Turn on: add `- <name>` under `addons` in `envs/<env>/values/switches.yaml` and run `tools/lib/render_switches.py --env <env>`. Turn off: remove the line and re-render. An empty list means core-only. `ci/checks/env-schema` rejects an unknown add-on, the same add-on twice, and two add-ons for one slot. Once the env is bootstrapped, it requires each sealed-Secret folder the add-on decrypts.
 - Turning an add-on off prunes its Kustomizations, and each of them prunes the workloads it applied. Its Namespaces, Secrets, tenant account, Roles and RoleBindings keep `prune: disabled` and stay until the operator deletes them ([docs/add-an-addon.md](../docs/add-an-addon.md#turn-it-off)); the leftover account holds rights only in the leftover namespaces.
 - The add-on's own settings come from `cluster-vars` keys that already exist, or from its sealed Secrets. A new env key is added to `schema/` with its first consumer.
 

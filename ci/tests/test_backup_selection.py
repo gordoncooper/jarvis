@@ -21,7 +21,7 @@ if str(REPO_ROOT / "tools" / "lib") not in sys.path:
 
 import _backup_selection
 from schema.env import ValidationError, validate_env_tree, validate_one_env
-from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app
+from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app, set_switches
 from verify.backups import backups_checks, check_backups
 from verify.common import CheckError
 
@@ -39,6 +39,7 @@ def _write_apps(copy: ExampleCopy, section: dict) -> None:
 def _render_selection(copy: ExampleCopy) -> None:
     from render_backup_selection import render_env
 
+    set_switches(copy.env_dir, optional=["app-hosting", "offsite-copy", "apps-backup-server"])
     render_env(copy.env_dir, copy.root)
 
 
@@ -424,7 +425,8 @@ def test_env_schema_validates_selection_with_no_apps(tmp_path: Path) -> None:
     """Rule: a backups section is validated even when the env lists no app."""
     copy = bootstrap_example_copy(tmp_path)
     path = copy.env_dir / "values" / "apps.yaml"
-    path.write_text(yaml.safe_dump({"apps": [], "backups": {"mode": "bogus"}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({"backups": {"mode": "bogus"}}), encoding="utf-8")
+    set_switches(copy.env_dir, apps=[])
     with pytest.raises(ValidationError) as exc:
         validate_one_env(copy.root, copy.name, pre_host=True)
     assert "mode must be" in "\n".join(exc.value.messages)
@@ -451,7 +453,7 @@ def test_exclusion_never_reads_the_excluded_app_file(tmp_path: Path, monkeypatch
     monkeypatch.setenv("APPS_REPO", str(apps))
     copy = bootstrap_example_copy(tmp_path)
     _write_apps(copy, {"mode": "all_except", "exclude": ["notes", "hello-web"]})
-    shutil.rmtree(apps / "notes")
+    (apps / "notes" / "app.yaml").write_text("spec: [\n", encoding="utf-8")
     validate_one_env(copy.root, copy.name, pre_host=True)
     assert "backup selection" not in _verify_checks(copy)
 

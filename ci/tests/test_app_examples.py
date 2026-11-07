@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT
+from support import REPO_ROOT, set_switches
 
 import _apps
 from _app_file import check_folder
@@ -36,7 +36,8 @@ def _env(tmp_path: Path, *, lan_line: bool = True) -> tuple[Path, Path, dict]:
     shutil.copytree(REPO_ROOT / "envs" / "env-00", env_dir)
     (instance / "core").symlink_to(REPO_ROOT)
     values = {"apps": APPS, "exceptions": [{"lan-demo": "lan-port 8080/TCP"}] if lan_line else []}
-    (env_dir / _apps.APPS_VALUES).write_text(yaml.safe_dump(values), encoding="utf-8")
+    (env_dir / _apps.APPS_VALUES).write_text(yaml.safe_dump({"exceptions": values["exceptions"]}), encoding="utf-8")
+    set_switches(env_dir, apps=APPS)
     text = render_env(env_dir)
     assert text is not None
     (env_dir / "flux" / _apps.GENERATED_REL).write_text(text, encoding="utf-8")

@@ -213,7 +213,7 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         if offsite_copy_listed(root / "envs" / env, root)
         else set()
     )
-    hosting = app_hosting_listed(root / "envs" / env, root)
+    hosting = app_hosting_listed(root / "envs" / env)
     assert _idents(f"envs/{env}/flux/platform-configs", root=root) == (
         _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | (_APP_HOSTING if hosting else set()) | offsite
     )

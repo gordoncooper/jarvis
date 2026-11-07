@@ -103,7 +103,10 @@ def run(
             # The env's add-on list; checks for an add-on it does not enable never load.
             enabled = load_addons(REPO_ROOT, enabled_addons(repo_root / "envs" / env))
             # Hosted-app checks only for an env that lists an app.
-            if _apps.app_names(_apps.load_values(repo_root / "envs" / env)[0]):
+            apps_data, apps_errors = _apps.load_values(repo_root / "envs" / env)
+            if apps_errors:
+                raise CheckError(f"values: {'; '.join(apps_errors)}")
+            if _apps.app_names(apps_data):
                 enabled = (*enabled, "apps")
         names = enabled_components(enabled)
         checks = collect(names, ctx)

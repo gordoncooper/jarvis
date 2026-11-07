@@ -1,12 +1,12 @@
-# App hosting, optional and off by default. An env turns it on with one line in
-# envs/<env>/flux/platform-configs/kustomization.yaml:
+# App hosting, optional and off by default. An env turns it on with one name in
+# envs/<env>/values/switches.yaml:
 #
-#   components:
-#     - ../../../../core/platform/app-hosting
+#   optional:
+#     - app-hosting
 #
 # and off by removing it (with its app list). It is a Component, not a directory under
 # resources, because it adds to an object platform-configs already has: TLSStore default
-# serves the apps wildcard. Without the line, the env renders none of this.
+# serves the apps wildcard. Without the name, the env renders none of this.
 # The per-app wiring (app/) is applied by each app's own wiring Kustomization, not here.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
