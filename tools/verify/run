@@ -13,6 +13,7 @@ from subprocess import CompletedProcess
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 sys.path.insert(1, str(REPO_ROOT))
+sys.path.insert(2, str(REPO_ROOT / "tools" / "lib"))
 
 from lib._env import (  # noqa: E402
     EnvError,

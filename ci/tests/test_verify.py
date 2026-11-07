@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import subprocess
 import sys
 import time
 from collections.abc import Sequence
@@ -1119,3 +1121,13 @@ def test_verify_kubectl_adds_timeouts(
         ]
     ]
     assert captured == [60.0]
+
+
+def test_verify_starts_from_its_real_entry_point(tmp_path: Path) -> None:
+    """Rule: make verify runs tools/verify/run as a script, with no test's import path to lean on."""
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    done = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tools/verify/run"), "--help"],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+    )
+    assert done.returncode == 0, done.stderr
