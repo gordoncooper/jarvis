@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 from ansible_role_proof import (
+    FLUX_INSTANCE_NAME,
     FLUX_OPERATOR_ROLE_DIR,
     REPO_ROOT,
     env_name,
@@ -231,7 +232,7 @@ def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list
     role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
     errors = []
     metadata = doc.get("metadata") or {}
-    lookup = (role["flux_system_namespace"], role["flux_instance_name"])
+    lookup = (role["flux_system_namespace"], FLUX_INSTANCE_NAME)
     if (metadata.get("namespace"), metadata.get("name")) != lookup:
         errors.append(f"metadata is not {lookup}, the flux-operator name")
     if "sync" in (doc.get("spec") or {}):

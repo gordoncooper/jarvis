@@ -20,6 +20,8 @@ FLUX_OPERATOR_ROLE_DIR = ANSIBLE_DIR / "roles" / "flux-operator"
 FLUX_OPERATOR_ROLE_TEMPLATES = FLUX_OPERATOR_ROLE_DIR / "templates"
 FLUX_OPERATOR_ROLE_TASKS = FLUX_OPERATOR_ROLE_DIR / "tasks"
 K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
+# The flux-operator reconciles a FluxInstance only under this name.
+FLUX_INSTANCE_NAME = "flux"
 
 
 def env_name() -> str:
@@ -132,7 +134,7 @@ def example_flux_entry(tmp_path: Path) -> ExampleFluxEntry:
         "apiVersion": "fluxcd.controlplane.io/v1",
         "kind": "FluxInstance",
         "metadata": {
-            "name": role["flux_instance_name"],
+            "name": FLUX_INSTANCE_NAME,
             "namespace": role["flux_system_namespace"],
         },
         "spec": {

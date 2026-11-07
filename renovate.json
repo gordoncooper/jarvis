@@ -29,20 +29,22 @@
       "matchDepNames": ["restic/restic", "restic/rest-server"]
     },
     {
-      "description": "One PR updates every Kyverno image digest pin.",
+      "description": "One PR updates the Kyverno chart and every Kyverno image digest pin.",
       "groupName": "kyverno-image",
       "matchManagers": ["custom.regex"],
       "matchDepNames": [
+        "kyverno",
         "ghcr.io/kyverno/kyverno",
         "ghcr.io/kyverno/kyvernopre",
         "ghcr.io/kyverno/background-controller"
       ]
     },
     {
-      "description": "One PR updates every cert-manager image digest pin.",
+      "description": "One PR updates the cert-manager chart and every cert-manager image digest pin.",
       "groupName": "cert-manager-image",
       "matchManagers": ["custom.regex"],
       "matchDepNames": [
+        "cert-manager",
         "quay.io/jetstack/cert-manager-controller",
         "quay.io/jetstack/cert-manager-webhook",
         "quay.io/jetstack/cert-manager-cainjector",
@@ -211,6 +213,15 @@
       "managerFilePatterns": ["/^platform\\/(backups\\/(etcd-snapshots|restic-check)|optional\\/offsite-backup-copy\\/restic-offsite)\\.yaml$/"],
       "matchStrings": [
         "image: (?<depName>restic/restic):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Grant reconciler python image tag and digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^platform\\/optional\\/app-hosting\\/grant-revoke\\.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=docker depName=(?<depName>python)\\n\\s*image: python:(?<currentValue>\\d+\\.\\d+\\.\\d+-alpine\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     },
     {

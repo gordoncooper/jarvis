@@ -1,6 +1,7 @@
 import copy
 import json
 import re
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -377,3 +378,57 @@ def test_testapp_image_tag_and_digest_are_a_custom_manager(rel: str) -> None:
     assert found[0].group("depName") == "nginxinc/nginx-unprivileged"
     assert found[0].group("currentValue") == name.rsplit(":", 1)[1]
     assert found[0].group("currentDigest") == digest
+
+
+def test_grant_revoke_python_image_is_a_renovate_pin() -> None:
+    """The grant reconciler's image is read by a manager, so its tag and digest get bump PRs."""
+    rel = "platform/optional/app-hosting/grant-revoke.yaml"
+    source = (ROOT / rel).read_text(encoding="utf-8")
+    found = _manager_matches(rel, source)
+    assert len(found) == 1
+    image = next(line.strip() for line in source.splitlines() if line.strip().startswith("image:"))
+    name, digest = image.removeprefix("image: ").split("@", 1)
+    assert found[0].group("depName") == "python"
+    assert found[0].group("currentValue") == name.rsplit(":", 1)[1]
+    assert found[0].group("currentDigest") == digest
+
+
+@pytest.mark.parametrize(
+    ("group", "chart"), [("cert-manager-image", "cert-manager"), ("kyverno-image", "kyverno")]
+)
+def test_chart_and_its_images_update_in_one_pr(group: str, chart: str) -> None:
+    """Merged alone, a chart bump or an image bump would run a chart with images of another release."""
+    rule = next(item for item in _renovate_config()["packageRules"] if item.get("groupName") == group)
+    assert chart in rule["matchDepNames"]
+
+
+def _unmanaged_renovate_comments(rel: str, text: str) -> list[str]:
+    """Renovate comments where no custom manager's match covers the comment or the pin below it."""
+    spans = [match.span() for match in _manager_matches(rel, text)]
+    return [
+        comment.group(0).splitlines()[0].strip()
+        for comment in re.finditer(r"# renovate:[^\n]*\n[^\n]*", text)
+        if not any(start < comment.end() and comment.start() < end for start, end in spans)
+    ]
+
+
+def test_every_renovate_comment_has_a_manager() -> None:
+    """A renovate comment no manager reads gets no bump PRs, and nothing else reports it."""
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True, text=True
+    ).stdout.split("\0")
+    commented = {
+        rel: text
+        for rel in tracked
+        if rel and rel != "renovate.json" and not rel.startswith("ci/") and (ROOT / rel).is_file()
+        and "# renovate:" in (text := (ROOT / rel).read_text(encoding="utf-8", errors="ignore"))
+    }
+    assert commented
+    missed = {rel: _unmanaged_renovate_comments(rel, text) for rel, text in commented.items()}
+    assert {rel: found for rel, found in missed.items() if found} == {}
+
+
+def test_seeded_renovate_comment_without_a_manager_fails() -> None:
+    """The same pin in a file no manager selects is reported."""
+    source = (ROOT / "platform/optional/app-hosting/grant-revoke.yaml").read_text(encoding="utf-8")
+    assert _unmanaged_renovate_comments("platform/optional/app-hosting/unmanaged.yaml", source)

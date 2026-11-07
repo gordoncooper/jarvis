@@ -20,7 +20,7 @@ Deployment `kyverno-admission-controller` in `kyverno` is Ready. That is the gat
 ## Config
 
 - Reports controller and cleanup controller are off. Report creation flags are off with them.
-- Images for the admission container, its init container, and the background controller are digest-pinned. Renovate updates the chart version and those digests.
+- Images for the admission container, its init container, and the background controller are digest-pinned. Renovate updates the chart version and those digests in one PR.
 - Chart `kubeVersion` is `>=1.25.0-0`. Upstream tests v1.19 on Kubernetes 1.33–1.35. The v1.19.2 module builds against `k8s.io/client-go` v0.36. The chart does not refuse 1.36.
 - Permissions are extra aggregated ClusterRoles. The chart's own roles are not edited.
 - The background controller's chart role can get Namespaces and cannot update them. `kyverno:backup-namespaces` adds `update` and `patch` so the enrollment policy can set `volsync.backube/privileged-movers`.
