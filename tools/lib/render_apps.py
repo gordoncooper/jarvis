@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render envs/<env>/flux/generated/apps.yaml from values/apps.yaml (platform/app-hosting/CONTRACT.md).
+"""Render envs/<env>/flux/generated/apps.yaml from values/apps.yaml (platform/optional/app-hosting/CONTRACT.md).
 
 render_switches.py runs this with the rest of the env's wiring. With no app listed there is
 nothing to render, and it removes the file and its line in flux/kustomization.yaml.
@@ -33,7 +33,7 @@ def render_env(env_dir: Path) -> str | None:
     if not _apps.app_names(data):
         return None
     if not app_hosting_listed(env_dir):
-        raise SystemExit(f"{env_dir}: lists apps, but app hosting is off (platform/app-hosting/CONTRACT.md, Config)")
+        raise SystemExit(f"{env_dir}: lists apps, but app hosting is off (platform/optional/app-hosting/CONTRACT.md, Config)")
     if not cluster_vars.get("apps_git_repo_url"):
         raise SystemExit(f"{env_dir}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
     return _apps.render(data, resolve_cluster_vars(cluster_vars))

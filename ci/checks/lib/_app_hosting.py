@@ -1,4 +1,4 @@
-"""Each hosted app an env lists gets core's whole wiring, unchanged (CONTRACT: platform/app-hosting/CONTRACT.md).
+"""Each hosted app an env lists gets core's whole wiring, unchanged (CONTRACT: platform/optional/app-hosting/CONTRACT.md).
 
 For each env with a flux/ tree, on each app wiring Kustomization (app-<name>-wiring), this
 builds its path with its postBuild values and checks what the cluster gets:
@@ -35,7 +35,7 @@ from schema.env import CORE_SOURCE_DIR
 
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
-POLICIES = f"{CORE_SOURCE_DIR}/platform/app-hosting/policies"
+POLICIES = f"{CORE_SOURCE_DIR}/platform/optional/app-hosting/policies"
 _KINDS = frozenset(
     {
         "Namespace",

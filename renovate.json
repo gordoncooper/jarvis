@@ -199,7 +199,7 @@
       "customType": "regex",
       "description": "restic rest-server image version tag and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/backups\\/(rest-server|apps\\/rest-server-apps)\\.yaml$/"],
+      "managerFilePatterns": ["/^platform\\/(backups\\/rest-server|optional\\/apps-backup-server\\/rest-server-apps)\\.yaml$/"],
       "matchStrings": [
         "image: (?<depName>restic/rest-server):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
@@ -208,7 +208,7 @@
       "customType": "regex",
       "description": "restic image version and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/backups\\/(etcd-snapshots|restic-check|offsite\\/restic-offsite)\\.yaml$/"],
+      "managerFilePatterns": ["/^platform\\/(backups\\/(etcd-snapshots|restic-check)|optional\\/offsite-copy\\/restic-offsite)\\.yaml$/"],
       "matchStrings": [
         "image: (?<depName>restic/restic):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]

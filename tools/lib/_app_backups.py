@@ -14,7 +14,7 @@ APP_NAMESPACE = re.compile(r"^app-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?$")
 APPS_SERVER = "restic-apps"
 APPS_REPOSITORY = f"rest:http://{APPS_SERVER}.platform-backups.svc.cluster.local:8000/"
 # The opt-in core directory the env's apps-backup-server switch lists in its platform-configs.
-APPS_SERVER_DIR = "platform/backups/apps"
+APPS_SERVER_DIR = "platform/optional/apps-backup-server"
 # Where a credential is mounted in the apps server, restic-check and restic-offsite.
 CREDENTIALS_MOUNT = "/credentials"
 # Registration Components live under envs/<env>/flux/platform-configs/<REGISTRATION_DIR>/<namespace>.

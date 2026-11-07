@@ -11,6 +11,8 @@ from schema.env import ADDONS_DIR, SLOTS_DIR
 # A root joins this list in the PR that creates it, and is removed when it is deleted.
 EXPLICIT_COMPONENT_ROOTS: tuple[str, ...] = (
     "docs/code-delivery",
+    "platform/optional",
+    "platform/optional/app-hosting",
     "schema",
 )
 

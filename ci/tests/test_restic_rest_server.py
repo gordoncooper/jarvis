@@ -54,7 +54,7 @@ def _docs(path: Path) -> list[dict]:
 
 def test_rest_server_contract_rules() -> None:
     docs: list[dict] = []
-    for path in sorted((ROOT / "platform/backups").rglob("*.yaml")):
+    for path in [*(ROOT / "platform/backups").rglob("*.yaml"), *(ROOT / "platform/optional").rglob("*.yaml")]:
         docs.extend(_docs(path))
     assert all(doc.get("kind") != "Ingress" for doc in docs)
 
@@ -386,7 +386,7 @@ def _run_keyed(tmp_path: Path, manifest: str, extra_env: dict[str, str]) -> tupl
     ("manifest", "extra_env"),
     [
         ("platform/backups/restic-check.yaml", {}),
-        ("platform/backups/offsite/restic-offsite.yaml", {"RESTIC_FROM_PASSWORD": "core-local"}),
+        ("platform/optional/offsite-copy/restic-offsite.yaml", {"RESTIC_FROM_PASSWORD": "core-local"}),
     ],
 )
 def test_app_repository_opens_only_with_its_own_password(
@@ -484,7 +484,7 @@ def test_offsite_copy_script_inits_and_copies_every_repository(tmp_path: Path) -
         (data / repo).mkdir(parents=True)
     (bindir / "restic").write_text(_FAKE_COPY, encoding="utf-8")
     (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "platform/backups/offsite/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    job = _docs(ROOT / "platform/optional/offsite-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
     container = job["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
     env.update(
@@ -515,7 +515,7 @@ def test_offsite_copy_fails_every_repository_at_once_when_the_target_is_down(tmp
         (data / repo).mkdir(parents=True)
     (bindir / "restic").write_text('#!/bin/sh\necho "$*" >> "$LOG"\nexit 1\n', encoding="utf-8")
     (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "platform/backups/offsite/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    job = _docs(ROOT / "platform/optional/offsite-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
     container = job["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
     env.update(
@@ -533,7 +533,7 @@ def test_offsite_copy_fails_every_repository_at_once_when_the_target_is_down(tmp
 
 def test_offsite_copy_reads_the_source_password_from_backups_restic() -> None:
     """The local-side password is key RESTIC_PASSWORD of Secret backups-restic."""
-    job = _docs(ROOT / "platform/backups/offsite/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    job = _docs(ROOT / "platform/optional/offsite-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
     container = job["spec"]["template"]["spec"]["containers"][0]
     source = next(item for item in container["env"] if item["name"] == "RESTIC_FROM_PASSWORD")
     assert source["valueFrom"]["secretKeyRef"] == {"name": "backups-restic", "key": "RESTIC_PASSWORD"}

@@ -749,7 +749,7 @@ def test_offsite_copy_freshness_is_checked_when_the_env_lists_it(
     configs = tmp_path / "envs" / "env-test" / "flux" / "platform-configs"
     configs.mkdir(parents=True)
     (configs / "kustomization.yaml").write_text(
-        "resources:\n  - ../../../../core/platform/backups/offsite\n", encoding="utf-8"
+        "resources:\n  - ../../../../core/platform/optional/offsite-copy\n", encoding="utf-8"
     )
     cluster = Cluster()
     cluster.offsite_sync = last
@@ -771,7 +771,7 @@ def test_unreadable_switches_fail_verify(
 def _list_apps_server(root: Path) -> None:
     configs = root / "envs" / "env-test" / "flux" / "platform-configs"
     configs.mkdir(parents=True, exist_ok=True)
-    (configs / "kustomization.yaml").write_text("resources:\n  - ../../../../core/platform/backups/apps\n", encoding="utf-8")
+    (configs / "kustomization.yaml").write_text("resources:\n  - ../../../../core/platform/optional/apps-backup-server\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize(

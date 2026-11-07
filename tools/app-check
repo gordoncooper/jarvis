@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate hosted app folders: python3 tools/app-check <folder>... (platform/app-hosting/CONTRACT.md).
+"""Validate hosted app folders: python3 tools/app-check <folder>... (platform/optional/app-hosting/CONTRACT.md).
 
 The apps repository's CI checks out this repository at a pinned commit and runs this on
 each changed app folder. It needs Python 3 with PyYAML, and kustomize when deploy/ holds a
