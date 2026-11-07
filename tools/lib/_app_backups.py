@@ -30,6 +30,12 @@ def secret_name(namespace: str) -> str:
     return f"backups-restic-{namespace}"
 
 
+def is_secret_name(name: str) -> bool:
+    """Whether name is a hosted app's credential Secret."""
+    prefix = secret_name("")
+    return name.startswith(prefix) and APP_NAMESPACE.fullmatch(name.removeprefix(prefix)) is not None
+
+
 def rest_username(namespace: str) -> str:
     """The app's apps-server user, which is also its top-level repository folder."""
     return f"ns-{namespace}"

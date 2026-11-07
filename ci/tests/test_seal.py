@@ -217,6 +217,16 @@ def test_seal_writes_an_app_credential_where_the_schema_expects_it(
             ),
             id="namespace-flag-names-an-app",
         ),
+        pytest.param(
+            lambda mod, sops: mod.seal(
+                "env-test", "backups-restic-app-demo", _app_credential(), sops_bin=sops, namespace="platform-backups"
+            ),
+            id="credential-name-in-the-wrong-folder",
+        ),
+        pytest.param(
+            lambda mod, sops: mod.seal("env-test", "backups-restic-app-demo", _app_credential(), sops_bin=sops),
+            id="credential-name-at-the-top-level",
+        ),
     ],
 )
 def test_seal_refuses_an_app_credential_that_would_land_wrong_before_sops(
