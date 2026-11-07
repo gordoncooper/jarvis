@@ -534,6 +534,23 @@ def test_render_cli_without_checkout_refuses_cleanly(tmp_path: Path) -> None:
     assert "Traceback" not in proc.stderr
 
 
+def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> None:
+    """Rule: this render rewrites the env's wiring from its switches, so an unknown name refuses before
+    any write, rather than silently dropping an optional piece."""
+    from render_backup_selection import render_env
+
+    copy = bootstrap_example_copy(tmp_path)
+    _write_apps(copy, {"mode": "selected", "selected": ["notes"]})
+    _render_selection(copy)
+    wiring = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
+    before = wiring.read_text(encoding="utf-8")
+    assert "offsite-backup-copy" in before
+    set_switches(copy.env_dir, optional=["app-hosting", "offsite-copy", "apps-backup-server"])
+    with pytest.raises(SystemExit, match="unknown name 'offsite-copy'"):
+        render_env(copy.env_dir, copy.root)
+    assert wiring.read_text(encoding="utf-8") == before
+
+
 def _render_cli(copy: ExampleCopy, **env: str) -> subprocess.CompletedProcess[str]:
     clean = {key: value for key, value in os.environ.items() if key != "APPS_REPO"}
     return subprocess.run(
