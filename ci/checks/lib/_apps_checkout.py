@@ -24,7 +24,7 @@ import _backup_selection  # noqa: E402
 from _env import instance_root  # noqa: E402
 
 # The wiring every env's app sources come from: its ref is the branch Flux deploys.
-_WIRING = REPO_ROOT / "platform" / "app-hosting" / "app" / "flux.yaml"
+_WIRING = REPO_ROOT / "platform" / "optional" / "app-hosting" / "app" / "flux.yaml"
 
 
 class AppsCheckoutError(Exception):

@@ -1,6 +1,6 @@
 # Add a hosted app
 
-A hosted app lives in the apps repository, one folder per app, and is untrusted: core decides what it may do, and the cluster holds it to that. The rules are in [platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md).
+A hosted app lives in the apps repository, one folder per app, and is untrusted: core decides what it may do, and the cluster holds it to that. The rules are in [platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md).
 
 Start from one of the three examples in the `jarvis-apps` apps repository:
 

@@ -34,7 +34,7 @@ _TESTAPP = {
     ("Namespace", "", "platform-testapp"),
     ("Service", "platform-testapp", "testapp"),
 }
-# platform/app-hosting: only in an env that turns app hosting on.
+# platform/optional/app-hosting: only in an env that turns app hosting on.
 _APP_HOSTING = {
     ("Namespace", "", "platform-app-hosting"),
     ("ServiceAccount", "platform-app-hosting", "app-grant-revoke"),

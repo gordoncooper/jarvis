@@ -1,4 +1,4 @@
-"""Hosted-app standing checks (platform/app-hosting/CONTRACT.md, Health). Read-only.
+"""Hosted-app standing checks (platform/optional/app-hosting/CONTRACT.md, Health). Read-only.
 
 make verify runs this component only for an env whose values/switches.yaml lists an app.
 """
@@ -64,7 +64,7 @@ def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None
     if leftover:
         raise CheckWarning(
             f"{', '.join(leftover)}: the env no longer lists these apps; delete what they left "
-            "(platform/app-hosting/CONTRACT.md, Operations)"
+            "(platform/optional/app-hosting/CONTRACT.md, Operations)"
         )
 
 

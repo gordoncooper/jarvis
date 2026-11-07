@@ -224,7 +224,7 @@ def _assert_enrollment_on_platform_configs(root, env: str) -> None:
         if isinstance(doc, dict)
     ]
     policies = [doc for doc in docs if doc.get("kind") == "ClusterPolicy"]
-    # app-derive and app-priority are the hosted apps' (platform/app-hosting, when the env turns
+    # app-derive and app-priority are the hosted apps' (platform/optional/app-hosting, when the env turns
     # it on); they make no backup object.
     from schema.env import app_hosting_listed
 

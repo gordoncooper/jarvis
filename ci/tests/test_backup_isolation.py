@@ -154,7 +154,7 @@ def _set_components(copy: ExampleCopy, components: list[str], *, apps_server: bo
     path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     # The registrations change; the app-hosting switch the copy carries stays.
-    switch = [item for item in doc.get("components") or [] if item.endswith("core/platform/app-hosting")]
+    switch = [item for item in doc.get("components") or [] if item.endswith("core/platform/optional/app-hosting")]
     doc["components"] = [*switch, *components]
     if not apps_server:
         doc["resources"] = [item for item in doc["resources"] if not item.endswith("platform/optional/apps-backup-server")]

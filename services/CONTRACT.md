@@ -1,6 +1,6 @@
 # CONTRACT: add-ons
 
-Every add-on meets this contract. An add-on is a limited-tenant swappable service on top of core (the chat bot slot, the code factory and similar), not an optional core component such as app hosting, the off-host copy or observability ([schema/CONTRACT.md](../schema/CONTRACT.md), `values/switches.yaml`). Add-ons are optional and off by default. Each env turns on the ones it wants, in its own repository. Core and add-ons form one trusted zone. Hosted apps ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)) are not add-ons.
+Every add-on meets this contract. An add-on is a limited-tenant swappable service on top of core (the chat bot slot, the code factory and similar), not an optional core component such as app hosting, the off-host copy or observability ([schema/CONTRACT.md](../schema/CONTRACT.md), `values/switches.yaml`). Add-ons are optional and off by default. Each env turns on the ones it wants, in its own repository. Core and add-ons form one trusted zone. Hosted apps ([platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md)) are not add-ons.
 
 How to write one: [docs/add-an-addon.md](../docs/add-an-addon.md).
 
@@ -51,4 +51,4 @@ The add-on's Flux Kustomizations are Ready; `make verify` already waits on every
 - The wiring keeps `prune: disabled`, so a Role or RoleBinding renamed or removed while the add-on stays on is left on the cluster until deleted by hand. A RoleBinding's `roleRef` cannot change in place: give the new one a new name.
 - An enabled add-on's sealed-Secret folder must hold a file before its `-secrets` Kustomization can go Ready; Git keeps no empty folder.
 - An add-on cannot ship cluster-scoped objects (ClusterRoles, CRDs, webhooks, cluster policies). One that needs them is not admitted yet. The safe shape is a platform component under `platform/` that owns those objects, with a platform contract the add-on depends on.
-- Hosted apps are not add-ons: each has its own wiring and an `app-<name>` namespace ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)). The app policies leave add-on namespaces alone.
+- Hosted apps are not add-ons: each has its own wiring and an `app-<name>` namespace ([platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md)). The app policies leave add-on namespaces alone.

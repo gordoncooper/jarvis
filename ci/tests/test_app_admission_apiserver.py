@@ -39,9 +39,9 @@ SELECTED_NODE = "volume.kubernetes.io/selected-node"
 PVC_PROTECTION_FINALIZER = "kubernetes.io/pvc-protection"
 
 WORK = REPO_ROOT / ".scratch" / "apiserver"
-CRD = REPO_ROOT / "platform" / "app-hosting" / "crd" / "app-crd.yaml"
-GRANT_REVOKE = REPO_ROOT / "platform" / "app-hosting" / "grant-revoke.yaml"
-WIRING_BINDING = REPO_ROOT / "platform" / "app-hosting" / "app" / "grant-revoke.yaml"
+CRD = REPO_ROOT / "platform" / "optional" / "app-hosting" / "crd" / "app-crd.yaml"
+GRANT_REVOKE = REPO_ROOT / "platform" / "optional" / "app-hosting" / "grant-revoke.yaml"
+WIRING_BINDING = REPO_ROOT / "platform" / "optional" / "app-hosting" / "app" / "grant-revoke.yaml"
 PRIVILEGED = {"containers": [{"name": "c", "image": "x", "securityContext": {"privileged": True}}]}
 PATHS = {
     "Namespace": "/api/v1/namespaces",

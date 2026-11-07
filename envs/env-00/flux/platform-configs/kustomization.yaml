@@ -8,4 +8,4 @@ resources:
 - ../../../../core/platform/optional/offsite-copy
 - ../../secrets/backups-offsite.sops.yaml
 components:
-- ../../../../core/platform/app-hosting
+- ../../../../core/platform/optional/app-hosting

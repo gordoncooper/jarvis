@@ -94,7 +94,7 @@ def _helper(tmp_path: Path, instance: Path, *, branches: tuple[str, ...] = ("tru
     shutil.copy(REPO_ROOT / "ci" / "checkout-apps-for-instance.sh", product / "ci")
     shutil.copytree(REPO_ROOT / "ci" / "checks" / "lib", product / "ci" / "checks" / "lib")
     shutil.copytree(REPO_ROOT / "tools" / "lib", product / "tools" / "lib")
-    wiring = product / "platform" / "app-hosting" / "app" / "flux.yaml"
+    wiring = product / "platform" / "optional" / "app-hosting" / "app" / "flux.yaml"
     wiring.parent.mkdir(parents=True)
     wiring.write_text(
         "---\n".join(f"kind: GitRepository\nspec:\n  ref:\n    branch: {branch}\n" for branch in branches),
