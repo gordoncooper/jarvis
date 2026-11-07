@@ -751,7 +751,7 @@ def test_offsite_copy_freshness_is_checked_when_the_env_lists_it(
     configs = tmp_path / "envs" / "env-test" / "flux" / "platform-configs"
     configs.mkdir(parents=True)
     (configs / "kustomization.yaml").write_text(
-        "resources:\n  - ../../../../core/platform/optional/offsite-copy\n", encoding="utf-8"
+        "resources:\n  - ../../../../core/platform/optional/offsite-backup-copy\n", encoding="utf-8"
     )
     cluster = Cluster()
     cluster.offsite_sync = last

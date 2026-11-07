@@ -5,7 +5,7 @@ Core pieces that run only in an env that names them. Each folder here is named f
 ## Offers
 
 - `app-hosting/`: the hosted-app Component and per-app wiring, with its own [CONTRACT.md](app-hosting/CONTRACT.md).
-- `offsite-copy/`: CronJob `restic-offsite`, the nightly copy of every local repository to the env's off-host backend.
+- `offsite-backup-copy/`: CronJob `restic-offsite`, the nightly copy of every local repository to the env's off-host backend. It always covers a dead disk; it covers losing the site only if the env's target is at another site.
 - `apps-backup-server/`: Deployment and Service `restic-apps`, the rest-server that holds only hosted apps' repositories.
 
 What the two backup pieces do, and how to run them, stays in [platform/backups/CONTRACT.md](../backups/CONTRACT.md) (Off-host copy, App credentials), beside the always-on backup plumbing they extend.

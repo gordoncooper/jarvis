@@ -1,4 +1,4 @@
-# Opt-in: an env lists offsite-copy in envs/<env>/values/switches.yaml and seals its
+# Opt-in: an env lists offsite-backup-copy in envs/<env>/values/switches.yaml and seals its
 # own backups-offsite.sops.yaml (platform-backups CONTRACT).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

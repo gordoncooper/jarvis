@@ -208,7 +208,7 @@
       "customType": "regex",
       "description": "restic image version and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/(backups\\/(etcd-snapshots|restic-check)|optional\\/offsite-copy\\/restic-offsite)\\.yaml$/"],
+      "managerFilePatterns": ["/^platform\\/(backups\\/(etcd-snapshots|restic-check)|optional\\/offsite-backup-copy\\/restic-offsite)\\.yaml$/"],
       "matchStrings": [
         "image: (?<depName>restic/restic):(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]

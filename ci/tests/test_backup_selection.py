@@ -39,7 +39,7 @@ def _write_apps(copy: ExampleCopy, section: dict) -> None:
 def _render_selection(copy: ExampleCopy) -> None:
     from render_backup_selection import render_env
 
-    set_switches(copy.env_dir, optional=["app-hosting", "offsite-copy", "apps-backup-server"])
+    set_switches(copy.env_dir, optional=["app-hosting", "offsite-backup-copy", "apps-backup-server"])
     render_env(copy.env_dir, copy.root)
 
 
