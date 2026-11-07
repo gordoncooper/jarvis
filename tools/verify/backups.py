@@ -210,7 +210,7 @@ def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
         registered = required = frozenset()
         checks = [(19, "backup selection", fail_selection)]
     else:
-        registered = frozenset(item for item in app_registrations(env_dir, ctx.repo_root) if isinstance(item, str))
+        registered = frozenset(app_registrations(env_dir, ctx.repo_root))
         required = backup_required_registrations(env_dir, ctx.repo_root)
         checks = []
     checks.extend(

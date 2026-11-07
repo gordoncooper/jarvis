@@ -768,13 +768,10 @@ def test_unreadable_switches_fail_verify(
     assert "FAIL verify components" in capsys.readouterr().out
 
 
-def _list_apps_server(root: Path, *registered: str) -> None:
+def _list_apps_server(root: Path) -> None:
     configs = root / "envs" / "env-test" / "flux" / "platform-configs"
     configs.mkdir(parents=True, exist_ok=True)
-    text = "resources:\n  - ../../../../core/platform/backups/apps\n"
-    if registered:
-        text += "components:\n" + "".join(f"  - backups/{name}\n" for name in registered)
-    (configs / "kustomization.yaml").write_text(text, encoding="utf-8")
+    (configs / "kustomization.yaml").write_text("resources:\n  - ../../../../core/platform/backups/apps\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -831,7 +828,7 @@ def test_app_pvc_without_a_registered_credential_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """An app- PVC is never backed up with core's credential, so without its own it fails verify."""
-    _list_apps_server(tmp_path, "app-other")
+    _list_apps_server(tmp_path)
     cluster = Cluster()
     cluster.pvcs = [("app", "data"), ("app-shop", "db")]
     assert _run(tmp_path, cluster, monkeypatch) == 1
