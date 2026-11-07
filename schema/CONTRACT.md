@@ -44,7 +44,7 @@ All keys in env value files use **lowercase snake_case** (including `cluster-var
 
 ### `values/switches.yaml`
 
-One short file, names only, one per line. Core is on in every env, so it has no section: `platform/kustomization.yaml` and `platform/configs/kustomization.yaml` list it. `tools/lib/render_switches.py --env <env>` turns it into the Flux wiring; `INSTANCE=<path>` points it at an instance. Settings stay where they were: an app's in its app file, an exception line or backup selection in `values/apps.yaml`, a sealed secret under `secrets/`.
+One short file, names only, one per line. Core is on in every env, so it has no section: `platform/kustomization.yaml` and `platform/configs/kustomization.yaml` list it. `tools/lib/render_switches.py --env <env>` turns it into the Flux wiring, and it and `tools/lib/render_backup_selection.py` refuse an unknown name before they write; `INSTANCE=<path>` points it at an instance. Settings stay where they were: an app's in its app file, an exception line or backup selection in `values/apps.yaml`, a sealed secret under `secrets/`.
 
 | Section | Names | Notes |
 | --- | --- | --- |

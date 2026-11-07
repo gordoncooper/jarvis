@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from schema.env import app_hosting_listed, instance_root  # noqa: E402
+from schema.env import app_hosting_listed, instance_root, switches_problems  # noqa: E402
 import _apps  # noqa: E402
 import _backup_selection  # noqa: E402
 import _switches  # noqa: E402
@@ -43,6 +43,10 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
     if problems:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(problems)}")
     enabled = _backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root)
+    # The wiring is rewritten from the switches below, and a name it does not know would drop silently.
+    problems = switches_problems(env_dir, repo_root)
+    if problems:
+        raise SystemExit("; ".join(problems))
     switches, _ = _switches.load(env_dir)
     if enabled and _switches.APPS_BACKUP_SERVER not in _switches.names(switches, _switches.OPTIONAL):
         raise SystemExit(
