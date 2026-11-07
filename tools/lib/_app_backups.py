@@ -10,6 +10,8 @@ import re
 
 # A hosted app's namespace: app-<name>, one DNS label.
 APP_NAMESPACE = re.compile(r"^app-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?$")
+# Where an app's credential Secret lives. Its sealed file sits in a folder named for the app.
+SECRET_NAMESPACE = "platform-backups"
 # The apps rest-server. Its users are confined to their own top-level folder (--private-repos).
 APPS_SERVER = "restic-apps"
 APPS_REPOSITORY = f"rest:http://{APPS_SERVER}.platform-backups.svc.cluster.local:8000/"
