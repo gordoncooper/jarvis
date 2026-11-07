@@ -866,7 +866,7 @@ def test_missing_flux_entry_file_fails(tmp_path: Path) -> None:
 
 
 def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Path) -> None:
-    """Once bootstrapped, an env listing platform/backups/offsite requires backups-offsite.sops.yaml."""
+    """Once bootstrapped, an env listing platform/optional/offsite-copy requires backups-offsite.sops.yaml."""
     env = _write_env(tmp_path)
     _copy_flux_entry(env)
     _render_core_only(env, "offsite-copy")

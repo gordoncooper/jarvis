@@ -27,6 +27,7 @@
 | [../platform/configs/CONTRACT.md](../platform/configs/CONTRACT.md) | platform-configs list |
 | [../platform/flux-operator/CONTRACT.md](../platform/flux-operator/CONTRACT.md) | Flux Operator |
 | [../platform/kyverno/CONTRACT.md](../platform/kyverno/CONTRACT.md) | Kyverno admission |
+| [../platform/optional/CONTRACT.md](../platform/optional/CONTRACT.md) | Optional core pieces and how an env enables them, observability included |
 | [../platform/testapp/CONTRACT.md](../platform/testapp/CONTRACT.md) | Platform canary |
 | [../platform/traefik/CONTRACT.md](../platform/traefik/CONTRACT.md) | Ingress exposure |
 | [../services/CONTRACT.md](../services/CONTRACT.md) | Add-ons: what every add-on meets |

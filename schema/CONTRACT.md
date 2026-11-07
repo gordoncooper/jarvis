@@ -48,7 +48,7 @@ One short file, names only, one per line. Core is on in every env, so it has no 
 
 | Section | Names | Notes |
 | --- | --- | --- |
-| `optional` | `app-hosting`, `offsite-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `tools/lib/_switches.py` and no bundle to any env. Observability joins this list when it is built; it is not an add-on. |
+| `optional` | `app-hosting`, `offsite-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `tools/lib/_switches.py` and no bundle to any env. Observability is an optional core component too, not an add-on: off until an env lists `observability` here, a name refused until it is built ([platform/optional/CONTRACT.md](../platform/optional/CONTRACT.md)). |
 | `addons` | A folder under core's `services/`. | Limited-tenant swappable services ([services/CONTRACT.md](../services/CONTRACT.md)). At most one per slot. |
 | `apps` | A folder in the apps repository. | Hosted apps: untrusted, held to their app file by the cluster ([platform/app-hosting/CONTRACT.md](../platform/app-hosting/CONTRACT.md)). Listing a name switches an app on and grants it nothing; a new app in that repository never deploys until an env lists it. |
 
@@ -116,7 +116,7 @@ The example env declares every known role. A new known role is declared on that 
 
 `envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and its `values/switches.yaml` names what CI renders. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `sync.yaml` (the two sources and the root Kustomization, with placeholder URLs), `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list, rendered from the switches, is `core/platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
-The example's switches also turn on the off-host copy, `offsite-copy`: `core/platform/backups/offsite` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
+The example's switches also turn on the off-host copy, `offsite-copy`: `core/platform/optional/offsite-copy` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
 
 The example's switches list the sample add-on, so CI renders an add-on. A copy empties `addons` and `apps`, takes `app-hosting` off `optional`, deletes `values/apps.yaml`, re-renders, and starts core-only. The test copy seals a placeholder in each folder the sample decrypts.
 

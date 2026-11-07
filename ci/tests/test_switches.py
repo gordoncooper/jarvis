@@ -9,6 +9,7 @@ import yaml
 
 from schema.env import ValidationError, validate_one_env
 from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app, render_switches, set_switches
+import _app_backups
 import _switches
 
 
@@ -70,6 +71,28 @@ def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: s
     with pytest.raises(SystemExit, match=bad):
         render_switches(copy.env_dir, copy.root)
     assert _tree(copy) == before
+
+
+@pytest.mark.parametrize(
+    ("name", "folder", "kind", "object_name"),
+    [
+        (_switches.OFFSITE_COPY, _switches.OFFSITE_COPY_DIR, "CronJob", "restic-offsite"),
+        (_switches.APPS_BACKUP_SERVER, _app_backups.APPS_SERVER_DIR, "Deployment", "restic-apps"),
+    ],
+)
+def test_an_optional_backup_piece_renders_only_from_its_name(name: str, folder: str, kind: str, object_name: str) -> None:
+    """Rule: always-on core carries no optional piece. Its folder sits under platform/optional, the
+    always-on list does not build it, and the env's wiring lists that folder only once the env names it."""
+    def has_object(rel: str) -> bool:
+        return any(
+            isinstance(doc, dict) and (doc["kind"], doc["metadata"]["name"]) == (kind, object_name)
+            for doc in yaml.safe_load_all(_kustomize_build(rel))
+        )
+
+    assert folder.startswith("platform/optional/") and has_object(folder)
+    assert not has_object("platform/configs")
+    assert folder in _switches.platform_configs({"optional": [name]})
+    assert folder not in _switches.platform_configs({"optional": []})
 
 
 def test_core_has_no_switch(tmp_path: Path) -> None:

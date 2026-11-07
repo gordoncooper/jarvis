@@ -22,7 +22,7 @@ import yaml
 from conftest import require_cli
 from support import REPO_ROOT, load_tool
 
-APPS_MANIFEST = REPO_ROOT / "platform/backups/apps/rest-server-apps.yaml"
+APPS_MANIFEST = REPO_ROOT / "platform/optional/apps-backup-server/rest-server-apps.yaml"
 
 
 def _pinned(path: Path, image: str) -> str:
