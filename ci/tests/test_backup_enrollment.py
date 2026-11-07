@@ -118,7 +118,7 @@ def test_renovate_tracks_the_kyverno_chart_and_images() -> None:
         for manager in managers
         for pattern in manager["matchStrings"]
     )
-    groups = [rule for rule in renovate["packageRules"] if rule.get("groupName") == "kyverno-image"]
+    groups = [rule for rule in renovate["packageRules"] if rule.get("groupName") == "kyverno"]
     assert len(groups) == 1
     assert "ghcr.io/kyverno/background-controller" in groups[0]["matchDepNames"]
 

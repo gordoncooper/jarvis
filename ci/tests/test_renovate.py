@@ -394,41 +394,70 @@ def test_grant_revoke_python_image_is_a_renovate_pin() -> None:
 
 
 @pytest.mark.parametrize(
-    ("group", "chart"), [("cert-manager-image", "cert-manager"), ("kyverno-image", "kyverno")]
+    ("group", "dep"),
+    [("cert-manager", "cert-manager"), ("kyverno", "kyverno"), ("kyverno", "kyverno/kyverno")],
 )
-def test_chart_and_its_images_update_in_one_pr(group: str, chart: str) -> None:
-    """Merged alone, a chart bump or an image bump would run a chart with images of another release."""
+def test_chart_cli_and_images_update_in_one_pr(group: str, dep: str) -> None:
+    """Merged alone, a chart, CLI or image bump would leave its release's other pins behind."""
     rule = next(item for item in _renovate_config()["packageRules"] if item.get("groupName") == group)
-    assert chart in rule["matchDepNames"]
+    assert dep in rule["matchDepNames"]
 
 
-def _unmanaged_renovate_comments(rel: str, text: str) -> list[str]:
-    """Renovate comments where no custom manager's match covers the comment or the pin below it."""
+_RENOVATE_COMMENT = r"# renovate:[^\n]*"
+_DIGEST_PIN = r"[^\n]*sha256:[a-f0-9]{64}[^\n]*"
+
+
+def _unmanaged(rel: str, text: str, line: str) -> list[str]:
+    """Lines matching line that no custom manager's match covers."""
     spans = [match.span() for match in _manager_matches(rel, text)]
     return [
-        comment.group(0).splitlines()[0].strip()
-        for comment in re.finditer(r"# renovate:[^\n]*\n[^\n]*", text)
-        if not any(start < comment.end() and comment.start() < end for start, end in spans)
+        found.group(0).strip()
+        for found in re.finditer(line, text)
+        if not any(start < found.end() and found.start() < end for start, end in spans)
     ]
 
 
-def test_every_renovate_comment_has_a_manager() -> None:
-    """A renovate comment no manager reads gets no bump PRs, and nothing else reports it."""
-    tracked = subprocess.run(
+def _tracked() -> dict[str, str]:
+    """Every tracked file outside ci/ and renovate.json, by path."""
+    listed = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True, text=True
     ).stdout.split("\0")
-    commented = {
-        rel: text
-        for rel in tracked
+    return {
+        rel: (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+        for rel in listed
         if rel and rel != "renovate.json" and not rel.startswith("ci/") and (ROOT / rel).is_file()
-        and "# renovate:" in (text := (ROOT / rel).read_text(encoding="utf-8", errors="ignore"))
     }
+
+
+def test_every_renovate_comment_is_read_by_a_manager() -> None:
+    """A comment no manager reads gets no bump PRs, and a comment a manager ignores can say anything."""
+    commented = {rel: text for rel, text in _tracked().items() if "# renovate:" in text}
     assert commented
-    missed = {rel: _unmanaged_renovate_comments(rel, text) for rel, text in commented.items()}
+    missed = {rel: _unmanaged(rel, text, _RENOVATE_COMMENT) for rel, text in commented.items()}
     assert {rel: found for rel, found in missed.items() if found} == {}
 
 
-def test_seeded_renovate_comment_without_a_manager_fails() -> None:
+def test_every_digest_pin_in_a_manifest_is_read_by_a_manager() -> None:
+    """A digest pin needs no comment to pass digest-pin, so one with no manager would never move."""
+    manifests = {
+        rel: text
+        for rel, text in _tracked().items()
+        if rel.startswith(("platform/", "services/")) and rel.endswith((".yaml", ".yml"))
+    }
+    assert any(re.search(_DIGEST_PIN, text) for text in manifests.values())
+    missed = {rel: _unmanaged(rel, text, _DIGEST_PIN) for rel, text in manifests.items()}
+    assert {rel: found for rel, found in missed.items() if found} == {}
+
+
+@pytest.mark.parametrize("line", [_RENOVATE_COMMENT, _DIGEST_PIN], ids=["comment", "digest-pin"])
+def test_seeded_pin_without_a_manager_fails(line: str) -> None:
     """The same pin in a file no manager selects is reported."""
     source = (ROOT / "platform/optional/app-hosting/grant-revoke.yaml").read_text(encoding="utf-8")
-    assert _unmanaged_renovate_comments("platform/optional/app-hosting/unmanaged.yaml", source)
+    assert _unmanaged("platform/optional/app-hosting/unmanaged.yaml", source, line)
+
+
+def test_seeded_comment_a_manager_ignores_fails() -> None:
+    """A comment whose depName no manager reads is reported, though the pin below it is managed."""
+    rel = "platform/backups/restic-check.yaml"
+    source = (ROOT / rel).read_text(encoding="utf-8").replace("depName=restic/restic", "depName=other/image")
+    assert _unmanaged(rel, source, _RENOVATE_COMMENT)
