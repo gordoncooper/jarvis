@@ -1,0 +1,15 @@
+# The jarvis package: the Python behind core's tools, checks, schema and verify. It is not
+# published; make deps installs it editable into the repo's venv, and a core release is its git
+# tag (CHANGELOG.md), so the version here never moves. Pins live in requirements-dev.txt.
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0"
+requires-python = ">=3.12"
+dependencies = ["PyYAML"]
+
+[tool.setuptools.packages.find]
+include = ["jarvis*"]

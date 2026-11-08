@@ -18,9 +18,8 @@ from subprocess import CompletedProcess
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "tools"))
 
-from lib._env import (  # noqa: E402
+from jarvis.lib.env import (  # noqa: E402
     EnvError,
     instance_root,
     json_object,
@@ -32,7 +31,7 @@ from lib._env import (  # noqa: E402
     tool_env,
     validate_cluster,
 )
-from lib._etcd_image import ImageError, etcd_snapshot_image  # noqa: E402
+from jarvis.lib.etcd_image import ImageError, etcd_snapshot_image  # noqa: E402
 
 NAMESPACE = "platform-drill"
 PVC = "drill"

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from _manifests import helm_values, load_documents, pod_spec, ref_of
+from jarvis.checks.manifests import helm_values, load_documents, pod_spec, ref_of
 
 _SHA = re.compile(r"sha256:[a-f0-9]{64}\Z")
 _SHA_REF = re.compile(r"@sha256:[a-f0-9]{64}\Z")

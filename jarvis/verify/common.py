@@ -9,7 +9,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from lib._env import json_object
+from jarvis.lib.env import json_object
 
 Kubectl = Callable[..., CompletedProcess[str]]
 Fetch = Callable[[str, Path], tuple[int, str]]

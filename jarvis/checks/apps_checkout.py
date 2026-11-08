@@ -16,12 +16,11 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "tools" / "lib"))
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-import _apps  # noqa: E402
-import _backup_selection  # noqa: E402
-from _env import instance_root  # noqa: E402
+from jarvis.lib import apps as _apps  # noqa: E402
+from jarvis.lib import backup_selection as _backup_selection  # noqa: E402
+from jarvis.lib.env import instance_root  # noqa: E402
 
 # The wiring every env's app sources come from: its ref is the branch Flux deploys.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _contract_md import EXPLICIT_COMPONENT_ROOTS, format_missing, missing_contract_roots
+from jarvis.checks.contract_md import EXPLICIT_COMPONENT_ROOTS, format_missing, missing_contract_roots
 
 
 def _listed_roots(tmp_path: Path) -> None:

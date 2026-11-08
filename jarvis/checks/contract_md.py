@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from schema.env import ADDONS_DIR, SLOTS_DIR
+from jarvis.schema.env import ADDONS_DIR, SLOTS_DIR
 
 # Contract paths that must exist. platform/*, the add-on contract at services/, each
 # add-on services/<name>/ and each slot services/slots/<slot>/ are discovered at scan time.

@@ -21,10 +21,10 @@ import yaml
 
 from support import REPO_ROOT, set_switches
 
-import _apps
-from _app_file import check_folder
-from render_apps import render_env
-from schema import env as env_schema
+from jarvis.lib import apps as _apps
+from jarvis.lib.app_file import check_folder
+from jarvis.lib.render_apps import render_env
+from jarvis.schema import env as env_schema
 import test_app_admission as admission
 
 EXAMPLES = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"

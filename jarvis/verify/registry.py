@@ -6,9 +6,9 @@ import importlib.util
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from schema.env import ADDONS_DIR, addon_names
+from jarvis.schema.env import ADDONS_DIR, addon_names
 
-from verify.common import CheckError, Context
+from jarvis.verify.common import CheckError, Context
 
 Builder = Callable[[Context], list[tuple[int, str, Callable[[], object]]]]
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV, ROOT_SOURCE
+from jarvis.schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV, ROOT_SOURCE
 
 SCAN_ROOTS = ("platform/", "services/", "envs/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")

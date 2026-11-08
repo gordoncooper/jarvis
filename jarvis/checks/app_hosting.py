@@ -27,11 +27,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from _manifests import flux_paths, kustomize_build, namespace_of, postbuild_values, ref_of, substitute
+from jarvis.checks.manifests import flux_paths, kustomize_build, namespace_of, postbuild_values, ref_of, substitute
 
-import _apps  # tools/lib, which schema.env (through _manifests) puts on the path
-from _app_file import SHIPPED_KINDS
-from schema.env import CORE_SOURCE_DIR, env_flux_dirs
+from jarvis.lib import apps as _apps
+from jarvis.lib.app_file import SHIPPED_KINDS
+from jarvis.schema.env import CORE_SOURCE_DIR, env_flux_dirs
 
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"

@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _flux_identity import scan_flux_identity
-from schema.env import EXAMPLE_ENV
+from jarvis.checks.flux_identity import scan_flux_identity
+from jarvis.schema.env import EXAMPLE_ENV
 from support import REPO_ROOT
 
 _ACCOUNTS = """

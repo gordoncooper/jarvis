@@ -2,7 +2,7 @@
 
 Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic; env specifics live only under `envs/`. Config with no consumer is not in the schema; each piece arrives with the code that uses it.
 
-A real env lives in a private instance checkout. `INSTANCE=<path>` points the schema, the env-level checks and every env tool at `<path>/envs/<env>` and `<path>/.sops.yaml`. Unset, they read this checkout, which holds only the example env. `instance_root` in `tools/lib/_env.py` is the one resolver.
+A real env lives in a private instance checkout. `INSTANCE=<path>` points the schema, the env-level checks and every env tool at `<path>/envs/<env>` and `<path>/.sops.yaml`. Unset, they read this checkout, which holds only the example env. `instance_root` in `jarvis/lib/env.py` is the one resolver.
 
 ## Offers
 
@@ -41,7 +41,7 @@ Not a runtime component. Health is “validation passes”: `ci/checks/env-schem
 
 ## Config
 
-All keys in env value files use **lowercase snake_case** (including `cluster-vars.yaml`). Validation applies to the fields below. Types are descriptive; the validator in `schema/env.py` is authoritative.
+All keys in env value files use **lowercase snake_case** (including `cluster-vars.yaml`). Validation applies to the fields below. Types are descriptive; the validator in `jarvis/schema/env.py` is authoritative.
 
 ### `values/switches.yaml`
 
@@ -49,7 +49,7 @@ One short file, names only, one per line. Core is on in every env, so it has no 
 
 | Section | Names | Notes |
 | --- | --- | --- |
-| `optional` | `app-hosting`, `offsite-backup-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `tools/lib/_switches.py` and no bundle to any env. Observability is an optional core component too, not an add-on: off until an env lists `observability` here, a name refused until it is built ([platform/optional/CONTRACT.md](../platform/optional/CONTRACT.md)). |
+| `optional` | `app-hosting`, `offsite-backup-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `jarvis/lib/switches.py` and no bundle to any env. Observability is an optional core component too, not an add-on: off until an env lists `observability` here, a name refused until it is built ([platform/optional/CONTRACT.md](../platform/optional/CONTRACT.md)). |
 | `addons` | A folder under core's `services/`. | Limited-tenant swappable services ([services/CONTRACT.md](../services/CONTRACT.md)). At most one per slot. |
 | `apps` | A folder in the apps repository. | Hosted apps: untrusted, held to their app file by the cluster ([platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md)). Listing a name switches an app on and grants it nothing; a new app in that repository never deploys until an env lists it. |
 
@@ -115,7 +115,7 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and its `values/switches.yaml` names what CI renders. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `sync.yaml` (the two sources and the root Kustomization, with placeholder URLs), `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the three files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list, rendered from the switches, is `core/platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
+`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `jarvis/schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and its `values/switches.yaml` names what CI renders. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `sync.yaml` (the two sources and the root Kustomization, with placeholder URLs), `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the three files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list, rendered from the switches, is `core/platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
 The example's switches also turn on the off-host copy, `offsite-backup-copy`: `core/platform/optional/offsite-backup-copy` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
 
@@ -131,7 +131,7 @@ The FluxInstance sets kustomize-controller `StrictPostBuildSubstitutions=true`. 
 
 The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluster-vars.yaml` for host settings, including every key that is not published. `jarvis_env` is published because verify, drill and restore read it from the live ConfigMap.
 
-The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_configmap.py`. Every other known key in `schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.
+The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_configmap.py`. Every other known key in `jarvis/schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.
 
 In `flux/sync.yaml`, the root `GitRepository` `flux-system` url and `ref.name` match `flux_git_repo_url` and `flux_git_ref`, its `core` `GitRepository` matches `core_git_repo_url` and `core_git_ref` and has no `secretRef`, the root includes `core` at `toPath: core`, an `ssh://` root names a `secretRef`, and the root Kustomization `flux-system` applies `./envs/<env>/flux` from `flux-system`. `site.yml` preflight requires the file.
 

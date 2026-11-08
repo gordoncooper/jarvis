@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from _manifests import helm_values, kind_of, load_documents, pod_spec, ref_of
+from jarvis.checks.manifests import helm_values, kind_of, load_documents, pod_spec, ref_of
 
 # Flags that send logs to a file. Modest on purpose: no volume guessing.
 _LOG_FILE = re.compile(

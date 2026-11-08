@@ -6,13 +6,13 @@ import base64
 import binascii
 from datetime import datetime, timedelta, timezone
 
-from lib._app_backups import APPS_SERVER, rest_username
-from lib._env import json_object, not_found, reason
-import _apps  # noqa: E402
-import _backup_selection  # noqa: E402
-from schema.env import app_registrations, apps_server_listed, backup_required_registrations, offsite_copy_listed
+from jarvis.lib.app_backups import APPS_SERVER, rest_username
+from jarvis.lib.env import json_object, not_found, reason
+from jarvis.lib import apps as _apps  # noqa: E402
+from jarvis.lib import backup_selection as _backup_selection  # noqa: E402
+from jarvis.schema.env import app_registrations, apps_server_listed, backup_required_registrations, offsite_copy_listed
 
-from verify.common import (
+from jarvis.verify.common import (
     CheckError,
     Context,
     Kubectl,
@@ -21,7 +21,7 @@ from verify.common import (
     recent,
     scheduled_instants,
 )
-from verify.registry import register
+from jarvis.verify.registry import register
 
 HOLD_NAMESPACE = "kube-system"
 HOLD_NAME = "backup-rebuild-hold"

@@ -17,8 +17,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from _manifests import flux_paths, kind_of, kustomize_build
-from schema.env import ROOT_SOURCE, env_flux_dirs
+from jarvis.checks.manifests import flux_paths, kind_of, kustomize_build
+from jarvis.schema.env import ROOT_SOURCE, env_flux_dirs
 
 PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 FLUX_NAMESPACE = "flux-system"

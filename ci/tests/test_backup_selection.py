@@ -19,12 +19,12 @@ if str(REPO_ROOT / "tools") not in sys.path:
 if str(REPO_ROOT / "tools" / "lib") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "tools" / "lib"))
 
-import _backup_selection
-from schema.env import ValidationError, validate_env_tree, validate_one_env
-from _manifests import substitute
+from jarvis.lib import backup_selection as _backup_selection
+from jarvis.schema.env import ValidationError, validate_env_tree, validate_one_env
+from jarvis.checks.manifests import substitute
 from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, kyverno_generated, register_copy_app, set_switches
-from verify.backups import backups_checks, check_backups
-from verify.common import CheckError
+from jarvis.verify.backups import backups_checks, check_backups
+from jarvis.verify.common import CheckError
 
 NOTES = "app-notes"
 FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
@@ -38,7 +38,7 @@ def _write_apps(copy: ExampleCopy, section: dict) -> None:
 
 
 def _render_selection(copy: ExampleCopy) -> None:
-    from render_backup_selection import render_env
+    from jarvis.lib.render_backup_selection import render_env
 
     set_switches(copy.env_dir, optional=["app-hosting", "offsite-backup-copy", "apps-backup-server"])
     render_env(copy.env_dir, copy.root)
@@ -535,7 +535,7 @@ def test_render_cli_without_checkout_refuses_cleanly(tmp_path: Path) -> None:
 def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> None:
     """Rule: this render rewrites the env's wiring from its switches, so an unknown name refuses before
     any write, rather than silently dropping an optional piece."""
-    from render_backup_selection import render_env
+    from jarvis.lib.render_backup_selection import render_env
 
     copy = bootstrap_example_copy(tmp_path)
     _write_apps(copy, {"mode": "selected", "selected": ["notes"]})

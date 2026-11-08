@@ -9,13 +9,10 @@ from pathlib import Path
 
 import yaml
 
-_TOOLS_LIB = Path(__file__).resolve().parent / "lib"
-if str(_TOOLS_LIB) not in sys.path:
-    sys.path.insert(0, str(_TOOLS_LIB))
 
-import _app_backups  # noqa: E402
-import _sops  # noqa: E402
-from _env import instance_root  # noqa: E402
+from jarvis.lib import app_backups as _app_backups  # noqa: E402
+from jarvis.lib import sops as _sops  # noqa: E402
+from jarvis.lib.env import instance_root  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

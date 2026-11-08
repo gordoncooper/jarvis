@@ -23,9 +23,9 @@ import yaml
 
 from support import REPO_ROOT, kyverno_generated
 
-import _apps
-from _app_file import check_folder
-from _manifests import substitute
+from jarvis.lib import apps as _apps
+from jarvis.lib.app_file import check_folder
+from jarvis.checks.manifests import substitute
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
 POLICIES = REPO_ROOT / "platform" / "optional" / "app-hosting" / "policies"

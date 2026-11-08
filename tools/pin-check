@@ -12,12 +12,10 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "tools"))
-sys.path.insert(0, str(REPO_ROOT))
 
-from lib._env import ENV_NAME, instance_root  # noqa: E402
-from lib._pin import ALLOW_FLAG, PinError, require_pin  # noqa: E402
-from schema.env import EXAMPLE_ENV  # noqa: E402
+from jarvis.lib.env import ENV_NAME, instance_root  # noqa: E402
+from jarvis.lib.pin import ALLOW_FLAG, PinError, require_pin  # noqa: E402
+from jarvis.schema.env import EXAMPLE_ENV  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

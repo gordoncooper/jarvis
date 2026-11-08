@@ -5,8 +5,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from _flux_substitute import scan_flux_substitute
-from schema.env import EXAMPLE_ENV
+from jarvis.checks.flux_substitute import scan_flux_substitute
+from jarvis.schema.env import EXAMPLE_ENV
 from support import REPO_ROOT, ExampleCopy, bootstrap_example_copy
 
 _ENV_FLUX = {

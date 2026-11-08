@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 import yaml
 
-from schema.env import EXAMPLE_ENV, is_example_env
+from jarvis.schema.env import EXAMPLE_ENV, is_example_env
 from support import REPO_ROOT
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
 K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"

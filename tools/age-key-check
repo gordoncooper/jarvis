@@ -13,14 +13,12 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "tools"))
 
-from lib._env import instance_root  # noqa: E402
+from jarvis.lib.env import instance_root  # noqa: E402
 
 _SEGMENT = re.compile(r"^[a-z0-9-]+$")
 _MODE_0600 = 0o600

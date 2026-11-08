@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 import yaml
 
-from _manifests import load_documents
+from jarvis.checks.manifests import load_documents
 
 BACKUP_NONE_ANNOTATION = "backup"
 BACKUP_NONE_VALUE = "none"

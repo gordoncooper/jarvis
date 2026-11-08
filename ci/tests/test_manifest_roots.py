@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from _digest_pin import scan_digest_pin
-from _loadbalancer import scan_loadbalancer
-from _manifest_lint import scan_manifest_lint
-from _pvc_backup import scan_pvc_backup
+from jarvis.checks.digest_pin import scan_digest_pin
+from jarvis.checks.loadbalancer import scan_loadbalancer
+from jarvis.checks.manifest_lint import scan_manifest_lint
+from jarvis.checks.pvc_backup import scan_pvc_backup
 from support import REPO_ROOT
 
 _SCANS = {
@@ -63,9 +63,8 @@ def test_the_check_script_requires_every_manifest_root(tmp_path: Path, name: str
     """The shipped check passes require_roots, so a tree missing services/ or envs/ fails."""
     _tree_with_platform_only(tmp_path)
     shutil.copytree(REPO_ROOT / "ci" / "checks", tmp_path / "ci" / "checks")
-    # The check libraries import schema.env, which the scripts find under the repo root,
-    # and schema.env imports the INSTANCE resolver from tools/lib.
-    for rel in ("schema", "tools/lib"):
+    # The check scripts import the jarvis package from the repo root (PYTHONPATH).
+    for rel in ("jarvis",):
         shutil.copytree(REPO_ROOT / rel, tmp_path / rel, ignore=shutil.ignore_patterns("__pycache__"))
     proc = subprocess.run(
         ["bash", str(tmp_path / "ci" / "checks" / name)],

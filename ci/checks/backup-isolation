@@ -6,13 +6,13 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 
 python3 - <<'PY'
 from pathlib import Path
 
-from _backup_isolation import format_violations, scan_backup_isolation
-from schema.env import instance_root
+from jarvis.checks.backup_isolation import format_violations, scan_backup_isolation
+from jarvis.schema.env import instance_root
 
 violations = scan_backup_isolation(instance_root(Path(".")))
 if violations:

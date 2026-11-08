@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from _manifests import helm_values, load_documents, ref_of
+from jarvis.checks.manifests import helm_values, load_documents, ref_of
 
 ALLOWED: dict[tuple[str, str, str], str] = {
     ("HelmChartConfig", "kube-system", "traefik"): "platform/traefik/",

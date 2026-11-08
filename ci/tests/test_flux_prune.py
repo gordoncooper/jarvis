@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from _flux_prune import EXCEPTIONS, PRUNE, index, scan_flux_prune, unguarded_objects
+from jarvis.checks.flux_prune import EXCEPTIONS, PRUNE, index, scan_flux_prune, unguarded_objects
 
 from support import ExampleCopy
 
@@ -20,7 +20,7 @@ def test_addon_secret_without_the_annotation_is_reported(tmp_path) -> None:
     import shutil
 
     import yaml
-    from _sops import encrypt_secret_to_file
+    from jarvis.lib.sops import encrypt_secret_to_file
     from support import bootstrap_example_copy
 
     copy_env = bootstrap_example_copy(tmp_path)

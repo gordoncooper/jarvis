@@ -25,15 +25,10 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-_TOOLS_LIB = REPO_ROOT / "tools" / "lib"
-if str(_TOOLS_LIB) not in sys.path:
-    sys.path.insert(0, str(_TOOLS_LIB))
 
-from _env import instance_root  # noqa: E402
-from render_cluster_vars_configmap import render_document  # noqa: E402
-from schema.env import (  # noqa: E402
+from jarvis.lib.env import instance_root  # noqa: E402
+from jarvis.lib.render_cluster_vars_configmap import render_document  # noqa: E402
+from jarvis.schema.env import (  # noqa: E402
     DEFAULT_SSH_USER,
     EXAMPLE_ENV,
     ValidationError,

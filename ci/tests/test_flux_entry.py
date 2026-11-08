@@ -28,12 +28,12 @@ from ansible_role_proof import (
     load_role_defaults,
     standard_flux_kustomization_paths,
 )
-from render_cluster_vars_configmap import (
+from jarvis.lib.render_cluster_vars_configmap import (
     CLUSTER_VARS_PUBLISHED,
     cluster_vars_configmap,
     render_document,
 )
-from schema.env import EXAMPLE_ENV, kubernetes_version_from_k3s
+from jarvis.schema.env import EXAMPLE_ENV, kubernetes_version_from_k3s
 from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
@@ -251,7 +251,7 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     """The env's platform-configs path is platform/configs plus that env's SOPS secrets,
     and the opt-in off-host copy. Its components (app hosting, app backup registrations) are
     env-schema's."""
-    from schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
+    from jarvis.schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
 
     base = f"envs/{env}/flux/platform-configs"
     resources = [posixpath.normpath(posixpath.join(base, item)) for item in doc.get("resources") or []]
@@ -673,7 +673,7 @@ def validate_env_flux(root: Path, env: str) -> None:
     services stage's path is built too, as on the cluster, with its postBuild values. A hosted
     app's own Kustomizations read the apps repository, which is not in this checkout.
     """
-    from _manifests import ROOT_SOURCE, flux_paths, postbuild_values, substitute
+    from jarvis.checks.manifests import ROOT_SOURCE, flux_paths, postbuild_values, substitute
 
     env_rel = f"envs/{env}/flux"
     env_docs = [doc for doc in yaml.safe_load_all(_kustomize_build(env_rel, root=root)) if isinstance(doc, dict)]

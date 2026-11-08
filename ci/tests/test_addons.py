@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _addons import scan_addons
-from schema.env import ValidationError, validate_env_tree
+from jarvis.checks.addons import scan_addons
+from jarvis.schema.env import ValidationError, validate_env_tree
 from support import REPO_ROOT, _write_env, bootstrap_example_copy, instance_apps_repo_for_checks, render_switches
 
 _TENANT = {"kind": "ServiceAccount", "name": "addon-widget", "namespace": "flux-system"}

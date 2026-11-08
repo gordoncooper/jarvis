@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _digest_pin import scan_digest_pin
+from jarvis.checks.digest_pin import scan_digest_pin
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "digest-pin" / "tag-without-digest.yaml"
 

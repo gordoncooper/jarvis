@@ -12,8 +12,8 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
+import subprocess  # noqa: F401  (tests patch restore_tool.subprocess)
 import time
 import zlib
 from collections.abc import Callable, Sequence
@@ -24,9 +24,8 @@ from subprocess import CompletedProcess
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "tools"))
 
-from lib._env import (
+from jarvis.lib.env import (
     EnvError,
     instance_root,
     kubectl as run_kubectl,
@@ -35,7 +34,7 @@ from lib._env import (
     repository_values,
     validate_cluster,
 )
-from lib._etcd_image import ImageError, etcd_snapshot_image
+from jarvis.lib.etcd_image import ImageError, etcd_snapshot_image
 
 PAUSE_BUDGET_SECONDS = 120
 RESTORE_BUDGET_SECONDS = 30 * 60

@@ -1,10 +1,9 @@
-"""Test harness: repo root on sys.path for imports from services/."""
+"""Test harness. pytest.ini puts the repo root on the path, so tests import the jarvis package."""
 
 from __future__ import annotations
 
 import os
 import shutil
-import sys
 
 import pytest
 
@@ -27,12 +26,6 @@ for _key, _value in (("maintenance.auto", "false"), ("gc.auto", "0")):
     os.environ[f"GIT_CONFIG_VALUE_{_count}"] = _value
     _count += 1
 os.environ["GIT_CONFIG_COUNT"] = str(_count)
-
-_TOOLS_LIB = _ROOT / "tools" / "lib"
-_CHECKS_LIB = _ROOT / "ci" / "checks" / "lib"
-for _entry in (_ROOT, _TOOLS_LIB, _CHECKS_LIB):
-    if str(_entry) not in sys.path:
-        sys.path.insert(0, str(_entry))
 
 
 @pytest.fixture(scope="session")

@@ -205,7 +205,7 @@ def test_platform_configs_hold_the_issuer_wildcard_and_store(example_copy: Examp
 
 
 def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
-    from schema.env import app_hosting_listed, offsite_copy_listed
+    from jarvis.schema.env import app_hosting_listed, offsite_copy_listed
 
     offsite = (
         {

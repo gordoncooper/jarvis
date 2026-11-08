@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _loadbalancer import scan_loadbalancer
+from jarvis.checks.loadbalancer import scan_loadbalancer
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "loadbalancer" / "extra-service.yaml"
 

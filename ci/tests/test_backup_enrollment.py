@@ -13,7 +13,7 @@ from support import ExampleCopy, real_and_copy_envs
 from support import REPO_ROOT as ROOT
 from support import _kustomize_build, kyverno_generated, renovate_python_pattern
 
-from _manifests import substitute
+from jarvis.checks.manifests import substitute
 
 
 def _docs(path: Path) -> list[dict]:

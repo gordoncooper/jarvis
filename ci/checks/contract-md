@@ -5,12 +5,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 
 python3 - <<'PY'
 from pathlib import Path
 
-from _contract_md import format_missing, missing_contract_roots
+from jarvis.checks.contract_md import format_missing, missing_contract_roots
 
 missing = missing_contract_roots(Path("."))
 if missing:

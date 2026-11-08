@@ -10,10 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from subprocess import CompletedProcess
 
-from lib._env import reason, tool_env
+from jarvis.lib.env import reason, tool_env
 
-from verify.common import CheckError, Context, Fetch, Issuer, Kubectl, items
-from verify.registry import register
+from jarvis.verify.common import CheckError, Context, Fetch, Issuer, Kubectl, items
+from jarvis.verify.registry import register
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FLUX_RESOURCES = (

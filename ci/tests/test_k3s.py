@@ -29,7 +29,7 @@ from ansible_role_proof import (
     roles_inventory_path,
 )
 from conftest import require_cli
-from support import ExampleCopy, _kustomize_build
+from support import ExampleCopy
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
 

@@ -108,7 +108,7 @@ def _helper(tmp_path: Path, instance: Path) -> subprocess.CompletedProcess[str]:
 def test_helper_checks_out_the_default_branch_with_every_tag(tmp_path: Path) -> None:
     """Rule: the URL comes from the env that lists apps; the checkout holds the default branch
     (its SHA logged) and the app tags, and the checks read each app at its pinned tag."""
-    import _backup_selection
+    from jarvis.lib import backup_selection as _backup_selection
 
     sha = _apps_remote(tmp_path / "remote")
     instance = tmp_path / "instance"
@@ -125,7 +125,7 @@ def test_helper_checks_out_the_default_branch_with_every_tag(tmp_path: Path) -> 
 
 def test_a_pin_the_checkout_lacks_fails(tmp_path: Path) -> None:
     """Rule: the checks never fall back to the tip for an app whose pinned tag is missing."""
-    import _backup_selection
+    from jarvis.lib import backup_selection as _backup_selection
 
     _apps_remote(tmp_path / "remote")
     instance = tmp_path / "instance"
@@ -167,7 +167,7 @@ def test_helper_refuses_envs_reading_different_repositories(tmp_path: Path) -> N
 
 def test_unreadable_app_failure_names_the_pinned_tag(tmp_path: Path) -> None:
     """Rule: when the checkout cannot answer for a selected app, the failure says it reads the pinned tag."""
-    import _backup_selection
+    from jarvis.lib import backup_selection as _backup_selection
 
     stale = instance_apps_repo_for_checks(tmp_path)
     shutil.rmtree(stale / "notes")

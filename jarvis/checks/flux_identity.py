@@ -39,8 +39,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, postbuild_values, ref_of, substitute
-from schema.env import env_flux_dirs
+from jarvis.checks.manifests import FluxPath, flux_paths, kustomize_build, namespace_of, postbuild_values, ref_of, substitute
+from jarvis.schema.env import env_flux_dirs
 
 PLATFORM_SERVICE_ACCOUNT = "flux-platform"
 FLUX_NAMESPACE = "flux-system"

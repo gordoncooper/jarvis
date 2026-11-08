@@ -21,7 +21,7 @@ App hosting's health checks are in its own contract, and the two backup pieces' 
 
 ## Config
 
-To enable a piece, list its name under `optional` in `values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`, then commit and push. `ci/checks/env-schema` fails an unknown name and a committed wiring that differs from the render. A new piece adds one row to `OPTIONAL_COMPONENTS` in `tools/lib/_switches.py` and no bundle to any env.
+To enable a piece, list its name under `optional` in `values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`, then commit and push. `ci/checks/env-schema` fails an unknown name and a committed wiring that differs from the render. A new piece adds one row to `OPTIONAL_COMPONENTS` in `jarvis/lib/switches.py` and no bundle to any env.
 
 ### Observability
 

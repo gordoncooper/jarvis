@@ -11,11 +11,8 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "tools"))
-sys.path.insert(1, str(REPO_ROOT))
-sys.path.insert(2, str(REPO_ROOT / "tools" / "lib"))
 
-from lib._env import (  # noqa: E402
+from jarvis.lib.env import (  # noqa: E402
     EnvError,
     instance_root,
     kubeconfig_for,
@@ -23,13 +20,13 @@ from lib._env import (  # noqa: E402
     repository_values,
     validate_cluster,
 )
-from lib import _apps  # noqa: E402
-from verify import apps as _apps_checks  # noqa: E402, F401
-from verify import backups as _backups  # noqa: E402, F401
-from verify import platform as _platform  # noqa: E402, F401
-from verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE  # noqa: E402
-from verify.common import CheckError, CheckWarning, Context  # noqa: E402
-from verify.platform import (  # noqa: E402
+from jarvis.lib import apps as _apps  # noqa: E402
+from jarvis.verify import apps as _apps_checks  # noqa: E402, F401
+from jarvis.verify import backups as _backups  # noqa: E402, F401
+from jarvis.verify import platform as _platform  # noqa: E402, F401
+from jarvis.verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE  # noqa: E402, F401  (tests read them here)
+from jarvis.verify.common import CheckError, CheckWarning, Context  # noqa: E402
+from jarvis.verify.platform import (  # noqa: E402, F401
     ENABLELB,
     FLUX_RESOURCES,
     _fetch,
@@ -37,8 +34,8 @@ from verify.platform import (  # noqa: E402
     _issuer,
     check_https,
 )
-from verify.registry import collect, enabled_components, load_addons  # noqa: E402
-from schema.env import enabled_addons  # noqa: E402
+from jarvis.verify.registry import collect, enabled_components, load_addons  # noqa: E402
+from jarvis.schema.env import enabled_addons  # noqa: E402
 
 REQUEST_TIMEOUT = "30s"
 KUBECTL_TIMEOUT = 60.0
