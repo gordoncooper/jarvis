@@ -6,8 +6,7 @@ import json
 import os
 import re
 import subprocess
-import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -212,9 +211,6 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
 
 
 def _etcd_kubectl(image: str):
-    tools = str(ROOT / "tools")
-    if tools not in sys.path:
-        sys.path.insert(0, tools)
     from jarvis.lib.etcd_image import etcd_snapshot_image
 
     body = {
@@ -416,9 +412,6 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
 ) -> None:
     """In every env, its backup_check_schedule starts at least 3 hours from every nightly
     backup and etcd copy start."""
-    tools = str(ROOT / "tools")
-    if tools not in sys.path:
-        sys.path.insert(0, tools)
     from jarvis.schema.env import resolve_cluster_vars
     from jarvis.verify.common import scheduled_instants
 
@@ -431,7 +424,7 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
             )
         )
         check = values["backup_check_schedule"]
-        run = scheduled_instants(check, "Etc/UTC", datetime(2026, 11, 2, tzinfo=timezone.utc), 1)[0]
+        run = scheduled_instants(check, "Etc/UTC", datetime(2026, 11, 2, tzinfo=UTC), 1)[0]
         for other in (values["backup_schedule"], etcd_schedule):
             for instant in scheduled_instants(other, "Etc/UTC", run + timedelta(days=2), 8):
                 assert abs(instant - run) >= timedelta(hours=3), (env, other)

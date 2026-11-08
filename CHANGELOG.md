@@ -13,6 +13,13 @@ the upgrade.
   `jarvis.verify`), described by `pyproject.toml`. `make deps` installs it editable into the
   venv; no module edits `sys.path`. The commands under `tools/` and `tools/lib/render_*.py` stay
   where they were.
+- CI lints with ruff and type-checks the package with pyright (`ci/lint`, pinned in
+  `requirements-dev.txt`, configured in `pyproject.toml`).
+
+### Fixed
+
+- Backup selection with no apps checkout fails with the missing-checkout error instead of a
+  `TypeError`.
 
 ### Upgrading
 

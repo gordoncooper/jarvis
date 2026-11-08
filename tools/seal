@@ -9,10 +9,9 @@ from pathlib import Path
 
 import yaml
 
-
-from jarvis.lib import app_backups as _app_backups  # noqa: E402
-from jarvis.lib import sops as _sops  # noqa: E402
-from jarvis.lib.env import instance_root  # noqa: E402
+from jarvis.lib import app_backups as _app_backups
+from jarvis.lib import sops as _sops
+from jarvis.lib.env import instance_root
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

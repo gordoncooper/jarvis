@@ -9,11 +9,9 @@ from pathlib import Path
 
 import yaml
 
-from support import ExampleCopy, real_and_copy_envs
-from support import REPO_ROOT as ROOT
-from support import _kustomize_build, kyverno_generated, renovate_python_pattern
-
 from jarvis.checks.manifests import substitute
+from support import REPO_ROOT as ROOT
+from support import ExampleCopy, _kustomize_build, kyverno_generated, real_and_copy_envs, renovate_python_pattern
 
 
 def _docs(path: Path) -> list[dict]:

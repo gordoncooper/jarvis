@@ -12,29 +12,31 @@ import json
 import os
 import re
 import shlex
-import sys
 import subprocess  # noqa: F401  (tests patch restore_tool.subprocess)
+import sys
 import time
 import zlib
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 from jarvis.lib.env import (
     EnvError,
     instance_root,
-    kubectl as run_kubectl,
     not_found,
     reason,
     repository_values,
     validate_cluster,
 )
+from jarvis.lib.env import (
+    kubectl as run_kubectl,
+)
 from jarvis.lib.etcd_image import ImageError, etcd_snapshot_image
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PAUSE_BUDGET_SECONDS = 120
 RESTORE_BUDGET_SECONDS = 30 * 60
@@ -133,7 +135,7 @@ def job_name(owner: str, *, prefix: str = _SRC_JOB_PREFIX) -> str:
 def restore_as_of(created: str) -> str:
     stamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
     earlier = stamp - timedelta(seconds=1)
-    return earlier.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return earlier.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def normalize_as_of(value: str) -> str:
@@ -143,7 +145,7 @@ def normalize_as_of(value: str) -> str:
         raise Fail(f"AS_OF must be RFC3339: {value}") from exc
     if stamp.tzinfo is None:
         raise Fail(f"AS_OF must include a timezone: {value}")
-    return stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return stamp.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def eligible(item: dict) -> bool:

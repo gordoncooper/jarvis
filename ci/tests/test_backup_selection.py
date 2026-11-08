@@ -6,25 +6,28 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT / "tools") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "tools"))
-if str(REPO_ROOT / "tools" / "lib") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "tools" / "lib"))
-
+from jarvis.checks.manifests import substitute
 from jarvis.lib import backup_selection as _backup_selection
 from jarvis.schema.env import ValidationError, validate_env_tree, validate_one_env
-from jarvis.checks.manifests import substitute
-from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, kyverno_generated, register_copy_app, set_switches
 from jarvis.verify.backups import backups_checks, check_backups
 from jarvis.verify.common import CheckError
+from support import (
+    ExampleCopy,
+    _kustomize_build,
+    bootstrap_example_copy,
+    kyverno_generated,
+    register_copy_app,
+    set_switches,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 NOTES = "app-notes"
 FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
@@ -116,7 +119,7 @@ def test_apps_repo_resolves_checkout_beside_instance(tmp_path: Path, monkeypatch
 def test_verify_skips_excluded_eligible_app_pvc() -> None:
     """Rule: verify does not fail an excluded backup-eligible app for a missing credential."""
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     def fake(cmd, **_k):
         if "pvc" in cmd:
@@ -154,7 +157,7 @@ def test_verify_skips_excluded_eligible_app_pvc() -> None:
     check_backups(
         fake,
         zone_name="UTC",
-        now=datetime(2020, 1, 2, tzinfo=timezone.utc),
+        now=datetime(2020, 1, 2, tzinfo=UTC),
         registered=frozenset(),
         required=frozenset(),
     )
@@ -163,7 +166,7 @@ def test_verify_skips_excluded_eligible_app_pvc() -> None:
 def test_verify_guard_fails_when_excluded_app_still_required() -> None:
     """Rule: treating an excluded app as required fails verify on its PVC."""
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     def fake(cmd, **_k):
         if "pvc" in cmd:
@@ -189,7 +192,7 @@ def test_verify_guard_fails_when_excluded_app_still_required() -> None:
         check_backups(
             fake,
             zone_name="UTC",
-            now=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            now=datetime(2020, 1, 1, tzinfo=UTC),
             registered=frozenset(),
             required=frozenset({NOTES}),
         )
@@ -481,7 +484,7 @@ def test_unreadable_app_file_fails_closed(tmp_path: Path, monkeypatch: pytest.Mo
 
 def _verify_checks(copy: ExampleCopy) -> dict[str, object]:
     ctx = SimpleNamespace(
-        repo_root=copy.root, env=copy.name, kubectl=None, values={}, now=datetime.now(timezone.utc)
+        repo_root=copy.root, env=copy.name, kubectl=None, values={}, now=datetime.now(UTC)
     )
     return {label: check for _order, label, check in backups_checks(ctx)}
 
@@ -558,3 +561,13 @@ def _render_cli(copy: ExampleCopy, **env: str) -> subprocess.CompletedProcess[st
         text=True,
         check=False,
     )
+
+
+def test_selection_with_no_apps_checkout_fails_clearly() -> None:
+    """Rule: with no apps checkout, a selected app fails as AppsRepoError, never as a crash."""
+    with pytest.raises(_backup_selection.AppsRepoError, match="no apps checkout"):
+        _backup_selection.backup_eligible(None, "notes")
+    with pytest.raises(_backup_selection.AppsRepoError, match="no apps checkout"):
+        _backup_selection.validate_section(
+            {"mode": "selected", "selected": ["notes"]}, rel="values/apps.yaml", apps_list=["notes"], apps_root=None
+        )

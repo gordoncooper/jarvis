@@ -11,11 +11,11 @@ import argparse
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from jarvis.lib.env import ENV_NAME, instance_root
+from jarvis.lib.pin import ALLOW_FLAG, PinError, require_pin
+from jarvis.schema.env import EXAMPLE_ENV
 
-from jarvis.lib.env import ENV_NAME, instance_root  # noqa: E402
-from jarvis.lib.pin import ALLOW_FLAG, PinError, require_pin  # noqa: E402
-from jarvis.schema.env import EXAMPLE_ENV  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def main(argv: list[str] | None = None) -> int:

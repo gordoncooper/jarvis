@@ -7,12 +7,16 @@ execnet==2.1.2
 iniconfig==2.3.1
 Jinja2==3.1.6
 MarkupSafe==3.0.4
+nodeenv==1.12.0
 packaging==26.3
 pluggy==1.7.0
 pycparser==3.12
 Pygments==2.21.0
+pyright==1.1.414
 pytest==9.2.0
 pytest-xdist==3.8.0
 PyYAML==6.0.3
 resolvelib==1.2.1
+ruff==0.17.4
 setuptools==84.2.1
+typing_extensions==4.16.0

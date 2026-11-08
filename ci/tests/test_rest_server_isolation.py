@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from conftest import require_cli
+
 from support import REPO_ROOT, load_tool
 
 APPS_MANIFEST = REPO_ROOT / "platform/optional/apps-backup-server/rest-server-apps.yaml"

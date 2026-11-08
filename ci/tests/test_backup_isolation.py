@@ -199,11 +199,7 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     assert f"registers {APP}, missing required file" in errors
     assert "an app credential is sealed only in its own folder" in errors
     shutil.move(moved, sealed)
-    import sys
 
-    lib = str(REPO_ROOT / "tools" / "lib")
-    if lib not in sys.path:
-        sys.path.insert(0, lib)
     from jarvis.lib.render_backup_selection import render_env
 
     render_env(copy.env_dir, copy.root)

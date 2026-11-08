@@ -145,9 +145,10 @@ def postbuild_values(doc: dict, env_docs: list[dict]) -> dict[str, str]:
     return values
 
 
-def substitute(node: object, values: dict[str, str]) -> object:
+def substitute[T](node: T, values: dict[str, str]) -> T:
     """node with each ${name} that values holds replaced, as postBuild does: in the YAML text,
-    which is then parsed again, so an unquoted false becomes a boolean and an empty value null."""
+    which is then parsed again, so an unquoted false becomes a boolean and an empty value null.
+    The result has node's shape (a dict stays a dict, a list a list)."""
     text = yaml.safe_dump(node, width=2**31 - 1)
     return yaml.safe_load(_VARIABLE.sub(lambda match: values.get(match.group(1), match.group(0)), text))
 

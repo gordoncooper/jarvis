@@ -12,9 +12,9 @@ literal and objects labelled or annotated substitute: disabled are skipped.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator
 
 from jarvis.checks.manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
 from jarvis.schema.env import env_flux_dirs

@@ -9,13 +9,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT, set_switches
-
 from jarvis.checks.app_hosting import scan_app_hosting
 from jarvis.checks.flux_identity import scan_flux_identity
 from jarvis.lib import apps as _apps
 from jarvis.lib import switches as _switches
 from jarvis.schema import env as env_schema
+from support import REPO_ROOT, set_switches
 
 EXAMPLE = REPO_ROOT / "envs" / "env-00"
 

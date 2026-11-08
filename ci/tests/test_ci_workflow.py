@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 
 import yaml
-
 from ansible_role_proof import REPO_ROOT
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from jarvis.lib.env import reason
-
 from jarvis.verify.backups import SECRET_KEYS_TEMPLATE
 from jarvis.verify.common import CheckError, Context, items
 from jarvis.verify.registry import register

@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from ansible_role_proof import ANSIBLE_DIR, roles_inventory_path
 from conftest import require_cli
-from jarvis.schema.env import validate_env_tree
-from support import ExampleCopy, bootstrap_example_copy
 from test_flux_entry import validate_env_flux
 from test_inventory_roles import _parse_graph
 from test_k3s import _agent_play_section, _hosts_outside_control_plane, _listed_play_hosts
+
+from jarvis.schema.env import validate_env_tree
+from support import ExampleCopy, bootstrap_example_copy
 
 _SHAPES = Path(__file__).resolve().parent / "fixtures" / "env-shapes"
 

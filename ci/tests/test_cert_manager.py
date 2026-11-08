@@ -7,8 +7,8 @@ import re
 from pathlib import Path
 
 import yaml
-
 from ansible_role_proof import REPO_ROOT, load_cluster_vars
+
 from support import ExampleCopy, _kustomize_build, real_and_copy_envs, renovate_python_pattern
 
 _CONFIGS_BEFORE = {

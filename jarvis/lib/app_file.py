@@ -12,8 +12,9 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import yaml
 
@@ -117,7 +118,7 @@ def _schema_problems(value: Any, schema: dict, where: str) -> Iterator[str]:
     if value is None:
         yield f"{where}: is required"
         return
-    kind = schema.get("type")
+    kind = str(schema.get("type") or "")
     ok = {
         "object": isinstance(value, dict),
         "array": isinstance(value, list),
@@ -206,7 +207,7 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
     for doc in objects:
         kind = str(doc.get("kind"))
         group = str(doc.get("apiVersion", "")).rpartition("/")[0]
-        metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+        metadata = metadata_raw if isinstance(metadata_raw := doc.get("metadata"), dict) else {}
         ref = f"{kind} {metadata.get('name')}"
         if (group, kind) not in SHIPPED_KINDS:
             yield (

@@ -120,6 +120,7 @@ def _ensure_sops_creation_rule(root: Path, env_name: str) -> None:
 
 def _valid_cluster_vars() -> dict:
     import yaml
+
     from jarvis.schema.env import EXAMPLE_ENV
 
     cluster_vars_path = REPO_ROOT / "envs" / EXAMPLE_ENV / "values" / "cluster-vars.yaml"
@@ -137,6 +138,7 @@ def _write_env(
     hosts_yml: str | None = None,
 ) -> Path:
     import yaml
+
     from jarvis.schema.env import EXAMPLE_ENV, is_example_env
 
     env = root / "envs" / env_name
@@ -386,7 +388,6 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
         apps=list(dict.fromkeys([*switches["apps"], app])),
         optional=list(dict.fromkeys([*switches["optional"], "apps-backup-server"])),
     )
-    lib = str(REPO_ROOT / "tools" / "lib")
     render_switches(copy.env_dir, copy.root)
     sops = shutil.which("sops")
     if not sops:
@@ -398,7 +399,6 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
 
 
 def _render_copy(env_dir: Path) -> None:
-    lib = str(REPO_ROOT / "tools" / "lib")
     from jarvis.lib.render_cluster_vars_configmap import render_document
 
     source = env_dir / "values" / "cluster-vars.yaml"

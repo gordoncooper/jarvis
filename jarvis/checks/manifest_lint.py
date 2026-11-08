@@ -16,9 +16,9 @@ and init containers are batch: they need the resource rules, not probes.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from jarvis.checks.manifests import helm_values, kind_of, load_documents, pod_spec, ref_of
 
@@ -151,8 +151,8 @@ def _is_resource_block(block: dict) -> bool:
 
 
 def _resource_problems(block: dict) -> list[str]:
-    requests = block.get("requests") if isinstance(block.get("requests"), dict) else {}
-    limits = block.get("limits") if isinstance(block.get("limits"), dict) else {}
+    requests = requests_raw if isinstance(requests_raw := block.get("requests"), dict) else {}
+    limits = limits_raw if isinstance(limits_raw := block.get("limits"), dict) else {}
     problems: list[str] = []
     if not _quantity(requests.get("memory")):
         problems.append("memory request is unset")

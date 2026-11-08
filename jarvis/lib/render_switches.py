@@ -12,14 +12,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from jarvis.lib import apps as _apps
+from jarvis.lib import backup_selection as _backup_selection
+from jarvis.lib import (
+    render_apps,
+    render_backup_selection,
+)
+from jarvis.lib import switches as _switches
+from jarvis.schema.env import instance_root, switches_problems
 
-from jarvis.schema.env import instance_root, switches_problems  # noqa: E402
-from jarvis.lib import apps as _apps  # noqa: E402
-from jarvis.lib import backup_selection as _backup_selection  # noqa: E402
-from jarvis.lib import switches as _switches  # noqa: E402
-from jarvis.lib import render_apps  # noqa: E402
-from jarvis.lib import render_backup_selection  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def render_env(env_dir: Path, repo_root: Path) -> None:

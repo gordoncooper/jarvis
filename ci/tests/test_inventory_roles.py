@@ -8,7 +8,6 @@ import subprocess
 from pathlib import Path
 
 import yaml
-
 from ansible_role_proof import (
     ANSIBLE_DIR,
     env_inventory_args,
@@ -16,8 +15,9 @@ from ansible_role_proof import (
     playbook_recap_field,
     roles_inventory_path,
 )
-from support import ExampleCopy, real_and_copy_envs
 from conftest import require_cli
+
+from support import ExampleCopy, real_and_copy_envs
 
 
 def _expected_role_groups() -> dict[str, set[str]]:
