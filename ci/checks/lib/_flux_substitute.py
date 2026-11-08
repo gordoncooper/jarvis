@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
+from schema.env import env_flux_dirs
 
 _SUBSTITUTE_KEY = "kustomize.toolkit.fluxcd.io/substitute"
 # Each `$$` is a literal `$`, so a variable starts after an odd run of `$`.
@@ -32,7 +33,7 @@ class FluxSubstituteViolation:
 def scan_flux_substitute(repo_root: Path | str) -> list[FluxSubstituteViolation]:
     root = Path(repo_root).resolve()
     violations: list[FluxSubstituteViolation] = []
-    flux_dirs = sorted(path for path in root.glob("envs/*/flux") if path.is_dir())
+    flux_dirs = env_flux_dirs(root)
     if not flux_dirs:
         return [FluxSubstituteViolation("envs", "no envs/<env>/flux tree to check")]
     for flux_dir in flux_dirs:

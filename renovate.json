@@ -72,6 +72,11 @@
       "allowedVersions": "<1.37"
     },
     {
+      "description": "The admission test's loopback etcd is the one kubeadm pairs with kubectl's minor (1.36: etcd 3.6). Raise this cap in the PR that moves kubectl to a minor kubeadm pairs with etcd 3.7.",
+      "matchDepNames": ["etcd-io/etcd"],
+      "allowedVersions": "<3.7"
+    },
+    {
       "description": "Python dev dependencies in requirements-dev.txt update as one PR. Exact == pins stay exact.",
       "groupName": "python-dev",
       "matchManagers": ["pip_requirements"],

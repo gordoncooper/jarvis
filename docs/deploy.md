@@ -41,7 +41,8 @@ A real env lives in its own private instance repository, made from `envs/env-00`
 6. `make bootstrap-secrets ENV=<env> INSTANCE=<path>`
 7. Make the deploy key ([Deploy key](#deploy-key)) when `flux_git_repo_url` is `ssh://`.
 8. Render the ConfigMap with `INSTANCE=<path> .venv/bin/python tools/lib/render_cluster_vars_configmap.py --env <env> --output <path>/envs/<env>/flux/generated/cluster-vars-configmap.yaml`. prep-node also rewrites that file when it already exists.
-9. Commit `envs/<env>/` and `.sops.yaml` in the instance repository. Do not commit the age private key. Push to the branch `flux_git_ref` names, then run `site.yml` as below.
+9. Add `renovate.json` to the instance repository: `{"extends": ["github><owner>/jarvis//renovate/instance.json#<core tag>"]}`. Renovate then opens one PR per pin an env holds: the core release tag (cluster-vars and `flux/sync.yaml` together), k3s and Flux. Nothing merges on its own.
+10. Commit `envs/<env>/`, `.sops.yaml` and `renovate.json` in the instance repository. Do not commit the age private key. Push to the branch `flux_git_ref` names, then run `site.yml` as below.
 
 An instance checkout with no `.git` counts as "not recorded" for prep-node and bootstrap-secrets, so neither refuses on the ground that git already records a file. Run them from a real clone when that refusal matters.
 
