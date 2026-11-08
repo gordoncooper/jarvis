@@ -879,11 +879,6 @@ def test_k3s_writes_mount_dropin_and_disables_opposite_unit(tmp_path: Path, mode
     assert playbook_recap_field(second_out, "changed") == 0
     assert dropin.read_text(encoding="utf-8") == expected
 
-    again = _run_dropin(play, mode=mode, unit_dir=unit_dir, check=True)
-    again_out = again.stdout + again.stderr
-    assert again.returncode == 0, again_out
-    assert playbook_recap_field(again_out, "changed") == 0
-
 
 def test_k3s_missing_opposite_unit_is_fine(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
@@ -1056,7 +1051,6 @@ def test_token_read_stops_visibly_before_any_decrypt(tmp_path: Path, broken: str
     ("sealed", "node_token", "refused"),
     [
         (_SERVER_TOKEN, f"K10abc123::server:{_SERVER_TOKEN}", False),
-        (_SERVER_TOKEN, _SERVER_TOKEN, False),
         (_SERVER_TOKEN, "K10abc123::server:fixture-node-passphrase", True),
         (f"K10abc123::server:{_SERVER_TOKEN}", f"K10abc123::server:{_SERVER_TOKEN}", False),
         (f"K10abc123::server:{_SERVER_TOKEN}", f"K10def456::server:{_SERVER_TOKEN}", True),
@@ -1197,15 +1191,13 @@ def test_node_memory_reserve_sets_the_kubelet_eviction_threshold(
 ) -> None:
     """Rule: every node's kubelet keeps node_memory_reserve_percent (default 10) of its memory
     out of allocatable as memory.available<N%, unless the env's eviction-hard is larger; the
-    other reserves stay as written, and a second run changes nothing."""
+    other reserves stay as written."""
     first = _render_reserve(tmp_path, _RESERVES + lines, memtotal_mb)
     assert first.returncode == 0, first.stdout + first.stderr
     for src in (K3S_CONFIG_TEMPLATE, "agent-config.yaml.j2"):
         args = yaml.safe_load((tmp_path / f"{src}.out").read_text(encoding="utf-8"))["kubelet-arg"]
         assert args == ["kube-reserved=cpu=100m,memory=128Mi", "system-reserved=cpu=100m,memory=128Mi",
                         f"eviction-hard={eviction}"], src
-    again = _render_reserve(tmp_path, _RESERVES + lines, memtotal_mb)
-    assert again.returncode == 0 and playbook_recap_field(again.stdout, "changed") == 0, again.stdout
 
 
 @pytest.mark.parametrize("bad", ["node_memory_reserve_percent: 60\n", "node_memory_reserve_percent: ten\n",

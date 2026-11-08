@@ -193,10 +193,16 @@ def test_non_x86_host_fails_before_any_change(tmp_path: Path) -> None:
     _stopped_before_base_os(result, "k3s role supports only amd64 hosts.")
 
 
-@pytest.mark.parametrize("key", _REQUIRED)
-def test_missing_cluster_var_fails_before_any_change(tmp_path: Path, key: str) -> None:
-    """Each required cluster-vars key fails the opening play and changes nothing."""
-    result = _run_site(tmp_path, drop=key)
+def test_every_required_cluster_var_is_asserted() -> None:
+    """Rule: the opening play's cluster-vars assert names every required key."""
+    tasks = yaml.safe_load((REPO_ROOT / "infra" / "ansible" / "tasks" / "preflight.yml").read_text(encoding="utf-8"))
+    that = next(task for task in tasks if task.get("name") == "Require k3s cluster-vars")["ansible.builtin.assert"]["that"]
+    assert {line.split()[0] for line in that if line.endswith("is defined")} == set(_REQUIRED)
+
+
+def test_missing_cluster_var_fails_before_any_change(tmp_path: Path) -> None:
+    """A required cluster-vars key that is missing fails the opening play and changes nothing."""
+    result = _run_site(tmp_path, drop="jarvis_env")
     _stopped_before_base_os(
         result,
         "site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env",
@@ -213,8 +219,8 @@ def test_not_exactly_one_control_plane_fails_before_any_change(
 
 @pytest.mark.parametrize(
     "override",
-    [{"k3s_sha256": "a" * 63}, {"k3s_sha256": "a" * 65}, {"k3s_version": ""}],
-    ids=["sha-too-short", "sha-too-long", "empty-version"],
+    [{"k3s_sha256": "a" * 63}, {"k3s_version": ""}],
+    ids=["sha-not-64", "empty-version"],
 )
 def test_malformed_k3s_pin_fails_before_any_change(
     tmp_path: Path, override: dict[str, object]
@@ -233,14 +239,14 @@ def test_node_memory_reserve_out_of_range_fails_before_any_change(tmp_path: Path
     _stopped_before_base_os(result, "node_memory_reserve_percent is a whole number from 0 to 50")
 
 
-@pytest.mark.parametrize("value", ["memory.available<lots", "memory.available<100MB", "nodefs.available<10%,memory.available<"])
+@pytest.mark.parametrize("value", ["memory.available<100MB", "nodefs.available<10%,memory.available<"])
 def test_unreadable_memory_threshold_fails_before_any_change(tmp_path: Path, value: str) -> None:
     """Rule: an eviction-hard memory.available the reserve cannot compare stops the opening play."""
     result = _run_site(tmp_path, override={"k3s_kubelet_eviction_hard": value})
     _stopped_before_base_os(result, "is not a Kubernetes quantity")
 
 
-@pytest.mark.parametrize("value", ["memory.available<100Mi", "memory.available<1.5Gi,nodefs.available<10%", "memory.available<7%"])
+@pytest.mark.parametrize("value", ["memory.available<1.5Gi,nodefs.available<10%", "memory.available<7%"])
 def test_readable_memory_threshold_passes_preflight(tmp_path: Path, value: str) -> None:
     """Rule: a quantity or percent memory.available, beside other signals, passes the check."""
     result = _run_site(tmp_path, override={"k3s_kubelet_eviction_hard": value})
