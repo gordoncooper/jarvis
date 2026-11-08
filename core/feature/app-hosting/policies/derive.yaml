@@ -1,6 +1,6 @@
 # What core derives from an app's App, in that app's namespace only: its quota and the network
 # allows the file's network section asks for. The namespace's default-deny, DNS and
-# same-namespace allows come from the trusted wiring (platform/optional/app-hosting/app), so if this
+# same-namespace allows come from the trusted wiring (core/feature/app-hosting/app), so if this
 # policy has not run, the app gets no traffic rather than open traffic. The env name, the env's
 # pod, service and LAN ranges, and the env's LAN grants for the app are read from annotations
 # the wiring sets on the namespace, which no tenant can edit.

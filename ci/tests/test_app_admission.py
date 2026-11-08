@@ -1,7 +1,7 @@
-"""Hosted-app admission, offline: every rule in platform/optional/app-hosting/policies against seeded
+"""Hosted-app admission, offline: every rule in core/feature/app-hosting/policies against seeded
 good and bad objects, with the pinned kyverno CLI, and tools/app-check on the same objects.
 
-The namespaces are rendered from the real per-app wiring (platform/optional/app-hosting/app) with the
+The namespaces are rendered from the real per-app wiring (core/feature/app-hosting/app) with the
 env's values, so app-grants sees the annotations the cluster gets. The CLI cannot run two parts
 as they are: it does not resolve the selector paramRef of the cluster-wide app-file binding, so
 a binding naming each App stands in for it, and its namespaceObject holds only a name and
@@ -27,9 +27,9 @@ from jarvis.lib.app_file import check_folder
 from support import REPO_ROOT, kyverno_generated
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
-POLICIES = REPO_ROOT / "platform" / "optional" / "app-hosting" / "policies"
-PRIORITY = REPO_ROOT / "platform" / "optional" / "app-hosting" / "priority.yaml"
-WIRING = REPO_ROOT / "platform" / "optional" / "app-hosting" / "app"
+POLICIES = REPO_ROOT / "core" / "feature" / "app-hosting" / "policies"
+PRIORITY = REPO_ROOT / "core" / "feature" / "app-hosting" / "priority.yaml"
+WIRING = REPO_ROOT / "core" / "feature" / "app-hosting" / "app"
 SUFFIX = "env-00.example"
 TENANT = "system:serviceaccount:flux-system:app-{app}"
 VOLSYNC = "system:serviceaccount:volsync:volsync"
@@ -542,7 +542,7 @@ def _apply(tmp_path: Path, policy: str, resource: dict, *, user: str | None = No
     (work / "policy.yaml").write_text(yaml.safe_dump_all(docs), encoding="utf-8")
     (work / "resource.yaml").write_text(yaml.safe_dump(resource), encoding="utf-8")
     command = [_kyverno(), "apply", str(work / "policy.yaml"), "--resource", str(work / "resource.yaml"), "--remove-color",
-               "--crd-paths", str(crd or REPO_ROOT / "platform" / "optional" / "app-hosting" / "crd" / "app-crd.yaml")]
+               "--crd-paths", str(crd or REPO_ROOT / "core" / "feature" / "app-hosting" / "crd" / "app-crd.yaml")]
     if user is not None:
         command += ["--userinfo", str(_userinfo(work / "userinfo.yaml", user))]
     proc = subprocess.run(command, capture_output=True, text=True, check=False)

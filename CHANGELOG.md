@@ -21,6 +21,10 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- Layout: core's universal part is `core/` (`core/flux`, `core/platform`, and `core/feature` for
+  the optional components, which were `platform/optional/`), and add-ons are top-level `addons/`
+  (was `services/`). The root source includes the core repository twice, `fromPath: core` and
+  `fromPath: addons`, so Flux paths are `./core/...` and `./addons/...`.
 - JSON Schemas for the four values files under `schema/` (cluster-vars, switches, apps, hosts),
   each named by a `# yaml-language-server: $schema=` line for editors. env-schema validates
   `cluster-vars.yaml`'s keys, types and patterns with its schema (`jsonschema`, pinned), with the
@@ -51,6 +55,8 @@ the upgrade.
   the same commit: the env's `flux/` and core's now depend on each other.
 - Run `tools/render --env <env>` where you ran `tools/lib/render_switches.py` or
   `render_cluster_vars_configmap.py`.
+- Render again (`tools/render --env <env>`): `sync.yaml` gains the two includes, and the services
+  stage and `platform-configs` name `./addons` and `core/feature/`.
 - Optional: add `# yaml-language-server: $schema=https://raw.githubusercontent.com/<owner>/jarvis/<tag>/schema/<name>.schema.json`
   as the first line of each values file, for editor checks.
 - To keep App DNS, add `app-dns` under `optional` in `values/switches.yaml` and render again.

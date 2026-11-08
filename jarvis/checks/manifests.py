@@ -12,9 +12,12 @@ from pathlib import Path
 
 import yaml
 
-from jarvis.schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV, ROOT_SOURCE
+from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, EXAMPLE_ENV, ROOT_SOURCE, core_dir
 
-SCAN_ROOTS = ("platform/", "services/", "envs/")
+# The trees the root artifact takes from the core repository.
+_CORE_TREES = (CORE_SOURCE_DIR, ADDONS_DIR)
+
+SCAN_ROOTS = ("core/", "addons/", "envs/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
 FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _KUSTOMIZATION_FILES = ("kustomization.yaml", "kustomization.yml", "Kustomization")
@@ -66,16 +69,23 @@ def load_documents(
 
 
 def source_rel(root: Path, rel: str) -> str:
-    """A Flux path in the root artifact, as a path under root.
+    """A Flux path in the root artifact, as a path under root (or absolute, into core).
 
-    The root source includes core at core/. An instance checkout holds the product
-    there; in the product checkout, core is the checkout itself.
+    The root artifact holds the env repository's files, and core's core/ and addons/ (sync.yaml
+    includes them from the core repository by fromPath). Those two resolve in the core repository
+    the env reads (core_dir): the product checkout itself, or an instance's checkout of it at core/.
     """
     rel = rel.strip().removeprefix("./")
-    prefix = f"{CORE_SOURCE_DIR}/"
-    if rel.startswith(prefix) and not (root / CORE_SOURCE_DIR).is_dir():
-        return rel.removeprefix(prefix)
+    # A tree that holds no core reads none: its core paths fail to build, as they would in Flux.
+    if rel.split("/", 1)[0] in _CORE_TREES and any((root / tree).exists() for tree in _CORE_TREES):
+        return str(core_dir(root) / rel)
     return rel
+
+
+def _artifact_shaped(root: Path) -> bool:
+    """root holds core/ and addons/ where the root artifact does: an env's relative paths to them
+    (../../../core/flux) then resolve in place."""
+    return core_dir(root) == root and all((root / tree).is_dir() for tree in _CORE_TREES)
 
 
 def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
@@ -85,6 +95,17 @@ def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
     YAML manifest under it.
     """
     rel = source_rel(root, rel)
+    if not Path(rel).is_absolute() and rel.startswith("envs/") and not _artifact_shaped(root):
+        # An env's files name core by its artifact path; build them on a copy laid out that way.
+        with tempfile.TemporaryDirectory() as work:
+            stage = Path(work)
+            core = core_dir(root)
+            for tree in _CORE_TREES:
+                (stage / tree).symlink_to((core / tree).resolve(), target_is_directory=True)
+            env_rel = "/".join(rel.split("/")[:2])
+            shutil.copytree(root / env_rel, stage / env_rel)
+            docs, error = kustomize_build(stage, rel)
+            return docs, error.replace(str(stage), str(root)) if error else None
     target = root / rel
     if target.is_dir() and not any((target / name).is_file() for name in _KUSTOMIZATION_FILES):
         return _generated(target), None
@@ -107,20 +128,10 @@ def env_flux_docs(root: Path, env_rel: str) -> tuple[list[dict], str | None]:
     """What an env's root Kustomization applies: its flux/ built with core's Flux base, then the
     root's postBuild.substitute (jarvis_env), as on the cluster.
 
-    flux/kustomization.yaml lists core's base as ../../../core/flux. An instance checkout holds
-    core at core/; in the product checkout core is the checkout itself, so the build runs on a
-    copy of the env's flux/ beside a core/ link to it.
+    flux/kustomization.yaml lists core's base as ../../../core/flux, the root artifact's path
+    (kustomize_build stages it where the checkout holds core elsewhere).
     """
-    if (root / CORE_SOURCE_DIR).is_dir():
-        docs, error = kustomize_build(root, env_rel)
-    else:
-        with tempfile.TemporaryDirectory() as work:
-            stage = Path(work)
-            (stage / CORE_SOURCE_DIR).symlink_to(root.resolve(), target_is_directory=True)
-            shutil.copytree(root / env_rel, stage / env_rel)
-            docs, error = kustomize_build(stage, env_rel)
-            if error:
-                error = error.replace(str(stage), str(root))
+    docs, error = kustomize_build(root, env_rel)
     if error:
         return [], error
     values = next(

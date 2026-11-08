@@ -23,18 +23,18 @@
 | [CONTRACT.template.md](CONTRACT.template.md) | Shared contract section layout |
 | [code-delivery/CONTRACT.md](code-delivery/CONTRACT.md) | Code delivery provider (`github`) |
 | [../schema/CONTRACT.md](../schema/CONTRACT.md) | Env schema |
-| [../platform/optional/app-dns/CONTRACT.md](../platform/optional/app-dns/CONTRACT.md) | App DNS |
-| [../platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md) | Hosted apps: the app file, admission and network baseline |
-| [../platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md) | PVC backups and etcd snapshot copy |
-| [../platform/cert-manager/CONTRACT.md](../platform/cert-manager/CONTRACT.md) | Internal CA and wildcard |
-| [../platform/configs/CONTRACT.md](../platform/configs/CONTRACT.md) | platform-configs list |
-| [../platform/flux-operator/CONTRACT.md](../platform/flux-operator/CONTRACT.md) | Flux Operator |
-| [../platform/kyverno/CONTRACT.md](../platform/kyverno/CONTRACT.md) | Kyverno admission |
-| [../platform/optional/CONTRACT.md](../platform/optional/CONTRACT.md) | Optional core pieces and how an env enables them, observability included |
-| [../platform/testapp/CONTRACT.md](../platform/testapp/CONTRACT.md) | Platform canary |
-| [../platform/traefik/CONTRACT.md](../platform/traefik/CONTRACT.md) | Ingress exposure |
-| [../services/CONTRACT.md](../services/CONTRACT.md) | Add-ons: what every add-on meets |
-| [../services/hello/CONTRACT.md](../services/hello/CONTRACT.md) | Sample add-on |
+| [../core/feature/app-dns/CONTRACT.md](../core/feature/app-dns/CONTRACT.md) | App DNS |
+| [../core/feature/app-hosting/CONTRACT.md](../core/feature/app-hosting/CONTRACT.md) | Hosted apps: the app file, admission and network baseline |
+| [../core/platform/backups/CONTRACT.md](../core/platform/backups/CONTRACT.md) | PVC backups and etcd snapshot copy |
+| [../core/platform/cert-manager/CONTRACT.md](../core/platform/cert-manager/CONTRACT.md) | Internal CA and wildcard |
+| [../core/platform/configs/CONTRACT.md](../core/platform/configs/CONTRACT.md) | platform-configs list |
+| [../core/platform/flux-operator/CONTRACT.md](../core/platform/flux-operator/CONTRACT.md) | Flux Operator |
+| [../core/platform/kyverno/CONTRACT.md](../core/platform/kyverno/CONTRACT.md) | Kyverno admission |
+| [../core/feature/CONTRACT.md](../core/feature/CONTRACT.md) | Optional core pieces and how an env enables them, observability included |
+| [../core/platform/testapp/CONTRACT.md](../core/platform/testapp/CONTRACT.md) | Platform canary |
+| [../core/platform/traefik/CONTRACT.md](../core/platform/traefik/CONTRACT.md) | Ingress exposure |
+| [../addons/CONTRACT.md](../addons/CONTRACT.md) | Add-ons: what every add-on meets |
+| [../addons/hello/CONTRACT.md](../addons/hello/CONTRACT.md) | Sample add-on |
 
 ## Env docs
 

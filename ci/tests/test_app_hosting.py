@@ -22,7 +22,7 @@ EXAMPLE = REPO_ROOT / "envs" / "env-00"
 def _tree(tmp_path: Path) -> tuple[Path, Path]:
     """A product copy (platform, services) and an instance holding env-00 with its apps."""
     product, instance = tmp_path / "product", tmp_path / "instance"
-    for name in ("flux", "platform", "services"):
+    for name in ("core", "addons"):
         shutil.copytree(REPO_ROOT / name, product / name)
     (instance / "envs").mkdir(parents=True)
     shutil.copytree(EXAMPLE, instance / "envs" / "env-00")
@@ -46,8 +46,8 @@ def test_listed_apps_with_core_wiring_pass(tmp_path: Path) -> None:
     assert _messages(instance) == []
 
 
-_APP = "platform/optional/app-hosting/app"
-_POLICIES = "platform/optional/app-hosting/policies/admission.yaml"
+_APP = "core/feature/app-hosting/app"
+_POLICIES = "core/feature/app-hosting/policies/admission.yaml"
 
 
 @pytest.mark.parametrize(
@@ -108,7 +108,7 @@ def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None
     """Rule: only app-<name>-wiring applying core's app template runs as the platform account."""
     _product, instance = _tree(tmp_path)
     generated = instance / "envs" / "env-00" / "flux" / _apps.GENERATED_REL
-    _edit(generated, "path: ./core/platform/optional/app-hosting/app", "path: ./core/platform")
+    _edit(generated, "path: ./core/feature/app-hosting/app", "path: ./core/platform")
     messages = [item.message for item in scan_flux_identity(instance)]
     assert any("an app's wiring runs as flux-platform" in item for item in messages), messages
 
@@ -222,9 +222,9 @@ def render_platform(tmp_path: Path, *, hosting: bool) -> dict[tuple[str, str], d
     work.mkdir(parents=True)
     rel = lambda path: os.path.relpath(REPO_ROOT / path, work)  # noqa: E731
     listing = {"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization",
-               "resources": [rel("platform"), rel("platform/configs")]}
+               "resources": [rel("core/platform"), rel("core/platform/configs")]}
     if hosting:
-        listing["components"] = [rel("platform/optional/app-hosting")]
+        listing["components"] = [rel("core/feature/app-hosting")]
     (work / "kustomization.yaml").write_text(yaml.safe_dump(listing), encoding="utf-8")
     docs = [doc for doc in yaml.safe_load_all(_kustomize_build(str(work), root=work)) if isinstance(doc, dict)]
     return {(doc["kind"], doc["metadata"]["name"]): doc for doc in docs}

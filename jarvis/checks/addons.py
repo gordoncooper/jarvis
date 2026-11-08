@@ -1,12 +1,12 @@
-"""Add-ons plug into core at one seam and stay inside it (CONTRACT: services/CONTRACT.md).
+"""Add-ons plug into core at one seam and stay inside it (CONTRACT: addons/CONTRACT.md).
 
 Product rules, on this checkout:
 
-- Each add-on folder services/<name>/ holds a kustomize Component that lists
+- Each add-on folder addons/<name>/ holds a kustomize Component that lists
   files only, so its objects are the same whether Flux adds it to the services
   stage or this check builds it alone.
 - The slot an add-on fills (label addons.jarvis.io/slot on its Flux
-  Kustomization) has a folder under services/slots/. No add-on is named like a slot,
+  Kustomization) has a folder under addons/slots/. No add-on is named like a slot,
   or apps, the hosted apps' hostname zone.
 - Core (CORE_DIRS) never names an add-on. It names slots and contracts.
 
@@ -29,7 +29,7 @@ Kustomization lists in spec.components:
   components, name affixes, kubeConfig or postBuild.substituteFrom (optional or
   not; inline postBuild.substitute only), so what this check builds is what
   Flux applies. A decrypting one reads envs/<env>/secrets/<one of its
-  namespaces>; any other reads under core/services/<name>/ (path normalised).
+  namespaces>; any other reads under addons/<name>/ (path normalised).
 - Every object an add-on Kustomization applies is namespaced, lands in the
   add-on's own namespaces, and is not RBAC or a Flux object.
 """
@@ -57,7 +57,6 @@ from jarvis.checks.manifests import (
 from jarvis.schema.env import (
     ADDON_SECRETS_PATH,
     ADDONS_DIR,
-    CORE_SOURCE_DIR,
     addon_documents,
     addon_names,
     addon_slots,
@@ -67,7 +66,7 @@ from jarvis.schema.env import (
 )
 
 # Core: these trees name slots and contracts, never an add-on.
-CORE_DIRS = ("platform", "tools", "schema", "infra", "ci/checks")
+CORE_DIRS = ("core", "jarvis", "tools", "schema", "infra", "ci/checks")
 ADDON_LABEL = "addons.jarvis.io/name"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 FLUX_NAMESPACE = "flux-system"
@@ -204,7 +203,7 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         name = str(component).strip().removeprefix("./")
         if name not in known:
             continue  # env-schema reports an unknown add-on
-        wiring, error = kustomize_build(root, f"{CORE_SOURCE_DIR}/{ADDONS_DIR}/{name}")
+        wiring, error = kustomize_build(root, f"{ADDONS_DIR}/{name}")
         if error:
             yield f"add-on {name}: {error}"
             continue
@@ -306,7 +305,7 @@ def _kustomization_problems(name: str, doc: dict, tenant: str, namespaces: set[s
         )
     raw = str(spec.get("path") or "")
     path = "./" + posixpath.normpath(raw.removeprefix("./"))
-    home = f"./{CORE_SOURCE_DIR}/{ADDONS_DIR}/{name}"
+    home = f"./{ADDONS_DIR}/{name}"
     if spec.get("decryption"):
         if path.removeprefix(ADDON_SECRETS_PATH) not in namespaces or not path.startswith(ADDON_SECRETS_PATH):
             yield f"decrypts {raw}; an add-on's sealed Secrets are under {ADDON_SECRETS_PATH}<its namespace>"

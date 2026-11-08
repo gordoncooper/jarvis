@@ -754,7 +754,7 @@ def test_offsite_copy_freshness_is_checked_when_the_env_lists_it(
     configs = tmp_path / "envs" / "env-test" / "flux" / "platform-configs"
     configs.mkdir(parents=True)
     (configs / "kustomization.yaml").write_text(
-        "resources:\n  - ../../../../core/platform/optional/offsite-backup-copy\n", encoding="utf-8"
+        "resources:\n  - ../../../../core/feature/offsite-backup-copy\n", encoding="utf-8"
     )
     cluster = Cluster()
     cluster.offsite_sync = last
@@ -776,7 +776,7 @@ def test_unreadable_switches_fail_verify(
 def _list_apps_server(root: Path) -> None:
     configs = root / "envs" / "env-test" / "flux" / "platform-configs"
     configs.mkdir(parents=True, exist_ok=True)
-    (configs / "kustomization.yaml").write_text("resources:\n  - ../../../../core/platform/optional/apps-backup-server\n", encoding="utf-8")
+    (configs / "kustomization.yaml").write_text("resources:\n  - ../../../../core/feature/apps-backup-server\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -846,7 +846,7 @@ def test_app_pvc_without_a_registered_credential_fails(
 def test_repository_check_deadline_fits_inside_verify_grace() -> None:
     """A check Job still inside its deadline never makes verify report it stale."""
     job = yaml.safe_load(
-        (REPO_ROOT / "platform/backups/restic-check.yaml").read_text(encoding="utf-8")
+        (REPO_ROOT / "core/platform/backups/restic-check.yaml").read_text(encoding="utf-8")
     )["spec"]["jobTemplate"]["spec"]
     grace = sys.modules["jarvis.verify.backups"].CHECK_GRACE
     assert 0 < job["activeDeadlineSeconds"] < grace.total_seconds()

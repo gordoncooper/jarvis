@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render backup registration Components from values/apps.yaml (platform/backups/CONTRACT.md).
+"""Render backup registration Components from values/apps.yaml (core/platform/backups/CONTRACT.md).
 
 render_switches.py runs this with the rest of the env's wiring. With no backup-enabled app it
 removes flux/generated/backup-selection/ and its line in flux/platform-configs/kustomization.yaml.

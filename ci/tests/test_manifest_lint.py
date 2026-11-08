@@ -18,20 +18,20 @@ def _write(root: Path, rel: str, text: str) -> None:
 
 
 def test_r5_seeded_manifest_missing_memory_limit_fails(tmp_path: Path) -> None:
-    target = tmp_path / "platform" / "seeded.yaml"
+    target = tmp_path / "core" / "platform" / "seeded.yaml"
     target.parent.mkdir(parents=True)
     target.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     violations = scan_manifest_lint(tmp_path)
     assert len(violations) == 1
-    assert violations[0].path == "platform/seeded.yaml"
+    assert violations[0].path == "core/platform/seeded.yaml"
     assert "memory limit is unset" in violations[0].message
 
 
 def test_r5_cpu_limit_fails(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "platform/cpu.yaml",
+        "core/platform/cpu.yaml",
         """
 apiVersion: apps/v1
 kind: Deployment
@@ -59,7 +59,7 @@ spec:
 def test_r5_null_cpu_limit_passes(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "platform/ok.yaml",
+        "core/platform/ok.yaml",
         """
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -79,7 +79,7 @@ spec:
 def test_r5_missing_readiness_probe_fails(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "platform/probe.yaml",
+        "core/platform/probe.yaml",
         """
 apiVersion: apps/v1
 kind: Deployment
@@ -106,7 +106,7 @@ spec:
 def test_r5_cronjob_without_probes_passes(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "platform/job.yaml",
+        "core/platform/job.yaml",
         """
 apiVersion: batch/v1
 kind: CronJob
@@ -133,7 +133,7 @@ spec:
 def test_r5_init_container_needs_resources_not_probes(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "platform/init.yaml",
+        "core/platform/init.yaml",
         """
 apiVersion: apps/v1
 kind: Deployment
@@ -168,7 +168,7 @@ spec:
 def test_r5_log_file_arg_fails(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "platform/logs.yaml",
+        "core/platform/logs.yaml",
         """
 apiVersion: apps/v1
 kind: Deployment
@@ -198,7 +198,7 @@ spec:
     ("rel", "text"),
     [
         (
-            "platform/release.yaml",
+            "core/platform/release.yaml",
             """
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -211,7 +211,7 @@ spec:
 """,
         ),
         (
-            "platform/empty.yaml",
+            "core/platform/empty.yaml",
             """
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -224,7 +224,7 @@ spec:
 """,
         ),
         (
-            "platform/chart.yaml",
+            "core/platform/chart.yaml",
             """
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
@@ -238,7 +238,7 @@ spec:
 """,
         ),
         (
-            "platform/blank-chart.yaml",
+            "core/platform/blank-chart.yaml",
             """
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
@@ -261,8 +261,8 @@ def test_r5_chart_values_need_a_passing_resources_block(tmp_path: Path, rel: str
 
 
 def test_r5_non_mapping_document_fails(tmp_path: Path) -> None:
-    _write(tmp_path, "platform/list.yaml", "- kind: Deployment\n---\n")
+    _write(tmp_path, "core/platform/list.yaml", "- kind: Deployment\n---\n")
     violations = scan_manifest_lint(tmp_path)
     assert len(violations) == 1
-    assert violations[0].path == "platform/list.yaml"
+    assert violations[0].path == "core/platform/list.yaml"
     assert "not a mapping" in violations[0].message

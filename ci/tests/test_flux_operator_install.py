@@ -17,8 +17,8 @@ from ansible_role_proof import (
 )
 
 ROLE_DEFAULTS = FLUX_OPERATOR_ROLE_DIR / "defaults" / "main.yml"
-OCI_REPOSITORY = REPO_ROOT / "platform" / "flux-operator" / "oci-repository.yaml"
-HELM_RELEASE = REPO_ROOT / "platform" / "flux-operator" / "helmrelease.yaml"
+OCI_REPOSITORY = REPO_ROOT / "core" / "platform" / "flux-operator" / "oci-repository.yaml"
+HELM_RELEASE = REPO_ROOT / "core" / "platform" / "flux-operator" / "helmrelease.yaml"
 FLUX_OPERATOR_CHART_OCI = "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator"
 
 

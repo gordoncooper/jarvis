@@ -203,17 +203,16 @@ def bootstrap_example_copy(
        backups-offsite and one placeholder Secret per namespace an enabled add-on decrypts.
     7. Render the cluster-vars ConfigMap over the copied file.
     """
-    from jarvis.schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV
+    from jarvis.schema.env import EXAMPLE_ENV
 
     root = (tmp_path / "repo").resolve()
     repo = REPO_ROOT.resolve()
     if (root == repo or repo in root.parents) and not _git_ignored(repo, root):
         raise RuntimeError("refusing to write the example copy at a tracked path in the repo")
     root.mkdir()
-    for dirname in ("flux", "platform", "services"):
+    # core/ and addons/ where the root artifact holds them (sync.yaml includes them by fromPath).
+    for dirname in ("core", "addons"):
         (root / dirname).symlink_to(repo / dirname)
-    # The root source includes core here, as an instance checkout does.
-    (root / CORE_SOURCE_DIR).symlink_to(repo)
     dest = root / "envs" / name
     shutil.copytree(repo / "envs" / EXAMPLE_ENV, dest)
     _rename_copied_env(dest, EXAMPLE_ENV, name)

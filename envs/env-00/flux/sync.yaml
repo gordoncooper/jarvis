@@ -2,8 +2,8 @@
 # Ansible (flux-operator role) applies this file once on a new cluster; the flux-system
 # Kustomization below then reconciles it from Git with the rest of this directory. The root
 # source is the env repo (flux_git_repo_url, flux_git_ref). It includes the core source
-# (core_git_repo_url, core_git_ref) at core/, so every Flux path here reads env files and core
-# files from one artifact, with one decryptor.
+# (core_git_repo_url, core_git_ref): its core/ and addons/ at core/ and addons/, so every Flux
+# path here reads env files, core and add-ons from one artifact, with one decryptor.
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -20,7 +20,12 @@ spec:
   include:
     - repository:
         name: core
+      fromPath: core
       toPath: core
+    - repository:
+        name: core
+      fromPath: addons
+      toPath: addons
 ---
 # Public core, read with no credential.
 apiVersion: source.toolkit.fluxcd.io/v1

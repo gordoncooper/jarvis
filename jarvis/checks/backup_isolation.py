@@ -18,7 +18,7 @@ from pathlib import Path
 
 from jarvis.checks.manifests import build_flux_path, kustomize_build, pod_spec
 from jarvis.lib import app_backups as _app_backups
-from jarvis.schema.env import CORE_SOURCE_DIR, env_dirs
+from jarvis.schema.env import env_dirs
 
 CORE_SECRET = "backups-restic"
 CORE_SERVER = "restic"
@@ -42,7 +42,7 @@ class Violation:
 def scan_backup_isolation(root: Path) -> list[Violation]:
     root = Path(root).resolve()
     found: list[Violation] = []
-    shipped = f"{CORE_SOURCE_DIR}/{_app_backups.APPS_SERVER_DIR}"
+    shipped = _app_backups.APPS_SERVER_DIR
     docs, error = kustomize_build(root, shipped)
     if error:
         found.append(Violation(_app_backups.APPS_SERVER_DIR, error))

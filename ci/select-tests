@@ -42,7 +42,7 @@ def _is_doc(path: str) -> bool:
 def _naming_tests(path: str) -> set[str]:
     """Test files whose source names the changed file, or its folder for a manifest."""
     needles = {path}
-    if path.startswith(("platform/", "services/")):
+    if path.startswith(("core/", "addons/")):
         needles.add(str(Path(path).parent))
     return {
         test.name
@@ -74,7 +74,7 @@ def select(branch: str, changed: list[str]) -> str:
     # Renovate's own managers read the pin that moved.
     chosen.add("test_renovate.py")
     # Every manifest change also passes the manifest rules and the flux render.
-    if any(path.startswith(("platform/", "services/", "envs/")) for path in code):
+    if any(path.startswith(("core/", "addons/", "envs/")) for path in code):
         chosen |= {"test_digest_pin.py", "test_manifest_lint.py", "test_flux_entry.py"}
     present = {test.name for test in TESTS.glob("test_*.py")}
     return " ".join(f"ci/tests/{name}" for name in sorted(chosen & present)) or "all"

@@ -17,7 +17,7 @@ curl -fsSL "https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256
 
 `site.yml` downloads that same `k3s` file and checks it against `k3s_sha256` ([infra/ansible/roles/k3s/tasks/main.yml](../infra/ansible/roles/k3s/tasks/main.yml)).
 
-- Router or LAN DNS forwards the env's DNS suffix (`dns_suffix`) to an edge node. App DNS answers that zone on UDP and TCP port 53 ([platform/optional/app-dns/CONTRACT.md](../platform/optional/app-dns/CONTRACT.md)).
+- Router or LAN DNS forwards the env's DNS suffix (`dns_suffix`) to an edge node. App DNS answers that zone on UDP and TCP port 53 ([core/feature/app-dns/CONTRACT.md](../core/feature/app-dns/CONTRACT.md)).
 
 ## Install tools
 
@@ -48,7 +48,7 @@ An instance checkout with no `.git` counts as "not recorded" for prep-node and b
 
 Run every env-level check against the instance with `INSTANCE=<path> bash ci/run-env-checks`. That one entry point is the list the instance CI calls too, so a new env-level check reaches an instance without a change there.
 
-The copy already has `flux/`: `sync.yaml` (whose root Kustomization sets `postBuild.substitute: {jarvis_env: <env>}`), `kustomization.yaml`, the `services` Kustomization (`./core/services`, plus the add-ons its `spec.components` lists) and `platform-configs/kustomization.yaml`. The rest of the Flux wiring is core's, at the core tag the env pins: `flux/` in this repository (`core/flux` in the root artifact) holds the FluxInstance (Flux's only version pin), the service accounts the Kustomizations and platform HelmReleases run as, and the layers `platform-controllers` (`./core/platform`) and `platform-configs` (`./envs/${jarvis_env}/flux/platform-configs`), chained with `dependsOn` to `services`. The env's `flux/kustomization.yaml` lists it as `../../../core/flux`. It also has app hosting turned on (`app-hosting` in `values/switches.yaml`) and `generated/apps.yaml`, one wiring Kustomization per sample app listed there; the copy's render in step 3 removes them until it hosts an app ([add-a-hosted-app.md](add-a-hosted-app.md)). `flux/kustomization.yaml`, `flux/kustomizations/services.yaml` and `flux/platform-configs/kustomization.yaml` are that render's output, so a change goes in `values/switches.yaml`. A core-only env is a full env: with no add-on listed, every env-level check passes and `make verify` runs core's checks alone. Core is k3s, Flux, certificates, ingress, App DNS, backups, secrets and CI. Optional core components (app hosting, the off-host copy, the apps backup server) and add-ons (limited-tenant swappable services) are off until `values/switches.yaml` names them. That list is `core/platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`, and the opt-in off-host copy. Step 6 creates those files, so the list needs no hand edit.
+The copy already has `flux/`: `sync.yaml` (whose root Kustomization sets `postBuild.substitute: {jarvis_env: <env>}`), `kustomization.yaml`, the `services` Kustomization (`./addons`, plus the add-ons its `spec.components` lists) and `platform-configs/kustomization.yaml`. The rest of the Flux wiring is core's, at the core tag the env pins: `flux/` in this repository (`core/flux` in the root artifact) holds the FluxInstance (Flux's only version pin), the service accounts the Kustomizations and platform HelmReleases run as, and the layers `platform-controllers` (`./core/platform`) and `platform-configs` (`./envs/${jarvis_env}/flux/platform-configs`), chained with `dependsOn` to `services`. The env's `flux/kustomization.yaml` lists it as `../../../core/flux`. It also has app hosting turned on (`app-hosting` in `values/switches.yaml`) and `generated/apps.yaml`, one wiring Kustomization per sample app listed there; the copy's render in step 3 removes them until it hosts an app ([add-a-hosted-app.md](add-a-hosted-app.md)). `flux/kustomization.yaml`, `flux/kustomizations/services.yaml` and `flux/platform-configs/kustomization.yaml` are that render's output, so a change goes in `values/switches.yaml`. A core-only env is a full env: with no add-on listed, every env-level check passes and `make verify` runs core's checks alone. Core is k3s, Flux, certificates, ingress, App DNS, backups, secrets and CI. Optional core components (app hosting, the off-host copy, the apps backup server) and add-ons (limited-tenant swappable services) are off until `values/switches.yaml` names them. That list is `core/platform/configs` plus `secrets/backups-restic.sops.yaml` and `secrets/cert-manager-ca.sops.yaml`, and the opt-in off-host copy. Step 6 creates those files, so the list needs no hand edit.
 
 The FluxInstance, both GitRepositories and the root Kustomization carry `kustomize.toolkit.fluxcd.io/prune: disabled`, so a commit that deletes one from Git cannot make Flux remove its own sources; `ci/checks/flux-prune` enforces it. Removing one on purpose means deleting it from the cluster by hand. The layer Kustomizations keep prune on.
 
@@ -102,7 +102,7 @@ make bootstrap-secrets ENV=<env>
 
 Commit all of `envs/<env>/` in the instance repository: `flux/`, values, inventory, prep-node's edits, secrets, and `ca.crt`. Commit its `.sops.yaml` too. Do not commit the age private key. Push to the branch `flux_git_ref` names. Flux syncs from that remote, so push before `site.yml`. Produces those files on the remote. What each secret file is, and how a second `make bootstrap-secrets` behaves, is in [envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md).
 
-A core-only env stops here. To host an app, follow [add-a-hosted-app.md](add-a-hosted-app.md). An env that will host an app that keeps data gives that app its own backup credential before the app stores anything: `make bootstrap-secrets ENV=<env> APP=app-<name>`, then the two lines in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md#app-credentials). An app volume without one is never backed up, and `make verify` fails it, unless the env's `backups:` section leaves that app unselected.
+A core-only env stops here. To host an app, follow [add-a-hosted-app.md](add-a-hosted-app.md). An env that will host an app that keeps data gives that app its own backup credential before the app stores anything: `make bootstrap-secrets ENV=<env> APP=app-<name>`, then the two lines in [core/platform/backups/CONTRACT.md](../core/platform/backups/CONTRACT.md#app-credentials). An app volume without one is never backed up, and `make verify` fails it, unless the env's `backups:` section leaves that app unselected.
 
 ## Bootstrap the cluster
 
@@ -128,7 +128,7 @@ Uses `~/.kube/jarvis-<env>.yaml`. Core's checks always run; an add-on's checks r
 make drill ENV=<env>
 ```
 
-Produces a scratch-volume restore and an etcd snapshot-copy check, then removes the scratch namespace and repository. Success is `PASS drill cleanup complete` and exit 0. If cleanup cannot finish, the tool prints `make drill-cleanup ENV=<env>`. What the drill changes is in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md).
+Produces a scratch-volume restore and an etcd snapshot-copy check, then removes the scratch namespace and repository. Success is `PASS drill cleanup complete` and exit 0. If cleanup cannot finish, the tool prints `make drill-cleanup ENV=<env>`. What the drill changes is in [core/platform/backups/CONTRACT.md](../core/platform/backups/CONTRACT.md).
 
 ## Restore
 
@@ -148,7 +148,7 @@ make restore-all ENV=<env>
 
 Optional `RETIRE`, `ACCEPT_EMPTY`, and `NODE=<node>`. Produces a restore of every enrolled PVC. The hold is lifted only when every listed repository is restored, accepted empty, or retired. Otherwise the hold stays and the PVCs stay `backup: paused`. Success is `HOLD lifted` when a hold was set and then lifted, the same `SUMMARY` line, and exit 0.
 
-The etcd cluster reset is owner-run and is not a make target. Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss. Detail is in [platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md).
+The etcd cluster reset is owner-run and is not a make target. Backups live on the same host as the data unless `backup_path` is on another disk. They cover mistakes and rollback, not disk loss. Detail is in [core/platform/backups/CONTRACT.md](../core/platform/backups/CONTRACT.md).
 
 ## Age key
 

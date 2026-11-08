@@ -1,4 +1,4 @@
-"""Each hosted app an env lists gets core's whole wiring, unchanged (CONTRACT: platform/optional/app-hosting/CONTRACT.md).
+"""Each hosted app an env lists gets core's whole wiring, unchanged (CONTRACT: core/feature/app-hosting/CONTRACT.md).
 
 For each env with a flux/ tree, on each app wiring Kustomization (app-<name>-wiring), this
 builds its path with its postBuild values and checks what the cluster gets:
@@ -38,11 +38,11 @@ from jarvis.checks.manifests import (
 )
 from jarvis.lib import apps as _apps
 from jarvis.lib.app_file import SHIPPED_KINDS
-from jarvis.schema.env import CORE_SOURCE_DIR, env_flux_dirs
+from jarvis.schema.env import env_flux_dirs
 
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
-POLICIES = f"{CORE_SOURCE_DIR}/platform/optional/app-hosting/policies"
+POLICIES = "core/feature/app-hosting/policies"
 _KINDS = frozenset(
     {
         "Namespace",

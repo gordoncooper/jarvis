@@ -7,7 +7,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 - ClusterIssuer `internal-ca` signs from Secret `cert-manager-ca` in `platform-cert-manager`.
 - Certificate `wildcard` in that namespace, name `*.<dns_suffix>`, stored as Secret `wildcard-tls`.
 - TLSStore `default` in that namespace, with `wildcard-tls` as the default certificate.
-- Only in an env that turns app hosting on ([platform/optional/app-hosting/CONTRACT.md](../optional/app-hosting/CONTRACT.md)): Certificate `wildcard-apps`, name `*.apps.<dns_suffix>`, stored as Secret `wildcard-apps-tls`, which TLSStore `default` serves for a name under `.apps`. It is a separate Certificate, so it never reissues or re-keys `wildcard`. The CA's name constraint (`dns_suffix` and its subdomains) covers it. `kube-system` holds the Traefik HelmChartConfig and ConfigMap `coredns-custom`.
+- Only in an env that turns app hosting on ([core/feature/app-hosting/CONTRACT.md](../../feature/app-hosting/CONTRACT.md)): Certificate `wildcard-apps`, name `*.apps.<dns_suffix>`, stored as Secret `wildcard-apps-tls`, which TLSStore `default` serves for a name under `.apps`. It is a separate Certificate, so it never reissues or re-keys `wildcard`. The CA's name constraint (`dns_suffix` and its subdomains) covers it. `kube-system` holds the Traefik HelmChartConfig and ConfigMap `coredns-custom`.
 
 ## Expects
 

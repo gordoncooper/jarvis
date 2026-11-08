@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate hosted app folders (platform/optional/app-hosting/CONTRACT.md).
+"""Validate hosted app folders (core/feature/app-hosting/CONTRACT.md).
 
     tools/app-check <folder>...
     tools/app-check --repo <apps repository> [--exclude <name>]...

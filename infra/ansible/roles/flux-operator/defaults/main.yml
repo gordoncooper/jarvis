@@ -1,5 +1,5 @@
 ---
-# Chart pin is spec.ref.tag in platform/flux-operator/oci-repository.yaml (chart_pin.yml).
+# Chart pin is spec.ref.tag in core/platform/flux-operator/oci-repository.yaml (chart_pin.yml).
 flux_operator_crd_wait_timeout: 120s
 flux_operator_rollout_wait_timeout: 300s
 flux_operator_helm_timeout: 5m

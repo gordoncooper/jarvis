@@ -53,8 +53,8 @@ _FLUX_ENTRY_FILES = (
 # Sealed once bootstrap-secrets has run; platform-configs applies the last two.
 _BOOTSTRAP_SEALED = ("k3s-token", "cert-manager-ca", "backups-restic")
 # Add-ons: one folder each under <core>/services/, a kustomize Component the services
-# Kustomization lists in spec.components. Slot contracts live under services/slots/.
-ADDONS_DIR = "services"
+# Kustomization lists in spec.components. Slot contracts live under addons/slots/.
+ADDONS_DIR = "addons"
 SLOTS_DIR = "slots"
 SERVICES_KUSTOMIZATION = _switches.SERVICES_REL
 # On an add-on's Flux Kustomization: the slot it fills.
@@ -536,7 +536,8 @@ def _platform_configs(env_dir: Path) -> tuple[Path, dict]:
 def _core_dir_listed(env_dir: Path, repo_root: Path, rel: str) -> bool:
     """True when the env's platform-configs list includes core directory rel."""
     path, doc = _platform_configs(env_dir)
-    target = (Path(repo_root) / CORE_SOURCE_DIR / rel).resolve()
+    # rel is a path in the root artifact (core/..., addons/...), as the env's list names it.
+    target = (Path(repo_root) / rel).resolve()
     return any(
         isinstance(item, str) and (path.parent / item).resolve() == target
         for item in doc.get("resources") or []
@@ -555,7 +556,7 @@ def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
 
 def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool:
     path, _doc = _platform_configs(env_dir)
-    target = (Path(repo_root) / CORE_SOURCE_DIR / APP_HOSTING_DIR).resolve()
+    target = (Path(repo_root) / APP_HOSTING_DIR).resolve()
     return isinstance(item, str) and (path.parent / item.strip()).resolve() == target
 
 
@@ -675,14 +676,20 @@ def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> l
 
 
 def core_dir(repo_root: Path | str) -> Path:
-    """Core as the env's Flux paths see it: <root>/core when the instance holds it there (its CI
-    does), otherwise the product checkout running this code."""
+    """The core repository the env's Flux paths read: <root>/core when an instance checkout holds a
+    checkout of it there (its CI does), otherwise the product checkout running this code. Its core/
+    and addons/ are the root artifact's core/ and addons/ (sync.yaml includes them by fromPath)."""
     root = Path(repo_root)
-    return root / CORE_SOURCE_DIR if (root / CORE_SOURCE_DIR).is_dir() else _PRODUCT_ROOT
+    held = root / CORE_SOURCE_DIR
+    if (held / CORE_SOURCE_DIR).is_dir() or (held / ADDONS_DIR).is_dir():
+        return held  # an instance's checkout of the core repository at core/
+    if held.is_dir():
+        return root  # laid out like the artifact already: the product checkout, or a copy of one
+    return _PRODUCT_ROOT
 
 
 def addon_names(core: Path) -> tuple[str, ...]:
-    """Every add-on core ships: a folder under services/ holding a kustomization file."""
+    """Every add-on core ships: a folder under addons/ holding a kustomization file."""
     base = core / ADDONS_DIR
     if not base.is_dir():
         return ()
@@ -696,7 +703,7 @@ def addon_names(core: Path) -> tuple[str, ...]:
 
 
 def slot_names(core: Path) -> tuple[str, ...]:
-    """Every slot core defines: a folder under services/slots/."""
+    """Every slot core defines: a folder under addons/slots/."""
     base = core / ADDONS_DIR / SLOTS_DIR
     return tuple(sorted(child.name for child in base.iterdir() if child.is_dir())) if base.is_dir() else ()
 

@@ -46,7 +46,7 @@ def _wiring() -> list[dict]:
             "kind": "Kustomization",
             "metadata": {"name": "addon-widget", "namespace": "flux-system"},
             "spec": {
-                "path": "./core/services/widget/app",
+                "path": "./addons/widget/app",
                 "serviceAccountName": "addon-widget",
                 "targetNamespace": "widget",
                 "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
@@ -67,7 +67,7 @@ def _app() -> list[dict]:
 
 def _stage(account: str = "flux-platform", components: tuple[str, ...] = ("widget",)) -> dict:
     spec: dict = {
-        "path": "./core/services",
+        "path": "./addons",
         "serviceAccountName": account,
         "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
         "postBuild": {"substituteFrom": [{"kind": "ConfigMap", "name": "cluster-vars"}]},
@@ -98,14 +98,14 @@ def _tree(
     """A product with one add-on and a chat-bot slot, and an instance whose env enables it."""
     product, instance = tmp_path / "product", tmp_path / "instance"
     files = {
-        "services/kustomization.yaml": "resources: []\n",
-        "services/slots/chat-bot/CONTRACT.md": "# CONTRACT: chat-bot slot\n",
-        "services/widget/kustomization.yaml": (
+        "addons/kustomization.yaml": "resources: []\n",
+        "addons/slots/chat-bot/CONTRACT.md": "# CONTRACT: chat-bot slot\n",
+        "addons/widget/kustomization.yaml": (
             "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [wiring.yaml]\n"
         ),
-        "services/widget/wiring.yaml": yaml.safe_dump_all(_wiring() if wiring is None else wiring),
-        "services/widget/app/kustomization.yaml": "resources: [app.yaml]\n",
-        "services/widget/app/app.yaml": yaml.safe_dump_all(_app() if app is None else app),
+        "addons/widget/wiring.yaml": yaml.safe_dump_all(_wiring() if wiring is None else wiring),
+        "addons/widget/app/kustomization.yaml": "resources: [app.yaml]\n",
+        "addons/widget/app/app.yaml": yaml.safe_dump_all(_app() if app is None else app),
         "tools/verify.py": "# Core refers to the chat-bot slot only.\n",
         **(core_files or {}),
     }
@@ -176,7 +176,7 @@ _PRIORITY = {"apiVersion": "scheduling.k8s.io/v1", "kind": "PriorityClass", "met
         ),
         ({"stage": _stage(account="flux-apps")}, "runs as flux-platform"),
         ({"wiring": _replace(_wiring(), "Kustomization", **{"metadata.labels": {"addons.jarvis.io/slot": "pager"}})}, "has no folder"),
-        ({"core_files": {"platform/x/notes.yaml": "# waits for widget\n"}}, "core names add-on 'widget'"),
+        ({"core_files": {"core/platform/x/notes.yaml": "# waits for widget\n"}}, "core names add-on 'widget'"),
         ({"wiring": _replace(_wiring(), "ServiceAccount", **{"metadata.annotations": {}})}, "could remove it before its workloads"),
         ({"wiring": _replace(_wiring(), "Kustomization", **{"metadata.namespace": "widget"})}, "lives outside flux-system"),
         ({"wiring": _replace(_wiring(), "Kustomization", **{"metadata.name": "widget-app"})}, "is named addon-widget"),
@@ -194,18 +194,18 @@ _PRIORITY = {"apiVersion": "scheduling.k8s.io/v1", "kind": "PriorityClass", "met
         ),
         ({"wiring": _replace(_wiring(), "Kustomization", **{"spec.sourceRef": {"kind": "GitRepository", "name": "other"}})}, "reads the root source"),
         ({"wiring": _replace(_wiring(), "Kustomization", **{"spec.patches": []})}, "sets spec.patches"),
-        ({"wiring": _replace(_wiring(), "Kustomization", **{"spec.path": "./core/services/widget/../../platform"})}, "outside the add-on's home"),
+        ({"wiring": _replace(_wiring(), "Kustomization", **{"spec.path": "./addons/widget/../../platform"})}, "outside the add-on's home"),
         ({"app": [{"apiVersion": "x.io/v1", "kind": "ClusterSecretStore", "metadata": {"name": "s"}}]}, "cluster-scoped"),
         (
-            {"core_files": {"services/widget/kustomization.yaml": "kind: Component\nresources: [wiring.yaml]\npatches: []\n"}},
+            {"core_files": {"addons/widget/kustomization.yaml": "kind: Component\nresources: [wiring.yaml]\npatches: []\n"}},
             "lists files only",
         ),
-        ({"core_files": {"services/widget/kustomization.yaml": "kind: Kustomization\nresources: [wiring.yaml]\n"}}, "must be a kustomize Component"),
+        ({"core_files": {"addons/widget/kustomization.yaml": "kind: Kustomization\nresources: [wiring.yaml]\n"}}, "must be a kustomize Component"),
         (
-            {"core_files": {"services/widget/kustomization.yaml": "kind: Component\nresources: [wiring.yaml, gone.yaml]\n"}},
+            {"core_files": {"addons/widget/kustomization.yaml": "kind: Component\nresources: [wiring.yaml, gone.yaml]\n"}},
             "gone.yaml, which is not a file",
         ),
-        ({"core_files": {"services/slots/widget/CONTRACT.md": "# slot\n"}}, "named like slot widget"),
+        ({"core_files": {"addons/slots/widget/CONTRACT.md": "# slot\n"}}, "named like slot widget"),
         (
             {"wiring": _replace(_wiring(), "Kustomization", **{"spec.postBuild": {"substituteFrom": [{"kind": "ConfigMap", "name": "cluster-vars"}]}})},
             "takes no substitution source",
@@ -265,8 +265,8 @@ def test_addon_outside_the_seam_fails(tmp_path: Path, seed: dict, expected: str)
 def test_addon_named_apps_fails(tmp_path: Path) -> None:
     """Rule: no add-on is named apps, so none claims the hosted apps' *.apps.<dns suffix>."""
     component = "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: []\n"
-    messages = _messages(*_tree(tmp_path, core_files={"services/apps/kustomization.yaml": component}))
-    assert any(item.startswith("services/apps: the add-on name apps is reserved") for item in messages), messages
+    messages = _messages(*_tree(tmp_path, core_files={"addons/apps/kustomization.yaml": component}))
+    assert any(item.startswith("addons/apps: the add-on name apps is reserved") for item in messages), messages
 
 
 def test_addon_secrets_from_its_namespace_folder_pass(tmp_path: Path) -> None:
@@ -296,8 +296,8 @@ def _schema_env(tmp_path: Path, components: list[str], *, slots: dict[str, str] 
     for name in ("widget", "gadget"):
         labels = {"addons.jarvis.io/slot": slots[name]} if slots and name in slots else {}
         ks = {"kind": "Kustomization", "metadata": {"name": f"addon-{name}", "labels": labels}, "spec": {}}
-        _write(product / "services" / name / "kustomization.yaml", "kind: Component\nresources: [flux.yaml]\n")
-        _write(product / "services" / name / "flux.yaml", yaml.safe_dump(ks))
+        _write(product / "addons" / name / "kustomization.yaml", "kind: Component\nresources: [flux.yaml]\n")
+        _write(product / "addons" / name / "flux.yaml", yaml.safe_dump(ks))
     root.mkdir()
     (root / "core").symlink_to(product)
     env = _write_env(root)

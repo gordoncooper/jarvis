@@ -2,6 +2,6 @@
 - name: Read the Flux Operator chart pin
   ansible.builtin.set_fact:
     flux_operator_chart_version: >-
-      {{ (lookup('file', role_path ~ '/../../../../platform/flux-operator/oci-repository.yaml')
+      {{ (lookup('file', role_path ~ '/../../../../core/platform/flux-operator/oci-repository.yaml')
           | from_yaml).spec.ref.tag }}
   changed_when: false

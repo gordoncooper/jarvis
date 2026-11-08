@@ -1,6 +1,6 @@
 # CONTRACT: optional core pieces
 
-Core pieces that run only in an env that names them. Each folder here is named for its switch under `optional` in `envs/<env>/values/switches.yaml`. An add-on is something else: a limited-tenant swappable service ([services/CONTRACT.md](../../services/CONTRACT.md)).
+Core pieces that run only in an env that names them. Each folder here is named for its switch under `optional` in `envs/<env>/values/switches.yaml`. An add-on is something else: a limited-tenant swappable service ([addons/CONTRACT.md](../../addons/CONTRACT.md)).
 
 ## Offers
 
@@ -8,16 +8,16 @@ Core pieces that run only in an env that names them. Each folder here is named f
 - `offsite-backup-copy/`: CronJob `restic-offsite`, the nightly copy of every local repository to the env's off-host backend. What it covers depends on the env's target: a dead disk only if the target is off that disk, and losing the site only if the target is at another site.
 - `apps-backup-server/`: Deployment and Service `restic-apps`, the rest-server that holds only hosted apps' repositories.
 
-What the two backup pieces do, and how to run them, stays in [platform/backups/CONTRACT.md](../backups/CONTRACT.md) (Off-host copy, App credentials), beside the always-on backup plumbing they extend.
+What the two backup pieces do, and how to run them, stays in [core/platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md) (Off-host copy, App credentials), beside the always-on backup plumbing they extend.
 
 ## Expects
 
-- Nothing always-on lists a folder here: not `platform/kustomization.yaml`, `platform/configs/kustomization.yaml` or `platform/backups/kustomization.yaml`. Only an env's rendered Flux wiring does, once the env names it.
-- The always-on `platform/backups` is up: the two backup pieces use its namespace and its restic data.
+- Nothing always-on lists a folder here: not `core/platform/kustomization.yaml`, `core/platform/configs/kustomization.yaml` or `core/platform/backups/kustomization.yaml`. Only an env's rendered Flux wiring does, once the env names it.
+- The always-on `core/platform/backups` is up: the two backup pieces use its namespace and its restic data.
 
 ## Health
 
-App hosting's health checks are in its own contract, and the two backup pieces' in [platform/backups/CONTRACT.md](../backups/CONTRACT.md). An env that does not list a piece has none of its objects, and that is healthy.
+App hosting's health checks are in its own contract, and the two backup pieces' in [core/platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md). An env that does not list a piece has none of its objects, and that is healthy.
 
 ## Config
 
@@ -27,7 +27,7 @@ To enable a piece, list its name under `optional` in `values/switches.yaml`, run
 
 Observability (metrics, logs, dashboards, uptime checks and alerts) is an optional core component, not an add-on. It stays off in an env until that env lists `observability` under `optional`, by the same steps as above.
 
-It is not built yet. `observability` has no row in `OPTIONAL_COMPONENTS`, so env-schema and the render refuse the name today and no env can turn it on. The build adds that row and puts its files in `platform/optional/observability/`. Core never depends on it: core's own health is `make verify`.
+It is not built yet. `observability` has no row in `OPTIONAL_COMPONENTS`, so env-schema and the render refuse the name today and no env can turn it on. The build adds that row and puts its files in `core/feature/observability/`. Core never depends on it: core's own health is `make verify`.
 
 ## Proven by
 

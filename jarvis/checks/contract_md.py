@@ -6,13 +6,13 @@ from pathlib import Path
 
 from jarvis.schema.env import ADDONS_DIR, SLOTS_DIR
 
-# Contract paths that must exist. platform/*, the add-on contract at services/, each
-# add-on services/<name>/ and each slot services/slots/<slot>/ are discovered at scan time.
+# Contract paths that must exist. core/platform/*, the add-on contract at addons/, each
+# add-on addons/<name>/ and each slot addons/slots/<slot>/ are discovered at scan time.
 # A root joins this list in the PR that creates it, and is removed when it is deleted.
 EXPLICIT_COMPONENT_ROOTS: tuple[str, ...] = (
     "docs/code-delivery",
-    "platform/optional",
-    "platform/optional/app-hosting",
+    "core/feature",
+    "core/feature/app-hosting",
     "schema",
 )
 
@@ -21,11 +21,11 @@ def component_roots(repo_root: Path | str) -> tuple[str, ...]:
     """All component root paths for this repo tree."""
     root = Path(repo_root).resolve()
     roots: set[str] = set(EXPLICIT_COMPONENT_ROOTS)
-    platform_dir = root / "platform"
+    platform_dir = root / "core" / "platform"
     if platform_dir.is_dir():
         for child in sorted(platform_dir.iterdir()):
             if child.is_dir():
-                roots.add(f"platform/{child.name}")
+                roots.add(f"core/platform/{child.name}")
     services_dir = root / ADDONS_DIR
     if services_dir.is_dir():
         roots.add(ADDONS_DIR)

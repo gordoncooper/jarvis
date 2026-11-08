@@ -70,8 +70,8 @@ def _repo(
     root_docs: list[dict] | None = None,
 ) -> Path:
     """An env whose root applies the accounts, a lockdown FluxInstance, a platform layer and a tenant layer."""
-    platform_ks = platform_ks or _kustomization("platform-controllers", "./platform", "flux-platform")
-    tenant_ks = tenant_ks or _kustomization("services", "./services", "flux-tenant")
+    platform_ks = platform_ks or _kustomization("platform-controllers", "./core/platform", "flux-platform")
+    tenant_ks = tenant_ks or _kustomization("services", "./addons", "flux-tenant")
     platform_docs = [_helmrelease("flux-platform")] if platform_docs is None else platform_docs
     tenant_docs = [] if tenant_docs is None else tenant_docs
     root_docs = [_flux_instance(multitenant=True)] if root_docs is None else root_docs
@@ -79,10 +79,10 @@ def _repo(
         "envs/env-test/flux/kustomization.yaml": "resources: [accounts.yaml, layers.yaml]\n",
         "envs/env-test/flux/accounts.yaml": _ACCOUNTS,
         "envs/env-test/flux/layers.yaml": yaml.safe_dump_all([platform_ks, tenant_ks, *root_docs]),
-        "platform/kustomization.yaml": "resources: [objects.yaml]\n",
-        "platform/objects.yaml": yaml.safe_dump_all(platform_docs),
-        "services/kustomization.yaml": "resources: [objects.yaml]\n" if tenant_docs else "resources: []\n",
-        "services/objects.yaml": yaml.safe_dump_all(tenant_docs),
+        "core/platform/kustomization.yaml": "resources: [objects.yaml]\n",
+        "core/platform/objects.yaml": yaml.safe_dump_all(platform_docs),
+        "addons/kustomization.yaml": "resources: [objects.yaml]\n" if tenant_docs else "resources: []\n",
+        "addons/objects.yaml": yaml.safe_dump_all(tenant_docs),
     }
     for rel, text in files.items():
         path = root / rel
@@ -103,9 +103,9 @@ def test_objects_with_declared_accounts_pass(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "seed",
     [
-        {"platform_ks": _kustomization("platform-controllers", "./platform", None)},
+        {"platform_ks": _kustomization("platform-controllers", "./core/platform", None)},
         {"platform_docs": [_helmrelease(None)]},
-        {"tenant_docs": [_kustomization("nested", "./platform", None)]},
+        {"tenant_docs": [_kustomization("nested", "./core/platform", None)]},
     ],
     ids=["kustomization", "helmrelease-on-path", "kustomization-on-path"],
 )
@@ -116,7 +116,7 @@ def test_object_without_service_account_fails(tmp_path: Path, seed: dict) -> Non
 
 def test_undeclared_service_account_fails(tmp_path: Path) -> None:
     """An account the root does not declare has no binding the check can see."""
-    seed = _kustomization("services", "./services", "flux-missing")
+    seed = _kustomization("services", "./addons", "flux-missing")
     messages = _messages(_repo(tmp_path, tenant_ks=seed))
     assert any("flux-system/flux-missing is not declared" in item for item in messages)
 
@@ -124,7 +124,7 @@ def test_undeclared_service_account_fails(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "seed",
     [
-        {"tenant_ks": _kustomization("apps", "./services", "flux-platform")},
+        {"tenant_ks": _kustomization("apps", "./addons", "flux-platform")},
         {"tenant_docs": [_helmrelease("flux-platform")]},
     ],
     ids=["tenant-kustomization", "helmrelease-on-tenant-path"],
@@ -139,17 +139,17 @@ _ADDON_ACCOUNT = {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"na
 
 def _addon_repo(root: Path, *, addon_ks: dict | None = None, app_docs: list[dict] | None = None) -> Path:
     """A services stage, as the platform account, that wires one add-on: its account and its Kustomization."""
-    addon_ks = addon_ks or _kustomization("addon-x", "./services/x", "addon-x")
+    addon_ks = addon_ks or _kustomization("addon-x", "./addons/x", "addon-x")
     wiring = [_ADDON_ACCOUNT, _role_binding("x", "Role", "addon-x", account="addon-x"), addon_ks]
     _repo(
         root,
-        tenant_ks=_kustomization("services", "./services", "flux-platform"),
+        tenant_ks=_kustomization("services", "./addons", "flux-platform"),
         tenant_docs=wiring,
     )
-    (root / "services" / "x").mkdir()
-    (root / "services" / "x" / "kustomization.yaml").write_text("resources: [app.yaml]\n", encoding="utf-8")
+    (root / "addons" / "x").mkdir()
+    (root / "addons" / "x" / "kustomization.yaml").write_text("resources: [app.yaml]\n", encoding="utf-8")
     app = app_docs if app_docs is not None else [{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a", "namespace": "x"}}]
-    (root / "services" / "x" / "app.yaml").write_text(yaml.safe_dump_all(app), encoding="utf-8")
+    (root / "addons" / "x" / "app.yaml").write_text(yaml.safe_dump_all(app), encoding="utf-8")
     return root
 
 
@@ -160,7 +160,7 @@ def test_services_stage_wiring_an_addon_tenant_passes(tmp_path: Path) -> None:
 
 def test_addon_kustomization_running_as_the_platform_account_fails(tmp_path: Path) -> None:
     """An object on the services stage's path is an add-on's, and never runs as flux-platform."""
-    seed = _kustomization("addon-x", "./services/x", "flux-platform")
+    seed = _kustomization("addon-x", "./addons/x", "flux-platform")
     assert any("run as flux-platform" in item for item in _messages(_addon_repo(tmp_path, addon_ks=seed)))
 
 
@@ -172,7 +172,7 @@ def test_addon_path_declaring_its_own_account_fails(tmp_path: Path) -> None:
 
 def test_decryption_outside_flux_system_fails(tmp_path: Path) -> None:
     """Only flux-system holds the env key; a Kustomization elsewhere that decrypts fails."""
-    seed = _kustomization("addon-x", "./services/x", "addon-x", decryption={"provider": "sops"})
+    seed = _kustomization("addon-x", "./addons/x", "addon-x", decryption={"provider": "sops"})
     seed["metadata"]["namespace"] = "x"
     messages = _messages(_addon_repo(tmp_path, addon_ks=seed))
     assert any("sets spec.decryption outside flux-system" in item for item in messages)
@@ -183,7 +183,7 @@ def _other(kind: str) -> dict:
 
 
 def _tenant(**spec: object) -> dict:
-    return {"tenant_ks": _kustomization("services", "./services", "flux-tenant", **spec)}
+    return {"tenant_ks": _kustomization("services", "./addons", "flux-tenant", **spec)}
 
 
 def _platform_release(**spec: object) -> dict:
@@ -311,9 +311,10 @@ def _example_tree(tmp_path: Path) -> Path:
     """The example env's flux tree and a writable platform copy; services is linked."""
     root = tmp_path / "repo"
     root.mkdir()
-    shutil.copytree(REPO_ROOT / "platform", root / "platform", symlinks=True)
-    (root / "services").symlink_to(REPO_ROOT / "services")
-    (root / "flux").symlink_to(REPO_ROOT / "flux")
+    shutil.copytree(REPO_ROOT / "core" / "platform", root / "core" / "platform", symlinks=True)
+    for tree in ("flux", "feature"):
+        (root / "core" / tree).symlink_to(REPO_ROOT / "core" / tree)
+    (root / "addons").symlink_to(REPO_ROOT / "addons")
     shutil.copytree(REPO_ROOT / "envs" / EXAMPLE_ENV / "flux", root / "envs" / EXAMPLE_ENV / "flux")
     return root
 
@@ -324,7 +325,7 @@ def _seed(root: Path, directory: str, doc: dict) -> None:
     listing.write_text(listing.read_text(encoding="utf-8") + "  - seed.yaml\n", encoding="utf-8")
 
 
-@pytest.mark.parametrize("directory", ["platform", "platform/configs"])
+@pytest.mark.parametrize("directory", ["core/platform", "core/platform/configs"])
 @pytest.mark.parametrize(
     ("seeded", "expected"),
     [
@@ -339,7 +340,7 @@ def test_example_tree_seeded_under_a_platform_path_fails(
 ) -> None:
     """The example flux tree passes, and fails once a platform Kustomization's path gains the seed.
 
-    platform/configs is the core of the example env's platform-configs path,
+    core/platform/configs is the core of the example env's platform-configs path,
     which is built without the bootstrap secrets the example does not have.
     """
     root = _example_tree(tmp_path)

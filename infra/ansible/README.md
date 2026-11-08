@@ -1,6 +1,6 @@
 # Ansible (node bootstrap)
 
-`site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, core's `flux/flux-instance.yaml` and a committed `envs/<env>/flux/sync.yaml`), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent one at a time, reconciles node role labels and the dedicated taint, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
+`site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, core's `core/flux/flux-instance.yaml` and a committed `envs/<env>/flux/sync.yaml`), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent one at a time, reconciles node role labels and the dedicated taint, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
 
 `make deps` and `make site ENV=<env>` run from the repo root. The env schema runs first and stops before Ansible on any error. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
 
@@ -76,7 +76,7 @@ The single control plane has no peer, so the API is down while it reboots; plan 
 
 ## Rebuild hold
 
-See `platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before it first applies the root `GitRepository`.
+See `core/platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before it first applies the root `GitRepository`.
 
 ## Recovery
 

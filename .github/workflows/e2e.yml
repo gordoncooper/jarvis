@@ -44,7 +44,7 @@ jobs:
           run=true
           if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
             changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-            pattern='^(flux/|platform/|services/|envs/|infra/ansible/roles/flux-operator/|tools/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$)'
+            pattern='^(core/|addons/|envs/|infra/ansible/roles/flux-operator/|tools/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$)'
             grep -Eq "${pattern}" <<<"${changed}" || run=false
           fi
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
@@ -165,7 +165,7 @@ jobs:
             -e jarvis_cluster_vars="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/values/cluster-vars.yaml" \
             -e jarvis_instance_root="${GITHUB_WORKSPACE}" \
             -e jarvis_env_dir="${GITHUB_WORKSPACE}/envs/${E2E_ENV}" \
-            -e flux_instance_file="${GITHUB_WORKSPACE}/flux/flux-instance.yaml" \
+            -e flux_instance_file="${GITHUB_WORKSPACE}/core/flux/flux-instance.yaml" \
             -e flux_sync_file="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/flux/sync.yaml" \
             -e k3s_binary_path="${GITHUB_WORKSPACE}/ci/e2e/k3s" \
             -e k3s_kubeconfig_path="${KUBECONFIG}" \

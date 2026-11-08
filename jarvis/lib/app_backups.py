@@ -1,7 +1,7 @@
 """One hosted app's own backup credential: names, paths and the registration Component.
 
 bootstrap-secrets writes these files and env-schema compares against them, so both read
-the one definition here (platform/backups/CONTRACT.md, App credentials).
+the one definition here (core/platform/backups/CONTRACT.md, App credentials).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ SECRET_NAMESPACE = "platform-backups"
 APPS_SERVER = "restic-apps"
 APPS_REPOSITORY = f"rest:http://{APPS_SERVER}.platform-backups.svc.cluster.local:8000/"
 # The opt-in core directory the env's apps-backup-server switch lists in its platform-configs.
-APPS_SERVER_DIR = "platform/optional/apps-backup-server"
+APPS_SERVER_DIR = "core/feature/apps-backup-server"
 # Where a credential is mounted in the apps server, restic-check and restic-offsite.
 CREDENTIALS_MOUNT = "/credentials"
 # Registration Components live under envs/<env>/flux/platform-configs/<REGISTRATION_DIR>/<namespace>.
@@ -79,7 +79,7 @@ def registration_component(namespace: str) -> str:
         raise ValueError(f"not a hosted app namespace: {namespace!r}")
     return (
         "# Written by make bootstrap-secrets APP=" + namespace + ". env-schema requires this exact text.\n"
-        "# Registers this app's own backup credential (platform/backups/CONTRACT.md, App credentials).\n"
+        "# Registers this app's own backup credential (core/platform/backups/CONTRACT.md, App credentials).\n"
         "apiVersion: kustomize.config.k8s.io/v1alpha1\n"
         "kind: Component\n"
         "resources:\n"
