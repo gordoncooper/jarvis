@@ -1589,10 +1589,16 @@ def test_fresh_cluster_creates_the_deploy_key_secret_once(tmp_path: Path) -> Non
 
 def test_known_hosts_is_a_github_published_host_key() -> None:
     """flux_known_hosts pins a key GitHub publishes (api.github.com/meta), so Flux trusts github.com only."""
+    import urllib.error
     import urllib.request
 
-    with urllib.request.urlopen("https://api.github.com/meta", timeout=30) as response:
-        published = json.load(response)["ssh_keys"]
+    try:
+        with urllib.request.urlopen("https://api.github.com/meta", timeout=30) as response:
+            published = json.load(response)["ssh_keys"]
+    except urllib.error.HTTPError as error:
+        if error.code < 500:
+            raise
+        pytest.skip(f"api.github.com answers {error.code}; GitHub is down, not the pin")
     host, key = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"].split(" ", 1)
     assert host == "github.com"
     assert key in published
