@@ -16,7 +16,7 @@ Tests that build a throwaway env copy refuse a tracked path in the repo. Where t
 
 ## End to end
 
-`.github/workflows/e2e.yml` brings up a real cluster from the commit under test: k3d (k3s in Docker, at the env's `k3s_version`), the flux-operator role applying the env's FluxInstance and `sync.yaml`, every Kustomization and HelmRelease Ready, then `make verify` and `make drill`. The env is a throwaway core-only copy of `env-00` (`ci/e2e/make-env`) with secrets sealed to an age key that lives only on the runner. Its root and core sources are a temporary branch of this repository holding the commit and that env; the job deletes the branch. It runs on pull requests that touch platform, add-on, env, Flux-role, tool or schema code, nightly, and by hand. A fork's pull request cannot push the branch, so it is skipped there.
+`.github/workflows/e2e.yml` brings up a real cluster from the commit under test: k3d (k3s in Docker, at the env's `k3s_version`), the flux-operator role applying the env's FluxInstance and `sync.yaml`, every Kustomization and HelmRelease Ready, then `make verify` and `make drill`. The env is a throwaway core-only copy of `env-00` (`ci/e2e/make-env`) with secrets sealed to an age key that lives only on the runner. Its root and core sources are a temporary branch of this repository holding the commit and that env; the job deletes the branch. It runs nightly, by hand, and on every pull request. Its `changes` job decides: a pull request that touches no platform, add-on, env, Flux-role, tool or schema code reports `e2e` as skipped, which branch protection counts as passing, so `e2e` can be a required check. A fork's pull request cannot push the branch, so it is skipped there too.
 
 ## Coding-agent deny lists
 
