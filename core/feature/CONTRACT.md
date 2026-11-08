@@ -1,6 +1,6 @@
 # CONTRACT: optional core pieces
 
-Core pieces that run only in an env that names them. Each folder here is named for its switch under `optional` in `envs/<env>/values/switches.yaml`. An add-on is something else: a limited-tenant swappable service ([addons/CONTRACT.md](../../addons/CONTRACT.md)).
+Core pieces that run only in an env that names them. Each folder here is named for its switch under `features` in `envs/<env>/values/switches.yaml`. An add-on is something else: a limited-tenant swappable service ([addons/CONTRACT.md](../../addons/CONTRACT.md)).
 
 ## Offers
 
@@ -21,11 +21,11 @@ App hosting's health checks are in its own contract, and the two backup pieces' 
 
 ## Config
 
-To enable a piece, list its name under `optional` in `values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`, then commit and push. `ci/checks/env-schema` fails an unknown name and a committed wiring that differs from the render. A new piece adds one row to `OPTIONAL_COMPONENTS` in `jarvis/lib/switches.py` and no bundle to any env.
+To enable a piece, list its name under `features` in `values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`, then commit and push. `ci/checks/env-schema` fails an unknown name and a committed wiring that differs from the render. A new piece adds one row to `OPTIONAL_COMPONENTS` in `jarvis/lib/switches.py` and no bundle to any env.
 
 ### Observability
 
-Observability (metrics, logs, dashboards, uptime checks and alerts) is an optional core component, not an add-on. It stays off in an env until that env lists `observability` under `optional`, by the same steps as above.
+Observability (metrics, logs, dashboards, uptime checks and alerts) is a feature, not an add-on. It stays off in an env until that env lists `observability` under `features`, by the same steps as above.
 
 It is not built yet. `observability` has no row in `OPTIONAL_COMPONENTS`, so env-schema and the render refuse the name today and no env can turn it on. The build adds that row and puts its files in `core/feature/observability/`. Core never depends on it: core's own health is `make verify`.
 

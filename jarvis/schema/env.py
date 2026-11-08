@@ -563,7 +563,7 @@ def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool
 def app_hosting_listed(env_dir: Path) -> bool:
     """True when the env turns app hosting on: its switches list it under optional."""
     data, _ = _switches.load(env_dir)
-    return _switches.APP_HOSTING in _switches.names(data, _switches.OPTIONAL)
+    return _switches.APP_HOSTING in _switches.names(data, _switches.FEATURES)
 
 
 def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[str]:
@@ -793,7 +793,7 @@ def _validate_switches(env_dir: Path, repo_root: Path, env_name: str, bootstrapp
             return []
         return [f"{env_name}: missing required file {_display_path(env_dir / _switches.SWITCHES_FILE, repo_root)}"]
     errors = switches_problems(env_dir, repo_root)
-    if _switches.APP_DNS in _switches.names(_switches.load(env_dir)[0], _switches.OPTIONAL):
+    if _switches.APP_DNS in _switches.names(_switches.load(env_dir)[0], _switches.FEATURES):
         cluster_vars_path = env_dir / "values" / "cluster-vars.yaml"
         try:
             cluster_vars = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8")) or {}
@@ -907,7 +907,7 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
             if not any(folder.glob("*.sops.yaml")):
                 errors.append(
                     f"{env_name}: add-on {name} decrypts {_display_path(folder, repo_root)}, "
-                    "which holds no sealed file; seal one with make seal NAMESPACE=" + namespace
+                    "which holds no sealed file; seal one with make encrypt NAMESPACE=" + namespace
                 )
     errors.extend(_slot_conflicts(rel, listed, core))
     return errors
@@ -937,7 +937,7 @@ def _validate_apps(
     if apps and not app_hosting_listed(env_dir):
         errors.append(
             f"{switches_rel}: lists apps, but app hosting is off; list {_switches.APP_HOSTING} "
-            f"under {_switches.OPTIONAL}, or remove the list"
+            f"under {_switches.FEATURES}, or remove the list"
         )
     if apps and not cluster_vars.get("apps_git_repo_url"):
         errors.append(f"{switches_rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")

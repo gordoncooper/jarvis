@@ -30,6 +30,7 @@ extend-include = [
   "tools/pin-check",
   "tools/prep-node",
   "tools/restore",
+  "tools/encrypt",
   "tools/seal",
   "tools/verify/run",
 ]

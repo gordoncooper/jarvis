@@ -1,4 +1,4 @@
-"""seal and bootstrap-secrets refuse a path that is not envs/<env>/secrets."""
+"""encrypt and bootstrap-secrets refuse a path that is not envs/<env>/secrets."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import yaml
 
 from support import REPO_ROOT, load_tool
 
-SEAL = REPO_ROOT / "tools" / "seal"
+SEAL = REPO_ROOT / "tools" / "encrypt"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 
 
@@ -361,3 +361,14 @@ def test_sops_set_adds_prune_annotation_without_changing_data(tmp_path: Path) ->
     assert before["sops"]["lastmodified"] != after["sops"]["lastmodified"]
     assert before["sops"]["version"] == after["sops"]["version"]
     assert before["sops"]["age"] == after["sops"]["age"]
+
+
+def test_the_old_seal_name_still_runs_encrypt_for_one_release() -> None:
+    """Rule: tools/seal and make seal run encrypt, and say the name is going."""
+    import subprocess
+    import sys
+
+    proc = subprocess.run([sys.executable, str(REPO_ROOT / "tools" / "seal"), "--help"], capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert "tools/seal is now tools/encrypt" in proc.stderr
+    assert "--name" in proc.stdout

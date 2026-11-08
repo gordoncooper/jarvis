@@ -837,7 +837,7 @@ def _render_core_only(env: Path, *optional: str) -> None:
     from jarvis.lib import apps as _apps
     from jarvis.lib import switches as _switches
 
-    data = {"optional": list(optional), "addons": [], "apps": []}
+    data = {"features": list(optional), "addons": [], "apps": []}
     (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     flux = env / "flux"
     (flux / _switches.ROOT_REL).write_text(
@@ -878,7 +878,7 @@ def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Pa
 def test_cli_requires_env() -> None:
     commands = (
         [sys.executable, "tools/bootstrap-secrets"],
-        [sys.executable, "tools/seal", "--name", "example"],
+        [sys.executable, "tools/encrypt", "--name", "example"],
         [sys.executable, "tools/render"],
     )
     for cmd in commands:
@@ -892,7 +892,7 @@ def test_make_targets_require_env() -> None:
     env.pop("ENV", None)
     commands = (
         ["make", "bootstrap-secrets"],
-        ["make", "seal", "NAME=example"],
+        ["make", "encrypt", "NAME=example"],
         ["make", "verify"],
         ["make", "drill"],
         ["make", "drill-cleanup"],

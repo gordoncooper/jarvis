@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Encrypt a plaintext Kubernetes Secret manifest into envs/<env>/secrets/."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import yaml
+
+from jarvis.lib import app_backups as _app_backups
+from jarvis.lib import sops as _sops
+from jarvis.lib.env import instance_root
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _repo_root() -> Path:
+    return instance_root(REPO_ROOT)
+
+
+def seal(
+    env: str,
+    name: str,
+    plaintext: str,
+    *,
+    sops_bin: str | None = None,
+    force: bool = False,
+    namespace: str | None = None,
+    folder: str | None = None,
+) -> Path:
+    """Write name.sops.yaml under envs/<env>/secrets/, or under secrets/<namespace>/ for an
+    add-on's Secret, or under secrets/<folder>/ when the two differ. Fails if present unless force."""
+    if folder is None:
+        in_app = namespace is not None and _app_backups.APP_NAMESPACE.fullmatch(namespace)
+        if in_app or _app_backups.is_secret_name(name):
+            raise SystemExit(f"refusing {name}: seal an app's backup credential with --app")
+        folder = namespace
+    out = _sops.secret_path(_repo_root(), env, name, folder)
+    doc = yaml.safe_load(plaintext)
+    if not isinstance(doc, dict) or doc.get("kind") != "Secret":
+        raise SystemExit("stdin must be a Kubernetes Secret manifest (kind: Secret)")
+    meta = doc.get("metadata") or {}
+    if meta.get("name") and meta.get("name") != name:
+        raise SystemExit("metadata.name must match --name")
+    if namespace is not None and meta.get("namespace") not in (None, namespace):
+        raise SystemExit("metadata.namespace must match --namespace")
+    meta["name"] = name
+    if namespace is not None:
+        meta["namespace"] = namespace
+    doc["metadata"] = meta
+
+    if out.exists() and not force:
+        raise SystemExit(f"{out} exists; pass --force to replace")
+
+    sops = sops_bin or _sops.require_sops()
+    _sops.encrypt_secret_to_file(
+        repo_root=_repo_root(),
+        env=env,
+        name=name,
+        document=doc,
+        sops_bin=sops,
+        namespace=folder,
+    )
+    return out
+
+
+def seal_app_credential(
+    env: str,
+    app: str,
+    plaintext: str,
+    *,
+    sops_bin: str | None = None,
+    force: bool = False,
+) -> Path:
+    """Write an app's backup credential where bootstrap-secrets does: secrets/<app>/, Secret in platform-backups."""
+    if not _app_backups.APP_NAMESPACE.fullmatch(app):
+        raise SystemExit("refusing --app: it must be a hosted app namespace, app-<name>")
+    return seal(
+        env,
+        _app_backups.secret_name(app),
+        plaintext,
+        sops_bin=sops_bin,
+        force=force,
+        namespace=_app_backups.SECRET_NAMESPACE,
+        folder=app,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env", required=True, help="Env under envs/")
+    parser.add_argument("--name", help="Secret name (<component>-<purpose>)")
+    parser.add_argument(
+        "--namespace",
+        help="An add-on's namespace: seal under envs/<env>/secrets/<namespace>/",
+    )
+    parser.add_argument(
+        "--app",
+        help="A hosted app's namespace, app-<name>: seal its backup credential. Takes no --name or --namespace",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace an existing file (bootstrap-secrets never overwrites; seal may for rotation)",
+    )
+    parser.add_argument("file", nargs="?", help="Plaintext Secret YAML (default: stdin)")
+    args = parser.parse_args(argv)
+    if args.app and (args.name or args.namespace):
+        parser.error("--app takes no --name or --namespace")
+    if not args.app and not args.name:
+        parser.error("--name or --app is required")
+
+    if args.file:
+        plaintext = Path(args.file).read_text(encoding="utf-8")
+    else:
+        plaintext = sys.stdin.read()
+    if not plaintext.strip():
+        raise SystemExit("empty input")
+
+    if args.app:
+        path = seal_app_credential(args.env, args.app, plaintext, force=args.force)
+    else:
+        path = seal(args.env, args.name, plaintext, force=args.force, namespace=args.namespace)
+    print(path.relative_to(_repo_root()))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

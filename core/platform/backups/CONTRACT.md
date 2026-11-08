@@ -140,7 +140,7 @@ Each hosted app that keeps data gets its own restic password, its own apps-serve
 
 To change one: edit the override, re-render, commit and push. Generate does not re-run on a ConfigMap change, so a PVC that already exists takes the new values on its next update; annotate it once (`kubectl annotate pvc -n app-<name> <pvc> backup-overrides=<date> --overwrite`). Check with `kubectl get replicationsource -n app-<name> <pvc> -o yaml`. A new PVC takes them when it binds.
 
-Turn the apps server on and add an app: list `apps-backup-server` under `optional` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `INSTANCE=<path> .venv/bin/python tools/render --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
+Turn the apps server on and add an app: list `apps-backup-server` under `features` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `INSTANCE=<path> .venv/bin/python tools/render --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
 
 1. `make bootstrap-secrets ENV=<env> APP=app-<name>`. It seals `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` and writes `envs/<env>/flux/platform-configs/backups/app-<name>/kustomization.yaml`, the Component that applies that Secret and mounts it in `restic-apps`, `restic-check` and `restic-offsite`. Nothing is printed but the created paths. A second run changes nothing. If that app's sealed file is missing and git already records it, it refuses: the app's repositories open only with the first password.
 2. The render lists `../../../../core/feature/apps-backup-server` under `resources:` of `envs/<env>/flux/platform-configs/kustomization.yaml`, and the generated wrapper carries the registration.
@@ -240,7 +240,7 @@ k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the or
 
 ### Rebuild a dead node
 
-Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make seal ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` and `stringData.agent_token`. Seal only the passphrase in `server_token`: the part of `/var/lib/rancher/k3s/server/token` after `::server:`. The full `K10<ca-hash>::server:<passphrase>` form pins the cluster CA hash, so it fails on any rebuild that mints a fresh CA (see [k3s token](https://docs.k3s.io/cli/token)). The passphrase is the same value, so older snapshots stay restorable. The k3s role refuses a `K10…` server token on a server that has no token file yet. A new env gets an agent token that is a separate random value. A cluster sealed from its node may have an agent token equal to its server token until the agent token is rotated at its next rebuild.
+Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make encrypt ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` and `stringData.agent_token`. Seal only the passphrase in `server_token`: the part of `/var/lib/rancher/k3s/server/token` after `::server:`. The full `K10<ca-hash>::server:<passphrase>` form pins the cluster CA hash, so it fails on any rebuild that mints a fresh CA (see [k3s token](https://docs.k3s.io/cli/token)). The passphrase is the same value, so older snapshots stay restorable. The k3s role refuses a `K10…` server token on a server that has no token file yet. A new env gets an agent token that is a separate random value. A cluster sealed from its node may have an agent token equal to its server token until the agent token is rotated at its next rebuild.
 
 **Server.**
 
@@ -383,8 +383,8 @@ Turn it on (owner-run, needs the age public key only):
 
 1. Set up the target: an empty bucket or a rest-server that only this env writes, and a login for it.
 2. Write a mode `0600` Secret manifest outside the repo: `kind: Secret`, `metadata.name: backups-offsite`, `metadata.namespace: platform-backups`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, and the `stringData` keys above. Generate the off-host password new (`openssl rand -base64 32`).
-3. `make seal ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
-4. List `offsite-backup-copy` under `optional` in `envs/<env>/values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`, commit, and push.
+3. `make encrypt ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
+4. List `offsite-backup-copy` under `features` in `envs/<env>/values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`, commit, and push.
 5. After Flux applies it: `kubectl -n platform-backups create job --from=cronjob/restic-offsite restic-offsite-first`, wait for it to complete, and read its log: one `PASS` line per repository. `restic snapshots` against the target lists each repository.
 
 Keep-safe: the off-host restic password goes on the owner's offline keep-safe list (`envs/<env>/secrets/README.md`). The sealed copy needs the age key, so a lost controller and a lost age key otherwise lose the off-host copy too.

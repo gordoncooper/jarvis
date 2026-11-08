@@ -130,7 +130,7 @@ def run(
     try:
         # With App DNS off, the LAN's own DNS names apps; verify reaches Traefik's address directly.
         switches, _ = _switches.load(repo_root / "envs" / env)
-        address = None if _switches.APP_DNS in _switches.names(switches, _switches.OPTIONAL) else traefik_address(kubectl)
+        address = None if _switches.APP_DNS in _switches.names(switches, _switches.FEATURES) else traefik_address(kubectl)
         cert_issuer = check_https(
             repo_root, env, str(values["dns_suffix"]), fetch, issuer, address=address
         )
