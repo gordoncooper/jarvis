@@ -81,7 +81,7 @@ A required key that is present but null counts as unset and fails.
 | `lan_cidrs` | no (yes when `values/apps.yaml` grants `lan-all` or `lan-target`) | The LAN's ranges: a list of IPv4 CIDRs inside RFC 1918, clear of `pod_cidr` and `service_cidr`. Hosted apps' internet egress excludes them; `lan-all` opens them and a `lan-target` range sits inside them ([platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md)). Not published in `cluster-vars`; the app wiring render carries it. |
 | `flux_git_ref` | yes | Git ref of the root source (e.g. `refs/heads/main`). |
 | `core_git_repo_url` | yes | The public core repository, the `core` `GitRepository` in `flux/sync.yaml`. https only, read with no credential. |
-| `core_git_ref` | yes | Git ref of the core source (e.g. `refs/heads/main`). |
+| `core_git_ref` | yes | Git ref of the core source: a release tag, `refs/tags/<tag>`. A branch ref passes the schema, but `make site`, `verify`, `drill` and `restore` refuse it, and any checkout not at the tag, without `ALLOW_UNPINNED=1` (`tools/pin-check`, [docs/releasing.md](../docs/releasing.md)). |
 | `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
 | `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
 | `flux_known_hosts` | no | SSH `known_hosts` lines Flux trusts for an `ssh://` root; the root's host must be among them. Unset: GitHub's published key. Host-only (Ansible). |
@@ -149,6 +149,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 
 ## Proven by
 
+- `ci/tests/test_pin.py`: a clean checkout at the env's tag passes; another commit, uncommitted changes, a branch ref and a missing tag are refused, and only warned with `--allow-unpinned`; `tools/pin-check` exits non-zero and skips the example env; a release's notes are its CHANGELOG section.
 - `ci/checks/env-schema` in the required `ci` workflow.
 - `ci/tests/test_env_schema.py`: valid env tree, an env without `hermes.yaml` or `apps.yaml`, `build_agent` and `code_delivery` as unknown keys, `storage` as an unknown role, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
 - A behavior test accepts an env that omits either of `apps_git_repo_url` and `lan_cidrs`, and an env that omits both. A value that is set still has to be allowed.

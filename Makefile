@@ -3,6 +3,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 VENV ?= $(CURDIR)/.venv
 ANSIBLE_PLAYBOOK ?= $(VENV)/bin/ansible-playbook
+PIN_CHECK = "$(VENV)/bin/python" tools/pin-check --env "$(ENV)" $(if $(filter 1,$(ALLOW_UNPINNED)),--allow-unpinned)
 NEED_VENV = test -x "$(VENV)/bin/python" || { echo "no venv at $(VENV): run 'make deps', or set VENV=<path>" >&2; exit 1; }
 # INSTANCE=<path> points every env command at <path>/envs/<env> and <path>/.sops.yaml.
 # Unset, the env lives in this checkout. The Python tools resolve it in tools/lib/_env.py.
@@ -24,6 +25,7 @@ help:
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password; APP=app-<name> mints only that hosted app's backup credential)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required; NAMESPACE=<ns> for an add-on's Secret)"
 	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
+	@echo "  ALLOW_UNPINNED=1        Let site, verify, drill and restore run from a checkout that is not the env's core tag"
 	@echo "  INSTANCE=<path>         Instance checkout that holds envs/<env> and its .sops.yaml (default: this checkout)"
 	@echo
 	@echo "Developer commands"
@@ -42,22 +44,26 @@ ci-verify: deps
 verify:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
+	@$(PIN_CHECK)
 	@"$(VENV)/bin/python" tools/verify/run --env "$(ENV)"
 
 drill:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
+	@$(PIN_CHECK)
 	@"$(VENV)/bin/python" tools/drill --env "$(ENV)"
 
 drill-cleanup:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
+	@$(PIN_CHECK)
 	@"$(VENV)/bin/python" tools/drill --env "$(ENV)" --cleanup-only
 
 restore:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
 	@$(NEED_VENV)
+	@$(PIN_CHECK)
 	@"$(VENV)/bin/python" tools/restore --env "$(ENV)" --app "$(APP)" \
 		$(if $(AS_OF),--as-of "$(AS_OF)") \
 		$(if $(NODE),--node "$(NODE)")
@@ -65,6 +71,7 @@ restore:
 restore-all:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
+	@$(PIN_CHECK)
 	@"$(VENV)/bin/python" tools/restore --env "$(ENV)" --all \
 		$(if $(AS_OF),--as-of "$(AS_OF)") \
 		$(if $(RETIRE),--retire "$(RETIRE)") \
@@ -99,6 +106,7 @@ site:
 	@PYTHONPATH=$(CURDIR) "$(VENV)/bin/python" -c \
 		"from schema.env import main; raise SystemExit(main())" \
 		--env "$(ENV)"
+	@$(PIN_CHECK)
 	@cd infra/ansible && $(ANSIBLE_PLAYBOOK) site.yml \
 		-i $(INSTANCE_ROOT)/envs/$(ENV)/inventory/hosts.yml \
 		-i ../inventory/roles \

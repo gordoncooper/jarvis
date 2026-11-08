@@ -42,4 +42,5 @@ flux_known_hosts: "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0Sd
 apps_git_repo_url: https://github.com/example-owner/example-apps
 flux_git_ref: refs/heads/example
 core_git_repo_url: https://github.com/example-owner/example-core
-core_git_ref: refs/heads/example
+# A core release tag. make site, verify, drill and restore refuse a checkout at any other commit.
+core_git_ref: refs/tags/v0.2.0
