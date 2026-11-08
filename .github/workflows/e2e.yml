@@ -68,7 +68,8 @@ jobs:
           chmod 600 "${RUNNER_TEMP}/age.key"
           .venv/bin/python ci/e2e/make-env --env "${E2E_ENV}" \
             --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
-            --ref "refs/heads/${E2E_BRANCH}" --key-file "${RUNNER_TEMP}/age.key"
+            --ref "refs/heads/${E2E_BRANCH}" --key-file "${RUNNER_TEMP}/age.key" \
+            --node "k3d-${E2E_ENV}-server-0"
           git config user.name "e2e"
           git config user.email "e2e@users.noreply.github.com"
           git checkout -b "${E2E_BRANCH}"
@@ -90,9 +91,13 @@ jobs:
             --kubeconfig-update-default=false --kubeconfig-switch-context=false
           k3d kubeconfig get "${E2E_ENV}" > "${KUBECONFIG}"
           chmod 600 "${KUBECONFIG}"
-          node="$(kubectl get nodes -o name | head -n1)"
-          # What site.yml's label play sets on the control plane and backup host.
-          kubectl label "${node}" node-role.jarvis.io/control_plane=true node-role.jarvis.io/backup=true --overwrite
+          node="k3d-${E2E_ENV}-server-0"
+          # What site.yml's label play sets from the inventory's node_roles, and ServiceLB on the edge host.
+          kubectl label node "${node}" node-role.jarvis.io/control_plane=true node-role.jarvis.io/backup=true \
+            node-role.jarvis.io/edge=true svccontroller.k3s.cattle.io/enablelb=true --overwrite
+          # The LAN's DNS stand-in: the canary host at the node, where ServiceLB serves Traefik.
+          address="$(kubectl get node "${node}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
+          echo "${address} testapp.$(read_var dns_suffix)" | sudo tee -a /etc/hosts
 
       - name: Bootstrap Flux with the flux-operator role
         working-directory: infra/ansible
