@@ -12,7 +12,7 @@ A component is reachable at `<svc>.<dns_suffix>` by adding one Ingress. cert-man
 
 - Planned: the component adds its own Gatus check for each exposed endpoint. Gatus is not in this repo yet. That check trusts the internal CA's public root (committed in plain text) and resolves the zone through cluster DNS.
 - k3s `coredns-custom` forwards that zone to App DNS.
-- `dns_suffix` comes from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode it (`ci/checks/core-names`).
+- `dns_suffix` comes from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode it.
 
 ## Health
 

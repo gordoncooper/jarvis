@@ -11,7 +11,7 @@
 | [../README.md](../README.md) | What this repo is, and the hardware limits |
 | [../infra/ansible/README.md](../infra/ansible/README.md) | Node bootstrap (`site.yml`) |
 | [../AGENTS.md](../AGENTS.md) | Where coding agents start |
-| [../rulebooks/coding-agents.md](../rulebooks/coding-agents.md) | Agent workflow |
+| [../agents/coding-agents.md](../agents/coding-agents.md) | Agent workflow |
 
 ## Contracts
 

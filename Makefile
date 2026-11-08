@@ -28,7 +28,6 @@ help:
 	@echo
 	@echo "Developer commands"
 	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
-	@echo "                          Set OWNER_NAME to the owner's personal name, the same value as the GitHub Actions repository variable"
 	@echo "  VENV=<path>             Python venv used by every target (default: .venv in the repo)"
 
 deps:
