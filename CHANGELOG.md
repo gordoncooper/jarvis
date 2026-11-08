@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.4.0
+
 ### Changed
 
 - Core's Python is one package, `jarvis/` (`jarvis.lib`, `jarvis.checks`, `jarvis.schema`,
