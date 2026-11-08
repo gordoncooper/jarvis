@@ -1,8 +1,0 @@
-# The services stage's own content. An env with no add-ons applies only this.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: placeholder-services
-  namespace: default
-data:
-  reason: services stage holds no add-on of its own

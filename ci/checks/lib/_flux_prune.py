@@ -2,7 +2,7 @@
 
 kustomize-controller reads kustomize.toolkit.fluxcd.io/prune off the live
 object and skips garbage collection when the value is disabled. For each env
-with a flux/ tree, this builds the root path, the four layer paths with their
+with a flux/ tree, this builds the root path, the three layer paths with their
 components, and the path of each add-on Kustomization on the services layer, then
 requires every object of a protected kind, and the root Kustomization, to
 carry prune: disabled. The layer Kustomizations keep prune on.
@@ -22,7 +22,7 @@ from schema.env import ROOT_SOURCE
 
 PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 FLUX_NAMESPACE = "flux-system"
-LAYERS = ("platform-controllers", "platform-configs", "services", "apps")
+LAYERS = ("platform-controllers", "platform-configs", "services")
 Key = tuple[str, str, str]
 
 PROTECTED_KINDS = frozenset(

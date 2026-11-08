@@ -33,7 +33,6 @@
 | [../platform/testapp/CONTRACT.md](../platform/testapp/CONTRACT.md) | Platform canary |
 | [../platform/traefik/CONTRACT.md](../platform/traefik/CONTRACT.md) | Ingress exposure |
 | [../services/CONTRACT.md](../services/CONTRACT.md) | Add-ons: what every add-on meets |
-| [../services/slots/chat-bot/CONTRACT.md](../services/slots/chat-bot/CONTRACT.md) | Chat-bot slot |
 | [../services/hello/CONTRACT.md](../services/hello/CONTRACT.md) | Sample add-on |
 
 ## Env docs

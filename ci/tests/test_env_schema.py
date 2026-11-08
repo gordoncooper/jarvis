@@ -280,15 +280,6 @@ def test_unknown_cluster_var_fails(tmp_path: Path):
     assert "extra_setting" in msg
 
 
-def test_llm_provider_host_must_be_bare_hostname(tmp_path: Path):
-    cv = _valid_cluster_vars()
-    cv["llm_provider_host"] = "https://llm.example/v1"
-    _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "llm_provider_host" in "\n".join(excinfo.value.messages)
-
-
 @pytest.mark.parametrize("value", ["off", 0, ["true"]])
 def test_chrony_nts_must_be_a_boolean(tmp_path: Path, value: object):
     cv = _valid_cluster_vars()
@@ -409,7 +400,6 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
 
 _OPTIONAL_CLUSTER_KEYS = (
     "apps_git_repo_url",
-    "llm_provider_host",
     "lan_cidrs",
 )
 
@@ -813,11 +803,11 @@ def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None
     secrets.mkdir(exist_ok=True)
     validate_env_tree(tmp_path)
     _copy_flux_entry(env)
-    (secrets / "grafana-admin.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    (secrets / "cert-manager-ca.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/k3s-token.sops.yaml" in excinfo.value.messages[0]
-    for name in ("k3s-token", "cert-manager-ca"):
+    for name in ("k3s-token",):
         (secrets / f"{name}.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)

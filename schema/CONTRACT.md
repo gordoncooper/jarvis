@@ -10,20 +10,20 @@ A real env lives in a private instance checkout. `INSTANCE=<path>` points the sc
   - `values/switches.yaml` — what the env enables, by name only (below).
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
-- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `lan_cidrs`, `llm_provider_host`, `chrony_nts`, `backup_check_schedule`, and `node_memory_reserve_percent`.
+- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `lan_cidrs`, `chrony_nts`, `backup_check_schedule`, and `node_memory_reserve_percent`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
 - Default `backup_check_schedule: 30 6 * * 3` when omitted. The example env still sets `backup_check_schedule`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
 - Rejection of a `time_zone` that is not an IANA zone, and of a `k3s_version` that is not a k3s version string (`v<major>.<minor>.<patch>+k3s<n>`).
 - `apps_git_repo_url`, when set, is https and validated like `flux_git_repo_url`. The two URLs use one owner handle. When `apps_git_repo_url` is unset, that handle comes from `flux_git_repo_url`. It is required once the env lists a hosted app.
-- `llm_provider_host`, when set, is a bare hostname with no scheme or path. Omitting it is valid.
+- Every sealed file under `envs/<env>/secrets/` has a reader: the bootstrap secrets (`k3s-token`, `cert-manager-ca`, `backups-restic`), the deploy key of an `ssh://` root, `backups-offsite` while the off-host copy is listed, the files in each folder an enabled add-on decrypts, and each registered app credential. Any other sealed file fails `ci/checks/env-schema`; delete it, or enable what uses it.
 - `lan_cidrs`, when set, is a non-empty list of IPv4 CIDRs, each inside RFC 1918 and clear of `pod_cidr` and `service_cidr`. It is required once `values/apps.yaml` grants `lan-all` or `lan-target`.
 
 ## Expects
 
 - One folder per env: `envs/<env>/` with the `cluster-vars.yaml` and `hosts.yml` above present when that env is active.
 - Once an env has a `flux/` folder or sealed files, it holds `values/switches.yaml`, and commits `flux/kustomization.yaml`, `flux/kustomizations/services.yaml` and `flux/platform-configs/kustomization.yaml` exactly as `tools/lib/render_switches.py` writes them from it. An unknown name, a name listed twice, or a hand-edited render fails, and the render refuses an unknown name or two add-ons for one slot before it writes.
-- Once an env has a `flux/` folder or sealed files, `flux/` holds every Flux entry file: `sync.yaml`, `flux-instance.yaml`, `kustomization.yaml`, `identities.yaml`, the four `kustomizations/*.yaml` and `platform-configs/kustomization.yaml`. A missing one fails the schema. An env with neither yet (prep-node on a new env) needs none.
+- Once an env has a `flux/` folder or sealed files, `flux/` holds every Flux entry file: `sync.yaml`, `flux-instance.yaml`, `kustomization.yaml`, `identities.yaml`, the three `kustomizations/*.yaml` and `platform-configs/kustomization.yaml`. A missing one fails the schema. An env with neither yet (prep-node on a new env) needs none.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `cert-manager-ca.sops.yaml` and `backups-restic.sops.yaml`, which the env's platform-configs path applies.
 - Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because prep-node validates a new env before `make bootstrap-secrets` runs.
 - When `flux_git_repo_url` is `ssh://`, `envs/<env>/secrets/flux-deploy-key.sops.yaml` (the read-only deploy key) is required.
@@ -81,7 +81,6 @@ A required key that is present but null counts as unset and fails.
 | `flux_git_ref` | yes | Git ref of the root source (e.g. `refs/heads/main`). |
 | `core_git_repo_url` | yes | The public core repository, the `core` `GitRepository` in `flux/sync.yaml`. https only, read with no credential. |
 | `core_git_ref` | yes | Git ref of the core source (e.g. `refs/heads/main`). |
-| `llm_provider_host` | no | When set, an AI provider API hostname, with no scheme, path, or port. |
 | `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
 | `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
 | `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
@@ -114,7 +113,7 @@ The example env declares every known role. A new known role is declared on that 
 
 ### Example env
 
-`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and its `values/switches.yaml` names what CI renders. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `sync.yaml` (the two sources and the root Kustomization, with placeholder URLs), `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the four files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list, rendered from the switches, is `core/platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
+`envs/env-00` is the never-deployed example env and the template for a new env. `EXAMPLE_ENV` in `schema/env.py` is that folder name. It sets every known `cluster-vars.yaml` key, including keys that are optional for other envs, and its `values/switches.yaml` names what CI renders. A new known key is added to this env in the same PR. Its `secrets/` directory holds only `README.md` and no secret files. It has no SOPS creation rule and no `ca.crt`. Its `flux/` tree is the Flux entry a copy starts from: `flux-instance.yaml`, `sync.yaml` (the two sources and the root Kustomization, with placeholder URLs), `identities.yaml` (the service accounts the Flux Kustomizations and HelmReleases run as), the rendered `generated/cluster-vars-configmap.yaml`, `kustomization.yaml`, the three files under `kustomizations/`, and `platform-configs/kustomization.yaml`. That platform-configs list, rendered from the switches, is `core/platform/configs` plus `backups-restic` and `cert-manager-ca`, the two files `make bootstrap-secrets` creates that this path applies. Those secret files are not in this env; a copy has them after bootstrap-secrets. In a non-example env, every `envs/<name>/` path under its `flux/` uses that env's name.
 
 The example's switches also turn on the off-host copy, `offsite-backup-copy`: `core/platform/optional/offsite-backup-copy` and `backups-offsite`, which the owner seals with `make seal` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
 
@@ -150,7 +149,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 
 - `ci/checks/env-schema` in the required `ci` workflow.
 - `ci/tests/test_env_schema.py`: valid env tree, an env without `hermes.yaml` or `apps.yaml`, `build_agent` and `code_delivery` as unknown keys, `storage` as an unknown role, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
-- A behavior test accepts an env that omits any one of `apps_git_repo_url`, `lan_cidrs` and `llm_provider_host`, and an env that omits all. A value that is set still has to be allowed.
+- A behavior test accepts an env that omits either of `apps_git_repo_url` and `lan_cidrs`, and an env that omits both. A value that is set still has to be allowed.
 - A behavior test rejects a `lan_cidrs` that is not a list, holds a non-network address, a public range, or a range overlapping the cluster's.
 - A behavior test accepts two non-example envs whose `flux_git_repo_url` owners differ.
 - A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
@@ -159,6 +158,7 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - `ci/tests/test_switches.py`: one name enables an app with no other env file and a second render changes nothing; an unknown name in each section fails and refuses the render, and so do two add-ons for one slot; a `core` section, a missing file, a hand-edited render and `apps:` in `values/apps.yaml` fail; an unlisted optional component renders nothing; selected backups need the apps server switch.
 - `ci/tests/test_backup_isolation.py` accepts a bootstrapped copy with one registered app credential, and rejects a registration outside `app-`, an edited registration Component, a missing sealed file, a registration without the apps server, and an app credential sealed outside its own folder.
 - `ci/tests/test_backup_selection.py` rejects an ineligible app on `selected`, requires a sealed credential for a selected eligible app once bootstrapped, accepts an `all_except` exclusion without that sealed file, renders registration Components from selection, fails verify when a required app has no credential, rejects each malformed section and an unknown component, and fails closed on an unreadable app file or missing checkout.
+- `ci/tests/test_addons.py` rejects a sealed file nothing reads, at the top level and in a folder no enabled add-on decrypts.
 - `ci/tests/test_addons.py` accepts known add-ons, rejects an unknown add-on, a duplicate, and two add-ons for one slot, and rejects a bootstrapped env whose add-on Secret folder is empty.
 - A behavior test rejects a repo URL that includes userinfo, a query, or a fragment.
 - A behavior test accepts the example env's source pair and rejects a core source whose url does not match cluster-vars.

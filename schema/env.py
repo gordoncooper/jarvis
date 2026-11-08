@@ -54,7 +54,6 @@ _FLUX_ENTRY_FILES = (
     "kustomizations/platform-controllers.yaml",
     "kustomizations/platform-configs.yaml",
     "kustomizations/services.yaml",
-    "kustomizations/apps.yaml",
     "platform-configs/kustomization.yaml",
 )
 # Sealed once bootstrap-secrets has run; platform-configs applies the last two.
@@ -114,7 +113,6 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "age_key_file",
         "apps_git_repo_url",
         "lan_cidrs",
-        "llm_provider_host",
         "chrony_nts",
         "backup_check_schedule",
         "node_memory_reserve_percent",
@@ -362,6 +360,7 @@ def _validate_env(
     errors.extend(_validate_offsite_secret(env_dir, repo_root, env_name))
     errors.extend(_validate_app_backups(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_addons(env_dir, repo_root, env_name, bootstrapped))
+    errors.extend(_validate_orphan_sealed(env_dir, repo_root, env_name, cluster_vars_path))
     errors.extend(_validate_apps(env_dir, repo_root, cluster_vars, pre_host=pre_host))
     errors.extend(_validate_flux_entry_files(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))
@@ -481,10 +480,6 @@ def _validate_cluster_vars(
     elif flux_owner:
         # apps_git_repo_url is optional. The env owner still comes from flux.
         owner = flux_owner
-
-    errors.extend(
-        _validate_bare_hostname(rel_path, "llm_provider_host", data.get("llm_provider_host"))
-    )
 
     jarvis_env = data.get("jarvis_env")
     if isinstance(jarvis_env, str) and jarvis_env and jarvis_env != env_name:
@@ -938,6 +933,47 @@ def _slot_conflicts(rel: str, listed: list[str], core: Path) -> list[str]:
     ]
 
 
+def sealed_readers(env_dir: Path, repo_root: Path, cluster_vars_path: Path) -> set[Path]:
+    """Every sealed file something reads: the bootstrap secrets, the deploy key of an ssh://
+    root, the off-host target when the copy is listed, the files in each folder an enabled
+    add-on decrypts, and each registered app credential."""
+    secrets = env_dir / "secrets"
+    read = {secrets / f"{name}.sops.yaml" for name in _BOOTSTRAP_SEALED}
+    if _ssh_root(cluster_vars_path):
+        read.add(secrets / DEPLOY_KEY_FILE)
+    if offsite_copy_listed(env_dir, repo_root):
+        read.add(secrets / OFFSITE_SECRET_FILE)
+    core = core_dir(repo_root)
+    known = addon_names(core)
+    for name in enabled_addons(env_dir):
+        if isinstance(name, str) and name in known:
+            for namespace in addon_secret_namespaces(addon_documents(core, name)):
+                read.update((secrets / namespace).glob("*.sops.yaml"))
+    try:
+        registered = app_registrations(env_dir, repo_root)
+    except (_backup_selection.AppsRepoError, TypeError, ValueError, yaml.YAMLError, UnicodeDecodeError):
+        # The selection is unreadable; _validate_apps reports why. Every app credential counts as read.
+        read.update(secrets.rglob(f"{_app_backups.secret_name('app-')}*.sops.yaml"))
+        registered = []
+    for namespace in registered:
+        read.add(repo_root / _app_backups.sealed_rel(env_dir.name, namespace))
+    return read
+
+
+def _validate_orphan_sealed(env_dir: Path, repo_root: Path, env_name: str, cluster_vars_path: Path) -> list[str]:
+    """A sealed file nothing reads fails: a left-over secret is a credential with no owner."""
+    secrets = env_dir / "secrets"
+    if not secrets.is_dir():
+        return []
+    read = {path.resolve() for path in sealed_readers(env_dir, repo_root, cluster_vars_path)}
+    return [
+        f"{env_name}: {_display_path(path, repo_root)} is sealed but nothing reads it; delete it, "
+        "or enable what uses it"
+        for path in sorted(secrets.rglob("*.sops.yaml"))
+        if path.resolve() not in read
+    ]
+
+
 def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped: bool) -> list[str]:
     """Each listed add-on exists in core, once; at most one per slot; its sealed Secrets exist once
     the env is bootstrapped. Like the off-host copy, a new env before bootstrap needs no secret."""
@@ -1224,18 +1260,6 @@ def _validate_repo_url(
         errors.append(f"{rel_path}: {key} must include an owner and a repo")
         return errors, None
     return errors, owner
-
-
-def _validate_bare_hostname(rel_path: str, key: str, value: Any) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, str):
-        return [f"{rel_path}: {key} must be a string"]
-    if not value.strip():
-        return [f"{rel_path}: {key} must not be empty"]
-    if _looks_like_ip(value) or not _HOSTNAME.match(value):
-        return [f"{rel_path}: {key} must be a bare hostname"]
-    return []
 
 
 def _validate_ssh_url(rel_path: str, key: str, value: str) -> list[str]:

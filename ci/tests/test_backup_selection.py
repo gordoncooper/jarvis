@@ -286,7 +286,7 @@ def test_wrapper_without_the_override_is_stale(tmp_path: Path) -> None:
 def _instance_with_backups(tmp_path: Path) -> Path:
     """Instance checkout (core → product) with env-00 copy and backups all_except excluding notes."""
     product, instance = tmp_path / "product", tmp_path / "instance"
-    for name in ("platform", "services", "apps"):
+    for name in ("platform", "services"):
         shutil.copytree(REPO_ROOT / name, product / name)
     (instance / "envs").mkdir(parents=True)
     shutil.copytree(REPO_ROOT / "envs" / "env-00", instance / "envs" / "env-00")

@@ -154,7 +154,7 @@ def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
 
 
 def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
-    """The four standard Kustomizations, in dependsOn order, with their paths.
+    """The three standard Kustomizations, in dependsOn order, with their paths.
 
     platform-controllers carries the HelmRelease health checks and a
     timeout. No other Kustomization carries health checks.
@@ -338,8 +338,8 @@ def test_flux_entry_has_the_four_standard_kustomizations(example_copy: ExampleCo
         assert _flux_kustomization_errors(_flux_kustomizations(env, root=root), env) == []
 
 
-def _drop_apps(docs: list[dict]) -> None:
-    docs[:] = [doc for doc in docs if doc["metadata"]["name"] != "apps"]
+def _drop_services(docs: list[dict]) -> None:
+    docs[:] = [doc for doc in docs if doc["metadata"]["name"] != "services"]
 
 
 def _add_extra(docs: list[dict]) -> None:
@@ -361,7 +361,7 @@ def _skip_platform_configs(docs: list[dict]) -> None:
 
 
 @pytest.mark.parametrize(
-    "mutate", [_drop_apps, _add_extra, _move_platform_configs, _skip_platform_configs]
+    "mutate", [_drop_services, _add_extra, _move_platform_configs, _skip_platform_configs]
 )
 def test_nonstandard_flux_kustomizations_fail(tmp_path: Path, mutate) -> None:
     entry = example_flux_entry(tmp_path)

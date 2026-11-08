@@ -76,7 +76,7 @@ def load_cluster_vars(
 
 
 def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
-    """The four Flux Kustomizations every env entry applies, in dependsOn order.
+    """The three Flux Kustomizations every env entry applies, in dependsOn order.
 
     Core paths are under core/, where the root source includes the core source.
     """
@@ -84,7 +84,6 @@ def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
         "platform-controllers": "./core/platform",
         "platform-configs": f"./envs/{env}/flux/platform-configs",
         "services": "./core/services",
-        "apps": "./core/apps",
     }
 
 

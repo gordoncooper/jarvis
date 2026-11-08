@@ -378,3 +378,20 @@ def test_env_with_the_sample_addon_and_its_sealed_secret_passes_every_env_check(
     for path in sealed:
         path.unlink()
     assert any("holds no sealed file" in item for item in _schema_errors(copy_env.root))
+
+
+def test_a_sealed_file_nothing_reads_fails(tmp_path: Path) -> None:
+    """Rule: every sealed file under envs/<env>/secrets/ has a reader. A left-over top-level
+    secret and a folder no enabled add-on decrypts each fail env-schema; the bootstrap secrets,
+    the off-host target and the enabled add-on's folder pass."""
+    copy_env = bootstrap_example_copy(tmp_path)
+    secrets = copy_env.env_dir / "secrets"
+    assert _schema_errors(copy_env.root) == []
+    template = next(secrets.glob("*.sops.yaml")).read_text(encoding="utf-8")
+    (secrets / "grafana-admin.sops.yaml").write_text(template, encoding="utf-8")
+    (secrets / "hermes").mkdir()
+    (secrets / "hermes" / "token.sops.yaml").write_text(template, encoding="utf-8")
+    orphans = [item for item in _schema_errors(copy_env.root) if "is sealed but nothing reads it" in item]
+    assert len(orphans) == 2, orphans
+    assert any("secrets/grafana-admin.sops.yaml" in item for item in orphans)
+    assert any("secrets/hermes/token.sops.yaml" in item for item in orphans)
