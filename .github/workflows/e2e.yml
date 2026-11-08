@@ -1,0 +1,141 @@
+name: e2e
+
+# A real cluster from this commit: k3d (k3s in Docker), the env's FluxInstance and sync.yaml
+# applied by the flux-operator role, every Kustomization and HelmRelease Ready, then
+# make verify and make drill. The env is a throwaway core-only copy of env-00 whose root
+# and core sources are a temporary branch of this repository; the job deletes the branch.
+on:
+  pull_request:
+    paths:
+      - "platform/**"
+      - "services/**"
+      - "envs/**"
+      - "infra/ansible/roles/flux-operator/**"
+      - "tools/**"
+      - "schema/**"
+      - "ci/e2e/**"
+      - ".github/workflows/e2e.yml"
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # A fork cannot push the temporary branch.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_ENV: e2e
+      E2E_BRANCH: e2e/${{ github.run_id }}-${{ github.run_attempt }}
+      KUBECONFIG: /home/runner/.kube/jarvis-e2e.yaml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Restore pinned CLIs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/bin
+          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps') }}
+
+      - name: Install pinned CLIs and Python deps
+        run: make deps
+
+      - name: Install k3d
+        env:
+          # renovate: datasource=github-releases depName=k3d-io/k3d
+          K3D_VERSION: v5.8.3
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "${RUNNER_TEMP}/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          install -m 0755 "${RUNNER_TEMP}/k3d" "${HOME}/.local/bin/k3d"
+
+      - name: Make the throwaway env and push its branch
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.local/bin:${PATH}"
+          age-keygen -o "${RUNNER_TEMP}/age.key" 2>/dev/null
+          chmod 600 "${RUNNER_TEMP}/age.key"
+          .venv/bin/python ci/e2e/make-env --env "${E2E_ENV}" \
+            --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
+            --ref "refs/heads/${E2E_BRANCH}" --key-file "${RUNNER_TEMP}/age.key"
+          git config user.name "e2e"
+          git config user.email "e2e@users.noreply.github.com"
+          git checkout -b "${E2E_BRANCH}"
+          git add -A envs/"${E2E_ENV}" .sops.yaml
+          git commit -q -m "e2e env for run ${GITHUB_RUN_ID}"
+          git push -q origin "${E2E_BRANCH}"
+
+      - name: Create the k3d cluster at the env's k3s version
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.local/bin:${PATH}"
+          vars="envs/${E2E_ENV}/values/cluster-vars.yaml"
+          read_var() { sed -n "s/^$1:[[:space:]]*//p" "${vars}" | tr -d "\"'"; }
+          image="rancher/k3s:$(read_var k3s_version | tr '+' '-')"
+          mkdir -p "$(dirname "${KUBECONFIG}")"
+          k3d cluster create "${E2E_ENV}" --image "${image}" --wait --timeout 300s \
+            --k3s-arg "--cluster-cidr=$(read_var pod_cidr)@server:0" \
+            --k3s-arg "--service-cidr=$(read_var service_cidr)@server:0" \
+            --kubeconfig-update-default=false --kubeconfig-switch-context=false
+          k3d kubeconfig get "${E2E_ENV}" > "${KUBECONFIG}"
+          chmod 600 "${KUBECONFIG}"
+          node="$(kubectl get nodes -o name | head -n1)"
+          # What site.yml's label play sets on the control plane and backup host.
+          kubectl label "${node}" node-role.jarvis.io/control_plane=true node-role.jarvis.io/backup=true --overwrite
+
+      - name: Bootstrap Flux with the flux-operator role
+        working-directory: infra/ansible
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.local/bin:${PATH}"
+          SOPS_AGE_KEY_FILE="${RUNNER_TEMP}/age.key" ../../.venv/bin/ansible-playbook ../../ci/e2e/flux.yml \
+            -i localhost, -e ansible_connection=local \
+            -e jarvis_env="${E2E_ENV}" \
+            -e jarvis_cluster_vars="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/values/cluster-vars.yaml" \
+            -e jarvis_instance_root="${GITHUB_WORKSPACE}" \
+            -e jarvis_env_dir="${GITHUB_WORKSPACE}/envs/${E2E_ENV}" \
+            -e flux_instance_file="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/flux/flux-instance.yaml" \
+            -e flux_sync_file="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/flux/sync.yaml" \
+            -e k3s_binary_path="${GITHUB_WORKSPACE}/ci/e2e/k3s" \
+            -e k3s_kubeconfig_path="${KUBECONFIG}" \
+            -e helm_binary_path="${HOME}/.local/bin/helm" \
+            -e helm_binary_owner="$(id -un)" -e helm_binary_group="$(id -gn)"
+
+      - name: Wait for every Kustomization and HelmRelease
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if kubectl -n flux-system get kustomization flux-system >/dev/null 2>&1; then break; fi
+            sleep 10
+          done
+          kubectl wait --for=condition=Ready kustomizations.kustomize.toolkit.fluxcd.io --all -A --timeout=20m
+          kubectl wait --for=condition=Ready helmreleases.helm.toolkit.fluxcd.io --all -A --timeout=10m
+
+      - name: make verify
+        run: make verify ENV="${E2E_ENV}" ALLOW_UNPINNED=1
+
+      - name: make drill
+        run: make drill ENV="${E2E_ENV}" ALLOW_UNPINNED=1
+
+      - name: Show Flux state
+        if: failure()
+        run: |
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io,gitrepositories.source.toolkit.fluxcd.io -A || true
+          kubectl get pods -A || true
+          kubectl -n flux-system logs deploy/kustomize-controller --tail=100 || true
+          kubectl -n flux-system logs deploy/helm-controller --tail=100 || true
+
+      - name: Delete the temporary branch
+        if: always()
+        run: git push -q origin --delete "${E2E_BRANCH}" || true

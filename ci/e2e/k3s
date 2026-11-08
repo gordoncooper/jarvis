@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Stands in for the k3s binary on a k3d cluster: "k3s kubectl ..." runs kubectl against
+# KUBECONFIG. Nothing else of k3s is called by the flux-operator role.
+set -euo pipefail
+if [[ "${1:-}" != kubectl ]]; then
+  echo "ci/e2e/k3s: only 'k3s kubectl' is supported, got: $*" >&2
+  exit 2
+fi
+shift
+exec kubectl "$@"

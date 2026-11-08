@@ -1,0 +1,11 @@
+---
+# The e2e job's Flux bootstrap: the real flux-operator role, on the runner, against the k3d
+# cluster. ci/e2e/k3s is the k3s binary the role calls (k3s kubectl -> kubectl).
+- name: Install Flux Operator on the e2e cluster
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars_files:
+    - "{{ jarvis_cluster_vars }}"
+  roles:
+    - role: flux-operator
