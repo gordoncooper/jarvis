@@ -6,6 +6,7 @@ A real env lives in a private instance checkout. `INSTANCE=<path>` points the sc
 
 ## Offers
 
+- JSON Schemas for an env's four values files: `schema/cluster-vars.schema.json`, `switches.schema.json`, `apps.schema.json` and `hosts.schema.json`. Each file names its schema on its first line (`# yaml-language-server: $schema=<path or URL>`), so an editor checks it as you type; in an instance, use the schema at the env's core tag, `https://raw.githubusercontent.com/<owner>/jarvis/<tag>/schema/<name>.schema.json`. `cluster-vars.schema.json` is env-schema's authority for that file's keys, types and simple patterns (`jarvis.schema.values`, with the messages below); the other three describe each file's shape, and env-schema's Python checks their names, grants and selections. Rules that span fields stay in Python: the CIDRs, the App DNS address, LAN ranges, repository owners, known hosts, the time zone and paths.
 - A single validation contract for three files per env:
   - `values/switches.yaml` — what the env enables, by name only (below).
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.

@@ -18,6 +18,7 @@ from jarvis.lib import apps as _apps
 from jarvis.lib import backup_selection as _backup_selection
 from jarvis.lib import switches as _switches
 from jarvis.lib.env import instance_root  # noqa: F401  (the one INSTANCE resolver)
+from jarvis.schema import values as _values
 
 _PRODUCT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -88,50 +89,9 @@ _HOSTNAME = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _SOPS_ENV_SECRETS = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/secrets/")
 
-_CLUSTER_VARS_REQUIRED = frozenset(
-    {
-        "jarvis_env",
-        "dns_suffix",
-        "time_zone",
-        "backup_path",
-        "backup_retention_daily",
-        "backup_retention_weekly",
-        "backup_retention_monthly",
-        "backup_schedule",
-        "pod_cidr",
-        "service_cidr",
-        "local_path_data",
-        "flux_git_repo_url",
-        "flux_git_ref",
-        "core_git_repo_url",
-        "core_git_ref",
-        "ntp_pools",
-        "k3s_kubelet_kube_reserved",
-        "k3s_kubelet_system_reserved",
-        "k3s_kubelet_eviction_hard",
-    }
-)
-
-# Optional. A set value is still checked. apps_git_repo_url is required once values/switches.yaml lists an
-# app, and lan_cidrs once values/apps.yaml grants lan-all or lan-target.
-_CLUSTER_VARS_OPTIONAL = frozenset(
-    {
-        "ssh_user",
-        "age_key_file",
-        "apps_git_repo_url",
-        "lan_cidrs",
-        "chrony_nts",
-        "flux_known_hosts",
-        "backup_check_schedule",
-        "node_memory_reserve_percent",
-        # Required once values/switches.yaml lists app-dns.
-        "app_dns_cluster_ip",
-        # Core's k3s release unless set, and then both together.
-        "k3s_version",
-        "k3s_sha256",
-    }
-)
-
+# The keys, their types and simple patterns are schema/cluster-vars.schema.json's.
+_CLUSTER_VARS_REQUIRED = _values.required_keys(_values.CLUSTER_VARS)
+_CLUSTER_VARS_OPTIONAL = _values.known_keys(_values.CLUSTER_VARS) - _CLUSTER_VARS_REQUIRED
 _CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 # Optional keys core sets a default for (infra/ansible/group_vars/all.yml).
 _CORE_DEFAULTED = frozenset({"k3s_version", "k3s_sha256"})
@@ -420,48 +380,13 @@ def _keys_set(data: dict[str, Any]) -> set[str]:
 def _validate_cluster_vars(
     data: dict[str, Any], rel_path: str, env_name: str
 ) -> tuple[list[str], str | None]:
-    errors: list[str] = []
-    allowed = ", ".join(sorted(_CLUSTER_VARS_KNOWN))
-    for key in data:
-        if not _SNAKE_CASE.match(key):
-            errors.append(f"{rel_path}: key must be lowercase snake_case: {key}")
-        elif key not in _CLUSTER_VARS_KNOWN:
-            errors.append(f"{rel_path}: unknown key '{key}' (allowed: {allowed})")
-
-    missing = sorted(_CLUSTER_VARS_REQUIRED - _keys_set(data))
-    for key in missing:
-        errors.append(f"{rel_path}: missing required key: {key}")
+    # Shape (keys, types, simple patterns) is the schema's; what follows needs more than one field.
+    errors: list[str] = _values.problems(_values.CLUSTER_VARS, data, rel_path)
 
     if is_example_env(env_name):
         # The example runs core's k3s release, so it shows that default by leaving the pair out.
         for key in sorted(_CLUSTER_VARS_KNOWN - _CORE_DEFAULTED - set(data)):
             errors.append(f"{rel_path}: {EXAMPLE_ENV} must set every known key: {key}")
-
-    if "ssh_user" in data and not isinstance(data["ssh_user"], str):
-        errors.append(f"{rel_path}: ssh_user must be a string")
-    elif "ssh_user" in data and not data["ssh_user"]:
-        errors.append(f"{rel_path}: ssh_user must not be empty")
-
-    if "age_key_file" in data and not isinstance(data["age_key_file"], str):
-        errors.append(f"{rel_path}: age_key_file must be a string")
-    elif "age_key_file" in data and not data["age_key_file"].strip():
-        errors.append(f"{rel_path}: age_key_file must not be empty")
-
-    for key in (
-        "jarvis_env",
-        "dns_suffix",
-        "time_zone",
-        "backup_path",
-        "pod_cidr",
-        "service_cidr",
-        "local_path_data",
-        "flux_git_ref",
-    ):
-        val = data.get(key)
-        if val is not None and not isinstance(val, str):
-            errors.append(f"{rel_path}: {key} must be a string")
-        elif isinstance(val, str) and not val.strip():
-            errors.append(f"{rel_path}: {key} must not be empty")
 
     for key in ("pod_cidr", "service_cidr"):
         errors.extend(_validate_cidr(rel_path, key, data.get(key)))
@@ -479,9 +404,6 @@ def _validate_cluster_vars(
         rel_path, "core_git_repo_url", data.get("core_git_repo_url")
     )
     errors.extend(core_errors)
-    val = data.get("core_git_ref")
-    if val is not None and (not isinstance(val, str) or not val.strip()):
-        errors.append(f"{rel_path}: core_git_ref must be a non-empty string")
     apps_errors, apps_owner = _validate_repo_url(
         rel_path, "apps_git_repo_url", data.get("apps_git_repo_url")
     )
@@ -502,12 +424,6 @@ def _validate_cluster_vars(
             f"{rel_path}: jarvis_env must match the env directory name ({env_name})"
         )
 
-    if ("k3s_version" in data) != ("k3s_sha256" in data):
-        errors.append(f"{rel_path}: k3s_version and k3s_sha256 override core's k3s release together; set both or neither")
-    k3s_sha = data.get("k3s_sha256")
-    if "k3s_sha256" in data and not (isinstance(k3s_sha, str) and _SHA256_HEX.match(k3s_sha)):
-        errors.append(f"{rel_path}: k3s_sha256 must be a 64-character lowercase hex string")
-
     time_zone = data.get("time_zone")
     if isinstance(time_zone, str) and time_zone.strip():
         errors.extend(_validate_time_zone(rel_path, time_zone.strip()))
@@ -516,54 +432,11 @@ def _validate_cluster_vars(
     if isinstance(dns_suffix, str) and dns_suffix.strip():
         errors.extend(_validate_dns_suffix(rel_path, dns_suffix.strip()))
 
-    k3s_version = data.get("k3s_version")
-    if "k3s_version" in data:
-        if not isinstance(k3s_version, str) or kubernetes_version_from_k3s(k3s_version) is None:
-            errors.append(
-                f"{rel_path}: k3s_version must be a k3s version string "
-                "(v<major>.<minor>.<patch>+k3s<n>)"
-            )
-
     errors.extend(_validate_local_path_data(rel_path, data.get("local_path_data")))
     errors.extend(_validate_backup_path(rel_path, data.get("backup_path")))
 
-    for key in (
-        "backup_retention_daily",
-        "backup_retention_weekly",
-        "backup_retention_monthly",
-    ):
-        val = data.get(key)
-        if val is None:
-            continue
-        if not _is_int_not_bool(val):
-            errors.append(f"{rel_path}: {key} must be an integer")
-        elif val <= 0:
-            errors.append(f"{rel_path}: {key} must be > 0")
-
-    reserve = data.get("node_memory_reserve_percent")
-    if reserve is not None and (not _is_int_not_bool(reserve) or not 0 <= reserve <= 50):
-        errors.append(f"{rel_path}: node_memory_reserve_percent must be an integer from 0 to 50")
-
-    for key in ("backup_schedule", "backup_check_schedule"):
-        schedule = data.get(key)
-        if schedule is not None and (
-            not isinstance(schedule, str) or len(schedule.split()) != 5
-        ):
-            errors.append(f"{rel_path}: {key} must be a five-field cron")
-
     errors.extend(_validate_ntp_pools(rel_path, data.get("ntp_pools")))
     errors.extend(_validate_chrony_nts(rel_path, data.get("chrony_nts")))
-
-    for key in (
-        "k3s_kubelet_kube_reserved",
-        "k3s_kubelet_system_reserved",
-        "k3s_kubelet_eviction_hard",
-    ):
-        val = data.get(key)
-        if val is None:
-            continue
-        if not isinstance(val, str) or not val.strip():
-            errors.append(f"{rel_path}: {key} must be a non-empty string")
 
     return errors, owner
 

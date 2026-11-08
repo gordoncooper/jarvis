@@ -21,6 +21,10 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- JSON Schemas for the four values files under `schema/` (cluster-vars, switches, apps, hosts),
+  each named by a `# yaml-language-server: $schema=` line for editors. env-schema validates
+  `cluster-vars.yaml`'s keys, types and patterns with its schema (`jsonschema`, pinned), with the
+  same messages; cross-field rules stay in Python.
 - `tools/render --env <env>` (or `make render ENV=<env>`) renders every generated file of an env;
   `--check` (`CHECK=1`) lists stale ones and writes nothing. It replaces `tools/lib/render_*.py`.
 - App DNS is an optional component, `app-dns` under `optional` in `values/switches.yaml`
@@ -47,6 +51,8 @@ the upgrade.
   the same commit: the env's `flux/` and core's now depend on each other.
 - Run `tools/render --env <env>` where you ran `tools/lib/render_switches.py` or
   `render_cluster_vars_configmap.py`.
+- Optional: add `# yaml-language-server: $schema=https://raw.githubusercontent.com/<owner>/jarvis/<tag>/schema/<name>.schema.json`
+  as the first line of each values file, for editor checks.
 - To keep App DNS, add `app-dns` under `optional` in `values/switches.yaml` and render again.
 - To run core's k3s release, delete `k3s_version` and `k3s_sha256` from `cluster-vars.yaml`;
   to keep your own, leave both.

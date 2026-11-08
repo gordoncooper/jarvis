@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gordoncooper/jarvis/schema/hosts.schema.json",
+  "title": "inventory/hosts.yml",
+  "description": "An env's hosts and their roles (schema/CONTRACT.md). env-schema also checks one control_plane and one backup host, and that every role is held.",
+  "type": "object",
+  "required": [
+    "all"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "all": {
+      "type": "object",
+      "required": [
+        "hosts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "hosts": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "node_roles"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "node_roles": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "backup",
+                    "control_plane",
+                    "edge",
+                    "gpu",
+                    "workers"
+                  ]
+                }
+              },
+              "data_disk": {
+                "const": true
+              },
+              "ssh_user": {
+                "type": "string",
+                "minLength": 1
+              },
+              "k3s_kubelet_kube_reserved": {
+                "type": "string",
+                "minLength": 1
+              },
+              "k3s_kubelet_system_reserved": {
+                "type": "string",
+                "minLength": 1
+              },
+              "k3s_kubelet_eviction_hard": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

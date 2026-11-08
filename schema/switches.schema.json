@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gordoncooper/jarvis/schema/switches.schema.json",
+  "title": "values/switches.yaml",
+  "description": "What an env turns on, by name only (schema/CONTRACT.md). env-schema also checks each add-on and app name against core and the apps repository.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "optional": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "app-dns",
+          "app-hosting",
+          "apps-backup-server",
+          "offsite-backup-copy"
+        ]
+      }
+    },
+    "addons": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      },
+      "uniqueItems": true
+    },
+    "apps": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      },
+      "uniqueItems": true
+    }
+  }
+}

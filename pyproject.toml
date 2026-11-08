@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 name = "jarvis"
 version = "0"
 requires-python = ">=3.12"
-dependencies = ["PyYAML"]
+dependencies = ["PyYAML", "jsonschema"]
 
 [tool.setuptools.packages.find]
 include = ["jarvis*"]

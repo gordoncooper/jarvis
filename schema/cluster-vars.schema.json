@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gordoncooper/jarvis/schema/cluster-vars.schema.json",
+  "title": "values/cluster-vars.yaml",
+  "description": "An env's cluster values (schema/CONTRACT.md). Cross-field rules (CIDRs, the App DNS address, LAN ranges, repository owners, known hosts, time zone, paths) are checked by jarvis.schema.env.",
+  "type": "object",
+  "propertyNames": {
+    "pattern": "^[a-z][a-z0-9_]*$"
+  },
+  "required": [
+    "jarvis_env",
+    "dns_suffix",
+    "time_zone",
+    "backup_path",
+    "backup_retention_daily",
+    "backup_retention_weekly",
+    "backup_retention_monthly",
+    "backup_schedule",
+    "pod_cidr",
+    "service_cidr",
+    "local_path_data",
+    "flux_git_repo_url",
+    "flux_git_ref",
+    "core_git_repo_url",
+    "core_git_ref",
+    "ntp_pools",
+    "k3s_kubelet_kube_reserved",
+    "k3s_kubelet_system_reserved",
+    "k3s_kubelet_eviction_hard"
+  ],
+  "additionalProperties": false,
+  "dependentRequired": {
+    "k3s_version": [
+      "k3s_sha256"
+    ],
+    "k3s_sha256": [
+      "k3s_version"
+    ]
+  },
+  "x-messages": {
+    "dependentRequired": "k3s_version and k3s_sha256 override core's k3s release together; set both or neither"
+  },
+  "properties": {
+    "age_key_file": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "age_key_file must be a string",
+        "pattern": "age_key_file must not be empty"
+      }
+    },
+    "app_dns_cluster_ip": {
+      "description": "Required once values/switches.yaml lists app-dns; checked against service_cidr in Python."
+    },
+    "apps_git_repo_url": {
+      "type": "string"
+    },
+    "backup_check_schedule": {
+      "type": "string",
+      "pattern": "^\\s*\\S+(\\s+\\S+){4}\\s*$",
+      "x-messages": {
+        "type": "backup_check_schedule must be a five-field cron",
+        "pattern": "backup_check_schedule must be a five-field cron"
+      }
+    },
+    "backup_path": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "backup_path must be a string",
+        "pattern": "backup_path must not be empty"
+      }
+    },
+    "backup_retention_daily": {
+      "type": "integer",
+      "minimum": 1,
+      "x-messages": {
+        "type": "backup_retention_daily must be an integer",
+        "minimum": "backup_retention_daily must be > 0",
+        "maximum": "backup_retention_daily must be > 0"
+      }
+    },
+    "backup_retention_monthly": {
+      "type": "integer",
+      "minimum": 1,
+      "x-messages": {
+        "type": "backup_retention_monthly must be an integer",
+        "minimum": "backup_retention_monthly must be > 0",
+        "maximum": "backup_retention_monthly must be > 0"
+      }
+    },
+    "backup_retention_weekly": {
+      "type": "integer",
+      "minimum": 1,
+      "x-messages": {
+        "type": "backup_retention_weekly must be an integer",
+        "minimum": "backup_retention_weekly must be > 0",
+        "maximum": "backup_retention_weekly must be > 0"
+      }
+    },
+    "backup_schedule": {
+      "type": "string",
+      "pattern": "^\\s*\\S+(\\s+\\S+){4}\\s*$",
+      "x-messages": {
+        "type": "backup_schedule must be a five-field cron",
+        "pattern": "backup_schedule must be a five-field cron"
+      }
+    },
+    "chrony_nts": {},
+    "core_git_ref": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "core_git_ref must be a non-empty string",
+        "pattern": "core_git_ref must be a non-empty string"
+      }
+    },
+    "core_git_repo_url": {
+      "type": "string"
+    },
+    "dns_suffix": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "dns_suffix must be a string",
+        "pattern": "dns_suffix must not be empty"
+      }
+    },
+    "flux_git_ref": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "flux_git_ref must be a string",
+        "pattern": "flux_git_ref must not be empty"
+      }
+    },
+    "flux_git_repo_url": {
+      "type": "string"
+    },
+    "flux_known_hosts": {},
+    "jarvis_env": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "jarvis_env must be a string",
+        "pattern": "jarvis_env must not be empty"
+      }
+    },
+    "k3s_kubelet_eviction_hard": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "k3s_kubelet_eviction_hard must be a non-empty string",
+        "pattern": "k3s_kubelet_eviction_hard must be a non-empty string"
+      }
+    },
+    "k3s_kubelet_kube_reserved": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "k3s_kubelet_kube_reserved must be a non-empty string",
+        "pattern": "k3s_kubelet_kube_reserved must be a non-empty string"
+      }
+    },
+    "k3s_kubelet_system_reserved": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "k3s_kubelet_system_reserved must be a non-empty string",
+        "pattern": "k3s_kubelet_system_reserved must be a non-empty string"
+      }
+    },
+    "k3s_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "x-messages": {
+        "type": "k3s_sha256 must be a 64-character lowercase hex string",
+        "pattern": "k3s_sha256 must be a 64-character lowercase hex string"
+      }
+    },
+    "k3s_version": {
+      "type": "string",
+      "pattern": "^v\\d+\\.\\d+\\.\\d+\\+k3s\\d+$",
+      "x-messages": {
+        "type": "k3s_version must be a k3s version string (v<major>.<minor>.<patch>+k3s<n>)",
+        "pattern": "k3s_version must be a k3s version string (v<major>.<minor>.<patch>+k3s<n>)"
+      }
+    },
+    "lan_cidrs": {
+      "description": "IPv4 CIDRs inside RFC 1918, clear of pod_cidr and service_cidr; checked in Python."
+    },
+    "local_path_data": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "local_path_data must be a string",
+        "pattern": "local_path_data must not be empty"
+      }
+    },
+    "node_memory_reserve_percent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50,
+      "x-messages": {
+        "type": "node_memory_reserve_percent must be an integer from 0 to 50",
+        "minimum": "node_memory_reserve_percent must be an integer from 0 to 50",
+        "maximum": "node_memory_reserve_percent must be an integer from 0 to 50"
+      }
+    },
+    "ntp_pools": {},
+    "pod_cidr": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "pod_cidr must be a string",
+        "pattern": "pod_cidr must not be empty"
+      }
+    },
+    "service_cidr": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "service_cidr must be a string",
+        "pattern": "service_cidr must not be empty"
+      }
+    },
+    "ssh_user": {
+      "type": "string",
+      "minLength": 1,
+      "x-messages": {
+        "type": "ssh_user must be a string",
+        "minLength": "ssh_user must not be empty"
+      }
+    },
+    "time_zone": {
+      "type": "string",
+      "pattern": "\\S",
+      "x-messages": {
+        "type": "time_zone must be a string",
+        "pattern": "time_zone must not be empty"
+      }
+    }
+  }
+}
