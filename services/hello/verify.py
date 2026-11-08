@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from lib._env import reason
+from jarvis.lib.env import reason
 
-from verify.backups import SECRET_KEYS_TEMPLATE
-from verify.common import CheckError, Context, items
-from verify.registry import register
+from jarvis.verify.backups import SECRET_KEYS_TEMPLATE
+from jarvis.verify.common import CheckError, Context, items
+from jarvis.verify.registry import register
 
 NAMESPACE = "hello"
 SECRET = "hello-greeting"

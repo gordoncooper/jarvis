@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _python_pins import scan_python_pins
+from jarvis.checks.python_pins import scan_python_pins
 
 
 def test_r33_seeded_open_python_range_fails(tmp_path: Path) -> None:

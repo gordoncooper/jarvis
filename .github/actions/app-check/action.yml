@@ -20,7 +20,9 @@ runs:
         set -euo pipefail
         pyyaml="$(grep -m1 '^PyYAML==' "${CORE}/requirements-dev.txt")"
         python3 -m venv "${RUNNER_TEMP}/app-check"
-        "${RUNNER_TEMP}/app-check/bin/pip" install -q "${pyyaml}"
+        setuptools="$(grep -m1 '^setuptools==' "${CORE}/requirements-dev.txt")"
+        "${RUNNER_TEMP}/app-check/bin/pip" install -q "${pyyaml}" "${setuptools}"
+        "${RUNNER_TEMP}/app-check/bin/pip" install -q --no-deps --no-build-isolation -e "${CORE}"
         python3 "${CORE}/tools/install-deps" kustomize
     - name: app-check
       shell: bash

@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _backup_isolation import _render_violations, scan_backup_isolation
-from schema.env import ValidationError, validate_one_env
+from jarvis.checks.backup_isolation import _render_violations, scan_backup_isolation
+from jarvis.schema.env import ValidationError, validate_one_env
 from support import REPO_ROOT, ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app
 
 APP = "app-notes"
@@ -204,7 +204,7 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     lib = str(REPO_ROOT / "tools" / "lib")
     if lib not in sys.path:
         sys.path.insert(0, lib)
-    from render_backup_selection import render_env
+    from jarvis.lib.render_backup_selection import render_env
 
     render_env(copy.env_dir, copy.root)
     validate_one_env(copy.root, copy.name)

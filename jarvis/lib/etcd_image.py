@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable
 from subprocess import CompletedProcess
 
-from . import _env
+from jarvis.lib import env as _env
 
 ETCD_NAMESPACE = "platform-backups"
 ETCD_CRONJOB = "etcd-snapshots"

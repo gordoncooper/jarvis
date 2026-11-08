@@ -14,7 +14,7 @@ from typing import Any, Sequence
 
 import yaml
 
-import _switches  # noqa: E402
+from jarvis.lib import switches as _switches  # noqa: E402
 
 # envs/<env>/values/apps.yaml: exception lines and backup selection. The names are in values/switches.yaml.
 APPS_VALUES = "values/apps.yaml"

@@ -26,7 +26,7 @@ def _load_module():
 def _load_sops():
     if str(TOOLS_LIB) not in sys.path:
         sys.path.insert(0, str(TOOLS_LIB))
-    import _sops
+    from jarvis.lib import sops as _sops
 
     return _sops
 

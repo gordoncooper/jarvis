@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
-from schema.env import env_flux_dirs
+from jarvis.checks.manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
+from jarvis.schema.env import env_flux_dirs
 
 _SUBSTITUTE_KEY = "kustomize.toolkit.fluxcd.io/substitute"
 # Each `$$` is a literal `$`, so a variable starts after an odd run of `$`.

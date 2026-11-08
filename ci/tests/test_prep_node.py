@@ -90,7 +90,7 @@ def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
 
     module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
 
-    from render_cluster_vars_configmap import render_document
+    from jarvis.lib.render_cluster_vars_configmap import render_document
 
     rendered = render_document(cluster)
     assert "backup_path: /var/lib/jarvis/backup" in rendered

@@ -32,7 +32,7 @@ from ansible_role_proof import (
     playbook_recap_field,
 )
 from conftest import require_cli
-from schema.env import DEFAULT_SSH_USER
+from jarvis.schema.env import DEFAULT_SSH_USER
 from support import REPO_ROOT
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
@@ -1541,7 +1541,7 @@ def test_fresh_cluster_creates_the_deploy_key_secret_once(tmp_path: Path) -> Non
     """An ssh:// root's sealed deploy key becomes flux-system/flux-deploy-key once, with GitHub's host key."""
     require_cli("ansible-playbook")
     require_cli("sops")
-    from _sops import encrypt_secret_to_file
+    from jarvis.lib.sops import encrypt_secret_to_file
 
     identity, public = _age_identity(tmp_path, "env")
     keyfile = _key_file(tmp_path, (identity, public))

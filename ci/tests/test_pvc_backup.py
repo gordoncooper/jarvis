@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _pvc_backup import scan_pvc_backup
+from jarvis.checks.pvc_backup import scan_pvc_backup
 
 _POLICY = """\
 apiVersion: policies.kyverno.io/v1

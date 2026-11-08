@@ -7,6 +7,17 @@ the upgrade.
 
 ## Unreleased
 
+### Changed
+
+- Core's Python is one package, `jarvis/` (`jarvis.lib`, `jarvis.checks`, `jarvis.schema`,
+  `jarvis.verify`), described by `pyproject.toml`. `make deps` installs it editable into the
+  venv; no module edits `sys.path`. The commands under `tools/` and `tools/lib/render_*.py` stay
+  where they were.
+
+### Upgrading
+
+- Run `make deps` again in the core checkout, so the venv has the package.
+
 ## v0.3.0
 
 ### Added

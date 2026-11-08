@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from _manifest_lint import scan_manifest_lint
+from jarvis.checks.manifest_lint import scan_manifest_lint
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "manifest-lint" / "missing-memory-limit.yaml"
 

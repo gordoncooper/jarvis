@@ -20,9 +20,9 @@ from urllib.parse import urlparse
 
 import yaml
 
-import _app_backups  # noqa: E402
-import _apps  # noqa: E402
-from _env import instance_root  # noqa: E402
+from jarvis.lib import app_backups as _app_backups  # noqa: E402
+from jarvis.lib import apps as _apps  # noqa: E402
+from jarvis.lib.env import instance_root  # noqa: E402
 
 BACKUPS_KEY = "backups"
 GENERATED_COMPONENT_REL = "generated/backup-selection"

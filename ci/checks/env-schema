@@ -14,7 +14,7 @@ export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 python3 - <<'PY'
 from pathlib import Path
 
-from schema.env import ValidationError, instance_root, validate_env_tree
+from jarvis.schema.env import ValidationError, instance_root, validate_env_tree
 
 try:
     validate_env_tree(instance_root(Path(".")))

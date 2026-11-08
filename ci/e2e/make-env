@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     _run(python, "tools/bootstrap-secrets", "--env", args.env)
     _run(python, "tools/lib/render_cluster_vars_configmap.py", "--env", args.env,
          "--output", str(env_dir / "flux" / "generated" / "cluster-vars-configmap.yaml"))
-    _run(python, "-c", "from schema.env import main; raise SystemExit(main())", "--env", args.env)
+    _run(python, "-c", "from jarvis.schema.env import main; raise SystemExit(main())", "--env", args.env)
     return 0
 
 

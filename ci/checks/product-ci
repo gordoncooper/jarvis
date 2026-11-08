@@ -5,12 +5,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-export PYTHONPATH="${repo_root}/ci/checks/lib:${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 
 python3 - <<'PY'
 from pathlib import Path
 
-from _product_ci import format_violations, scan_product_ci
+from jarvis.checks.product_ci import format_violations, scan_product_ci
 
 violations = scan_product_ci(Path("."))
 if violations:

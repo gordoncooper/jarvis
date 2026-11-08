@@ -13,18 +13,14 @@ On what each env's platform-configs path renders (and on the apps server core sh
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from _manifests import build_flux_path, kustomize_build, pod_spec
-from schema.env import CORE_SOURCE_DIR, env_dirs
+from jarvis.checks.manifests import build_flux_path, kustomize_build, pod_spec
+from jarvis.schema.env import CORE_SOURCE_DIR, env_dirs
 
-_TOOLS_LIB = Path(__file__).resolve().parents[3] / "tools" / "lib"
-if str(_TOOLS_LIB) not in sys.path:
-    sys.path.insert(0, str(_TOOLS_LIB))
 
-import _app_backups  # noqa: E402
+from jarvis.lib import app_backups as _app_backups  # noqa: E402
 
 CORE_SECRET = "backups-restic"
 CORE_SERVER = "restic"

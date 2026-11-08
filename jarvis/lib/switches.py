@@ -11,7 +11,7 @@ from typing import Any, Sequence
 
 import yaml
 
-import _app_backups  # noqa: E402
+from jarvis.lib import app_backups as _app_backups  # noqa: E402
 
 # envs/<env>/values/switches.yaml.
 SWITCHES_FILE = "values/switches.yaml"

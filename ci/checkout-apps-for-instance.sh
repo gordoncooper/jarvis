@@ -20,7 +20,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 instance="$(readlink -f "${INSTANCE}")"
 export PATH="${HOME}/.local/bin:${repo_root}/.venv/bin:${PATH}"
 
-source_line="$(python3 "${repo_root}/ci/checks/lib/_apps_checkout.py" source)"
+source_line="$(PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m jarvis.checks.apps_checkout source)"
 if [[ -z "${source_line}" ]]; then
   echo "checkout-apps-for-instance: no env lists an app; nothing to check out" >&2
   exit 0

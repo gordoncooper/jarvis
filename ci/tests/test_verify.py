@@ -356,7 +356,7 @@ def test_verify_curl_is_get_only_without_request_data(
         raise AssertionError(call)
 
     monkeypatch.setattr(
-        sys.modules["verify.platform"],
+        sys.modules["jarvis.verify.platform"],
         "_run",
         invoke,
     )
@@ -549,7 +549,7 @@ def test_disabled_component_checks_do_not_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    registry = sys.modules["verify.registry"]
+    registry = sys.modules["jarvis.verify.registry"]
     ran = {"extra": False}
 
     def extra(_ctx: object) -> list[tuple[int, str, object]]:
@@ -845,7 +845,7 @@ def test_repository_check_deadline_fits_inside_verify_grace() -> None:
     job = yaml.safe_load(
         (REPO_ROOT / "platform/backups/restic-check.yaml").read_text(encoding="utf-8")
     )["spec"]["jobTemplate"]["spec"]
-    grace = sys.modules["verify.backups"].CHECK_GRACE
+    grace = sys.modules["jarvis.verify.backups"].CHECK_GRACE
     assert 0 < job["activeDeadlineSeconds"] < grace.total_seconds()
 
 
@@ -978,7 +978,7 @@ def test_sleeping_kubectl_times_out_cleanly(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    env_mod = sys.modules["lib._env"]
+    env_mod = sys.modules["jarvis.lib.env"]
     monkeypatch.setattr(verify_tool, "KUBECTL_TIMEOUT", 0.05)
 
     def sleeper(argv: object, **kwargs: object) -> CompletedProcess[str]:

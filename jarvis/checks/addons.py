@@ -44,7 +44,7 @@ from typing import Iterable, Iterator
 
 import yaml
 
-from _manifests import (
+from jarvis.checks.manifests import (
     build_flux_path,
     is_flux_kustomization,
     kustomize_build,
@@ -53,7 +53,7 @@ from _manifests import (
     ref_of,
     substitute,
 )
-from schema.env import (
+from jarvis.schema.env import (
     env_flux_dirs,
     ADDON_SECRETS_PATH,
     ADDONS_DIR,

@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-import schema.env as env_schema
-from schema.env import (
+import jarvis.schema.env as env_schema
+from jarvis.schema.env import (
     DEFAULT_AGE_KEY_FILE,
     DEFAULT_BACKUP_CHECK_SCHEDULE,
     DEFAULT_SSH_USER,
@@ -833,8 +833,8 @@ def _copy_flux_entry(env: Path) -> None:
 
 
 def _render_core_only(env: Path, *optional: str) -> None:
-    import _apps
-    import _switches
+    from jarvis.lib import apps as _apps
+    from jarvis.lib import switches as _switches
 
     data = {"optional": list(optional), "addons": [], "apps": []}
     (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")

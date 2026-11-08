@@ -6,7 +6,7 @@ ANSIBLE_PLAYBOOK ?= $(VENV)/bin/ansible-playbook
 PIN_CHECK = "$(VENV)/bin/python" tools/pin-check --env "$(ENV)" $(if $(filter 1,$(ALLOW_UNPINNED)),--allow-unpinned)
 NEED_VENV = test -x "$(VENV)/bin/python" || { echo "no venv at $(VENV): run 'make deps', or set VENV=<path>" >&2; exit 1; }
 # INSTANCE=<path> points every env command at <path>/envs/<env> and <path>/.sops.yaml.
-# Unset, the env lives in this checkout. The Python tools resolve it in tools/lib/_env.py.
+# Unset, the env lives in this checkout. The Python tools resolve it in jarvis/lib/env.py.
 export INSTANCE
 INSTANCE_ROOT = $(abspath $(or $(INSTANCE),$(CURDIR)))
 
@@ -36,6 +36,7 @@ deps:
 	python3 tools/install-deps
 	@test -d "$(VENV)" || python3 -m venv "$(VENV)"
 	"$(VENV)/bin/pip" install --no-deps -r requirements-dev.txt
+	"$(VENV)/bin/pip" install --no-deps --no-build-isolation -e .
 	"$(VENV)/bin/pip" check
 
 ci-verify: deps
@@ -104,7 +105,7 @@ site:
 	@if [ -n "$(CHECK)" ] && [ "$(CHECK)" != "1" ]; then echo "CHECK must be empty or 1" >&2; exit 1; fi
 	@$(NEED_VENV)
 	@PYTHONPATH=$(CURDIR) "$(VENV)/bin/python" -c \
-		"from schema.env import main; raise SystemExit(main())" \
+		"from jarvis.schema.env import main; raise SystemExit(main())" \
 		--env "$(ENV)"
 	@$(PIN_CHECK)
 	@cd infra/ansible && $(ANSIBLE_PLAYBOOK) site.yml \

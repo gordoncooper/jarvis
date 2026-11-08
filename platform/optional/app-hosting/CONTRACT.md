@@ -90,7 +90,7 @@ Without that name the env renders none of this: no App CRD, no app admission pol
 - `ci/tests/test_app_admission.py` also runs `app-priority` and then admission on every sample: a sample passes once mutated and its workloads fail unmutated, a tenant's own class is overwritten and the mover's left alone, another class fails; a memory request equal to its limit (in any unit) or a limit alone passes and a request below its limit fails; each `restricted` item beyond the old baseline fails without `privileged`; an extra router annotation, another entrypoint, another controller's annotation, no or another class fail and Flux's labels pass; a tenant's `volumeName`, `dataSource` or `dataSourceRef` fails and the binder's `volumeName` passes (the CLI sends no `oldObject`, so the tenant's later apply of a bound claim is left to the live test); a `network.ports` entry opens only with its `lan-port` line; the app namespace lets the backup movers run privileged.
 - `ci/tests/test_app_hosting.py` renders `platform-controllers` and `platform-configs` with and without the switch: off holds no app-hosting object; on holds every one, and nothing else differs.
 - `ci/checks/env-schema` (apps only with the switch on, the app list, exception lines, `apps_git_repo_url`, the render), `ci/checks/flux-identity` (the wiring as the platform account, the app's Kustomizations as its tenant), `ci/checks/flux-prune`, `ci/checks/addons` (no add-on is named `apps`).
-- `make verify` component `apps` (`tools/verify/apps.py`; `ci/tests/test_verify_apps.py`).
+- `make verify` component `apps` (`jarvis/verify/apps.py`; `ci/tests/test_verify_apps.py`).
 
 ## Operations
 

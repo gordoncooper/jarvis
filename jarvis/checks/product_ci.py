@@ -15,6 +15,11 @@ _PRODUCT_ROOTS = (
     "apps/",
     "envs/",
     "schema/",
+    # The jarvis package's product half; jarvis/checks/ is CI's own code.
+    "jarvis/__init__.py",
+    "jarvis/lib/",
+    "jarvis/schema/",
+    "jarvis/verify/",
 )
 
 _INLINE_CODE = re.compile(r"`[^`\n]*`")

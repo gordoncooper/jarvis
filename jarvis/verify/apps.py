@@ -5,10 +5,10 @@ make verify runs this component only for an env whose values/switches.yaml lists
 
 from __future__ import annotations
 
-from lib import _apps
+from jarvis.lib import apps as _apps
 
-from verify.common import CheckError, CheckWarning, Context, Kubectl, items
-from verify.registry import register
+from jarvis.verify.common import CheckError, CheckWarning, Context, Kubectl, items
+from jarvis.verify.registry import register
 
 BASELINE_POLICIES = ("default-deny", "cluster-dns", "same-namespace")
 

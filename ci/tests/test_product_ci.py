@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from _product_ci import scan_product_ci
+from jarvis.checks.product_ci import scan_product_ci
 
 
 def test_product_file_referencing_ci_fails(tmp_path: Path) -> None:
@@ -20,10 +20,17 @@ def test_product_file_referencing_ci_fails(tmp_path: Path) -> None:
         "import ci.checks.lib._core_names\n",
         encoding="utf-8",
     )
+    package = tmp_path / "jarvis"
+    (package / "lib").mkdir(parents=True)
+    (package / "checks").mkdir()
+    (package / "lib" / "leak.py").write_text('open("ci/run-checks")\n', encoding="utf-8")
+    # jarvis/checks/ is CI's own code, so it may read ci/.
+    (package / "checks" / "reads_ci.py").write_text('open("ci/run-checks")\n', encoding="utf-8")
     _git_add_all(tmp_path)
 
     violations = scan_product_ci(tmp_path)
     assert [(item.path, item.line, item.reference) for item in violations] == [
+        ("jarvis/lib/leak.py", 1, "ci/run-checks"),
         ("tools/leak.py", 1, "ci/checks/secret-scan"),
         ("tools/verify/run", 1, "ci/rule-checks.txt"),
         ("tools/verify/run", 2, "import ci"),

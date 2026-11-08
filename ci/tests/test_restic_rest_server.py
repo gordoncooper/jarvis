@@ -215,7 +215,7 @@ def _etcd_kubectl(image: str):
     tools = str(ROOT / "tools")
     if tools not in sys.path:
         sys.path.insert(0, tools)
-    from lib._etcd_image import etcd_snapshot_image
+    from jarvis.lib.etcd_image import etcd_snapshot_image
 
     body = {
         "spec": {
@@ -259,7 +259,7 @@ def test_nonrelease_etcd_tag_is_rejected(tag: str) -> None:
     """latest, edge, Latest, and a partial tag are not a restic release."""
     image = f"restic/restic:{tag}@sha256:" + ("ab" * 32)
     read, kubectl = _etcd_kubectl(image)
-    from lib._etcd_image import ImageError
+    from jarvis.lib.etcd_image import ImageError
 
     with pytest.raises(ImageError, match="must be restic/restic@sha256:"):
         read(kubectl)
@@ -419,8 +419,8 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
     tools = str(ROOT / "tools")
     if tools not in sys.path:
         sys.path.insert(0, tools)
-    from schema.env import resolve_cluster_vars
-    from verify.common import scheduled_instants
+    from jarvis.schema.env import resolve_cluster_vars
+    from jarvis.verify.common import scheduled_instants
 
     etcd_schedule = _docs(ROOT / "platform/backups/etcd-snapshots.yaml")[0]["spec"]["schedule"]
     for root, env in real_and_copy_envs(example_copy):
@@ -440,7 +440,7 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
 def test_offsite_copy_renders_only_where_the_env_lists_it(example_copy: ExampleCopy) -> None:
     """The example copy turns the off-host copy on with its own backups-offsite secret; an env
     that does not list it renders no off-host CronJob or secret."""
-    from schema.env import offsite_copy_listed
+    from jarvis.schema.env import offsite_copy_listed
 
     for root, env in real_and_copy_envs(example_copy):
         docs = [

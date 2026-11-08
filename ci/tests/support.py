@@ -120,7 +120,7 @@ def _ensure_sops_creation_rule(root: Path, env_name: str) -> None:
 
 def _valid_cluster_vars() -> dict:
     import yaml
-    from schema.env import EXAMPLE_ENV
+    from jarvis.schema.env import EXAMPLE_ENV
 
     cluster_vars_path = REPO_ROOT / "envs" / EXAMPLE_ENV / "values" / "cluster-vars.yaml"
     reference = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8"))
@@ -137,7 +137,7 @@ def _write_env(
     hosts_yml: str | None = None,
 ) -> Path:
     import yaml
-    from schema.env import EXAMPLE_ENV, is_example_env
+    from jarvis.schema.env import EXAMPLE_ENV, is_example_env
 
     env = root / "envs" / env_name
     (env / "values").mkdir(parents=True)
@@ -201,7 +201,7 @@ def bootstrap_example_copy(
        backups-offsite and one placeholder Secret per namespace an enabled add-on decrypts.
     7. Render the cluster-vars ConfigMap over the copied file.
     """
-    from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV
+    from jarvis.schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV
 
     root = (tmp_path / "repo").resolve()
     repo = REPO_ROOT.resolve()
@@ -239,14 +239,14 @@ def set_switches(env_dir: Path, **sections: list[str]) -> None:
 
 def render_switches(env_dir: Path, root: Path) -> None:
     """Render the env's Flux wiring from its switches, as an owner would."""
-    from render_switches import render_env
+    from jarvis.lib.render_switches import render_env
 
     render_env(env_dir, root)
 
 
 def _drop_addons(env_dir: Path) -> None:
-    import _switches
-    from schema.env import SERVICES_KUSTOMIZATION
+    from jarvis.lib import switches as _switches
+    from jarvis.schema.env import SERVICES_KUSTOMIZATION
 
     set_switches(env_dir, addons=[])
     (env_dir / "flux" / SERVICES_KUSTOMIZATION).write_text(_switches.services({}), encoding="utf-8")
@@ -254,8 +254,8 @@ def _drop_addons(env_dir: Path) -> None:
 
 def _seal_copy_addons(root: Path, name: str) -> None:
     """One placeholder Secret, sealed to the copy's throwaway key, per namespace an enabled add-on decrypts."""
-    from _sops import encrypt_secret_to_file
-    from schema.env import addon_documents, addon_secret_namespaces, enabled_addons
+    from jarvis.lib.sops import encrypt_secret_to_file
+    from jarvis.schema.env import addon_documents, addon_secret_namespaces, enabled_addons
 
     for addon in enabled_addons(root / "envs" / name):
         for namespace in addon_secret_namespaces(addon_documents(REPO_ROOT, addon)):
@@ -294,7 +294,7 @@ def _git_ignored(repo: Path, path: Path) -> bool:
 
 def _seal_copy_offsite(root: Path, name: str) -> None:
     """The owner seals backups-offsite with make seal; the copy gets a placeholder to the same key."""
-    from _sops import encrypt_secret_to_file
+    from jarvis.lib.sops import encrypt_secret_to_file
 
     document = {
         "apiVersion": "v1",
@@ -387,8 +387,6 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
         optional=list(dict.fromkeys([*switches["optional"], "apps-backup-server"])),
     )
     lib = str(REPO_ROOT / "tools" / "lib")
-    if lib not in sys.path:
-        sys.path.insert(0, lib)
     render_switches(copy.env_dir, copy.root)
     sops = shutil.which("sops")
     if not sops:
@@ -401,9 +399,7 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
 
 def _render_copy(env_dir: Path) -> None:
     lib = str(REPO_ROOT / "tools" / "lib")
-    if lib not in sys.path:
-        sys.path.insert(0, lib)
-    from render_cluster_vars_configmap import render_document
+    from jarvis.lib.render_cluster_vars_configmap import render_document
 
     source = env_dir / "values" / "cluster-vars.yaml"
     output = env_dir / "flux" / "generated" / "cluster-vars-configmap.yaml"
