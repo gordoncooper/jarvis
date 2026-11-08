@@ -321,7 +321,7 @@ spec:
         (has(object.spec.allocateLoadBalancerNodePorts) && !object.spec.allocateLoadBalancerNodePorts)
       message: "an app's LoadBalancer sets allocateLoadBalancerNodePorts: false"
     # Every app pod runs at the lowest priority: core preempts it, it never preempts core, and
-    # among pods the kubelet would evict alike it goes first. ClusterPolicy app-priority sets
+    # among pods the kubelet would evict alike it goes first. MutatingPolicy app-priority sets
     # the class; this refuses any other.
     - expression: >-
         !has(variables.podSpec.containers) ||

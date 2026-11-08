@@ -9,10 +9,13 @@ import os
 import shutil
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_ATTEMPTS = 4
 
 
 def _versions() -> dict[str, str]:
@@ -28,15 +31,41 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _fetch(url: str, dest: Path, expected: str) -> None:
-    """dest holds url's bytes at the pinned digest, or this stops with dest gone."""
-    if not dest.is_file() or _sha256(dest) != expected:
-        with urllib.request.urlopen(url) as response, dest.open("wb") as handle:
-            shutil.copyfileobj(response, handle)
-    actual = _sha256(dest)
-    if actual != expected:
-        dest.unlink()
-        sys.exit(f"{url}: sha256 mismatch (expected {expected}, got {actual})")
+def _download(url: str, dest: Path) -> None:
+    """url's bytes in dest. A server or network error is retried (the hosts answer 504 at times)."""
+    for attempt in range(1, _ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response, dest.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+            return
+        except urllib.error.HTTPError as error:
+            if error.code < 500 or attempt == _ATTEMPTS:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == _ATTEMPTS:
+                raise
+        print(f"{url}: attempt {attempt} failed, retrying", file=sys.stderr)
+        time.sleep(10 * attempt)
+
+
+def _fetch(urls: list[str], dest: Path, expected: str) -> None:
+    """dest holds the pinned bytes, from the first of urls that serves them, or this stops with
+    dest gone. Every source is held to the same sha256, so a mirror cannot change the bytes."""
+    if dest.is_file() and _sha256(dest) == expected:
+        return
+    for url in urls:
+        try:
+            _download(url, dest)
+        except (urllib.error.URLError, TimeoutError) as error:
+            print(f"{url}: {error}; trying the next source", file=sys.stderr)
+            continue
+        actual = _sha256(dest)
+        if actual != expected:
+            dest.unlink()
+            sys.exit(f"{url}: sha256 mismatch (expected {expected}, got {actual})")
+        return
+    dest.unlink(missing_ok=True)
+    sys.exit(f"{dest.name}: no source served it ({', '.join(urls)})")
 
 
 def main() -> None:
@@ -48,13 +77,15 @@ def main() -> None:
     target.mkdir(parents=True, exist_ok=True)
 
     apiserver = target / "kube-apiserver"
-    _fetch(f"https://dl.k8s.io/release/v{apiserver_version}/bin/linux/amd64/kube-apiserver", apiserver,
+    _fetch([f"https://dl.k8s.io/release/v{apiserver_version}/bin/linux/amd64/kube-apiserver"], apiserver,
            versions["kube_apiserver_linux_amd64_binary_sha256"])
     apiserver.chmod(0o755)
 
     stem = f"etcd-v{etcd_version}-linux-amd64"
     tarball = target / f"{stem}.tar.gz"
-    _fetch(f"https://github.com/etcd-io/etcd/releases/download/v{etcd_version}/{stem}.tar.gz", tarball,
+    # etcd publishes each release to GitHub and to its Google Cloud Storage bucket.
+    _fetch([f"https://github.com/etcd-io/etcd/releases/download/v{etcd_version}/{stem}.tar.gz",
+            f"https://storage.googleapis.com/etcd/v{etcd_version}/{stem}.tar.gz"], tarball,
            versions["etcd_linux_amd64_tarball_sha256"])
     etcd = target / "etcd"
     with tarfile.open(tarball, "r:gz") as archive, etcd.open("wb") as handle:

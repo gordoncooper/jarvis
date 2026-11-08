@@ -10,7 +10,7 @@ What any filler gives the rest of the env:
 
 - **Hosting.** Runs in the env's own cluster as an add-on, within [the add-on contract](../../CONTRACT.md). Its Flux Kustomizations carry the label `addons.jarvis.io/slot: chat-bot`, which is how core and other add-ons find the filler without its name.
 - **URL.** One HTTPS endpoint, `https://<host>.<dns_suffix>/`, through a Traefik Ingress on `websecure` with the internal CA wildcard, published by App DNS. It is reachable from the LAN only.
-- **Data survives a restore.** Every volume it keeps is a PVC that ClusterPolicy `pvc-backup` enrolls, so `make restore APP=<namespace>` and `make restore-all` put it back.
+- **Data survives a restore.** Every volume it keeps is a PVC that GeneratingPolicy `pvc-backup` enrolls, so `make restore APP=<namespace>` and `make restore-all` put it back.
 
 ## Expects
 

@@ -4,257 +4,156 @@
 # policy has not run, the app gets no traffic rather than open traffic. The env name, the env's
 # pod, service and LAN ranges, and the env's LAN grants for the app are read from annotations
 # the wiring sets on the namespace, which no tenant can edit.
-# Prune stays off: deleting the policy deletes every object it generated (synchronize).
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# One policy makes every object for an App: an allow the file stops asking for is deleted on the
+# App's next update (synchronize), and so is everything once the App is gone.
+# Prune stays off: deleting a policy deletes every object it generated.
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
 metadata:
   name: app-derive
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
-  rules:
+  evaluation:
+    generateExisting:
+      enabled: true
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [hosting.jarvis.io]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [apps]
+  matchConditions:
+    - name: app-namespace
+      expression: object.metadata.namespace.startsWith('app-')
+  variables:
+    - name: ns
+      expression: object.metadata.namespace
+    - name: notes
+      expression: resource.get("v1", "namespaces", "", object.metadata.namespace).metadata.?annotations.orValue({})
+    - name: override
+      expression: >-
+        object.spec.?envs.orValue({})[?variables.notes[?"hosting.jarvis.io/env"].orValue("")].orValue({})
+    - name: network
+      expression: object.spec.?network.orValue({})
+    # Small: 500m CPU and 512Mi memory unless the file (or its env override) says otherwise.
+    - name: cpu
+      expression: >-
+        string(variables.override.?resources.?cpu.orValue(object.spec.?resources.?cpu.orValue("500m")))
+    - name: memory
+      expression: >-
+        string(variables.override.?resources.?memory.orValue(object.spec.?resources.?memory.orValue("512Mi")))
+    - name: internet
+      expression: >-
+        variables.override.?network.?egress.?internet.orValue(variables.network.?egress.?internet.orValue(false)) == true
+    - name: lanRanges
+      expression: >-
+        variables.notes[?"hosting.jarvis.io/lan-cidrs"].orValue("").split(",").filter(c, c != "")
+    # Never the internet: private, shared and link-local ranges, and the env's pod, service
+    # and LAN ranges.
+    - name: internetExcept
+      expression: >-
+        ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16",
+         variables.notes[?"hosting.jarvis.io/pod-cidr"].orValue(""),
+         variables.notes[?"hosting.jarvis.io/service-cidr"].orValue("")].filter(c, c != "")
+        + variables.lanRanges
+    - name: lanAsks
+      expression: variables.network.?egress.?lan.orValue([])
+    # The env's lan-target lines ('<name> <cidr> <port>/<protocol>', comma-separated) for the
+    # targets the App lists, as egress rules.
+    - name: lanEgress
+      expression: >-
+        variables.notes[?"hosting.jarvis.io/lan-targets"].orValue("").split(",").filter(t, t != "")
+        .map(t, t.split(" ")).filter(t, t[0] in variables.lanAsks)
+        .map(t, {"to": [{"ipBlock": {"cidr": t[1]}}],
+                 "ports": [{"port": int(t[2].split("/")[0]), "protocol": t[2].split("/")[1]}]})
+    # The env's lan-port lines ('<listen>/<protocol>', comma-separated), and the target port of
+    # each network.ports entry they grant.
+    - name: lanPortGrants
+      expression: >-
+        variables.notes[?"hosting.jarvis.io/lan-ports"].orValue("").split(",").filter(p, p != "")
+    - name: ports
+      expression: variables.network.?ports.orValue([])
+    - name: lanPorts
+      expression: >-
+        variables.ports.filter(p, string(p.listen) + "/" + p.protocol in variables.lanPortGrants)
+        .map(p, {"port": p.target, "protocol": p.protocol})
+    - name: egressApps
+      expression: variables.network.?egress.?apps.orValue([])
+    - name: callers
+      expression: variables.network.?callers.orValue([])
     - name: quota
-      match: &app-match
-        any:
-          - resources:
-              kinds:
-                - hosting.jarvis.io/v1alpha1/App
-              namespaces:
-                - app-*
-      context: &app-context
-        - name: notes
-          apiCall:
-            urlPath: "/api/v1/namespaces/{{ request.object.metadata.namespace }}"
-            jmesPath: "metadata.annotations"
-        - name: envName
-          variable:
-            jmesPath: "notes.\"hosting.jarvis.io/env\""
-            default: ""
-        - name: override
-          variable:
-            jmesPath: "request.object.spec.envs.\"{{ envName }}\""
-            default: {}
-        # Small: 500m CPU and 512Mi memory unless the file (or its env override) says otherwise.
-        - name: cpu
-          variable:
-            jmesPath: "not_null(override.resources.cpu, request.object.spec.resources.cpu, '500m')"
-        - name: memory
-          variable:
-            jmesPath: "not_null(override.resources.memory, request.object.spec.resources.memory, '512Mi')"
-        - name: internet
-          variable:
-            jmesPath: "not_null(override.network.egress.internet, request.object.spec.network.egress.internet, `false`)"
-        # Never the internet: private, shared and link-local ranges, and the env's pod, service
-        # and LAN ranges.
-        - name: internetExcept
-          variable:
-            jmesPath: >-
-              [['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16'],
-              [notes."hosting.jarvis.io/pod-cidr", notes."hosting.jarvis.io/service-cidr"],
-              split(notes."hosting.jarvis.io/lan-cidrs" || '', ',')][] | [?@ != '']
-        - name: lanRanges
-          variable:
-            jmesPath: "split(notes.\"hosting.jarvis.io/lan-cidrs\" || '', ',')[?@ != ''] | map(&{ipBlock: {cidr: @}}, @)"
-        - name: lanAsks
-          variable:
-            jmesPath: "request.object.spec.network.egress.lan || `[]`"
-        # The env's lan-target lines ('<name> <cidr> <port>/<protocol>', comma-separated) for
-        # the targets the App lists, as egress rules.
-        - name: lanEgress
-          variable:
-            jmesPath: >-
-              split(notes."hosting.jarvis.io/lan-targets" || '', ',')[?@ != '']
-              | map(&split(@, ' '), @)
-              | [?contains(`{{ to_string(lanAsks) }}`, [0])]
-              | map(&{to: [{ipBlock: {cidr: @[1]}}],
-              ports: [{port: to_number(split(@[2], '/')[0]), protocol: split(@[2], '/')[1]}]}, @)
-        # The env's lan-port lines ('<listen>/<protocol>', comma-separated), and the target port
-        # of each network.ports entry they grant.
-        - name: lanPortGrants
-          variable:
-            jmesPath: "split(notes.\"hosting.jarvis.io/lan-ports\" || '', ',')[?@ != '']"
-        - name: lanPorts
-          variable:
-            jmesPath: >-
-              (request.object.spec.network.ports || `[]`)[?contains(`{{ to_string(lanPortGrants) }}`,
-              join('/', [to_string(listen), protocol]))].{port: target, protocol: protocol}
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: v1
-        kind: ResourceQuota
-        name: app
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            hard:
-              limits.cpu: "{{ cpu }}"
-              limits.memory: "{{ memory }}"
-              requests.cpu: "{{ cpu }}"
-              requests.memory: "{{ memory }}"
-              services.loadbalancers: "{{ to_string(length(request.object.spec.network.ports || `[]`)) }}"
-              services.nodeports: "0"
+      expression: >-
+        [dyn({"apiVersion": "v1", "kind": "ResourceQuota", "metadata": {"name": "app", "namespace": variables.ns},
+              "spec": {"hard": {
+                "limits.cpu": variables.cpu, "limits.memory": variables.memory,
+                "requests.cpu": variables.cpu, "requests.memory": variables.memory,
+                "services.loadbalancers": string(size(variables.ports)), "services.nodeports": "0"}}})]
     # The web address: Traefik to network.web.port.
     - name: web
-      match: *app-match
-      preconditions:
-        all:
-          - key: "{{ request.object.spec.network.web.port || `0` }}"
-            operator: GreaterThan
-            value: 0
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-web
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Ingress]
-            ingress:
-              - from:
-                  - namespaceSelector:
-                      matchLabels:
-                        kubernetes.io/metadata.name: kube-system
-                    podSelector:
-                      matchLabels:
-                        app.kubernetes.io/name: traefik
-                ports:
-                  - port: "{{ request.object.spec.network.web.port }}"
-                    protocol: TCP
+      expression: >-
+        int(variables.network.?web.?port.orValue(0)) > 0
+        ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "app-web", "namespace": variables.ns},
+                "spec": {"podSelector": {}, "policyTypes": ["Ingress"], "ingress": [{
+                  "from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}],
+                  "ports": [{"port": int(variables.network.web.port), "protocol": "TCP"}]}]}})]
+        : []
     # Internet: DNS (from the wiring) plus any port and protocol to 0.0.0.0/0, except private,
     # shared, link-local, the env's pod and service ranges and its LAN ranges. Internet never
     # opens the LAN or the cluster.
-    - name: internet
-      match: *app-match
-      context: *app-context
-      preconditions:
-        all:
-          - key: "{{ internet }}"
-            operator: Equals
-            value: true
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-internet
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Egress]
-            egress:
-              - to:
-                  - ipBlock:
-                      cidr: 0.0.0.0/0
-                      except: "{{ internetExcept }}"
+    - name: internetAllow
+      expression: >-
+        variables.internet
+        ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "app-internet", "namespace": variables.ns},
+                "spec": {"podSelector": {}, "policyTypes": ["Egress"], "egress": [{
+                  "to": [{"ipBlock": {"cidr": "0.0.0.0/0", "except": variables.internetExcept}}]}]}})]
+        : []
     # The whole LAN: the App asks for lan: [all] and the env grants lan-all. Any port to each of
     # the env's LAN ranges.
-    - name: lan-all
-      match: *app-match
-      context: *app-context
-      preconditions:
-        all:
-          - key: all
-            operator: AnyIn
-            value: "{{ lanAsks }}"
-          - key: "{{ notes.\"hosting.jarvis.io/lan-all\" || '' }}"
-            operator: Equals
-            value: "true"
-          - key: "{{ length(lanRanges) }}"
-            operator: GreaterThan
-            value: 0
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-lan-all
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Egress]
-            egress:
-              - to: "{{ lanRanges }}"
+    - name: lanAll
+      expression: >-
+        "all" in variables.lanAsks && variables.notes[?"hosting.jarvis.io/lan-all"].orValue("") == "true"
+        && size(variables.lanRanges) > 0
+        ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "app-lan-all", "namespace": variables.ns},
+                "spec": {"podSelector": {}, "policyTypes": ["Egress"], "egress": [{
+                  "to": variables.lanRanges.map(c, {"ipBlock": {"cidr": c}})}]}})]
+        : []
     # Named LAN targets: each target the App lists under egress.lan that the env grants as
     # '<app>: lan-target <name> <cidr> <port>/<protocol>', on that port only. A target the env
     # does not grant, or a grant the App does not ask for, opens nothing.
     - name: lan
-      match: *app-match
-      context: *app-context
-      preconditions:
-        all:
-          - key: "{{ length(lanEgress) }}"
-            operator: GreaterThan
-            value: 0
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-lan
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Egress]
-            egress: "{{ lanEgress }}"
+      expression: >-
+        size(variables.lanEgress) > 0
+        ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "app-lan", "namespace": variables.ns},
+                "spec": {"podSelector": {}, "policyTypes": ["Egress"], "egress": variables.lanEgress}})]
+        : []
     # App to app: this side's half. Traffic flows only when the caller lists the callee under
     # egress.apps and the callee lists the caller under callers.
     - name: apps
-      match: *app-match
-      preconditions:
-        all:
-          - key: "{{ length(request.object.spec.network.egress.apps || `[]`) }}"
-            operator: GreaterThan
-            value: 0
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-apps
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Egress]
-            egress:
-              - to:
-                  - namespaceSelector:
-                      matchExpressions:
-                        - key: kubernetes.io/metadata.name
-                          operator: In
-                          values: "{{ map(&join('', ['app-', @]), request.object.spec.network.egress.apps) }}"
-    - name: callers
-      match: *app-match
-      preconditions:
-        all:
-          - key: "{{ length(request.object.spec.network.callers || `[]`) }}"
-            operator: GreaterThan
-            value: 0
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-callers
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Ingress]
-            ingress:
-              - from:
-                  - namespaceSelector:
-                      matchExpressions:
-                        - key: kubernetes.io/metadata.name
-                          operator: In
-                          values: "{{ map(&join('', ['app-', @]), request.object.spec.network.callers) }}"
+      expression: >-
+        size(variables.egressApps) > 0
+        ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "app-apps", "namespace": variables.ns},
+                "spec": {"podSelector": {}, "policyTypes": ["Egress"], "egress": [{"to": [{"namespaceSelector": {
+                  "matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In",
+                                        "values": variables.egressApps.map(a, "app-" + a)}]}}]}]}})]
+        : []
+    - name: callersAllow
+      expression: >-
+        size(variables.callers) > 0
+        ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "app-callers", "namespace": variables.ns},
+                "spec": {"podSelector": {}, "policyTypes": ["Ingress"], "ingress": [{"from": [{"namespaceSelector": {
+                  "matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In",
+                                        "values": variables.callers.map(a, "app-" + a)}]}}]}]}})]
+        : []
     # LAN ports: each network.ports entry the env grants as '<app>: lan-port <listen>/<protocol>',
     # from any address to its target port; an entry the env does not grant opens nothing. The
     # source stays any address because ServiceLB's path rewrites it: the hostPort path arrives
@@ -263,61 +162,52 @@ spec:
     # on their own side: every app namespace denies egress by default, and none of the allows
     # above reaches the pod range except the apps both files list. An app granted the whole LAN,
     # or a LAN target holding a node, comes in through a node's LAN address like any LAN device.
-    - name: ports
-      match: *app-match
-      context: *app-context
-      preconditions:
-        all:
-          - key: "{{ length(lanPorts) }}"
-            operator: GreaterThan
-            value: 0
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-ports
-        namespace: "{{ request.object.metadata.namespace }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Ingress]
-            ingress:
-              - from:
-                  - ipBlock:
-                      cidr: 0.0.0.0/0
-                ports: "{{ lanPorts }}"
-    # Backups: an app reaches the apps rest-server only once the env registers its credential
-    # (platform-backups/backups-restic-app-<name>). Removing the credential removes the allow.
-    - name: backups
-      match:
-        any:
-          - resources:
-              kinds:
-                - Secret
-              namespaces:
-                - platform-backups
-              names:
-                - backups-restic-app-*
-      generate:
-        generateExisting: true
-        synchronize: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: app-backups
-        namespace: "{{ trim_prefix(request.object.metadata.name, 'backups-restic-') }}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes: [Egress]
-            egress:
-              - to:
-                  - namespaceSelector:
-                      matchLabels:
-                        kubernetes.io/metadata.name: platform-backups
-                    podSelector:
-                      matchLabels:
-                        app.kubernetes.io/name: restic-apps
-                ports:
-                  - port: 8000
-                    protocol: TCP
+    - name: portsAllow
+      expression: >-
+        size(variables.lanPorts) > 0
+        ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                "metadata": {"name": "app-ports", "namespace": variables.ns},
+                "spec": {"podSelector": {}, "policyTypes": ["Ingress"], "ingress": [{
+                  "from": [{"ipBlock": {"cidr": "0.0.0.0/0"}}], "ports": variables.lanPorts}]}})]
+        : []
+  generate:
+    - expression: >-
+        generator.apply(variables.ns, variables.quota + variables.web + variables.internetAllow
+          + variables.lanAll + variables.lan + variables.apps + variables.callersAllow + variables.portsAllow)
+---
+# Backups: an app reaches the apps rest-server only once the env registers its credential
+# (platform-backups/backups-restic-app-<name>). Removing the credential removes the allow.
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: app-derive-backups
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  evaluation:
+    generateExisting:
+      enabled: true
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [secrets]
+  matchConditions:
+    - name: app-credential
+      expression: >-
+        object.metadata.namespace == "platform-backups"
+        && object.metadata.name.startsWith("backups-restic-app-")
+  variables:
+    - name: allow
+      expression: >-
+        {"apiVersion": dyn("networking.k8s.io/v1"), "kind": dyn("NetworkPolicy"),
+         "metadata": dyn({"name": "app-backups", "namespace": object.metadata.name.substring(15)}),
+         "spec": dyn({"podSelector": {}, "policyTypes": ["Egress"], "egress": [{
+           "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "platform-backups"}},
+                   "podSelector": {"matchLabels": {"app.kubernetes.io/name": "restic-apps"}}}],
+           "ports": [{"port": 8000, "protocol": "TCP"}]}]})}
+  generate:
+    - expression: generator.apply(object.metadata.name.substring(15), [variables.allow])

@@ -10,6 +10,8 @@
 | [../ci/README.md](../ci/README.md) | What `ci/run-checks` and the test suite do before a push |
 | [../README.md](../README.md) | What this repo is, and the hardware limits |
 | [../infra/ansible/README.md](../infra/ansible/README.md) | Node bootstrap (`site.yml`) |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to send a change |
+| [../SECURITY.md](../SECURITY.md) | How to report a vulnerability |
 | [../AGENTS.md](../AGENTS.md) | Where coding agents start |
 | [../agents/coding-agents.md](../agents/coding-agents.md) | Agent workflow |
 

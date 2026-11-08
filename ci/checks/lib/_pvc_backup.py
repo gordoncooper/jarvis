@@ -1,4 +1,4 @@
-"""The backup ClusterPolicy enrolls PVCs. Git does not write ReplicationSources."""
+"""The backup GeneratingPolicy enrolls PVCs. Git does not write ReplicationSources."""
 
 from __future__ import annotations
 
@@ -65,8 +65,8 @@ def scan_pvc_backup(
                 _POLICY_KUSTOMIZATION,
                 "cluster",
                 _POLICY_NAME,
-                "ClusterPolicy",
-                "backup enrollment ClusterPolicy is missing",
+                "GeneratingPolicy",
+                "backup enrollment GeneratingPolicy is missing",
             )
         )
 
@@ -118,33 +118,17 @@ def _enrollment_policy_listed(repo_root: Path) -> bool:
 
 
 def _is_enrollment_policy(doc: object) -> bool:
-    """The named ClusterPolicy with a rule that matches PVCs and generates a ReplicationSource."""
-    if not isinstance(doc, dict) or doc.get("kind") != "ClusterPolicy" or _name(doc) != _POLICY_NAME:
+    """The named GeneratingPolicy that matches PVCs and generates a ReplicationSource."""
+    if not isinstance(doc, dict) or doc.get("kind") != "GeneratingPolicy" or _name(doc) != _POLICY_NAME:
         return False
     spec = doc.get("spec")
-    rules = spec.get("rules") if isinstance(spec, dict) else None
-    return isinstance(rules, list) and any(
-        isinstance(rule, dict)
-        and isinstance(rule.get("generate"), dict)
-        and rule["generate"].get("kind") == "ReplicationSource"
-        and _matches_pvc(rule.get("match"))
-        for rule in rules
+    if not isinstance(spec, dict):
+        return False
+    rules = (spec.get("matchConstraints") or {}).get("resourceRules") or []
+    matches_pvc = any(
+        isinstance(rule, dict) and "persistentvolumeclaims" in (rule.get("resources") or []) for rule in rules
     )
-
-
-def _matches_pvc(match: object) -> bool:
-    """True when a `kinds` list anywhere under the rule's match names PersistentVolumeClaim."""
-    if isinstance(match, dict):
-        kinds = match.get("kinds")
-        if isinstance(kinds, list) and any(
-            isinstance(kind, str) and kind.rsplit("/", 1)[-1] == "PersistentVolumeClaim"
-            for kind in kinds
-        ):
-            return True
-        return any(_matches_pvc(value) for value in match.values())
-    if isinstance(match, list):
-        return any(_matches_pvc(item) for item in match)
-    return False
+    return matches_pvc and "ReplicationSource" in yaml.safe_dump(spec.get("variables") or [])
 
 
 def _document_violations(doc: dict[str, Any], rel_path: str) -> list[PvcBackupViolation]:

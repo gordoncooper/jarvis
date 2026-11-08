@@ -13,3 +13,7 @@ Doc index: [docs/README.md](docs/README.md).
 - NVIDIA GPUs only, and only on a host with the `gpu` role.
 
 `site.yml` checks these in its opening play, before it changes a node ([infra/ansible/README.md](infra/ansible/README.md)).
+
+## License
+
+[Apache License 2.0](LICENSE). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
