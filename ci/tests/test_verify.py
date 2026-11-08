@@ -574,6 +574,9 @@ def test_disabled_component_checks_do_not_run(
 
 
 def _enable_addons(root: Path, addons: list[str]) -> None:
+    from support import link_core_with_fixture_addons
+
+    link_core_with_fixture_addons(root)
     path = root / "envs" / "env-test" / "flux" / "kustomizations" / "services.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump({"kind": "Kustomization", "spec": {"components": addons}}), encoding="utf-8")

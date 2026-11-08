@@ -120,7 +120,7 @@ The example env declares every known role. A new known role is declared on that 
 
 The example's switches also turn on the off-host copy, `offsite-backup-copy`: `core/feature/offsite-backup-copy` and `backups-offsite`, which the owner seals with `make encrypt` rather than `make bootstrap-secrets`. The test copy seals a placeholder for it.
 
-The example's switches list the sample add-on, so CI renders an add-on. A copy empties `addons` and `apps`, takes `app-hosting` off `features`, deletes `values/apps.yaml`, re-renders, and starts core-only. The test copy seals a placeholder in each folder the sample decrypts.
+The example's switches list no add-on: the product ships none, and the tests render a copy with their sample add-on. A copy empties `addons` and `apps`, takes `app-hosting` off `features`, deletes `values/apps.yaml`, re-renders, and starts core-only. The test copy seals a placeholder in each folder the sample decrypts.
 
 ### Explicit env
 

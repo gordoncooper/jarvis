@@ -54,7 +54,11 @@ def main(argv: list[str] | None = None) -> int:
     env_dir = ROOT / "envs" / args.env
     if env_dir.exists():
         raise SystemExit(f"{env_dir} exists")
-    shutil.copytree(ROOT / "envs" / EXAMPLE, env_dir)
+    # Phase 2's gate: an env is its hand-written values, its hosts and .sops.yaml. Everything else
+    # (flux/, secrets/, ca.crt) is generated below by bootstrap-secrets and the render.
+    shutil.copytree(ROOT / "envs" / EXAMPLE, env_dir, ignore=lambda folder, names: [
+        name for name in names if Path(folder) == ROOT / "envs" / EXAMPLE and name not in ("values", "inventory")
+    ])
     for path in env_dir.rglob("*.yaml"):
         text = path.read_text(encoding="utf-8")
         if EXAMPLE in text:

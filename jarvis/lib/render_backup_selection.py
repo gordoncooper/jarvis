@@ -51,6 +51,8 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
             f"{env_dir}: backups select {enabled}, so {_switches.SWITCHES_FILE} lists "
             f"{_switches.APPS_BACKUP_SERVER} under {_switches.FEATURES}"
         )
+    # A new env has no flux/ yet: the render makes it.
+    (env_dir / "flux" / _switches.PLATFORM_CONFIGS_REL).parent.mkdir(parents=True, exist_ok=True)
     _backup_selection.write_registration_files(env_dir, enabled)
     wrapper = (_backup_selection.WRAPPER_ENTRY,) if enabled else ()
     (env_dir / "flux" / _switches.PLATFORM_CONFIGS_REL).write_text(

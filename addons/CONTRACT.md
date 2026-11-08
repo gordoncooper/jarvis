@@ -44,7 +44,7 @@ The add-on's Flux Kustomizations are Ready; `make verify` already waits on every
 - `ci/checks/addons` (the Component lists files only, its slot exists, no add-on is named `apps`, core never names an add-on, and per enabled add-on: a services stage that lists add-ons runs as the platform account, the wiring kinds, namespace names, `prune: disabled` on the wiring, the tenant's Roles and RoleBindings, each Kustomization's source, path, extra fields and `dependsOn`, and the objects its Kustomizations apply). `ci/tests/test_addons.py` seeds each failure.
 - `ci/checks/flux-identity` (the services stage may run as the platform account, the add-on's Kustomizations run as their declared tenant and never as the platform account, no path declares its own account, and only `flux-system` decrypts).
 - `ci/checks/env-schema` (unknown add-on, duplicate, slot conflict, missing sealed folder), `ci/checks/contract-md` (each add-on and slot has a `CONTRACT.md`), `ci/checks/flux-prune` and `ci/checks/flux-substitute` on each add-on Kustomization's path.
-- `ci/tests/test_addons.py` runs every env-level check on a bootstrapped copy of the example env with no add-on, and on one with the sample add-on and its sealed Secret.
+- `ci/tests/test_addons.py` runs every env-level check on a bootstrapped copy of the example env with no add-on, and on one with the tests' sample add-on and its sealed Secret.
 
 ## Limits
 

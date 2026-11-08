@@ -354,9 +354,9 @@ def test_volsync_chart_prs_name_the_vendored_crd() -> None:
     assert (ROOT / crd).is_file()
 
 
-@pytest.mark.parametrize("rel", ["core/platform/testapp/testapp.yaml", "addons/hello/app/hello.yaml"])
+@pytest.mark.parametrize("rel", ["core/platform/testapp/testapp.yaml"])
 def test_testapp_image_tag_and_digest_are_a_custom_manager(rel: str) -> None:
-    """The canary image pins, and the sample add-on's copy, are one file-scoped regex manager."""
+    """The canary image pins are one file-scoped regex manager (an add-on that runs the image joins it)."""
     source = (ROOT / rel).read_text(encoding="utf-8")
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [

@@ -1,6 +1,6 @@
 # Add an add-on
 
-An add-on is an optional piece Jarvis ships on top of core. Each env turns it on in its own repository; it is off everywhere else. The rules are in [addons/CONTRACT.md](../addons/CONTRACT.md), and [addons/hello/](../addons/hello) is a complete example.
+An add-on is an optional piece Jarvis ships on top of core. Each env turns it on in its own repository; it is off everywhere else. The rules are in [addons/CONTRACT.md](../addons/CONTRACT.md), and [ci/tests/fixtures/addons/hello/](../ci/tests/fixtures/addons/hello) is a complete example: the product ships no add-on, and the tests run every add-on rule on this one.
 
 ## Write it
 

@@ -22,7 +22,7 @@ from jarvis.lib.env import (
 from jarvis.lib.env import (
     kubectl as run_kubectl,
 )
-from jarvis.schema.env import enabled_addons
+from jarvis.schema.env import core_dir, enabled_addons
 from jarvis.verify import apps as _apps_checks  # noqa: F401
 from jarvis.verify import backups as _backups  # noqa: F401
 from jarvis.verify import platform as _platform  # noqa: F401
@@ -103,7 +103,8 @@ def run(
     try:
         if enabled is None:
             # The env's add-on list; checks for an add-on it does not enable never load.
-            enabled = load_addons(REPO_ROOT, enabled_addons(repo_root / "envs" / env))
+            # The core the env reads: the checkout running this, or a tree laid out like the artifact.
+            enabled = load_addons(core_dir(repo_root), enabled_addons(repo_root / "envs" / env))
             # Hosted-app checks only for an env that lists an app.
             apps_data, apps_errors = _apps.load_values(repo_root / "envs" / env)
             if apps_errors:
