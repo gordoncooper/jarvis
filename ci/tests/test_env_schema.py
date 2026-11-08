@@ -395,7 +395,7 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
     msg = "\n".join(excinfo.value.messages)
     assert "cluster-vars-configmap.yaml" in msg
     assert "re-render" in msg
-    assert "tools/lib/render_cluster_vars_configmap.py" in msg
+    assert "tools/render" in msg
 
 
 _OPTIONAL_CLUSTER_KEYS = (
@@ -879,7 +879,7 @@ def test_cli_requires_env() -> None:
     commands = (
         [sys.executable, "tools/bootstrap-secrets"],
         [sys.executable, "tools/seal", "--name", "example"],
-        [sys.executable, "tools/lib/render_cluster_vars_configmap.py"],
+        [sys.executable, "tools/render"],
     )
     for cmd in commands:
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)

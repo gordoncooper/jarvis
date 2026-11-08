@@ -35,7 +35,7 @@ The add-on's Flux Kustomizations are Ready; `make verify` already waits on every
 
 ## Config
 
-- Turn on: add `- <name>` under `addons` in `envs/<env>/values/switches.yaml` and run `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`. Turn off: remove the line and re-render. An empty list means core-only. `ci/checks/env-schema` rejects an unknown add-on, the same add-on twice, and two add-ons for one slot. Once the env is bootstrapped, it requires each sealed-Secret folder the add-on decrypts.
+- Turn on: add `- <name>` under `addons` in `envs/<env>/values/switches.yaml` and run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`. Turn off: remove the line and re-render. An empty list means core-only. `ci/checks/env-schema` rejects an unknown add-on, the same add-on twice, and two add-ons for one slot. Once the env is bootstrapped, it requires each sealed-Secret folder the add-on decrypts.
 - Turning an add-on off prunes its Kustomizations, and each of them prunes the workloads it applied. Its Namespaces, Secrets, tenant account, Roles and RoleBindings keep `prune: disabled` and stay until the operator deletes them ([docs/add-an-addon.md](../docs/add-an-addon.md#turn-it-off)); the leftover account holds rights only in the leftover namespaces.
 - The add-on's own settings come from `cluster-vars` keys that already exist, or from its sealed Secrets. A new env key is added to `schema/` with its first consumer.
 

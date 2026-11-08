@@ -10,7 +10,7 @@ NEED_VENV = test -x "$(VENV)/bin/python" || { echo "no venv at $(VENV): run 'mak
 export INSTANCE
 INSTANCE_ROOT = $(abspath $(or $(INSTANCE),$(CURDIR)))
 
-.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check site
+.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check render site
 help:
 	@echo "JARVIS Makefile"
 	@echo
@@ -25,6 +25,7 @@ help:
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password; APP=app-<name> mints only that hosted app's backup credential)"
 	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required; NAMESPACE=<ns> for an add-on's Secret)"
 	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
+	@echo "  make render             Render the env's generated files from its values (ENV required; CHECK=1 lists stale ones)"
 	@echo "  ALLOW_UNPINNED=1        Let site, verify, drill and restore run from a checkout that is not the env's core tag"
 	@echo "  INSTANCE=<path>         Instance checkout that holds envs/<env> and its .sops.yaml (default: this checkout)"
 	@echo
@@ -83,6 +84,11 @@ bootstrap-secrets:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
 	@"$(VENV)/bin/python" tools/bootstrap-secrets --env "$(ENV)" $(if $(filter 1,$(ROTATE_RESTIC)),--rotate-restic,) $(if $(APP),--app "$(APP)",)
+
+render:
+	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
+	@$(NEED_VENV)
+	@"$(VENV)/bin/python" tools/render --env "$(ENV)" $(if $(filter 1,$(CHECK)),--check)
 
 age-key-check:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)

@@ -21,6 +21,8 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- `tools/render --env <env>` (or `make render ENV=<env>`) renders every generated file of an env;
+  `--check` (`CHECK=1`) lists stale ones and writes nothing. It replaces `tools/lib/render_*.py`.
 - App DNS is an optional component, `app-dns` under `optional` in `values/switches.yaml`
   (`platform/optional/app-dns/`, applied with `platform-configs`). Off, the LAN's own DNS names
   apps: edge hosts keep the resolved stub, `app_dns_cluster_ip` is not required, and `make
@@ -43,6 +45,8 @@ the upgrade.
   `flux/kustomizations/platform-controllers.yaml` and `flux/kustomizations/platform-configs.yaml`;
   and render again (`tools/lib/render_switches.py`), which now writes `flux/sync.yaml` too. Move the env's core pin in
   the same commit: the env's `flux/` and core's now depend on each other.
+- Run `tools/render --env <env>` where you ran `tools/lib/render_switches.py` or
+  `render_cluster_vars_configmap.py`.
 - To keep App DNS, add `app-dns` under `optional` in `values/switches.yaml` and render again.
 - To run core's k3s release, delete `k3s_version` and `k3s_sha256` from `cluster-vars.yaml`;
   to keep your own, leave both.
