@@ -115,11 +115,19 @@ jobs:
       - name: Wait for every Kustomization and HelmRelease
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 60); do
-            if kubectl -n flux-system get kustomization flux-system >/dev/null 2>&1; then break; fi
-            sleep 10
+          # The root applies the layer Kustomizations, which apply the HelmReleases: wait for each to exist first.
+          layers="flux-system platform-controllers platform-configs services"
+          for name in ${layers}; do
+            for attempt in $(seq 1 90); do
+              kubectl -n flux-system get kustomization "${name}" >/dev/null 2>&1 && break
+              sleep 10
+            done
           done
-          kubectl wait --for=condition=Ready kustomizations.kustomize.toolkit.fluxcd.io --all -A --timeout=20m
+          for name in ${layers}; do
+            kubectl -n flux-system wait --for=condition=Ready "kustomization/${name}" --timeout=20m
+          done
+          # Every Kustomization (add-on and app wiring included) and every HelmRelease, once the layers are up.
+          kubectl wait --for=condition=Ready kustomizations.kustomize.toolkit.fluxcd.io --all -A --timeout=10m
           kubectl wait --for=condition=Ready helmreleases.helm.toolkit.fluxcd.io --all -A --timeout=10m
 
       - name: make verify
@@ -133,6 +141,7 @@ jobs:
         run: |
           kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io,gitrepositories.source.toolkit.fluxcd.io -A || true
           kubectl get pods -A || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -n 60 || true
           kubectl -n flux-system logs deploy/kustomize-controller --tail=100 || true
           kubectl -n flux-system logs deploy/helm-controller --tail=100 || true
 
