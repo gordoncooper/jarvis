@@ -12,7 +12,7 @@ spec:
   serviceAccountName: flux-platform
   # HelmRelease stays InProgress until this generation is Ready, so the gate
   # does not pass on the previous Deployments. Ready includes the admission
-  # webhooks ClusterIssuer and ClusterPolicy call, and the VolSync controller
+  # webhooks ClusterIssuer and the Kyverno policies call, and the VolSync controller
   # behind the backup objects on platform-configs.
   healthChecks:
     - apiVersion: helm.toolkit.fluxcd.io/v2

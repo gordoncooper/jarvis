@@ -42,7 +42,7 @@ SHIPPED_KINDS = frozenset(
     }
 )
 _WORKLOADS = {"Deployment", "StatefulSet", "Job", "CronJob"}
-# ClusterPolicy app-priority sets it on every workload; app-file refuses another.
+# MutatingPolicy app-priority sets it on every workload; app-file refuses another.
 PRIORITY_CLASS = "hosted-app"
 # The only router annotations an app's Ingress carries (app-file holds the same pairs).
 INGRESS_ANNOTATIONS = {

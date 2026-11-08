@@ -12,7 +12,8 @@ from ansible_role_proof import REPO_ROOT, load_cluster_vars
 from support import ExampleCopy, _kustomize_build, real_and_copy_envs, renovate_python_pattern
 
 _CONFIGS_BEFORE = {
-    ("ClusterPolicy", "", "pvc-backup"),
+    ("GeneratingPolicy", "", "pvc-backup"),
+    ("GeneratingPolicy", "", "pvc-backup-app"),
     ("CronJob", "platform-backups", "etcd-snapshots"),
     ("CronJob", "platform-backups", "restic-check"),
     ("Deployment", "platform-backups", "restic"),
@@ -46,8 +47,9 @@ _APP_HOSTING = {
     ("Certificate", "platform-cert-manager", "wildcard-apps"),
     ("ClusterRole", "", "kyverno:app-derive"),
     ("CustomResourceDefinition", "", "apps.hosting.jarvis.io"),
-    ("ClusterPolicy", "", "app-derive"),
-    ("ClusterPolicy", "", "app-priority"),
+    ("GeneratingPolicy", "", "app-derive"),
+    ("GeneratingPolicy", "", "app-derive-backups"),
+    ("MutatingPolicy", "", "app-priority"),
     ("PriorityClass", "", "hosted-app"),
     ("ValidatingAdmissionPolicy", "", "app-file"),
     ("ValidatingAdmissionPolicy", "", "app-grants"),
