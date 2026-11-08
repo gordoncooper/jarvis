@@ -11,7 +11,7 @@ from support import ExampleCopy
 def test_bootstrapped_example_env_has_every_protected_object_guarded(
     example_copy: ExampleCopy,
 ) -> None:
-    """The root path and all four layer paths build, and nothing protected is unguarded."""
+    """The root path and all three layer paths build, and nothing protected is unguarded."""
     assert scan_flux_prune(example_copy.root) == []
 
 

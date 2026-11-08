@@ -20,7 +20,7 @@ BACKUP_NONE_ALLOWED_PREFIXES: tuple[str, ...] = (
     "services/observability/victoria-logs/",
 )
 
-_HANDWRITTEN_ROOTS = ("services/", "apps/")
+_HANDWRITTEN_ROOTS = ("services/",)
 _POLICY_KUSTOMIZATION = "platform/backups/kustomization.yaml"
 _POLICY_NAME = "pvc-backup"
 _VOLSYNC_KIND = re.compile(

@@ -40,5 +40,3 @@ apps_git_repo_url: https://github.com/example-owner/example-apps
 flux_git_ref: refs/heads/example
 core_git_repo_url: https://github.com/example-owner/example-core
 core_git_ref: refs/heads/example
-
-llm_provider_host: llm.example

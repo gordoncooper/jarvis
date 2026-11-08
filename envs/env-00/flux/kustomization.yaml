@@ -9,5 +9,4 @@ resources:
 - kustomizations/platform-controllers.yaml
 - kustomizations/platform-configs.yaml
 - kustomizations/services.yaml
-- kustomizations/apps.yaml
 - generated/apps.yaml

@@ -21,9 +21,9 @@ EXAMPLE = REPO_ROOT / "envs" / "env-00"
 
 
 def _tree(tmp_path: Path) -> tuple[Path, Path]:
-    """A product copy (platform, services, apps) and an instance holding env-00 with its apps."""
+    """A product copy (platform, services) and an instance holding env-00 with its apps."""
     product, instance = tmp_path / "product", tmp_path / "instance"
-    for name in ("platform", "services", "apps"):
+    for name in ("platform", "services"):
         shutil.copytree(REPO_ROOT / name, product / name)
     (instance / "envs").mkdir(parents=True)
     shutil.copytree(EXAMPLE, instance / "envs" / "env-00")

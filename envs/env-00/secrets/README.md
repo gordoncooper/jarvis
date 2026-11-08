@@ -26,6 +26,8 @@ A hosted app that keeps data gets its own credential: `make bootstrap-secrets EN
 
 `backups-offsite` is not generated: the owner sets up the off-host target and seals it with `make seal` (`platform/backups/CONTRACT.md`, Off-host copy). This example env lists `offsite-backup-copy` under `optional` in `values/switches.yaml` to show the copy turned on; a copy that does not want it takes it off that list and re-renders.
 
+Every sealed file needs a reader. A file nothing reads (a left-over secret, or a folder no enabled add-on decrypts) fails `ci/checks/env-schema`. Delete it, or enable what uses it.
+
 ## Age-key custody
 
 Keep two copies of the one age private key. The second copy stays offline, off the controller. A second recipient in `.sops.yaml` is optional and is not required.

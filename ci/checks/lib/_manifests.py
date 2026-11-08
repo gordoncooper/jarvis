@@ -13,7 +13,7 @@ import yaml
 
 from schema.env import CORE_SOURCE_DIR, EXAMPLE_ENV, ROOT_SOURCE
 
-SCAN_ROOTS = ("apps/", "platform/", "services/", "envs/")
+SCAN_ROOTS = ("platform/", "services/", "envs/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
 FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _KUSTOMIZATION_FILES = ("kustomization.yaml", "kustomization.yml", "Kustomization")

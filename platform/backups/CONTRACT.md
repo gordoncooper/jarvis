@@ -116,7 +116,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 
 - `ci/tests/test_flux_entry.py` (SOPS-encrypted secret in Git, platform-configs decryption).
 - `ci/tests/test_restic_rest_server.py` (rest-server rules and the etcd CronJob rules) and `ci/tests/test_bootstrap_secrets.py`.
-- `ci/checks/pvc-backup` and `ci/tests/test_pvc_backup.py` (policy present, `backup: none` allow-list, no ReplicationSource in Git, no hand-written VolSync object or restic repository URL under `services/` or `apps/`).
+- `ci/checks/pvc-backup` and `ci/tests/test_pvc_backup.py` (policy present, `backup: none` allow-list, no ReplicationSource in Git, no hand-written VolSync object or restic repository URL under `services/`).
 - `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles, policy rules, `backup: paused` sets `spec.paused`).
 - `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails from mover status; `AS_OF` restores a live volume; `restore-all` keeps, retires, or lifts the hold).
 - `ci/tests/test_verify.py` (read-only, fail-closed standing checks, including enrollment freshness and the rebuild hold).

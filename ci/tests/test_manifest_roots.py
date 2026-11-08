@@ -53,13 +53,13 @@ def test_required_roots_fail_when_a_manifest_root_is_missing(tmp_path: Path, nam
         (item.rel_path if hasattr(item, "rel_path") else item.path): item
         for item in _SCANS[name](tmp_path, require_roots=True)
     }
-    assert {"apps", "services", "envs"} <= set(reasons)
+    assert {"services", "envs"} <= set(reasons)
     assert "platform" not in reasons
 
 
 @pytest.mark.parametrize("name", sorted(_SCANS))
 def test_the_check_script_requires_every_manifest_root(tmp_path: Path, name: str) -> None:
-    """The shipped check passes require_roots, so a tree missing apps/, services/ or envs/ fails."""
+    """The shipped check passes require_roots, so a tree missing services/ or envs/ fails."""
     _tree_with_platform_only(tmp_path)
     shutil.copytree(REPO_ROOT / "ci" / "checks", tmp_path / "ci" / "checks")
     # The check libraries import schema.env, which the scripts find under the repo root,

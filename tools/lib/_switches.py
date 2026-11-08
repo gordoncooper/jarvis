@@ -150,7 +150,6 @@ def root_kustomization(data: dict[str, Any], *, apps_generated: str) -> str:
         "kustomizations/platform-controllers.yaml",
         "kustomizations/platform-configs.yaml",
         SERVICES_REL,
-        "kustomizations/apps.yaml",
     ]
     if names(data, APPS):
         resources.append(apps_generated)

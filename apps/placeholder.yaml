@@ -1,8 +1,0 @@
-# Placeholder for the apps Flux stage. Hosted apps have their own wiring.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: placeholder-apps
-  namespace: default
-data:
-  reason: apps layer not deployed yet

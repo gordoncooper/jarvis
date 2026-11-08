@@ -308,12 +308,11 @@ def test_narrow_binding_for_a_tenant_elsewhere_passes(tmp_path: Path) -> None:
 
 
 def _example_tree(tmp_path: Path) -> Path:
-    """The example env's flux tree and a writable platform copy; services and apps are linked."""
+    """The example env's flux tree and a writable platform copy; services is linked."""
     root = tmp_path / "repo"
     root.mkdir()
     shutil.copytree(REPO_ROOT / "platform", root / "platform", symlinks=True)
-    for dirname in ("services", "apps"):
-        (root / dirname).symlink_to(REPO_ROOT / dirname)
+    (root / "services").symlink_to(REPO_ROOT / "services")
     shutil.copytree(REPO_ROOT / "envs" / EXAMPLE_ENV / "flux", root / "envs" / EXAMPLE_ENV / "flux")
     return root
 

@@ -225,17 +225,6 @@ def test_services_file_with_a_replication_source_fails(tmp_path: Path) -> None:
     assert "hand-written ReplicationSource" in _reasons(tmp_path)
 
 
-def test_apps_file_with_a_replication_destination_fails(tmp_path: Path) -> None:
-    _policy(tmp_path)
-    dest = tmp_path / "apps" / "demo" / "restore.yaml"
-    dest.parent.mkdir(parents=True)
-    dest.write_text(
-        "apiVersion: volsync.backube/v1alpha1\nkind: ReplicationDestination\n",
-        encoding="utf-8",
-    )
-    assert "hand-written ReplicationDestination" in _reasons(tmp_path)
-
-
 def test_services_file_with_a_restic_repository_url_fails(tmp_path: Path) -> None:
     _policy(tmp_path)
     note = tmp_path / "services" / "app" / "repo.md"
