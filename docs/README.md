@@ -5,6 +5,7 @@
 | Path | Topic |
 | --- | --- |
 | [deploy.md](deploy.md) | Fresh copy to a running, verified cluster |
+| [releasing.md](releasing.md) | Cut a core release, and move an env to it |
 | [add-an-addon.md](add-an-addon.md) | Write an add-on, and turn it on or off in an env |
 | [add-a-hosted-app.md](add-a-hosted-app.md) | Write a hosted app's folder, and turn it on or off in an env |
 | [../ci/README.md](../ci/README.md) | What `ci/run-checks` and the test suite do before a push |
