@@ -22,19 +22,20 @@ _SCANS = {
 }
 
 _POLICY = """\
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
 metadata:
   name: pvc-backup
 spec:
-  rules:
-    - name: replication-source
-      match:
-        any:
-          - resources:
-              kinds: [PersistentVolumeClaim]
-      generate:
-        kind: ReplicationSource
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [persistentvolumeclaims]
+  variables:
+    - name: source
+      expression: '{"kind": "ReplicationSource"}'
 """
 
 

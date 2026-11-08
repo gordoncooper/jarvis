@@ -36,7 +36,8 @@ PROTECTED_KINDS = frozenset(
         "OCIRepository",
         "GitRepository",
         "FluxInstance",
-        "ClusterPolicy",
+        "GeneratingPolicy",
+        "MutatingPolicy",
         "ClusterIssuer",
     }
 )
@@ -54,7 +55,6 @@ KEPT = frozenset(
     {
         ("Kustomization", FLUX_NAMESPACE, ROOT_SOURCE),
         ("ClusterRole", "", "kyverno:backup-generate"),
-        ("ClusterRole", "", "kyverno:backup-namespaces"),
         ("ConfigMap", "kube-system", "coredns-custom"),
         ("Deployment", "platform-backups", "restic"),
         ("HelmChartConfig", "kube-system", "traefik"),

@@ -21,7 +21,8 @@ if str(REPO_ROOT / "tools" / "lib") not in sys.path:
 
 import _backup_selection
 from schema.env import ValidationError, validate_env_tree, validate_one_env
-from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app, set_switches
+from _manifests import substitute
+from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, kyverno_generated, register_copy_app, set_switches
 from verify.backups import backups_checks, check_backups
 from verify.common import CheckError
 
@@ -228,20 +229,15 @@ def test_overrides_land_on_the_replication_source(tmp_path: Path) -> None:
     """Rule: an app's override reaches its ReplicationSource, one the override leaves out stays the
     env's value, and an enabled app with no override and a core PVC keep every cluster-wide value.
     The objects platform-configs renders, with the kyverno CLI standing in only for the API read."""
-    from test_app_admission import _generate_test, _pvc
+    from test_app_admission import _pvc
 
     copy = _override_copy(tmp_path, {"notes": {"backup_schedule": "15 4 * * *", "backup_retention_daily": 0, "backup_retention_weekly": 9}})
     validate_one_env(copy.root, copy.name)
     rendered = _kustomize_build(f"envs/{copy.name}/flux/platform-configs", root=copy.root)
     docs = [doc for doc in yaml.safe_load_all(rendered) if isinstance(doc, dict)]
-    data = next(doc for doc in docs if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "backup-overrides")["data"]
-    policy = next(doc for doc in docs if doc["kind"] == "ClusterPolicy" and doc["metadata"]["name"] == "pvc-backup")
     env = yaml.safe_load((copy.env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    text = yaml.safe_dump(policy)
-    for key in ("backup_schedule", "backup_retention_daily", "backup_retention_weekly", "backup_retention_monthly"):
-        text = text.replace("${" + key + "}", str(env[key]))
-    enrollment = tmp_path / "pvc-backup.yaml"
-    enrollment.write_text(text, encoding="utf-8")
+    policies = [substitute(doc, {key: str(value) for key, value in env.items() if key.startswith("backup_")})
+                for doc in docs if doc["kind"] == "GeneratingPolicy" and doc["metadata"]["name"].startswith("pvc-backup")]
 
     def source(claim: dict, schedule: str, daily: int, weekly: int, monthly: int) -> dict:
         name, namespace = claim["metadata"]["name"], claim["metadata"]["namespace"]
@@ -256,17 +252,19 @@ def test_overrides_land_on_the_replication_source(tmp_path: Path) -> None:
         claim["metadata"]["name"] = f"data-{claim['metadata']['namespace']}"
         claim["spec"]["volumeName"] = "pv-1"
     defaults = (env["backup_schedule"], env["backup_retention_daily"], env["backup_retention_weekly"], env["backup_retention_monthly"])
-    # plain reads what a missing ConfigMap gives (the apiCall default); core reads one with no entry for it.
-    values = {"policies": [{"name": "pvc-backup", "resources": [
-        {"name": claim["metadata"]["name"], "values": {"appCredential": "true", "rebuildHold": "false", "backupOverrides": read}}
-        for claim, read in ((overridden, data), (plain, {}), (core, data))
-    ]}]}
-    namespaces = [{"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": claim["metadata"]["namespace"]}} for claim in (overridden, plain, core)]
-    _generate_test(tmp_path, enrollment, [overridden, plain, core, *namespaces], values, [
-        ("replication-source-app", (overridden, source(overridden, "15 4 * * *", 0, 9, env["backup_retention_monthly"]))),
-        ("replication-source-app", (plain, source(plain, *defaults))),
-        ("replication-source", (core, source(core, *defaults))),
-    ])
+    overrides = next(doc for doc in docs if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "backup-overrides")
+    credential = lambda name: {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": "platform-backups"},  # noqa: E731
+                               "data": {key: "eA==" for key in ("RESTIC_REPOSITORY", "RESTIC_PASSWORD", "RESTIC_REST_USERNAME", "RESTIC_REST_PASSWORD")}}
+    cluster = [overrides, credential("backups-restic"), credential("backups-restic-app-notes"), credential("backups-restic-app-web-demo"),
+               *({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": claim["metadata"]["namespace"]}} for claim in (overridden, plain, core))]
+    made = {(doc["metadata"]["namespace"], doc["metadata"]["name"]): doc
+            for doc in kyverno_generated(tmp_path / "enroll", policies, [overridden, plain, core], cluster)
+            if doc["kind"] == "ReplicationSource"}
+    assert made == {
+        ("app-notes", "data-app-notes"): source(overridden, "15 4 * * *", 0, 9, env["backup_retention_monthly"]),
+        ("app-web-demo", "data-app-web-demo"): source(plain, *defaults),
+        ("monitoring", "data-monitoring"): source(core, *defaults),
+    }
 
 
 def test_no_override_renders_no_configmap(tmp_path: Path) -> None:

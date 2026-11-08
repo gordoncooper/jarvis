@@ -1,5 +1,4 @@
-# Chart roles aggregate these. The background core role can get a Namespace, not update one.
-# Prune stays off so a path move cannot drop the backup permissions.
+# Chart roles aggregate these. Prune stays off so a path move cannot drop the backup permissions.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -13,25 +12,11 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # pvc-backup reads kube-system/backup-rebuild-hold and platform-backups/backup-overrides. A forbidden
-  # GET is the same as a missing ConfigMap (not paused, no override).
+  # pvc-backup lists kube-system and platform-backups ConfigMaps for backup-rebuild-hold and
+  # backup-overrides. A list cannot be narrowed by resourceNames.
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["backup-rebuild-hold", "backup-overrides"]
-    verbs: ["get"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["volsync.backube"]
     resources: ["replicationsources"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kyverno:backup-namespaces
-  annotations:
-    kustomize.toolkit.fluxcd.io/prune: disabled
-  labels:
-    rbac.kyverno.io/aggregate-to-background-controller: "true"
-rules:
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "update", "patch"]

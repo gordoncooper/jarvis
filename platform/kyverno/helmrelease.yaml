@@ -1,11 +1,11 @@
-# Kyverno 1.19.2, chart 3.9.2. Classic ClusterPolicy only.
+# Kyverno 1.19.2, chart 3.9.2. CEL policies (policies.kyverno.io) only; no ClusterPolicy.
 # Reports and cleanup controllers are off. Admission and background stay on.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: kyverno
   namespace: flux-system
-  # The crds subchart templates ClusterPolicy. Uninstall deletes that CRD and every ClusterPolicy.
+  # The crds subchart templates the policy CRDs. Uninstall deletes them and every policy.
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:

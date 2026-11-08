@@ -21,7 +21,7 @@ APPS_SERVER_DIR = "platform/optional/apps-backup-server"
 CREDENTIALS_MOUNT = "/credentials"
 # Registration Components live under envs/<env>/flux/platform-configs/<REGISTRATION_DIR>/<namespace>.
 REGISTRATION_DIR = "backups"
-# ConfigMap in platform-backups that ClusterPolicy pvc-backup reads for per-app schedule and retention.
+# ConfigMap in platform-backups that GeneratingPolicy pvc-backup-app reads for per-app schedule and retention.
 OVERRIDES_CONFIGMAP = "backup-overrides"
 
 
