@@ -88,6 +88,8 @@ jobs:
           k3d cluster create "${E2E_ENV}" --image "${image}" --wait --timeout 300s \
             --k3s-arg "--cluster-cidr=$(read_var pod_cidr)@server:0" \
             --k3s-arg "--service-cidr=$(read_var service_cidr)@server:0" \
+            --k3s-arg "--cluster-init@server:0" \
+            --k3s-arg "--etcd-snapshot-dir=$(read_var backup_path)/etcd-snapshots@server:0" \
             --kubeconfig-update-default=false --kubeconfig-switch-context=false
           k3d kubeconfig get "${E2E_ENV}" > "${KUBECONFIG}"
           chmod 600 "${KUBECONFIG}"
@@ -137,6 +139,14 @@ jobs:
 
       - name: make verify
         run: make verify ENV="${E2E_ENV}" ALLOW_UNPINNED=1
+
+      - name: Take an etcd snapshot and copy it, as the schedules would
+        run: |
+          set -euo pipefail
+          # k3s's own schedule is every 12 h and the copy runs after it; the drill restores the newest copy.
+          docker exec "k3d-${E2E_ENV}-server-0" k3s etcd-snapshot save --name e2e
+          kubectl -n platform-backups create job etcd-snapshots-e2e --from=cronjob/etcd-snapshots
+          kubectl -n platform-backups wait --for=condition=complete job/etcd-snapshots-e2e --timeout=10m
 
       - name: make drill
         run: make drill ENV="${E2E_ENV}" ALLOW_UNPINNED=1
