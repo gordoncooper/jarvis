@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Which pytest files a pull request needs, from the files it changes.
+
+  ci/select-tests --branch <head branch> <changed file>...
+
+Prints one line: "none", "all", or the test files to run, space-separated.
+
+- Only docs changed (*.md, LICENSE): none. The rule checks still run.
+- A Renovate branch (renovate/*): the tests tied to each changed file. A file this cannot
+  place runs everything.
+- Any other branch: all. Its own tests are what the change has to pass.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TESTS = ROOT / "ci" / "tests"
+DOC_SUFFIXES = (".md",)
+DOC_FILES = {"LICENSE"}
+
+# Files a Renovate PR changes whose tests are not found by name (below).
+_MAPPED = {
+    "tools/versions.env": [
+        "test_install_deps.py", "test_renovate.py", "test_app_admission.py",
+        "test_app_admission_apiserver.py", "test_rest_server_isolation.py", "test_restic_rest_server.py",
+    ],
+    "renovate.json": ["test_renovate.py"],
+    "infra/ansible/roles/flux-operator/defaults/main.yml": ["test_flux_operator.py", "test_renovate.py"],
+}
+# A change here can reach any test.
+_EVERYTHING = ("requirements-dev.txt", "pytest.ini", "ci/tests/support.py", "ci/tests/conftest.py")
+
+
+def _is_doc(path: str) -> bool:
+    return path.endswith(DOC_SUFFIXES) or path in DOC_FILES
+
+
+def _naming_tests(path: str) -> set[str]:
+    """Test files whose source names the changed file, or its folder for a manifest."""
+    needles = {path}
+    if path.startswith(("platform/", "services/")):
+        needles.add(str(Path(path).parent))
+    return {
+        test.name
+        for test in sorted(TESTS.glob("test_*.py"))
+        if any(needle in test.read_text(encoding="utf-8", errors="ignore") for needle in needles)
+    }
+
+
+def select(branch: str, changed: list[str]) -> str:
+    changed = [path for path in changed if path]
+    if not changed:
+        return "all"
+    code = [path for path in changed if not _is_doc(path)]
+    if not code:
+        return "none"
+    if not branch.startswith("renovate/"):
+        return "all"
+    chosen: set[str] = set()
+    for path in code:
+        if path in _EVERYTHING:
+            return "all"
+        if path.startswith("ci/tests/") and path.endswith(".py"):
+            chosen.add(Path(path).name)
+            continue
+        found = set(_MAPPED.get(path, ())) | _naming_tests(path)
+        if not found:
+            return "all"
+        chosen |= found
+    # Renovate's own managers read the pin that moved.
+    chosen.add("test_renovate.py")
+    # Every manifest change also passes the manifest rules and the flux render.
+    if any(path.startswith(("platform/", "services/", "envs/")) for path in code):
+        chosen |= {"test_digest_pin.py", "test_manifest_lint.py", "test_flux_entry.py"}
+    present = {test.name for test in TESTS.glob("test_*.py")}
+    return " ".join(f"ci/tests/{name}" for name in sorted(chosen & present)) or "all"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--branch", required=True)
+    parser.add_argument("changed", nargs="*")
+    args = parser.parse_args(argv)
+    print(select(args.branch, args.changed))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

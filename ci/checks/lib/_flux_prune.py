@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from _manifests import flux_paths, kind_of, kustomize_build
-from schema.env import ROOT_SOURCE
+from schema.env import ROOT_SOURCE, env_flux_dirs
 
 PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 FLUX_NAMESPACE = "flux-system"
@@ -70,7 +70,7 @@ class FluxPruneViolation:
 
 def scan_flux_prune(repo_root: Path | str) -> list[FluxPruneViolation]:
     root = Path(repo_root).resolve()
-    flux_dirs = sorted(path for path in root.glob("envs/*/flux") if path.is_dir())
+    flux_dirs = env_flux_dirs(root)
     if not flux_dirs:
         return [FluxPruneViolation("envs", "no envs/<env>/flux tree to check")]
     violations: list[FluxPruneViolation] = []
