@@ -16,3 +16,7 @@ flux_sync_file: "{{ jarvis_env_dir }}/flux/sync.yaml"
 # `k3s` line of the release's sha256sum-amd64.txt, bumped by hand in the version's PR).
 k3s_version: v1.36.5+k3s1
 k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
+# The env's values/switches.yaml (empty until it exists), and whether it lists App DNS: only then
+# do edge hosts hand DNS to it (base-os).
+jarvis_switches: "{{ (lookup('file', jarvis_env_dir ~ '/values/switches.yaml', errors='ignore') | default('', true) | from_yaml) or {} }}"
+app_dns_enabled: "{{ 'app-dns' in (jarvis_switches.optional | default([], true)) }}"

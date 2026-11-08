@@ -50,19 +50,25 @@ jobs:
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
           echo "e2e runs: ${run}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
-  e2e:
+  cluster:
     needs: changes
     # Only a change that reaches the cluster. A fork cannot push the temporary branch.
     if: >-
       needs.changes.outputs.run == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    name: cluster (app-dns ${{ matrix.app_dns }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Core with App DNS and without it: off, verify reaches Traefik's address directly.
+    strategy:
+      fail-fast: false
+      matrix:
+        app_dns: ["on", "off"]
     env:
       E2E_ENV: e2e
       # The apps env-00 lists, at the tags its values/apps.yaml pins.
       APPS_URL: https://github.com/${{ github.repository_owner }}/jarvis-apps
-      E2E_BRANCH: e2e/${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_BRANCH: e2e/${{ github.run_id }}-${{ github.run_attempt }}-app-dns-${{ matrix.app_dns }}
       KUBECONFIG: /home/runner/.kube/jarvis-e2e.yaml
     steps:
       - name: Checkout
@@ -100,6 +106,8 @@ jobs:
           echo "APPS_REPO=${RUNNER_TEMP}/apps" >> "${GITHUB_ENV}"
 
       - name: Make the throwaway env and push its branch
+        env:
+          APP_DNS_FLAG: ${{ matrix.app_dns == 'on' && '--app-dns' || '' }}
         run: |
           set -euo pipefail
           export PATH="${HOME}/.local/bin:${PATH}"
@@ -113,7 +121,7 @@ jobs:
             --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
             --ref "refs/heads/${E2E_BRANCH}" --core-ref "${core_ref}" \
             --apps-url "${APPS_URL}" --key-file "${RUNNER_TEMP}/age.key" \
-            --node "k3d-${E2E_ENV}-server-0"
+            --node "k3d-${E2E_ENV}-server-0" ${APP_DNS_FLAG}
           git config user.name "e2e"
           git config user.email "e2e@users.noreply.github.com"
           git checkout -b "${E2E_BRANCH}"
@@ -250,3 +258,15 @@ jobs:
       - name: Delete the temporary branch
         if: always()
         run: git push -q origin --delete "${E2E_BRANCH}" || true
+
+  # The required check: green when every cluster leg passed, or when the change reaches no cluster.
+  e2e:
+    needs: [changes, cluster]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every cluster leg passed, or none ran
+        env:
+          RESULT: ${{ needs.cluster.result }}
+          CHANGES: ${{ needs.changes.result }}
+        run: test "${CHANGES}" = success && { test "${RESULT}" = success || test "${RESULT}" = skipped; }

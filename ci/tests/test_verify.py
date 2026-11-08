@@ -91,6 +91,9 @@ class Cluster:
         self.calls.append(argv)
         if argv[:3] == ["get", "configmap", "cluster-vars"]:
             return _completed(argv, {"data": {"jarvis_env": self.marker}})
+        if argv[:5] == ["get", "service", "-n", "kube-system", "traefik"]:
+            # An env with no App DNS: verify reaches Traefik's ServiceLB address.
+            return _completed(argv, {"status": {"loadBalancer": {"ingress": [{"ip": "192.0.2.10"}]}}})
         if argv[0] == "get" and argv[1] in verify_tool.FLUX_RESOURCES:
             return _completed(argv, {"items": [] if self.flux_empty else [{}]})
         if argv[0] == "wait":
@@ -255,12 +258,12 @@ def _run(
         cluster.kubectl,
         fetch
         or (
-            lambda host, ca: (
+            lambda host, ca, *address: (
                 fetch_code,
                 "testapp\n" if not fetch_code else "certificate rejected",
             )
         ),
-        issuer or (lambda host, ca: (0, "issuer=CN = fixture-ca")),
+        issuer or (lambda host, ca, *address: (0, "issuer=CN = fixture-ca")),
         now=NOW,
         enabled=enabled,
     )
@@ -1010,8 +1013,8 @@ def test_sleeping_kubectl_times_out_cleanly(
         tmp_path,
         "env-test",
         kubectl,
-        lambda host, ca: (0, "testapp\n"),
-        lambda host, ca: (0, "issuer=CN = fixture-ca"),
+        lambda host, ca, *address: (0, "testapp\n"),
+        lambda host, ca, *address: (0, "issuer=CN = fixture-ca"),
         now=NOW,
     )
     captured = capsys.readouterr()
@@ -1055,7 +1058,7 @@ def test_failed_certificate_chain_fails(
             tmp_path,
             Cluster(),
             monkeypatch,
-            issuer=lambda host, ca: (1, "verify error:num=19:self signed certificate"),
+            issuer=lambda host, ca, *address: (1, "verify error:num=19:self signed certificate"),
         )
         != 0
     )
@@ -1072,7 +1075,7 @@ def test_wrong_canary_body_fails(
             tmp_path,
             Cluster(),
             monkeypatch,
-            fetch=lambda host, ca: (0, "not-the-canary\n"),
+            fetch=lambda host, ca, *address: (0, "not-the-canary\n"),
         )
         != 0
     )
@@ -1131,3 +1134,31 @@ def test_verify_starts_from_its_real_entry_point(tmp_path: Path) -> None:
         cwd=tmp_path, env=env, capture_output=True, text=True,
     )
     assert done.returncode == 0, done.stderr
+
+
+def test_https_without_app_dns_connects_to_traefiks_address(tmp_path: Path) -> None:
+    """Rule: with no App DNS, the canary and its certificate are read at Traefik's address."""
+    from jarvis.verify import platform as verify_platform
+
+    env = tmp_path / "envs" / "env-test"
+    env.mkdir(parents=True)
+    (env / "ca.crt").write_text("ca\n", encoding="utf-8")
+    seen: list[tuple] = []
+    canary = "testapp\n"
+
+    def fetch(host, ca, *address):
+        seen.append(("fetch", host, *address))
+        return 0, canary
+
+    def issuer(host, ca, *address):
+        seen.append(("issuer", host, *address))
+        return 0, "issuer=CN = fixture-ca"
+
+    cluster = Cluster()
+    address = verify_platform.traefik_address(cluster.kubectl)
+    assert address == "192.0.2.10"
+    verify_platform.check_https(tmp_path, "env-test", "env-test.example", fetch, issuer, address=address)
+    assert seen == [("fetch", "testapp.env-test.example", address), ("issuer", "testapp.env-test.example", address)]
+    seen.clear()
+    verify_platform.check_https(tmp_path, "env-test", "env-test.example", fetch, issuer)
+    assert seen == [("fetch", "testapp.env-test.example"), ("issuer", "testapp.env-test.example")]

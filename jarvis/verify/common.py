@@ -13,8 +13,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from jarvis.lib.env import json_object
 
 Kubectl = Callable[..., CompletedProcess[str]]
-Fetch = Callable[[str, Path], tuple[int, str]]
-Issuer = Callable[[str, Path], tuple[int, str]]
+# (host, ca_file[, address]): an address connects there in place of resolving host.
+Fetch = Callable[..., tuple[int, str]]
+Issuer = Callable[..., tuple[int, str]]
 
 
 class CheckError(Exception):

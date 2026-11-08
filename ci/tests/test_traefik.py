@@ -22,7 +22,7 @@ _CHECKED_LINE = re.compile(
 def test_traefik_helmchartconfig_rules() -> None:
     docs = [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build("platform"))
+        for doc in yaml.safe_load_all(_kustomize_build("platform") + "\n---\n" + _kustomize_build("platform/optional/app-dns"))
         if isinstance(doc, dict)
     ]
     assert not any(

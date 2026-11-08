@@ -2,6 +2,8 @@
 
 A second CoreDNS, with the k8s_gateway plugin, answers `${dns_suffix}` from Ingress routes. Cluster DNS forwards that zone here.
 
+Optional: an env turns it on with `app-dns` under `optional` in `values/switches.yaml`, which adds this folder to its `platform-configs` and needs `app_dns_cluster_ip`. Only then do edge hosts move their DNS off the systemd-resolved stub (base-os), so ServiceLB can take port 53. Off, the LAN's own DNS names apps (a wildcard for `${dns_suffix}` at an edge host), and `make verify` reaches the canary at Traefik's ServiceLB address.
+
 ## Offers
 
 - Names from Ingress `spec.rules[*].host` in `${dns_suffix}`.

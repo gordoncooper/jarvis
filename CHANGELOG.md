@@ -21,6 +21,10 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- App DNS is an optional component, `app-dns` under `optional` in `values/switches.yaml`
+  (`platform/optional/app-dns/`, applied with `platform-configs`). Off, the LAN's own DNS names
+  apps: edge hosts keep the resolved stub, `app_dns_cluster_ip` is not required, and `make
+  verify` reaches the canary at Traefik's address. e2e runs core both ways.
 - Core sets the k3s release every env runs (`k3s_version` and `k3s_sha256` in
   `infra/ansible/group_vars/all.yml`); an env overrides it by setting both in `cluster-vars.yaml`.
   Renovate bumps core's.
@@ -39,6 +43,7 @@ the upgrade.
   `flux/kustomizations/platform-controllers.yaml` and `flux/kustomizations/platform-configs.yaml`;
   and render again (`tools/lib/render_switches.py`), which now writes `flux/sync.yaml` too. Move the env's core pin in
   the same commit: the env's `flux/` and core's now depend on each other.
+- To keep App DNS, add `app-dns` under `optional` in `values/switches.yaml` and render again.
 - To run core's k3s release, delete `k3s_version` and `k3s_sha256` from `cluster-vars.yaml`;
   to keep your own, leave both.
 

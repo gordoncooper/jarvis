@@ -106,13 +106,13 @@
     - base-os
     - time
 
-# Edge only. ServiceLB requests hostPort 53 with no hostIP, and the portmap
+# Edge hosts with App DNS on only. ServiceLB requests hostPort 53 with no hostIP, and the portmap
 # DNAT sends locally generated traffic for the stub at 127.0.0.53 to App DNS.
 # systemd-resolved.service(8): with the stub off, resolv.conf points at the
 # upstream list resolved already uses. A later site.yml applies this when a
 # host joins edge. Leaving edge does not turn the stub back on.
 - name: Keep edge host DNS off the resolved stub
-  when: "'edge' in group_names"
+  when: "'edge' in group_names and app_dns_enabled | bool"
   tags:
     - base-os
     - resolved

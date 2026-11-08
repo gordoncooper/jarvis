@@ -49,7 +49,7 @@ One short file, names only, one per line. Core is on in every env, so it has no 
 
 | Section | Names | Notes |
 | --- | --- | --- |
-| `optional` | `app-hosting`, `offsite-backup-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `jarvis/lib/switches.py` and no bundle to any env. Observability is an optional core component too, not an add-on: off until an env lists `observability` here, a name refused until it is built ([platform/optional/CONTRACT.md](../platform/optional/CONTRACT.md)). |
+| `optional` | `app-dns` (needs `app_dns_cluster_ip`), `app-hosting`, `offsite-backup-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. An optional core component adds one row to `OPTIONAL_COMPONENTS` in `jarvis/lib/switches.py` and no bundle to any env. Observability is an optional core component too, not an add-on: off until an env lists `observability` here, a name refused until it is built ([platform/optional/CONTRACT.md](../platform/optional/CONTRACT.md)). |
 | `addons` | A folder under core's `services/`. | Limited-tenant swappable services ([services/CONTRACT.md](../services/CONTRACT.md)). At most one per slot. |
 | `apps` | A folder in the apps repository. | Hosted apps: untrusted, held to their app file by the cluster ([platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md)). Listing a name switches an app on and grants it nothing; a new app in that repository never deploys until an env lists it. |
 
@@ -74,7 +74,7 @@ A required key that is present but null counts as unset and fails.
 | `k3s_sha256` | no (set with `k3s_version`) | SHA-256 of that `k3s` amd64 release binary (verified on install). |
 | `pod_cidr` | yes | Pod network CIDR; an IP network, set once per env. |
 | `service_cidr` | yes | Service network CIDR; an IP network, set once per env. |
-| `app_dns_cluster_ip` | yes | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |
+| `app_dns_cluster_ip` | no (yes when `values/switches.yaml` lists `app-dns`) | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |
 | `local_path_data` | yes | k3s local-path provisioner data directory. A subdirectory of `/var/lib/jarvis`, not that mount itself. |
 | `flux_git_repo_url` | yes | The env repository, the root `GitRepository` in `flux/sync.yaml`. `https://` (no userinfo, query, or fragment) or `ssh://<user>@<host>/<owner>/<repo>` read with the sealed deploy key; owner/repo path. |
 | `apps_git_repo_url` | no (yes when `values/switches.yaml` lists an app) | An https Git remote for the apps repository, read with no credential, with the same owner handle as `flux_git_repo_url`. Each listed app's sources read it ([platform/optional/app-hosting/CONTRACT.md](../platform/optional/app-hosting/CONTRACT.md)). When unset, the env owner is the `flux_git_repo_url` handle. |

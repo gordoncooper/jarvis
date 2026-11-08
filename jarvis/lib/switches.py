@@ -35,7 +35,11 @@ OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
 APPS_BACKUP_SERVER = "apps-backup-server"
 _CORE_PATH = "../../../../core/"
 # What each optional core component adds to the env's platform-configs. One name, one row.
+# App DNS (k8s_gateway): the LAN resolves app hostnames through it. Off, the LAN's own DNS does.
+APP_DNS = "app-dns"
+APP_DNS_DIR = "platform/optional/app-dns"
 OPTIONAL_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
+    APP_DNS: {"resources": (_CORE_PATH + APP_DNS_DIR,)},
     APP_HOSTING: {"components": (_CORE_PATH + APP_HOSTING_DIR,)},
     OFFSITE_COPY: {"resources": (_CORE_PATH + OFFSITE_COPY_DIR, f"../../secrets/{OFFSITE_SECRET_FILE}")},
     APPS_BACKUP_SERVER: {"resources": (_CORE_PATH + _app_backups.APPS_SERVER_DIR,)},

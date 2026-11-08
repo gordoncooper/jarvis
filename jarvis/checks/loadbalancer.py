@@ -1,7 +1,7 @@
 """The only LoadBalancer Services are Traefik and App DNS.
 
 Traefik is the HelmChartConfig under platform/traefik/. App DNS is the
-HelmRelease under platform/app-dns/. The allow-list is those two objects by
+HelmRelease under platform/optional/app-dns/. The allow-list is those two objects by
 (kind, namespace, name), each in its own folder. The check does not match a
 DNS name or an address.
 """
@@ -16,7 +16,7 @@ from jarvis.checks.manifests import helm_values, load_documents, ref_of
 
 ALLOWED: dict[tuple[str, str, str], str] = {
     ("HelmChartConfig", "kube-system", "traefik"): "platform/traefik/",
-    ("HelmRelease", "flux-system", "k8s-gateway"): "platform/app-dns/",
+    ("HelmRelease", "flux-system", "k8s-gateway"): "platform/optional/app-dns/",
 }
 
 

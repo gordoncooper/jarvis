@@ -166,7 +166,7 @@
     {
       "customType": "regex",
       "description": "k8s-gateway OCI chart pin.",
-      "managerFilePatterns": ["/^platform\\/app-dns\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^platform\\/optional\\/app-dns\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
@@ -175,7 +175,7 @@
       "customType": "regex",
       "description": "k8s_gateway image tag and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/app-dns\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^platform\\/optional\\/app-dns\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>codeberg\\.org/k8s-gateway/k8s_gateway)\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ]

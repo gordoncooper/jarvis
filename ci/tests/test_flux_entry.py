@@ -255,8 +255,9 @@ def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list
 
 def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     """The env's platform-configs path is platform/configs plus that env's SOPS secrets,
-    and the opt-in off-host copy. Its components (app hosting, app backup registrations) are
+    and the opt-in off-host copy and App DNS. Its components (app hosting, app backup registrations) are
     env-schema's."""
+    from jarvis.lib.switches import APP_DNS_DIR
     from jarvis.schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
 
     base = f"envs/{env}/flux/platform-configs"
@@ -271,7 +272,7 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     others = [
         item
         for item in resources
-        if item not in (configs, f"{CORE_SOURCE_DIR}/{OFFSITE_COPY_DIR}")
+        if item not in (configs, f"{CORE_SOURCE_DIR}/{OFFSITE_COPY_DIR}", f"{CORE_SOURCE_DIR}/{APP_DNS_DIR}")
         and not (posixpath.dirname(item) == f"envs/{env}/secrets" and item.endswith(".sops.yaml"))
     ]
     if others:

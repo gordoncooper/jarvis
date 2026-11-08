@@ -1,10 +1,11 @@
 # What this env enables, by name only. tools/lib/render_switches.py renders the Flux wiring from
 # it (schema/CONTRACT.md); an unknown name fails. Everything else about a piece is in its own file.
-# Core is on in every env, so it is not listed. optional is off until listed (app-hosting, offsite-backup-copy,
-# apps-backup-server).
+# Core is on in every env, so it is not listed. optional is off until listed (app-dns, app-hosting,
+# offsite-backup-copy, apps-backup-server).
 # This example lists the sample add-on and apps so CI renders them; a new env empties addons and apps
 # (docs/deploy.md).
 optional:
+  - app-dns
   - app-hosting
   - offsite-backup-copy
 addons:
