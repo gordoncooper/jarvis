@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Install pinned sops, age, age-keygen, gitleaks, kustomize, kubeconform, kubectl, restic,
-rest-server and the kyverno CLI into ~/.local/bin."""
+rest-server and the kyverno CLI into ~/.local/bin.
+
+    tools/install-deps [tool...]
+
+Names (sops, age, kubectl, restic, or a tarball CLI) install only those; none installs all."""
 
 from __future__ import annotations
 
@@ -344,18 +348,30 @@ def install_age(versions: dict[str, str], arch: str, dest_dir: Path) -> None:
             )
 
 
-def main() -> None:
+def _installers() -> dict[str, Callable[[dict[str, str], str, Path], None]]:
+    installers: dict[str, Callable[[dict[str, str], str, Path], None]] = {
+        "sops": install_sops, "age": install_age, "kubectl": install_kubectl, "restic": install_restic,
+    }
+    for cli_name, spec in TARBALL_INSTALLS.items():
+        installers[cli_name] = lambda versions, arch, dest, name=cli_name, spec=spec: install_tarball_cli(
+            name, spec, versions, arch, dest
+        )
+    return installers
+
+
+def main(argv: list[str] | None = None) -> None:
+    names = sys.argv[1:] if argv is None else argv
+    installers = _installers()
+    unknown = [name for name in names if name not in installers]
+    if unknown:
+        raise SystemExit(f"install-deps: unknown tool {', '.join(unknown)} (known: {', '.join(installers)})")
     if sys.platform != "linux":
         raise SystemExit("install-deps supports linux only")
     require_system_tools()
     versions = load_versions(VERSIONS_FILE)
     arch = linux_arch()
-    install_sops(versions, arch, INSTALL_DIR)
-    install_age(versions, arch, INSTALL_DIR)
-    install_kubectl(versions, arch, INSTALL_DIR)
-    install_restic(versions, arch, INSTALL_DIR)
-    for cli_name, spec in TARBALL_INSTALLS.items():
-        install_tarball_cli(cli_name, spec, versions, arch, INSTALL_DIR)
+    for name in names or installers:
+        installers[name](versions, arch, INSTALL_DIR)
     print(f"done; ensure {INSTALL_DIR} is on PATH")
 
 

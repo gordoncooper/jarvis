@@ -92,3 +92,17 @@ def test_apt_refreshes_once_and_asks_for_yaml_but_not_bcrypt(
     assert "python3-yaml" in installs[0]
     assert "python3-venv" in installs[0]
     assert "python3-bcrypt" not in installs[0]
+
+
+def test_named_tools_install_alone_and_an_unknown_name_installs_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: install-deps <tool>... installs only those, and an unknown name fails before any download."""
+    mod = _load_module()
+    calls: list[str] = []
+    monkeypatch.setattr(mod, "require_system_tools", lambda: None)
+    monkeypatch.setattr(mod, "install_sops", lambda *args: calls.append("sops"))
+    monkeypatch.setattr(mod, "install_tarball_cli", lambda name, *args: calls.append(name))
+    mod.main(["kyverno", "kustomize"])
+    assert calls == ["kyverno", "kustomize"]
+    with pytest.raises(SystemExit, match="unknown tool helm"):
+        mod.main(["helm"])
+    assert calls == ["kyverno", "kustomize"]

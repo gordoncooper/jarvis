@@ -13,11 +13,30 @@ the upgrade.
   not the env's tag (another commit, uncommitted changes, or a branch ref); `ALLOW_UNPINNED=1`
   warns instead.
 - A pushed `v*` tag publishes a GitHub release whose notes are that tag's section here.
+- Hosted apps run at a pinned tag: `versions:` in `values/apps.yaml` pins each listed app
+  (`<app>: v<x.y.z>` for the apps repository's tag `<app>/v<x.y.z>`). The wiring deploys that tag,
+  and eligibility and app checks read the app at it. A merge to the apps repository changes no env
+  until its pin moves.
+- `renovate/instance.json`, a Renovate preset for instance repositories: one PR per core tag, k3s,
+  Flux and app pin.
+- The app-check Action (`.github/actions/app-check`): an apps repository checks every app folder
+  against a core tag's rules with `uses: <owner>/jarvis/.github/actions/app-check@<tag>`.
+  `tools/app-check --repo <dir>` and `tools/install-deps <tool>...` back it.
+- `flux_known_hosts` in `cluster-vars.yaml`: the SSH host keys Flux trusts for an `ssh://` root
+  (unset: GitHub's published key).
+- `ENVS=<env>...` limits the env-level checks to those envs.
+- An e2e job brings a k3d cluster up with Flux from the PR's commit, runs `make verify` and `make
+  drill`, and is a required check.
 
 ### Upgrading
 
 - Set `core_git_ref` (cluster-vars) and the core `GitRepository` `spec.ref.name` (`flux/sync.yaml`)
   to `refs/tags/<tag>`, and run tools from a checkout of that tag.
+- An env that lists apps adds `versions:` to `values/apps.yaml` with a pin for each, then renders
+  again (`tools/lib/render_switches.py`). The instance's apps checkout needs the apps repository's
+  tags (`ci/checkout-apps-for-instance.sh` fetches them).
+- An instance using the Renovate preset adds a rule naming its apps repository for the app pins
+  ([docs/deploy.md](docs/deploy.md), step 9).
 
 ## v0.2.0
 

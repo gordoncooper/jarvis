@@ -1,5 +1,5 @@
-"""The jarvis-apps examples (copied under fixtures/app-hosting/jarvis-apps, held equal to the apps
-repository by its CI) against jarvis's own tools.
+"""The jarvis-apps examples env-00 lists (a snapshot under fixtures/app-hosting/jarvis-apps; the
+apps repository owns them and checks its own with the app-check Action) against jarvis's own tools.
 
 env-00 lists hello-web, notes and lan-demo with lan-demo's exception line, so:
 - tools/app-check passes each folder;
@@ -12,6 +12,8 @@ env-00 lists hello-web, notes and lan-demo with lan-demo's exception line, so:
 from __future__ import annotations
 
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -91,3 +93,21 @@ def test_host_path_refused_without_a_host_path_line(tmp_path: Path, monkeypatch:
     deployment = next(doc for doc in admission._mutated(tmp_path, admission._deploy("hello-web")) if doc["kind"] == "Deployment")
     deployment["spec"]["template"]["spec"]["volumes"].append({"name": "h", "hostPath": {"path": "/srv"}})
     admission._run(tmp_path, "host-path", None, [(deployment, admission.BOTH_FAIL)])
+
+
+def test_app_check_repo_mode_checks_every_folder_but_the_excluded(tmp_path: Path) -> None:
+    """Rule: app-check --repo checks every non-hidden top-level folder; one without app.yaml fails
+    unless --exclude names it."""
+    repo = tmp_path / "apps"
+    shutil.copytree(EXAMPLES, repo)
+    (repo / "ci").mkdir()
+    (repo / ".github").mkdir()
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(REPO_ROOT / "tools" / "app-check"), "--repo", str(repo), *args],
+                              capture_output=True, text=True, check=False)
+
+    refused = run()
+    assert refused.returncode == 1 and "ci" in refused.stdout and "app.yaml" in refused.stdout, refused.stdout
+    passed = run("--exclude", "ci")
+    assert passed.returncode == 0 and "3 app folder(s) OK" in passed.stdout, passed.stdout + passed.stderr

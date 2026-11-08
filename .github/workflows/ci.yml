@@ -68,3 +68,10 @@ jobs:
             # shellcheck disable=SC2086
             .venv/bin/pytest -ra ${TESTS}
           fi
+
+      # The Action an apps repository runs at a core tag, here at this commit over the fixture apps.
+      - name: app-check Action over the fixture apps repository
+        uses: ./.github/actions/app-check
+        with:
+          path: ci/tests/fixtures/app-hosting/jarvis-apps
+          exclude: ""

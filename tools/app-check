@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Validate hosted app folders: python3 tools/app-check <folder>... (platform/optional/app-hosting/CONTRACT.md).
+"""Validate hosted app folders (platform/optional/app-hosting/CONTRACT.md).
 
-The apps repository's CI checks out this repository at a pinned commit and runs this on
-each changed app folder. It needs Python 3 with PyYAML, and kustomize when deploy/ holds a
-kustomization.yaml. Exit 1 lists every problem.
+    tools/app-check <folder>...
+    tools/app-check --repo <apps repository> [--exclude <name>]...
+
+--repo checks every top-level folder of the apps repository except hidden ones and each
+--exclude (the repository's own tooling); a folder without app.yaml fails. The apps
+repository's CI runs it through the app-check Action at a core tag
+(.github/actions/app-check). It needs Python 3 with PyYAML, and kustomize when deploy/ holds
+a kustomization.yaml. Exit 1 lists every problem.
 """
 
 from __future__ import annotations
@@ -17,15 +22,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from _app_file import check_folder  # noqa: E402
 
 
+def repo_folders(repo: Path, exclude: list[str]) -> list[Path]:
+    """Every top-level folder of repo except hidden ones and those named in exclude."""
+    return sorted(
+        path for path in repo.iterdir()
+        if path.is_dir() and not path.name.startswith(".") and path.name not in exclude
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("folders", nargs="+", type=Path, help="App folders, each <name>/ holding app.yaml and deploy/")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("folders", nargs="*", type=Path, help="App folders, each <name>/ holding app.yaml and deploy/")
+    parser.add_argument("--repo", type=Path, help="Check every app folder of this apps repository")
+    parser.add_argument("--exclude", action="append", default=[], help="With --repo, a top-level folder that is not an app")
     args = parser.parse_args(argv)
-    problems = [problem for folder in args.folders for problem in check_folder(folder)]
+    if bool(args.folders) == bool(args.repo):
+        parser.error("give either app folders or --repo")
+    if args.exclude and not args.repo:
+        parser.error("--exclude needs --repo")
+    folders = repo_folders(args.repo, args.exclude) if args.repo else args.folders
+    if not folders:
+        print("app-check: no app folders")
+        return 0
+    problems = [problem for folder in folders for problem in check_folder(folder)]
     for problem in problems:
         print(problem)
     if not problems:
-        print(f"app-check: {len(args.folders)} app folder(s) OK")
+        print(f"app-check: {len(folders)} app folder(s) OK: {', '.join(folder.name for folder in folders)}")
     return 1 if problems else 0
 
 
