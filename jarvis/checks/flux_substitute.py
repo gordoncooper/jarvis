@@ -16,7 +16,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis.checks.manifests import FluxPath, flux_paths, kustomize_build, namespace_of, ref_of
+from jarvis.checks.manifests import FluxPath, env_flux_docs, flux_paths, namespace_of, ref_of
 from jarvis.schema.env import env_flux_dirs
 
 _SUBSTITUTE_KEY = "kustomize.toolkit.fluxcd.io/substitute"
@@ -38,7 +38,7 @@ def scan_flux_substitute(repo_root: Path | str) -> list[FluxSubstituteViolation]
         return [FluxSubstituteViolation("envs", "no envs/<env>/flux tree to check")]
     for flux_dir in flux_dirs:
         env_rel = flux_dir.relative_to(root).as_posix()
-        env_docs, error = kustomize_build(root, env_rel)
+        env_docs, error = env_flux_docs(root, env_rel)
         if error:
             violations.append(FluxSubstituteViolation(env_rel, error))
             continue

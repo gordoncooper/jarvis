@@ -17,7 +17,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis.checks.manifests import flux_paths, kind_of, kustomize_build
+from jarvis.checks.manifests import env_flux_docs, flux_paths, kind_of
 from jarvis.schema.env import ROOT_SOURCE, env_flux_dirs
 
 PRUNE = "kustomize.toolkit.fluxcd.io/prune"
@@ -141,7 +141,7 @@ def _applied(root: Path, env_rel: str) -> tuple[dict[Key, dict], list[str], bool
     The example env's platform-configs lists bootstrap secrets that are not in Git, so
     the product tree skips it; a bootstrapped copy builds it.
     """
-    docs, error = kustomize_build(root, env_rel)
+    docs, error = env_flux_docs(root, env_rel)
     if error:
         return {}, [error], True
     applied = index(docs)

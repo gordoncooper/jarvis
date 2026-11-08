@@ -41,8 +41,8 @@ from pathlib import Path
 
 from jarvis.checks.manifests import (
     FluxPath,
+    env_flux_docs,
     flux_paths,
-    kustomize_build,
     namespace_of,
     postbuild_values,
     ref_of,
@@ -91,7 +91,7 @@ def scan_flux_identity(repo_root: Path | str) -> list[FluxIdentityViolation]:
     violations: list[FluxIdentityViolation] = []
     for flux_dir in env_flux_dirs(root):
         env_rel = flux_dir.relative_to(root).as_posix()
-        env_docs, error = kustomize_build(root, env_rel)
+        env_docs, error = env_flux_docs(root, env_rel)
         if error:
             violations.append(FluxIdentityViolation(env_rel, error))
             continue

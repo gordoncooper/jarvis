@@ -23,6 +23,8 @@ SECTIONS = (OPTIONAL, ADDONS, APPS)
 # The rendered wiring, under envs/<env>/flux/.
 ROOT_REL = "kustomization.yaml"
 SERVICES_REL = "kustomizations/services.yaml"
+# Core's Flux base (the FluxInstance, identities and the platform layers), from an env's flux/.
+CORE_FLUX_BASE = "../../../core/flux"
 PLATFORM_CONFIGS_REL = "platform-configs/kustomization.yaml"
 APP_HOSTING = "app-hosting"
 APP_HOSTING_DIR = "platform/optional/app-hosting"
@@ -144,12 +146,9 @@ def services(data: dict[str, Any]) -> str:
 def root_kustomization(data: dict[str, Any], *, apps_generated: str) -> str:
     """The root Flux path's list; the app wiring render joins it once the env lists an app."""
     resources = [
+        CORE_FLUX_BASE,
         "generated/cluster-vars-configmap.yaml",
-        "flux-instance.yaml",
         "sync.yaml",
-        "identities.yaml",
-        "kustomizations/platform-controllers.yaml",
-        "kustomizations/platform-configs.yaml",
         SERVICES_REL,
     ]
     if names(data, APPS):

@@ -45,11 +45,7 @@ DEPLOY_KEY_FILE = "flux-deploy-key.sops.yaml"
 # Files under flux/ that Ansible and the root Kustomization read.
 _FLUX_ENTRY_FILES = (
     SYNC_FILE,
-    "flux-instance.yaml",
     "kustomization.yaml",
-    "identities.yaml",
-    "kustomizations/platform-controllers.yaml",
-    "kustomizations/platform-configs.yaml",
     "kustomizations/services.yaml",
     "platform-configs/kustomization.yaml",
 )
@@ -1195,6 +1191,9 @@ def _validate_flux_sources(
         errors.append(f"{rel}: GitRepository {ROOT_SOURCE} reads an ssh:// URL and needs spec.secretRef")
     if sync.get("path") != f"./envs/{env_name}/flux" or (sync.get("sourceRef") or {}).get("name") != ROOT_SOURCE:
         errors.append(f"{rel}: Kustomization {ROOT_SOURCE} must apply ./envs/{env_name}/flux from {ROOT_SOURCE}")
+    # Core's Flux base (core/flux) names the env's paths by ${jarvis_env}; the root sets it, alone.
+    if (sync.get("postBuild") or {}) != {"substitute": {"jarvis_env": env_name}}:
+        errors.append(f"{rel}: Kustomization {ROOT_SOURCE} must set spec.postBuild.substitute to jarvis_env: {env_name}, and nothing else")
     return errors
 
 

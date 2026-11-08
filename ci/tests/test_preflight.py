@@ -255,16 +255,17 @@ def test_readable_memory_threshold_passes_preflight(tmp_path: Path, value: str) 
     assert "ok: [cp-1]" in task and "ok: [wk-1]" in task and "failed" not in task, task
 
 
-def test_missing_env_flux_instance_fails_before_any_change(tmp_path: Path) -> None:
-    """site.yml applies envs/<env>/flux/flux-instance.yaml, so its absence stops the opening play."""
+def test_env_without_its_flux_fails_before_any_change(tmp_path: Path) -> None:
+    """site.yml applies core's FluxInstance and the env's sync.yaml, so an env without its flux/
+    stops the opening play."""
     result = _run_site(tmp_path, jarvis_env="env-absent", flux_instance=False)
-    _stopped_before_base_os(result, "envs/env-absent/flux/flux-instance.yaml or sync.yaml is missing")
+    _stopped_before_base_os(result, "flux/flux-instance.yaml (core's) or envs/env-absent/flux/sync.yaml is missing")
 
 
 def test_missing_sync_yaml_with_flux_instance_present_fails_before_any_change(tmp_path: Path) -> None:
     """site.yml applies sync.yaml after flux-instance.yaml, so a missing sync.yaml stops it too."""
     result = _run_site(tmp_path, sync_file=tmp_path / "absent-sync.yaml")
-    _stopped_before_base_os(result, "flux-instance.yaml or sync.yaml is missing")
+    _stopped_before_base_os(result, "flux-instance.yaml (core's) or envs/")
 
 
 def test_unmarked_k3s_fails_before_any_change(tmp_path: Path) -> None:
@@ -443,7 +444,7 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
 
 
 def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> None:
-    """group_vars resolves envs/<jarvis_env>/flux/flux-instance.yaml, and that assert passes."""
+    """group_vars resolves core's flux/flux-instance.yaml beside the playbook, and that assert passes."""
     require_cli("ansible-playbook")
     hosts = (
         REPO_ROOT / "ci/tests/fixtures/env-shapes/single-node/hosts.yml"
@@ -487,6 +488,6 @@ def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> N
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "Require the env FluxInstance and Flux sources in Git" in output
-    assert "flux-instance.yaml or sync.yaml is missing" not in output
+    assert "flux/sync.yaml is missing" not in output
     assert "PLAY [Base OS]" not in output
     assert playbook_recap_field(output, "changed") == 0

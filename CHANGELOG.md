@@ -16,6 +16,12 @@ the upgrade.
 - CI lints with ruff and type-checks the package with pyright (`ci/lint`, pinned in
   `requirements-dev.txt`, configured in `pyproject.toml`).
 
+- Core ships the Flux wiring every env runs: `flux/` holds the FluxInstance (Flux's version pin),
+  the Flux identities and the `platform-controllers` and `platform-configs` layers, paths by
+  `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
+  `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
+  files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+
 ### Fixed
 
 - Backup selection with no apps checkout fails with the missing-checkout error instead of a
@@ -24,6 +30,11 @@ the upgrade.
 ### Upgrading
 
 - Run `make deps` again in the core checkout, so the venv has the package.
+- In each env, delete `flux/flux-instance.yaml`, `flux/identities.yaml`,
+  `flux/kustomizations/platform-controllers.yaml` and `flux/kustomizations/platform-configs.yaml`;
+  add `postBuild: {substitute: {jarvis_env: <env>}}` to the root Kustomization `flux-system` in
+  `flux/sync.yaml`; and render again (`tools/lib/render_switches.py`). Move the env's core pin in
+  the same commit: the env's `flux/` and core's now depend on each other.
 
 ## v0.3.0
 

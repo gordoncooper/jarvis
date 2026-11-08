@@ -9,23 +9,14 @@ import pytest
 import yaml
 
 from support import REPO_ROOT as ROOT
-from support import ExampleCopy
 from support import renovate_python_pattern as _js_to_python
 
 
-def test_each_env_flux_instance_version_is_a_renovate_pin(example_copy: ExampleCopy) -> None:
-    """Renovate reads each env FluxInstance's Flux version, its only pin."""
+def test_core_flux_instance_version_is_a_renovate_pin() -> None:
+    """Renovate reads core's FluxInstance's Flux version, its only pin; every env runs it at its core tag."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    paths = sorted(ROOT.glob("envs/*/flux/flux-instance.yaml"))
-    tracked = set(paths)
-    paths.append(example_copy.env_dir / "flux" / "flux-instance.yaml")
-    assert paths
-    for path in paths:
-        # The copy may sit in a git-ignored directory inside the repo; it is still a copy.
-        if path in tracked:
-            rel = path.relative_to(ROOT).as_posix()
-        else:
-            rel = f"envs/{example_copy.name}/flux/flux-instance.yaml"
+    for path in [ROOT / "flux" / "flux-instance.yaml"]:
+        rel = path.relative_to(ROOT).as_posix()
         managers = [
             manager
             for manager in renovate["customManagers"]
@@ -510,8 +501,9 @@ def test_instance_preset_reads_every_pin_an_env_holds() -> None:
     sync = core_source[0] + "example-core" + re.sub(r"name: refs/\S+", "name: refs/tags/v1.2.3", core_source[1], count=1)
     assert [(m.group("depName"), m.group("currentValue")) for m in _preset_matches("envs/env-x/flux/sync.yaml", sync)] == [
         ("example-owner/example-core", "v1.2.3")]
-    instance = (ROOT / "envs/env-00/flux/flux-instance.yaml").read_text(encoding="utf-8")
-    assert len(_preset_matches("envs/env-x/flux/flux-instance.yaml", instance)) == 1
+    # Flux comes with the core tag: an env holds no FluxInstance, and the preset reads none.
+    instance = (ROOT / "flux/flux-instance.yaml").read_text(encoding="utf-8")
+    assert not _preset_matches("envs/env-x/flux/flux-instance.yaml", instance)
     branch = re.sub(r"(?m)^core_git_ref:.*$", "core_git_ref: refs/heads/main", cluster_vars)
     assert not [m for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", branch) if "depName" in m.groupdict()]
 
