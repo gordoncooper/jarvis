@@ -355,14 +355,14 @@ def test_dns_suffix_must_be_a_lowercase_dns_name(tmp_path: Path) -> None:
 
 
 def test_env_00_source_pair_matches_cluster_vars_and_drift_fails(tmp_path: Path) -> None:
-    """sync.yaml's root and core GitRepositories take url and ref from cluster-vars."""
+    """sync.yaml renders from cluster-vars (the root and core sources' url and ref), so an edit fails."""
     shutil.copytree(REPO_ROOT / "envs" / EXAMPLE_ENV, tmp_path / "envs" / EXAMPLE_ENV)
     env_schema.validate_one_env(tmp_path, EXAMPLE_ENV)
     sync = tmp_path / "envs" / EXAMPLE_ENV / "flux" / "sync.yaml"
     sync.write_text(sync.read_text(encoding="utf-8").replace("example-core", "other-core"), encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         env_schema.validate_one_env(tmp_path, EXAMPLE_ENV)
-    assert "core_git_repo_url" in str(excinfo.value)
+    assert "sync.yaml: does not match values/cluster-vars.yaml" in str(excinfo.value)
 
 
 def test_ssh_root_requires_the_sealed_deploy_key(tmp_path: Path) -> None:
@@ -1030,7 +1030,8 @@ def test_flux_known_hosts_trusts_the_root_host(tmp_path: Path, root: str, known_
     ids=["missing", "other-env", "extra-key"],
 )
 def test_root_kustomization_sets_only_its_own_jarvis_env(tmp_path: Path, post_build: dict | None) -> None:
-    """Rule: the root Kustomization sets postBuild.substitute to jarvis_env: <env> and nothing else."""
+    """Rule: the root Kustomization sets postBuild.substitute to jarvis_env: <env> and nothing else;
+    sync.yaml is the render, so any other value fails."""
     env = _write_env(tmp_path)
     (env / "secrets").mkdir(exist_ok=True)
     _copy_flux_entry(env)
@@ -1045,4 +1046,4 @@ def test_root_kustomization_sets_only_its_own_jarvis_env(tmp_path: Path, post_bu
     sync.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    assert "must set spec.postBuild.substitute to jarvis_env: env-test" in "\n".join(excinfo.value.messages)
+    assert "envs/env-test/flux/sync.yaml: does not match values/cluster-vars.yaml" in "\n".join(excinfo.value.messages)

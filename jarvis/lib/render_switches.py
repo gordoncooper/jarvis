@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import yaml
+
 from jarvis.lib import apps as _apps
 from jarvis.lib import backup_selection as _backup_selection
 from jarvis.lib import (
@@ -38,7 +40,9 @@ def render_env(env_dir: Path, repo_root: Path) -> None:
     data, _ = _switches.load(env_dir)
     flux = env_dir / "flux"
     wrapper = (_backup_selection.WRAPPER_ENTRY,) if selection is not None else ()
+    cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
     for rel, text in (
+        (_switches.SYNC_REL, _switches.sync(cluster_vars, env_dir.name)),
         (_switches.ROOT_REL, _switches.root_kustomization(data, apps_generated=_apps.GENERATED_REL)),
         (_switches.SERVICES_REL, _switches.services(data)),
         (_switches.PLATFORM_CONFIGS_REL, _switches.platform_configs(data, extra_components=wrapper)),

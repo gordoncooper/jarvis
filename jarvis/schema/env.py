@@ -1151,8 +1151,9 @@ def _validate_flux_entry_files(
 def _validate_flux_sources(
     env_dir: Path, repo_root: Path, env_name: str, cluster_vars: dict[str, Any]
 ) -> list[str]:
-    """flux/sync.yaml declares the root and core GitRepositories from cluster-vars, the root
-    includes core at CORE_SOURCE_DIR, and the root Kustomization applies this env's flux path."""
+    """flux/sync.yaml is exactly what render_switches renders from cluster-vars: the root and core
+    GitRepositories (the root including core at core/), and the root Kustomization applying this
+    env's flux path with jarvis_env."""
     path = env_dir / "flux" / SYNC_FILE
     rel = _display_path(path, repo_root)
     if not path.is_file():
@@ -1162,39 +1163,10 @@ def _validate_flux_sources(
     except yaml.YAMLError as exc:
         return [f"{rel}: invalid YAML: {exc}"]
 
-    def find(kind: str, name: str) -> dict:
-        for doc in docs:
-            meta = doc.get("metadata") or {}
-            if doc.get("kind") == kind and meta.get("name") == name and meta.get("namespace") == ROOT_SOURCE:
-                return doc.get("spec") or {}
-        return {}
-
-    root, core, sync = find("GitRepository", ROOT_SOURCE), find("GitRepository", CORE_SOURCE), find("Kustomization", ROOT_SOURCE)
-    root_url = cluster_vars.get("flux_git_repo_url")
-    want = {
-        f"GitRepository {ROOT_SOURCE} spec.url": (root.get("url"), root_url, "flux_git_repo_url"),
-        f"GitRepository {ROOT_SOURCE} spec.ref.name": ((root.get("ref") or {}).get("name"), cluster_vars.get("flux_git_ref"), "flux_git_ref"),
-        f"GitRepository {CORE_SOURCE} spec.url": (core.get("url"), cluster_vars.get("core_git_repo_url"), "core_git_repo_url"),
-        f"GitRepository {CORE_SOURCE} spec.ref.name": ((core.get("ref") or {}).get("name"), cluster_vars.get("core_git_ref"), "core_git_ref"),
-    }
-    errors = [
-        f"{rel}: {field} is {got!r}, expected {expected!r}; set it to {key} in values/cluster-vars.yaml"
-        for field, (got, expected, key) in want.items()
-        if expected is not None and got != expected
-    ]
-    include = {"repository": {"name": CORE_SOURCE}, "toPath": CORE_SOURCE_DIR}
-    if include not in (root.get("include") or []):
-        errors.append(f"{rel}: GitRepository {ROOT_SOURCE} must include {CORE_SOURCE} at toPath {CORE_SOURCE_DIR}")
-    if core.get("secretRef"):
-        errors.append(f"{rel}: GitRepository {CORE_SOURCE} is public and takes no secretRef")
-    if isinstance(root_url, str) and root_url.startswith("ssh://") and not root.get("secretRef"):
-        errors.append(f"{rel}: GitRepository {ROOT_SOURCE} reads an ssh:// URL and needs spec.secretRef")
-    if sync.get("path") != f"./envs/{env_name}/flux" or (sync.get("sourceRef") or {}).get("name") != ROOT_SOURCE:
-        errors.append(f"{rel}: Kustomization {ROOT_SOURCE} must apply ./envs/{env_name}/flux from {ROOT_SOURCE}")
-    # Core's Flux base (core/flux) names the env's paths by ${jarvis_env}; the root sets it, alone.
-    if (sync.get("postBuild") or {}) != {"substitute": {"jarvis_env": env_name}}:
-        errors.append(f"{rel}: Kustomization {ROOT_SOURCE} must set spec.postBuild.substitute to jarvis_env: {env_name}, and nothing else")
-    return errors
+    del docs  # parsed only to report invalid YAML
+    if path.read_text(encoding="utf-8") != _switches.sync(cluster_vars, env_name):
+        return [f"{rel}: does not match values/cluster-vars.yaml; re-render with tools/lib/render_switches.py --env {env_name}"]
+    return []
 
 
 def _rendered_cluster_vars_configmap(cluster_vars_path: Path) -> str:

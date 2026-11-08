@@ -67,14 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         "age_key_file": str(args.key_file),
         "apps_git_repo_url": args.apps_url,
     })
-    sync = env_dir / "flux" / "sync.yaml"
-    docs = [doc for doc in yaml.safe_load_all(sync.read_text(encoding="utf-8")) if doc]
-    refs = {"flux-system": args.ref, "core": args.core_ref or args.ref}
-    for doc in docs:
-        if doc.get("kind") == "GitRepository":
-            doc["spec"]["url"] = args.repo_url
-            doc["spec"]["ref"] = {"name": refs[doc["metadata"]["name"]]}
-    sync.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+    # flux/sync.yaml renders from these values with the rest of the wiring, below.
 
     # One node holds every role a single-node env needs.
     (env_dir / "inventory" / "hosts.yml").write_text(
