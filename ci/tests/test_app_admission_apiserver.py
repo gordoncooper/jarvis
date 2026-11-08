@@ -497,12 +497,18 @@ def _reconcile(api: Api, *, succeeds: bool = True) -> str:
     return run.stdout
 
 
-def _wire_revoker(api: Api, app: str) -> None:
-    """The cluster-wide rights once, and the binding the app's wiring holds."""
+def _cluster_rights(api: Api) -> None:
+    """The revoker's cluster-wide rights, once per server. Each test that runs the reconciler
+    asks for them itself, so no test leans on another having run first on its worker."""
     if api.request("GET", PATHS["ClusterRoleBinding"] + "/app-grant-revoke-namespaces")[0] == 404:
         for doc in _docs(GRANT_REVOKE):
             if doc["kind"] in ("ClusterRole", "ClusterRoleBinding"):
                 api.create(doc)
+
+
+def _wire_revoker(api: Api, app: str) -> None:
+    """The cluster-wide rights once, and the binding the app's wiring holds."""
+    _cluster_rights(api)
     binding = _docs(WIRING_BINDING)[0]
     binding["metadata"]["namespace"] = f"app-{app}"
     api.create(binding)
@@ -658,6 +664,7 @@ def test_a_probe_with_no_policy_answer_fails_the_run(api: Api) -> None:
     """Rule: a run that cannot ask the API server about an object reports failure; it neither
     stops the object nor passes as healthy."""
     app, ns = "unasked", "app-unasked"
+    _cluster_rights(api)
     api.create(_namespace(app, []))
     api.create(_app(app))
     pod = _pod("web", app)

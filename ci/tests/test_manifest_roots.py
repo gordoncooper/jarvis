@@ -64,7 +64,7 @@ def test_the_check_script_requires_every_manifest_root(tmp_path: Path, name: str
     _tree_with_platform_only(tmp_path)
     shutil.copytree(REPO_ROOT / "ci" / "checks", tmp_path / "ci" / "checks")
     # The check scripts import the jarvis package from the repo root (PYTHONPATH).
-    for rel in ("jarvis",):
+    for rel in ("jarvis", "schema"):
         shutil.copytree(REPO_ROOT / rel, tmp_path / rel, ignore=shutil.ignore_patterns("__pycache__"))
     proc = subprocess.run(
         ["bash", str(tmp_path / "ci" / "checks" / name)],

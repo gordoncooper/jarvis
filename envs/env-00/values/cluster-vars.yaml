@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../../schema/cluster-vars.schema.json
 # Example env. Identity values are invented. It runs core's k3s release
 # (infra/ansible/group_vars/all.yml); an env that needs another sets k3s_version and k3s_sha256 together.
 jarvis_env: env-00

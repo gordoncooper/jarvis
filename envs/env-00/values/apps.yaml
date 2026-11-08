@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../../schema/apps.schema.json
 # The names of the hosted apps this env runs are in values/switches.yaml. Everything else about
 # an app is in its own app file in the apps repository; this file holds what the env decides for it.
 # The release each listed app runs: its apps-repository tag <app>/v<version>. Every listed app has

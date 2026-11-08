@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gordoncooper/jarvis/schema/apps.schema.json",
+  "title": "values/apps.yaml",
+  "description": "What an env decides for its hosted apps (schema/CONTRACT.md, platform/optional/app-hosting/CONTRACT.md). env-schema also checks each grant, selection and pin against the app list and the apps repository.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "exceptions": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "propertyNames": {
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "additionalProperties": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "versions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "propertyNames": {
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+      }
+    },
+    "backups": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "selected",
+            "all_except"
+          ]
+        },
+        "selected": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "uniqueItems": true
+        },
+        "exclude": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "uniqueItems": true
+        },
+        "overrides": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "propertyNames": {
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "backup_schedule": {
+                "type": "string"
+              },
+              "backup_retention_daily": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "backup_retention_weekly": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "backup_retention_monthly": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
