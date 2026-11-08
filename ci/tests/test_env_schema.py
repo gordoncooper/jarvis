@@ -974,3 +974,18 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     assert "--diff" in args
     bad, recorded = _run_site(tmp_path, "ENV=env-00", "CHECK=true")
     assert bad.returncode != 0 and recorded == "" and "CHECK must be empty or 1" in bad.stderr
+
+
+def test_envs_limits_the_env_checks_to_the_named_envs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Rule: ENVS names the envs validate_env_tree checks, so an instance CI leg checks one env
+    against its own core pin; .sops.yaml rules still see every env folder."""
+    _write_env(tmp_path, "env-test")
+    _write_env(tmp_path, "env-broken")
+    (tmp_path / "envs" / "env-broken" / "values" / "cluster-vars.yaml").write_text("not: valid\n", encoding="utf-8")
+    with pytest.raises(ValidationError):
+        validate_env_tree(tmp_path)
+    monkeypatch.setenv(env_schema.ENVS_VAR, "env-test")
+    assert set(validate_env_tree(tmp_path)) == {"env-test"}
+    monkeypatch.setenv(env_schema.ENVS_VAR, "env-broken")
+    with pytest.raises(ValidationError):
+        validate_env_tree(tmp_path)

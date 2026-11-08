@@ -54,6 +54,7 @@ from _manifests import (
     substitute,
 )
 from schema.env import (
+    env_flux_dirs,
     ADDON_SECRETS_PATH,
     ADDONS_DIR,
     CORE_SOURCE_DIR,
@@ -122,7 +123,7 @@ def scan_addons(product_root: Path | str, env_root: Path | str) -> list[AddonVio
     """Product rules on product_root, env rules on every env under env_root."""
     violations = list(_product_problems(Path(product_root).resolve()))
     root = Path(env_root).resolve()
-    for flux_dir in sorted(path for path in root.glob("envs/*/flux") if path.is_dir()):
+    for flux_dir in env_flux_dirs(root):
         env_rel = flux_dir.relative_to(root).as_posix()
         violations.extend(AddonViolation(env_rel, problem) for problem in _env_problems(root, env_rel))
     return sorted(violations, key=lambda item: (item.path, item.message))

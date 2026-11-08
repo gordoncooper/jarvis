@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from _manifests import FluxPath, flux_paths, kustomize_build, namespace_of, postbuild_values, ref_of, substitute
+from schema.env import env_flux_dirs
 
 PLATFORM_SERVICE_ACCOUNT = "flux-platform"
 FLUX_NAMESPACE = "flux-system"
@@ -80,7 +81,7 @@ class FluxIdentityViolation:
 def scan_flux_identity(repo_root: Path | str) -> list[FluxIdentityViolation]:
     root = Path(repo_root).resolve()
     violations: list[FluxIdentityViolation] = []
-    for flux_dir in sorted(path for path in root.glob("envs/*/flux") if path.is_dir()):
+    for flux_dir in env_flux_dirs(root):
         env_rel = flux_dir.relative_to(root).as_posix()
         env_docs, error = kustomize_build(root, env_rel)
         if error:

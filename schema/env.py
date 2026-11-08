@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import os
 import re
 import sys
 import zoneinfo
@@ -67,6 +68,23 @@ SERVICES_KUSTOMIZATION = _switches.SERVICES_REL
 SLOT_LABEL = "addons.jarvis.io/slot"
 # An add-on's sealed Secrets are under envs/<env>/secrets/<namespace>/.
 ADDON_SECRETS_PATH = "./envs/${jarvis_env}/secrets/"
+
+
+# ENVS="<env> [<env>...]" limits validate_env_tree and the env-level checks to those envs, so an
+# instance CI can check each env against the core tag that env pins. Unset, every env.
+ENVS_VAR = "ENVS"
+
+
+def env_dirs(root: Path) -> list[Path]:
+    """The env folders under root/envs/ the env-level checks act on."""
+    base = Path(root) / "envs"
+    found = sorted(path for path in base.iterdir() if path.is_dir()) if base.is_dir() else []
+    wanted = os.environ.get(ENVS_VAR, "").replace(",", " ").split()
+    return [path for path in found if path.name in wanted] if wanted else found
+
+
+def env_flux_dirs(root: Path) -> list[Path]:
+    return [path / "flux" for path in env_dirs(root) if (path / "flux").is_dir()]
 
 
 def is_example_env(name: str) -> bool:
@@ -181,13 +199,13 @@ def validate_env_tree(
 
     errors: list[str] = []
     resolved_by_env: dict[str, dict[str, Any]] = {}
-    env_dirs = sorted(p for p in envs_dir.iterdir() if p.is_dir())
-    if not env_dirs:
+    selected = env_dirs(root)
+    if not selected:
         errors.append(f"no env directories under {_display_path(envs_dir, root)}")
         raise ValidationError(errors)
 
-    env_names = [env_dir.name for env_dir in env_dirs]
-    for env_dir in env_dirs:
+    env_names = [path.name for path in sorted(envs_dir.iterdir()) if path.is_dir()]
+    for env_dir in selected:
         env_errors, env_resolved, _owner = _validate_env(
             env_dir, root, pre_host=pre_host
         )
