@@ -21,6 +21,9 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- Core sets the k3s release every env runs (`k3s_version` and `k3s_sha256` in
+  `infra/ansible/group_vars/all.yml`); an env overrides it by setting both in `cluster-vars.yaml`.
+  Renovate bumps core's.
 - `flux/sync.yaml` is generated from `cluster-vars.yaml` (`render_switches.py`), and env-schema
   requires the render, so the Flux sources' URLs and refs have one source.
 
@@ -36,6 +39,8 @@ the upgrade.
   `flux/kustomizations/platform-controllers.yaml` and `flux/kustomizations/platform-configs.yaml`;
   and render again (`tools/lib/render_switches.py`), which now writes `flux/sync.yaml` too. Move the env's core pin in
   the same commit: the env's `flux/` and core's now depend on each other.
+- To run core's k3s release, delete `k3s_version` and `k3s_sha256` from `cluster-vars.yaml`;
+  to keep your own, leave both.
 
 ## v0.3.0
 

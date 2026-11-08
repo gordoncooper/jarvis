@@ -70,8 +70,8 @@ A required key that is present but null counts as unset and fails.
 | `backup_schedule` | yes | Five-field cron for each PVC's VolSync ReplicationSource (`trigger.schedule`). The controller evaluates it in `time_zone`. |
 | `backup_check_schedule` | no | Five-field cron for CronJob `platform-backups/restic-check`, evaluated in `time_zone`. Default `30 6 * * 3`. Keep every start at least 3 hours from each `backup_schedule` start and from the etcd copy (`5 */12 * * *`). |
 | `jarvis_env` | yes | Env name for `/etc/jarvis/env` marker and guards; must match `envs/<env>/`. |
-| `k3s_version` | yes | k3s version string `v<major>.<minor>.<patch>+k3s<n>`. The host binary changes only by a pull request. |
-| `k3s_sha256` | yes | SHA-256 of the pinned `k3s` amd64 release binary (verified on install). |
+| `k3s_version` | no (set with `k3s_sha256`) | k3s version string `v<major>.<minor>.<patch>+k3s<n>`, in place of core's release (`infra/ansible/group_vars/all.yml`). Set both or neither. The host binary changes only by a pull request. |
+| `k3s_sha256` | no (set with `k3s_version`) | SHA-256 of that `k3s` amd64 release binary (verified on install). |
 | `pod_cidr` | yes | Pod network CIDR; an IP network, set once per env. |
 | `service_cidr` | yes | Service network CIDR; an IP network, set once per env. |
 | `app_dns_cluster_ip` | yes | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |

@@ -8,6 +8,7 @@ import re
 import yaml
 from ansible_role_proof import REPO_ROOT, load_cluster_vars
 
+from jarvis.lib.k3s import release as k3s_release
 from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 
 # The example env's pin is the contract pin. The check runs on real envs and a copy.
@@ -70,7 +71,7 @@ def test_env_k3s_version_matches_traefik_contract(example_copy: ExampleCopy) -> 
     """Each full env's k3s_version is the pin the Traefik contract checks."""
     contract = (REPO_ROOT / "platform/traefik/CONTRACT.md").read_text(encoding="utf-8")
     versions = {
-        env: str(load_cluster_vars(root, env=env)["k3s_version"])
+        env: k3s_release(load_cluster_vars(root, env=env))[0]
         for root, env in real_and_copy_envs(example_copy)
     }
     assert versions

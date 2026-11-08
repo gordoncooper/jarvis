@@ -98,8 +98,6 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "backup_retention_weekly",
         "backup_retention_monthly",
         "backup_schedule",
-        "k3s_version",
-        "k3s_sha256",
         "pod_cidr",
         "service_cidr",
         "app_dns_cluster_ip",
@@ -127,10 +125,15 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "flux_known_hosts",
         "backup_check_schedule",
         "node_memory_reserve_percent",
+        # Core's k3s release unless set, and then both together.
+        "k3s_version",
+        "k3s_sha256",
     }
 )
 
 _CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
+# Optional keys core sets a default for (infra/ansible/group_vars/all.yml).
+_CORE_DEFAULTED = frozenset({"k3s_version", "k3s_sha256"})
 
 _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 _ENV_GIT_PATH = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/")
@@ -429,7 +432,8 @@ def _validate_cluster_vars(
         errors.append(f"{rel_path}: missing required key: {key}")
 
     if is_example_env(env_name):
-        for key in sorted(_CLUSTER_VARS_KNOWN - set(data)):
+        # The example runs core's k3s release, so it shows that default by leaving the pair out.
+        for key in sorted(_CLUSTER_VARS_KNOWN - _CORE_DEFAULTED - set(data)):
             errors.append(f"{rel_path}: {EXAMPLE_ENV} must set every known key: {key}")
 
     if "ssh_user" in data and not isinstance(data["ssh_user"], str):
@@ -447,8 +451,6 @@ def _validate_cluster_vars(
         "dns_suffix",
         "time_zone",
         "backup_path",
-        "k3s_version",
-        "k3s_sha256",
         "pod_cidr",
         "service_cidr",
         "local_path_data",
@@ -499,8 +501,10 @@ def _validate_cluster_vars(
             f"{rel_path}: jarvis_env must match the env directory name ({env_name})"
         )
 
+    if ("k3s_version" in data) != ("k3s_sha256" in data):
+        errors.append(f"{rel_path}: k3s_version and k3s_sha256 override core's k3s release together; set both or neither")
     k3s_sha = data.get("k3s_sha256")
-    if isinstance(k3s_sha, str) and k3s_sha and not _SHA256_HEX.match(k3s_sha):
+    if "k3s_sha256" in data and not (isinstance(k3s_sha, str) and _SHA256_HEX.match(k3s_sha)):
         errors.append(f"{rel_path}: k3s_sha256 must be a 64-character lowercase hex string")
 
     time_zone = data.get("time_zone")
@@ -512,8 +516,8 @@ def _validate_cluster_vars(
         errors.extend(_validate_dns_suffix(rel_path, dns_suffix.strip()))
 
     k3s_version = data.get("k3s_version")
-    if isinstance(k3s_version, str) and k3s_version.strip():
-        if kubernetes_version_from_k3s(k3s_version) is None:
+    if "k3s_version" in data:
+        if not isinstance(k3s_version, str) or kubernetes_version_from_k3s(k3s_version) is None:
             errors.append(
                 f"{rel_path}: k3s_version must be a k3s version string "
                 "(v<major>.<minor>.<patch>+k3s<n>)"

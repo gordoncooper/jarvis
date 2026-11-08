@@ -65,7 +65,11 @@ def _vars_file(
     jarvis_env: str | None = None,
     override: dict[str, object] | None = None,
 ) -> None:
+    from jarvis.lib import k3s
+
     cluster = load_cluster_vars()
+    # The env's k3s pair is optional (core's release otherwise); the opening play reads it either way.
+    cluster["k3s_version"], cluster["k3s_sha256"] = k3s.release(cluster)
     body = {key: cluster[key] for key in _REQUIRED}
     body.update(override or {})
     if jarvis_env is not None:
