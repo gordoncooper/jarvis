@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/gordoncooper/jarvis/schema/apps.schema.json",
   "title": "values/apps.yaml",
-  "description": "What an env decides for its hosted apps (schema/CONTRACT.md, platform/optional/app-hosting/CONTRACT.md). env-schema also checks each grant, selection and pin against the app list and the apps repository.",
+  "description": "What an env decides for its hosted apps (schema/CONTRACT.md, core/feature/app-hosting/CONTRACT.md). env-schema also checks each grant, selection and pin against the app list and the apps repository.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

@@ -84,7 +84,7 @@ def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
     return {
         "platform-controllers": "./core/platform",
         "platform-configs": f"./envs/{env}/flux/platform-configs",
-        "services": "./core/services",
+        "services": "./addons",
     }
 
 

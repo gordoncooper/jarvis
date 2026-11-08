@@ -1,7 +1,7 @@
 """Validate one hosted app's folder: its app file and the objects in deploy/.
 
-CONTRACT: platform/optional/app-hosting/CONTRACT.md. The schema is the App CRD's
-(platform/optional/app-hosting/crd/app-crd.yaml), read here, with unknown keys refused; the API
+CONTRACT: core/feature/app-hosting/CONTRACT.md. The schema is the App CRD's
+(core/feature/app-hosting/crd/app-crd.yaml), read here, with unknown keys refused; the API
 server prunes them unread. The deploy/ rules are ValidatingAdmissionPolicies app-tenant and
 app-file as far as the folder alone decides them: a risky item the file does not ask for
 fails here, and one it asks for still needs the env's exception line in the cluster.
@@ -19,7 +19,7 @@ from typing import Any
 import yaml
 
 PRODUCT_ROOT = Path(__file__).resolve().parents[2]
-CRD_FILE = PRODUCT_ROOT / "platform" / "optional" / "app-hosting" / "crd" / "app-crd.yaml"
+CRD_FILE = PRODUCT_ROOT / "core" / "feature" / "app-hosting" / "crd" / "app-crd.yaml"
 APP_FILE = "app.yaml"
 DEPLOY_DIR = "deploy"
 API_VERSION = "hosting.jarvis.io/v1alpha1"

@@ -103,7 +103,7 @@ def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: s
     ],
 )
 def test_an_optional_backup_piece_renders_only_from_its_name(name: str, folder: str, kind: str, object_name: str) -> None:
-    """Rule: always-on core carries no optional piece. Its folder sits under platform/optional, the
+    """Rule: always-on core carries no optional piece. Its folder sits under core/feature, the
     always-on list does not build it, and the env's wiring lists that folder only once the env names it."""
     def has_object(rel: str) -> bool:
         return any(
@@ -111,8 +111,8 @@ def test_an_optional_backup_piece_renders_only_from_its_name(name: str, folder: 
             for doc in yaml.safe_load_all(_kustomize_build(rel))
         )
 
-    assert folder.startswith("platform/optional/") and has_object(folder)
-    assert not has_object("platform/configs")
+    assert folder.startswith("core/feature/") and has_object(folder)
+    assert not has_object("core/platform/configs")
     assert folder in _switches.platform_configs({"optional": [name]})
     assert folder not in _switches.platform_configs({"optional": []})
 

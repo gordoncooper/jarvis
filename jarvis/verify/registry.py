@@ -26,7 +26,7 @@ def register(name: str) -> Callable[[Builder], Builder]:
 
 
 def load_addons(core: Path, addons: Sequence[str]) -> tuple[str, ...]:
-    """Load services/<name>/verify.py for each enabled add-on that has one. Each registers a
+    """Load addons/<name>/verify.py for each enabled add-on that has one. Each registers a
     component under its own name. An add-on that is not enabled is never loaded."""
     loaded: list[str] = []
     known = set(addon_names(core))

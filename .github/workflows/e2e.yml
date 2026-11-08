@@ -44,7 +44,7 @@ jobs:
           run=true
           if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
             changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-            pattern='^(flux/|platform/|services/|envs/|infra/ansible/roles/flux-operator/|tools/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$)'
+            pattern='^(core/|addons/|envs/|infra/ansible/roles/flux-operator/|tools/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$)'
             grep -Eq "${pattern}" <<<"${changed}" || run=false
           fi
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
@@ -113,8 +113,8 @@ jobs:
           export PATH="${HOME}/.local/bin:${PATH}"
           age-keygen -o "${RUNNER_TEMP}/age.key" 2>/dev/null
           chmod 600 "${RUNNER_TEMP}/age.key"
-          # A release tag push runs Flux's core source at that tag; anything else at the branch.
-          core_ref="refs/heads/${E2E_BRANCH}"
+          # Core at the commit under test, on its own temporary branch; a release tag push reads the tag.
+          core_ref="refs/heads/${E2E_BRANCH}-core"
           [[ "${GITHUB_REF}" == refs/tags/v* ]] && core_ref="${GITHUB_REF}"
           echo "core source: ${core_ref}" | tee -a "${GITHUB_STEP_SUMMARY}"
           .venv/bin/python ci/e2e/make-env --env "${E2E_ENV}" \
@@ -124,8 +124,12 @@ jobs:
             --node "k3d-${E2E_ENV}-server-0" ${APP_DNS_FLAG}
           git config user.name "e2e"
           git config user.email "e2e@users.noreply.github.com"
-          git checkout -b "${E2E_BRANCH}"
-          git add -A envs/"${E2E_ENV}" .sops.yaml
+          [[ "${core_ref}" == refs/heads/* ]] && git push -q origin "HEAD:${core_ref}"
+          # The root source holds only the env, as an instance repository does: core/ and addons/
+          # come from the core source by include, so the root must not carry its own.
+          git checkout -q --orphan "${E2E_BRANCH}"
+          git rm -rq --cached .
+          git add -f envs/"${E2E_ENV}" .sops.yaml
           git commit -q -m "e2e env for run ${GITHUB_RUN_ID}"
           git push -q origin "${E2E_BRANCH}"
 
@@ -165,7 +169,7 @@ jobs:
             -e jarvis_cluster_vars="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/values/cluster-vars.yaml" \
             -e jarvis_instance_root="${GITHUB_WORKSPACE}" \
             -e jarvis_env_dir="${GITHUB_WORKSPACE}/envs/${E2E_ENV}" \
-            -e flux_instance_file="${GITHUB_WORKSPACE}/flux/flux-instance.yaml" \
+            -e flux_instance_file="${GITHUB_WORKSPACE}/core/flux/flux-instance.yaml" \
             -e flux_sync_file="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/flux/sync.yaml" \
             -e k3s_binary_path="${GITHUB_WORKSPACE}/ci/e2e/k3s" \
             -e k3s_kubeconfig_path="${KUBECONFIG}" \
@@ -175,6 +179,9 @@ jobs:
       - name: Wait for every Kustomization and HelmRelease
         run: |
           set -euo pipefail
+          # The root source first: a source that cannot build its artifact fails here in minutes.
+          kubectl -n flux-system wait --for=condition=Ready gitrepository/core gitrepository/flux-system --timeout=5m
+          kubectl -n flux-system wait --for=condition=Ready kustomization/flux-system --timeout=10m
           # The root applies the layer Kustomizations, which apply the HelmReleases: wait for each to exist first.
           layers="flux-system platform-controllers platform-configs services"
           for name in ${layers}; do
@@ -252,12 +259,16 @@ jobs:
           kubectl get pods -A || true
           kubectl get apps.hosting.jarvis.io -A || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -n 60 || true
+          kubectl -n flux-system describe gitrepositories.source.toolkit.fluxcd.io || true
+          kubectl -n flux-system logs deploy/source-controller --tail=100 || true
           kubectl -n flux-system logs deploy/kustomize-controller --tail=100 || true
           kubectl -n flux-system logs deploy/helm-controller --tail=100 || true
 
-      - name: Delete the temporary branch
+      - name: Delete the temporary branches
         if: always()
-        run: git push -q origin --delete "${E2E_BRANCH}" || true
+        run: |
+          git push -q origin --delete "${E2E_BRANCH}" || true
+          git push -q origin --delete "${E2E_BRANCH}-core" || true
 
   # The required check: green when every cluster leg passed, or when the change reaches no cluster.
   e2e:

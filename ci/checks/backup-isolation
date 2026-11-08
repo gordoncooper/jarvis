@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # CI rule check: no hosted app's backup credential reaches core's rest-server or repositories,
-# and core's credential never reaches an app (platform/backups/CONTRACT.md, App credentials).
+# and core's credential never reaches an app (core/platform/backups/CONTRACT.md, App credentials).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -14,7 +14,7 @@ from support import _kustomize_build, renovate_python_pattern
 def test_app_dns_service_zone_forward_and_resources() -> None:
     docs = [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build("platform") + "\n---\n" + _kustomize_build("platform/optional/app-dns"))
+        for doc in yaml.safe_load_all(_kustomize_build("core/platform") + "\n---\n" + _kustomize_build("core/feature/app-dns"))
         if isinstance(doc, dict) and isinstance(doc.get("metadata"), dict)
     ]
     release = next(
@@ -51,7 +51,7 @@ def test_app_dns_service_zone_forward_and_resources() -> None:
     assert "${dns_suffix}:53" in corefile
     assert "forward . ${app_dns_cluster_ip}" in corefile
 
-    source = (REPO_ROOT / "platform/optional/app-dns/helmrelease.yaml").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "core/feature/app-dns/helmrelease.yaml").read_text(encoding="utf-8")
     renovate = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = [
         manager

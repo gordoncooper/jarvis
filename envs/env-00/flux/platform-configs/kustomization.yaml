@@ -5,8 +5,8 @@ resources:
 - ../../../../core/platform/configs
 - ../../secrets/backups-restic.sops.yaml
 - ../../secrets/cert-manager-ca.sops.yaml
-- ../../../../core/platform/optional/app-dns
-- ../../../../core/platform/optional/offsite-backup-copy
+- ../../../../core/feature/app-dns
+- ../../../../core/feature/offsite-backup-copy
 - ../../secrets/backups-offsite.sops.yaml
 components:
-- ../../../../core/platform/optional/app-hosting
+- ../../../../core/feature/app-hosting

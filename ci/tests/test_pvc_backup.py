@@ -38,7 +38,7 @@ spec:
 
 
 def _policy(root: Path, text: str = _POLICY) -> None:
-    dest = root / "platform" / "backups"
+    dest = root / "core" / "platform" / "backups"
     dest.mkdir(parents=True)
     (dest / "kustomization.yaml").write_text(
         "apiVersion: kustomize.config.k8s.io/v1beta1\n"
@@ -56,7 +56,7 @@ def _reasons(root: Path) -> list[str]:
 
 def test_pvc_without_a_replication_source_passes_when_the_policy_is_present(tmp_path: Path) -> None:
     _policy(tmp_path)
-    pvc = tmp_path / "platform" / "app" / "pvc.yaml"
+    pvc = tmp_path / "core" / "platform" / "app" / "pvc.yaml"
     pvc.parent.mkdir(parents=True)
     pvc.write_text(_PVC, encoding="utf-8")
     assert scan_pvc_backup(tmp_path) == []
@@ -64,7 +64,7 @@ def test_pvc_without_a_replication_source_passes_when_the_policy_is_present(tmp_
 
 def test_statefulset_needs_no_per_ordinal_replication_source(tmp_path: Path) -> None:
     _policy(tmp_path)
-    sts = tmp_path / "services" / "app" / "sts.yaml"
+    sts = tmp_path / "addons" / "app" / "sts.yaml"
     sts.parent.mkdir(parents=True)
     sts.write_text(
         """
@@ -101,7 +101,7 @@ spec:
 
 
 def test_missing_policy_fails(tmp_path: Path) -> None:
-    pvc = tmp_path / "platform" / "app" / "pvc.yaml"
+    pvc = tmp_path / "core" / "platform" / "app" / "pvc.yaml"
     pvc.parent.mkdir(parents=True)
     pvc.write_text(_PVC, encoding="utf-8")
     reasons = _reasons(tmp_path)
@@ -133,18 +133,18 @@ def test_policy_without_match_constraints_fails(tmp_path: Path) -> None:
 
 def test_r31_non_mapping_document_fails(tmp_path: Path) -> None:
     _policy(tmp_path)
-    listed = tmp_path / "services" / "app" / "pvc.yaml"
+    listed = tmp_path / "addons" / "app" / "pvc.yaml"
     listed.parent.mkdir(parents=True)
     listed.write_text("- kind: PersistentVolumeClaim\n", encoding="utf-8")
     violations = scan_pvc_backup(tmp_path)
     assert len(violations) == 1
-    assert violations[0].rel_path == "services/app/pvc.yaml"
+    assert violations[0].rel_path == "addons/app/pvc.yaml"
     assert "not a mapping" in violations[0].reason
 
 
 def test_backup_none_outside_the_allow_list_fails(tmp_path: Path) -> None:
     _policy(tmp_path)
-    pvc = tmp_path / "platform" / "app" / "pvc.yaml"
+    pvc = tmp_path / "core" / "platform" / "app" / "pvc.yaml"
     pvc.parent.mkdir(parents=True)
     pvc.write_text(
         """
@@ -172,7 +172,7 @@ spec:
 
 def test_backup_none_under_the_allow_list_passes(tmp_path: Path) -> None:
     _policy(tmp_path)
-    pvc = tmp_path / "services" / "observability" / "victoria-metrics" / "pvc.yaml"
+    pvc = tmp_path / "addons" / "observability" / "victoria-metrics" / "pvc.yaml"
     pvc.parent.mkdir(parents=True)
     pvc.write_text(
         """
@@ -196,7 +196,7 @@ spec:
 
 def test_hand_written_replication_source_fails(tmp_path: Path) -> None:
     _policy(tmp_path)
-    source = tmp_path / "platform" / "app" / "source.yaml"
+    source = tmp_path / "core" / "platform" / "app" / "source.yaml"
     source.parent.mkdir(parents=True)
     source.write_text(
         """
@@ -215,7 +215,7 @@ spec:
 
 def test_services_file_with_a_replication_source_fails(tmp_path: Path) -> None:
     _policy(tmp_path)
-    source = tmp_path / "services" / "app" / "backup.txt"
+    source = tmp_path / "addons" / "app" / "backup.txt"
     source.parent.mkdir(parents=True)
     source.write_text("kind: ReplicationSource\n", encoding="utf-8")
     assert "hand-written ReplicationSource" in _reasons(tmp_path)
@@ -223,7 +223,7 @@ def test_services_file_with_a_replication_source_fails(tmp_path: Path) -> None:
 
 def test_services_file_with_a_restic_repository_url_fails(tmp_path: Path) -> None:
     _policy(tmp_path)
-    note = tmp_path / "services" / "app" / "repo.md"
+    note = tmp_path / "addons" / "app" / "repo.md"
     note.parent.mkdir(parents=True)
     note.write_text(
         "RESTIC_REPOSITORY=rest:http://restic.example/ns-app/pvc-data\n",

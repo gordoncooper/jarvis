@@ -8,7 +8,7 @@ metadata:
 spec:
   interval: 10m
   retryInterval: 1m
-  path: ./core/services
+  path: ./addons
   prune: true
   serviceAccountName: flux-platform
   sourceRef:

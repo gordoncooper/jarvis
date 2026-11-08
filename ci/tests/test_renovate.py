@@ -15,7 +15,7 @@ from support import renovate_python_pattern as _js_to_python
 def test_core_flux_instance_version_is_a_renovate_pin() -> None:
     """Renovate reads core's FluxInstance's Flux version, its only pin; every env runs it at its core tag."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    for path in [ROOT / "flux" / "flux-instance.yaml"]:
+    for path in [ROOT / "core" / "flux" / "flux-instance.yaml"]:
         rel = path.relative_to(ROOT).as_posix()
         managers = [
             manager
@@ -272,7 +272,7 @@ def test_managed_image_without_a_version_tag_fails() -> None:
     ]
     assert managers
     chart_version = yaml.safe_load(
-        (ROOT / "platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
+        (ROOT / "core/platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
     )["spec"]["chart"]["spec"]["version"]
     saw_volsync = False
     for manager in managers:
@@ -314,7 +314,7 @@ def test_managed_image_without_a_version_tag_fails() -> None:
         if any("quay.io/backube/volsync" in pattern for pattern in manager["matchStrings"])
     )
     pattern_src = next(pattern for pattern in volsync["matchStrings"] if "currentDigest" in pattern)
-    source = (ROOT / "platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
+    source = (ROOT / "core/platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
     assert _unmatched_image_lines(source, pattern_src) == []
     versionless = source + "\nimage: quay.io/backube/volsync@sha256:" + ("ab" * 32) + "\n"
     assert _unmatched_image_lines(versionless, pattern_src)
@@ -354,7 +354,7 @@ def test_volsync_chart_prs_name_the_vendored_crd() -> None:
     assert (ROOT / crd).is_file()
 
 
-@pytest.mark.parametrize("rel", ["platform/testapp/testapp.yaml", "services/hello/app/hello.yaml"])
+@pytest.mark.parametrize("rel", ["core/platform/testapp/testapp.yaml", "addons/hello/app/hello.yaml"])
 def test_testapp_image_tag_and_digest_are_a_custom_manager(rel: str) -> None:
     """The canary image pins, and the sample add-on's copy, are one file-scoped regex manager."""
     source = (ROOT / rel).read_text(encoding="utf-8")
@@ -378,7 +378,7 @@ def test_testapp_image_tag_and_digest_are_a_custom_manager(rel: str) -> None:
 
 def test_grant_revoke_python_image_is_a_renovate_pin() -> None:
     """The grant reconciler's image is read by a manager, so its tag and digest get bump PRs."""
-    rel = "platform/optional/app-hosting/grant-revoke.yaml"
+    rel = "core/feature/app-hosting/grant-revoke.yaml"
     source = (ROOT / rel).read_text(encoding="utf-8")
     found = _manager_matches(rel, source)
     assert len(found) == 1
@@ -438,7 +438,7 @@ def test_every_digest_pin_in_a_manifest_is_read_by_a_manager() -> None:
     manifests = {
         rel: text
         for rel, text in _tracked().items()
-        if rel.startswith(("platform/", "services/")) and rel.endswith((".yaml", ".yml"))
+        if rel.startswith(("core/platform/", "addons/")) and rel.endswith((".yaml", ".yml"))
     }
     assert any(re.search(_DIGEST_PIN, text) for text in manifests.values())
     missed = {rel: _unmanaged(rel, text, _DIGEST_PIN) for rel, text in manifests.items()}
@@ -448,13 +448,13 @@ def test_every_digest_pin_in_a_manifest_is_read_by_a_manager() -> None:
 @pytest.mark.parametrize("line", [_RENOVATE_COMMENT, _DIGEST_PIN], ids=["comment", "digest-pin"])
 def test_seeded_pin_without_a_manager_fails(line: str) -> None:
     """The same pin in a file no manager selects is reported."""
-    source = (ROOT / "platform/optional/app-hosting/grant-revoke.yaml").read_text(encoding="utf-8")
-    assert _unmanaged("platform/optional/app-hosting/unmanaged.yaml", source, line)
+    source = (ROOT / "core/feature/app-hosting/grant-revoke.yaml").read_text(encoding="utf-8")
+    assert _unmanaged("core/feature/app-hosting/unmanaged.yaml", source, line)
 
 
 def test_seeded_comment_a_manager_ignores_fails() -> None:
     """A comment whose depName no manager reads is reported, though the pin below it is managed."""
-    rel = "platform/backups/restic-check.yaml"
+    rel = "core/platform/backups/restic-check.yaml"
     source = (ROOT / rel).read_text(encoding="utf-8").replace("depName=restic/restic", "depName=other/image")
     assert _unmanaged(rel, source, _RENOVATE_COMMENT)
 
@@ -502,7 +502,7 @@ def test_instance_preset_reads_every_pin_an_env_holds() -> None:
     assert [(m.group("depName"), m.group("currentValue")) for m in _preset_matches("envs/env-x/flux/sync.yaml", sync)] == [
         ("example-owner/example-core", "v1.2.3")]
     # Flux comes with the core tag: an env holds no FluxInstance, and the preset reads none.
-    instance = (ROOT / "flux/flux-instance.yaml").read_text(encoding="utf-8")
+    instance = (ROOT / "core/flux/flux-instance.yaml").read_text(encoding="utf-8")
     assert not _preset_matches("envs/env-x/flux/flux-instance.yaml", instance)
     branch = re.sub(r"(?m)^core_git_ref:.*$", "core_git_ref: refs/heads/main", cluster_vars)
     assert not [m for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", branch) if "depName" in m.groupdict()]

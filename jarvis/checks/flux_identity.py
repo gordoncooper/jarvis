@@ -64,7 +64,7 @@ PLATFORM_PATHS = frozenset({(FLUX_NAMESPACE, "platform-controllers"), (FLUX_NAME
 # A hosted app's wiring, app-<name>-wiring, applies core's app template as the platform
 # account and nothing else: it creates the app's namespace and tenant identity. The app's own
 # Kustomizations on that path run as the tenant.
-APP_WIRING_PATH = "./core/platform/optional/app-hosting/app"
+APP_WIRING_PATH = "./core/feature/app-hosting/app"
 _APP_WIRING_NAME = re.compile(r"^app-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?-wiring$")
 # The root Kustomization applies the env's flux tree, which declares every other
 # account, so it runs as the controller's own identity, which the FluxInstance creates.

@@ -53,7 +53,7 @@ def _docs(path: Path) -> list[dict]:
 
 def test_rest_server_contract_rules() -> None:
     docs: list[dict] = []
-    for path in [*(ROOT / "platform/backups").rglob("*.yaml"), *(ROOT / "platform/optional").rglob("*.yaml")]:
+    for path in [*(ROOT / "core/platform/backups").rglob("*.yaml"), *(ROOT / "core/feature").rglob("*.yaml")]:
         docs.extend(_docs(path))
     assert all(doc.get("kind") != "Ingress" for doc in docs)
 
@@ -91,12 +91,12 @@ def test_rest_server_contract_rules() -> None:
 
 
 def test_volsync_controller_tz_comes_from_time_zone() -> None:
-    text = (ROOT / "platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
+    text = (ROOT / "core/platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
     assert "name: TZ" in text
     assert "value: ${time_zone}" in text
     assert "mountPath: /usr/share/zoneinfo" in text
     assert "path: /usr/share/zoneinfo" in text
-    resources = _docs(ROOT / "platform/backups/controller/helmrelease.yaml")[0]["spec"]["values"][
+    resources = _docs(ROOT / "core/platform/backups/controller/helmrelease.yaml")[0]["spec"]["values"][
         "resources"
     ]
     assert resources["limits"]["cpu"] is None
@@ -107,7 +107,7 @@ def test_volsync_controller_tz_comes_from_time_zone() -> None:
 def test_renovate_tracks_the_rest_server_digest() -> None:
     image_line = next(
         line.strip()
-        for line in (ROOT / "platform/backups/rest-server.yaml").read_text(encoding="utf-8").splitlines()
+        for line in (ROOT / "core/platform/backups/rest-server.yaml").read_text(encoding="utf-8").splitlines()
         if line.strip().startswith("image:")
     )
     assert re.fullmatch(
@@ -147,7 +147,7 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     )
 
     docs: list[dict] = []
-    for path in sorted((ROOT / "platform/backups").rglob("*.yaml")):
+    for path in sorted((ROOT / "core/platform/backups").rglob("*.yaml")):
         docs.extend(_docs(path))
     snapshot_path = "${backup_path}/etcd-snapshots"
     job = next(
@@ -241,7 +241,7 @@ def test_versioned_etcd_image_is_accepted() -> None:
         assert read(kubectl) == image
     committed = next(
         line.strip().removeprefix("image:").strip()
-        for line in (ROOT / "platform/backups/etcd-snapshots.yaml")
+        for line in (ROOT / "core/platform/backups/etcd-snapshots.yaml")
         .read_text(encoding="utf-8")
         .splitlines()
         if line.strip().startswith("image:") and "restic/restic" in line
@@ -276,7 +276,7 @@ def test_restic_check_reads_repositories_without_a_lock(example_copy: ExampleCop
     """The check takes no lock and mounts the repositories read-only, so it never blocks,
     deletes, prunes or unlocks anything; it has no API token or capabilities, and runs the
     etcd copy's pinned image with a memory cap."""
-    etcd = _docs(ROOT / "platform/backups/etcd-snapshots.yaml")[0]
+    etcd = _docs(ROOT / "core/platform/backups/etcd-snapshots.yaml")[0]
     etcd_image = etcd["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"]
     for root, env in real_and_copy_envs(example_copy):
         pod = _restic_check(root, env)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
@@ -339,7 +339,7 @@ def test_restic_check_script_checks_every_repository_and_prints_only_results(
         (data / "ns-b/pvc-bad/broken").touch()
     (bindir / "restic").write_text(_FAKE_CHECK, encoding="utf-8")
     (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "platform/backups/restic-check.yaml")[0]["spec"]["jobTemplate"]
+    job = _docs(ROOT / "core/platform/backups/restic-check.yaml")[0]["spec"]["jobTemplate"]
     container = job["spec"]["template"]["spec"]["containers"][0]
     env ={item["name"]: item["value"] for item in container["env"] if "value" in item}
     env.update(PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(tmp_path / "log"))
@@ -381,8 +381,8 @@ def _run_keyed(tmp_path: Path, manifest: str, extra_env: dict[str, str]) -> tupl
 @pytest.mark.parametrize(
     ("manifest", "extra_env"),
     [
-        ("platform/backups/restic-check.yaml", {}),
-        ("platform/optional/offsite-backup-copy/restic-offsite.yaml", {"RESTIC_FROM_PASSWORD": "core-local"}),
+        ("core/platform/backups/restic-check.yaml", {}),
+        ("core/feature/offsite-backup-copy/restic-offsite.yaml", {"RESTIC_FROM_PASSWORD": "core-local"}),
     ],
 )
 def test_app_repository_opens_only_with_its_own_password(
@@ -415,7 +415,7 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
     from jarvis.schema.env import resolve_cluster_vars
     from jarvis.verify.common import scheduled_instants
 
-    etcd_schedule = _docs(ROOT / "platform/backups/etcd-snapshots.yaml")[0]["spec"]["schedule"]
+    etcd_schedule = _docs(ROOT / "core/platform/backups/etcd-snapshots.yaml")[0]["spec"]["schedule"]
     for root, env in real_and_copy_envs(example_copy):
         assert _restic_check(root, env)["spec"]["schedule"] == "${backup_check_schedule}"
         values = resolve_cluster_vars(
@@ -477,7 +477,7 @@ def test_offsite_copy_script_inits_and_copies_every_repository(tmp_path: Path) -
         (data / repo).mkdir(parents=True)
     (bindir / "restic").write_text(_FAKE_COPY, encoding="utf-8")
     (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "platform/optional/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    job = _docs(ROOT / "core/feature/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
     container = job["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
     env.update(
@@ -508,7 +508,7 @@ def test_offsite_copy_fails_every_repository_at_once_when_the_target_is_down(tmp
         (data / repo).mkdir(parents=True)
     (bindir / "restic").write_text('#!/bin/sh\necho "$*" >> "$LOG"\nexit 1\n', encoding="utf-8")
     (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "platform/optional/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    job = _docs(ROOT / "core/feature/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
     container = job["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
     env.update(
@@ -526,7 +526,7 @@ def test_offsite_copy_fails_every_repository_at_once_when_the_target_is_down(tmp
 
 def test_offsite_copy_reads_the_source_password_from_backups_restic() -> None:
     """The local-side password is key RESTIC_PASSWORD of Secret backups-restic."""
-    job = _docs(ROOT / "platform/optional/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
+    job = _docs(ROOT / "core/feature/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
     container = job["spec"]["template"]["spec"]["containers"][0]
     source = next(item for item in container["env"] if item["name"] == "RESTIC_FROM_PASSWORD")
     assert source["valueFrom"]["secretKeyRef"] == {"name": "backups-restic", "key": "RESTIC_PASSWORD"}

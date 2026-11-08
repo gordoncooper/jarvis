@@ -1,7 +1,7 @@
 name: app-check
 description: >-
   Check every app folder of a Jarvis apps repository against the app rules of the core
-  release this Action is used at (platform/optional/app-hosting/CONTRACT.md).
+  release this Action is used at (core/feature/app-hosting/CONTRACT.md).
 inputs:
   path:
     description: The apps repository checkout.

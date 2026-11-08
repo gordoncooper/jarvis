@@ -4,7 +4,7 @@
   "automerge": false,
   "packageRules": [
     {
-      "description": "k3s host binary is pinned in cluster-vars.yaml and changes only by PR, opened after approval in the dependency dashboard. A bump has to re-check platform/traefik and update the bundled chart and k3s versions in platform/traefik/CONTRACT.md.",
+      "description": "k3s host binary is pinned in cluster-vars.yaml and changes only by PR, opened after approval in the dependency dashboard. A bump has to re-check core/platform/traefik and update the bundled chart and k3s versions in core/platform/traefik/CONTRACT.md.",
       "matchDatasources": ["github-releases"],
       "matchPackageNames": ["k3s-io/k3s"],
       "dependencyDashboardApproval": true
@@ -21,7 +21,7 @@
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["volsync"],
       "prBodyNotes": [
-        "Re-check `platform/backups/controller/volumesnapshot-crd.yaml` against the external-snapshotter client this VolSync release imports."
+        "Re-check `core/platform/backups/controller/volumesnapshot-crd.yaml` against the external-snapshotter client this VolSync release imports."
       ]
     },
     {
@@ -122,7 +122,7 @@
       "description": "Datasource comments in Ansible defaults and Flux OCIRepository.",
       "managerFilePatterns": [
         "/^infra\\/ansible\\/roles\\/flux-operator\\/defaults\\/main\\.yml$/",
-        "/^platform\\/flux-operator\\/oci-repository\\.yaml$/"
+        "/^core\\/platform\\/flux-operator\\/oci-repository\\.yaml$/"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version: (?<currentValue>\\S+)",
@@ -131,8 +131,8 @@
     },
     {
       "customType": "regex",
-      "description": "Flux distribution version in core's FluxInstance (flux/flux-instance.yaml), which every env runs at its core tag. A bump merges only after the Flux Operator version that supports it is live, because the operator ships the manifests for each Flux version.",
-      "managerFilePatterns": ["/^flux\\/flux-instance\\.yaml$/"],
+      "description": "Flux distribution version in core's FluxInstance (core/flux/flux-instance.yaml), which every env runs at its core tag. A bump merges only after the Flux Operator version that supports it is live, because the operator ships the manifests for each Flux version.",
+      "managerFilePatterns": ["/^core\\/flux\\/flux-instance\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
@@ -141,7 +141,7 @@
     {
       "customType": "regex",
       "description": "VolSync Helm chart pin.",
-      "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/platform\\/backups\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>helm) depName=(?<depName>volsync) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
@@ -149,7 +149,7 @@
     {
       "customType": "regex",
       "description": "cert-manager Helm chart pin.",
-      "managerFilePatterns": ["/^platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>helm) depName=(?<depName>cert-manager) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\""
       ]
@@ -158,7 +158,7 @@
       "customType": "regex",
       "description": "cert-manager component image tag and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>quay\\.io/jetstack/cert-manager-\\S+)\\n\\s*tag: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"\\n\\s*digest: \"(?<currentDigest>sha256:[a-f0-9]+)\""
       ]
@@ -166,7 +166,7 @@
     {
       "customType": "regex",
       "description": "k8s-gateway OCI chart pin.",
-      "managerFilePatterns": ["/^platform\\/optional\\/app-dns\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/feature\\/app-dns\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
@@ -175,7 +175,7 @@
       "customType": "regex",
       "description": "k8s_gateway image tag and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/optional\\/app-dns\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/feature\\/app-dns\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>codeberg\\.org/k8s-gateway/k8s_gateway)\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ]
@@ -183,7 +183,7 @@
     {
       "customType": "regex",
       "description": "Kyverno Helm chart pin.",
-      "managerFilePatterns": ["/^platform\\/kyverno\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/platform\\/kyverno\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>helm) depName=(?<depName>kyverno) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
@@ -192,7 +192,7 @@
       "customType": "regex",
       "description": "Kyverno controller image digest and version.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/kyverno\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/platform\\/kyverno\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>ghcr.io/kyverno/\\S+)\\n\\s*tag: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ]
@@ -201,7 +201,7 @@
       "customType": "regex",
       "description": "VolSync container image version and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/backups\\/controller\\/helmrelease.yaml$/"],
+      "managerFilePatterns": ["/^core\\/platform\\/backups\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>quay.io/backube/volsync)\\n\\s*image: quay.io/backube/volsync:(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
@@ -210,7 +210,7 @@
       "customType": "regex",
       "description": "restic rest-server image version tag and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/(backups\\/rest-server|optional\\/apps-backup-server\\/rest-server-apps)\\.yaml$/"],
+      "managerFilePatterns": ["/^core\\/(platform\\/backups\\/rest-server|feature\\/apps-backup-server\\/rest-server-apps)\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>restic/rest-server)\\n\\s*image: restic/rest-server:(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
@@ -219,7 +219,7 @@
       "customType": "regex",
       "description": "restic image version and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/(backups\\/(etcd-snapshots|restic-check)|optional\\/offsite-backup-copy\\/restic-offsite)\\.yaml$/"],
+      "managerFilePatterns": ["/^core\\/(platform\\/backups\\/(etcd-snapshots|restic-check)|feature\\/offsite-backup-copy\\/restic-offsite)\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>restic/restic)\\n\\s*image: restic/restic:(?<currentValue>\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
@@ -228,7 +228,7 @@
       "customType": "regex",
       "description": "Grant reconciler python image tag and digest.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/optional\\/app-hosting\\/grant-revoke\\.yaml$/"],
+      "managerFilePatterns": ["/^core\\/feature\\/app-hosting\\/grant-revoke\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>python)\\n\\s*image: python:(?<currentValue>\\d+\\.\\d+\\.\\d+-alpine\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
@@ -237,7 +237,7 @@
       "customType": "regex",
       "description": "testapp image tag and digest, and any add-on that runs the same image.",
       "datasourceTemplate": "docker",
-      "managerFilePatterns": ["/^platform\\/testapp\\/.+\\.yaml$/", "/^services\\/[^/]+\\/.+\\.yaml$/"],
+      "managerFilePatterns": ["/^core\\/platform\\/testapp\\/.+\\.yaml$/", "/^addons\\/[^/]+\\/.+\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>nginxinc/nginx-unprivileged)\\n\\s*image: nginxinc/nginx-unprivileged:(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.]+)*)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]

@@ -27,7 +27,7 @@ _CONFIGS_ADDED = {
     ("Secret", "platform-cert-manager", "cert-manager-ca"),
     ("TLSStore", "platform-cert-manager", "default"),
 }
-# platform/testapp is rendered on the platform-configs path.
+# core/platform/testapp is rendered on the platform-configs path.
 _TESTAPP = {
     ("ConfigMap", "platform-testapp", "testapp"),
     ("Deployment", "platform-testapp", "testapp"),
@@ -35,7 +35,7 @@ _TESTAPP = {
     ("Namespace", "", "platform-testapp"),
     ("Service", "platform-testapp", "testapp"),
 }
-# platform/optional/app-hosting: only in an env that turns app hosting on.
+# core/feature/app-hosting: only in an env that turns app hosting on.
 _APP_HOSTING = {
     ("Namespace", "", "platform-app-hosting"),
     ("ServiceAccount", "platform-app-hosting", "app-grant-revoke"),
@@ -77,7 +77,7 @@ def _idents(path: str, *, root: Path | None = None) -> set[tuple[str, str, str]]
 
 def test_controller_list_lives_on_platform() -> None:
     platform = yaml.safe_load(
-        (REPO_ROOT / "platform/kustomization.yaml").read_text(encoding="utf-8")
+        (REPO_ROOT / "core/platform/kustomization.yaml").read_text(encoding="utf-8")
     )
     assert platform["resources"] == [
         "flux-operator",
@@ -87,7 +87,7 @@ def test_controller_list_lives_on_platform() -> None:
         "cert-manager/controller",
     ]
     operator = yaml.safe_load(
-        (REPO_ROOT / "platform/flux-operator/kustomization.yaml").read_text(encoding="utf-8")
+        (REPO_ROOT / "core/platform/flux-operator/kustomization.yaml").read_text(encoding="utf-8")
     )
     assert operator["resources"] == ["oci-repository.yaml", "helmrelease.yaml"]
 
@@ -96,7 +96,7 @@ def test_platform_build_includes_the_cert_manager_controller() -> None:
     """The platform build includes cert-manager's namespace, chart source, and release."""
     docs = {
         (doc["kind"], doc["metadata"].get("namespace") or "", doc["metadata"]["name"]): doc
-        for doc in yaml.safe_load_all(_kustomize_build("platform"))
+        for doc in yaml.safe_load_all(_kustomize_build("core/platform"))
         if isinstance(doc, dict)
         and (doc.get("metadata") or {}).get("name")
     }
@@ -117,7 +117,7 @@ def test_platform_build_includes_the_cert_manager_controller() -> None:
 
 def test_cert_manager_release_pins_chart_and_resources() -> None:
     release = yaml.safe_load(
-        (REPO_ROOT / "platform/cert-manager/controller/helmrelease.yaml").read_text(
+        (REPO_ROOT / "core/platform/cert-manager/controller/helmrelease.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -166,7 +166,7 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
     ]
     assert len(chart_managers) == 1
     assert any("currentValue" in pattern for pattern in chart_managers[0]["matchStrings"])
-    source = (REPO_ROOT / "platform/cert-manager/controller/helmrelease.yaml").read_text(
+    source = (REPO_ROOT / "core/platform/cert-manager/controller/helmrelease.yaml").read_text(
         encoding="utf-8"
     )
     chart_pattern = renovate_python_pattern(chart_managers[0]["matchStrings"][0])
@@ -195,7 +195,7 @@ def test_cert_manager_release_pins_chart_and_resources() -> None:
 
 def test_platform_configs_hold_the_issuer_wildcard_and_store(example_copy: ExampleCopy) -> None:
     """platform-configs builds the internal issuer, wildcard certificate, and default TLS store."""
-    text = (REPO_ROOT / "platform/cert-manager/config/internal-ca.yaml").read_text(
+    text = (REPO_ROOT / "core/platform/cert-manager/config/internal-ca.yaml").read_text(
         encoding="utf-8"
     )
     assert '"*.${dns_suffix}"' in text
@@ -228,7 +228,7 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | (_APP_HOSTING if hosting else set()) | offsite | app_dns
     )
     suffix = str(load_cluster_vars(root, env=env)["dns_suffix"])
-    for path in (REPO_ROOT / "platform/cert-manager").rglob("*"):
+    for path in (REPO_ROOT / "core/platform/cert-manager").rglob("*"):
         if path.is_file():
             assert suffix not in path.read_text(encoding="utf-8")
     docs = {

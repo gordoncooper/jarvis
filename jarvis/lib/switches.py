@@ -28,16 +28,17 @@ SYNC_REL = "sync.yaml"
 CORE_FLUX_BASE = "../../../core/flux"
 PLATFORM_CONFIGS_REL = "platform-configs/kustomization.yaml"
 APP_HOSTING = "app-hosting"
-APP_HOSTING_DIR = "platform/optional/app-hosting"
+APP_HOSTING_DIR = "core/feature/app-hosting"
 OFFSITE_COPY = "offsite-backup-copy"
-OFFSITE_COPY_DIR = "platform/optional/offsite-backup-copy"
+OFFSITE_COPY_DIR = "core/feature/offsite-backup-copy"
 OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
 APPS_BACKUP_SERVER = "apps-backup-server"
-_CORE_PATH = "../../../../core/"
+# From an env's flux/platform-configs/ to the root artifact, which holds core/ and addons/.
+_CORE_PATH = "../../../../"
 # What each optional core component adds to the env's platform-configs. One name, one row.
 # App DNS (k8s_gateway): the LAN resolves app hostnames through it. Off, the LAN's own DNS does.
 APP_DNS = "app-dns"
-APP_DNS_DIR = "platform/optional/app-dns"
+APP_DNS_DIR = "core/feature/app-dns"
 OPTIONAL_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
     APP_DNS: {"resources": (_CORE_PATH + APP_DNS_DIR,)},
     APP_HOSTING: {"components": (_CORE_PATH + APP_HOSTING_DIR,)},
@@ -45,7 +46,7 @@ OPTIONAL_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
     APPS_BACKUP_SERVER: {"resources": (_CORE_PATH + _app_backups.APPS_SERVER_DIR,)},
 }
 _BOOTSTRAP_RESOURCES = (
-    _CORE_PATH + "platform/configs",
+    _CORE_PATH + "core/platform/configs",
     "../../secrets/backups-restic.sops.yaml",
     "../../secrets/cert-manager-ca.sops.yaml",
 )
@@ -130,7 +131,7 @@ def services(data: dict[str, Any]) -> str:
     spec: dict[str, Any] = {
         "interval": "10m",
         "retryInterval": "1m",
-        "path": "./core/services",
+        "path": "./addons",
         "prune": True,
         "serviceAccountName": "flux-platform",
         "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
@@ -166,8 +167,8 @@ _SYNC = """\
 # Ansible (flux-operator role) applies this file once on a new cluster; the flux-system
 # Kustomization below then reconciles it from Git with the rest of this directory. The root
 # source is the env repo (flux_git_repo_url, flux_git_ref). It includes the core source
-# (core_git_repo_url, core_git_ref) at core/, so every Flux path here reads env files and core
-# files from one artifact, with one decryptor.
+# (core_git_repo_url, core_git_ref): its core/ and addons/ at core/ and addons/, so every Flux
+# path here reads env files, core and add-ons from one artifact, with one decryptor.
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -184,7 +185,12 @@ spec:
 {secret_ref}  include:
     - repository:
         name: core
+      fromPath: core
       toPath: core
+    - repository:
+        name: core
+      fromPath: addons
+      toPath: addons
 ---
 # Public core, read with no credential.
 apiVersion: source.toolkit.fluxcd.io/v1

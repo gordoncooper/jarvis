@@ -11,7 +11,7 @@ Kyverno 1.19 generates the backup objects (`ci/checks/pvc-backup`) and, in an en
 ## Expects
 
 - Flux `platform-controllers` reconciles this directory before `platform-configs`.
-- The backup GeneratingPolicies live under `platform/backups/` on the platform-configs path.
+- The backup GeneratingPolicies live under `core/platform/backups/` on the platform-configs path.
 
 ## Health
 
@@ -24,7 +24,7 @@ Deployment `kyverno-admission-controller` in `kyverno` is Ready. That is the gat
 - Chart `kubeVersion` is `>=1.25.0-0`. Upstream tests v1.19 on Kubernetes 1.33–1.35. The v1.19.2 module builds against `k8s.io/client-go` v0.36. The chart does not refuse 1.36.
 - Permissions are extra aggregated ClusterRoles. The chart's own roles are not edited.
 - `kyverno:backup-generate` lists ConfigMaps cluster-wide: the enrollment policies list `kube-system` and `platform-backups` for the rebuild hold and the overrides, and a list cannot be narrowed by name. No Kyverno role updates Namespaces; `volsync.backube/privileged-movers` is set in Namespace manifests.
-- In an env that turns app hosting on, `kyverno:app-derive` (from the app-hosting Component) lets both controllers read hosted apps' Apps and manage NetworkPolicies and ResourceQuotas, for GeneratingPolicies `app-derive` and `app-derive-backups` ([platform/optional/app-hosting/CONTRACT.md](../optional/app-hosting/CONTRACT.md)), which writes them only in an app's own namespace.
+- In an env that turns app hosting on, `kyverno:app-derive` (from the app-hosting Component) lets both controllers read hosted apps' Apps and manage NetworkPolicies and ResourceQuotas, for GeneratingPolicies `app-derive` and `app-derive-backups` ([core/feature/app-hosting/CONTRACT.md](../../feature/app-hosting/CONTRACT.md)), which writes them only in an app's own namespace.
 
 ## Proven by
 

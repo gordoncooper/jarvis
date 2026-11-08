@@ -1,6 +1,6 @@
 """A hosted app's own backup credential: registration, render, and the isolation guards.
 
-Rules (platform/backups/CONTRACT.md, App credentials): core's credential never reaches an app-
+Rules (core/platform/backups/CONTRACT.md, App credentials): core's credential never reaches an app-
 namespace; an app credential reaches only the apps server, restic-check and restic-offsite; the
 apps server runs --private-repos; an app credential is sealed only in its own namespace's folder.
 """
@@ -134,7 +134,7 @@ def _no_apps_server(docs: list[dict]) -> None:
         (_app_password_in_apps_server, "the apps server mounts backups-restic-app-notes keys None; only htpasswd"),
         (_app_secret_in_core_env, "core's rest-server mounts Secret backups-restic-app-notes"),
         (_no_private_repos, "the apps server runs without --private-repos"),
-        (_no_apps_server, "Secret backups-restic-app-notes is an app credential, but platform/optional/apps-backup-server is not listed"),
+        (_no_apps_server, "Secret backups-restic-app-notes is an app credential, but core/feature/apps-backup-server is not listed"),
     ],
 )
 def test_isolation_check_fails_each_seeded_leak(app_copy: ExampleCopy, seed, reason: str) -> None:
@@ -155,10 +155,10 @@ def _set_components(copy: ExampleCopy, components: list[str], *, apps_server: bo
     path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     # The registrations change; the app-hosting switch the copy carries stays.
-    switch = [item for item in doc.get("components") or [] if item.endswith("core/platform/optional/app-hosting")]
+    switch = [item for item in doc.get("components") or [] if item.endswith("core/feature/app-hosting")]
     doc["components"] = [*switch, *components]
     if not apps_server:
-        doc["resources"] = [item for item in doc["resources"] if not item.endswith("platform/optional/apps-backup-server")]
+        doc["resources"] = [item for item in doc["resources"] if not item.endswith("core/feature/apps-backup-server")]
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
@@ -184,7 +184,7 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     doc["components"] = [item for item in doc.get("components") or [] if "backup-selection" not in str(item)]
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
-    assert "registers app credentials but does not list platform/optional/apps-backup-server" in _schema_errors(copy)
+    assert "registers app credentials but does not list core/feature/apps-backup-server" in _schema_errors(copy)
     _set_components(copy, [f"backups/{APP}"])
     path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))

@@ -22,7 +22,7 @@ from conftest import require_cli
 
 from support import REPO_ROOT, load_tool
 
-APPS_MANIFEST = REPO_ROOT / "platform/optional/apps-backup-server/rest-server-apps.yaml"
+APPS_MANIFEST = REPO_ROOT / "core/feature/apps-backup-server/rest-server-apps.yaml"
 
 
 def _pinned(path: Path, image: str) -> str:
@@ -60,7 +60,7 @@ def _wait(port: int, proc: subprocess.Popen) -> None:
 def servers(tmp_path: Path):
     rest_server = _require_pinned("rest-server", ["--version"], _pinned(APPS_MANIFEST, "restic/rest-server"))
     image = re.compile(r"image: restic/rest-server:\S+")
-    core_manifest = REPO_ROOT / "platform/backups/rest-server.yaml"
+    core_manifest = REPO_ROOT / "core/platform/backups/rest-server.yaml"
     assert image.findall(APPS_MANIFEST.read_text(encoding="utf-8")) == image.findall(core_manifest.read_text(encoding="utf-8"))
     tool = load_tool("bootstrap_secrets_isolation", REPO_ROOT / "tools" / "bootstrap-secrets")
     data, creds, auth = tmp_path / "data", tmp_path / "credentials", tmp_path / "auth"
@@ -104,7 +104,7 @@ def servers(tmp_path: Path):
 
 
 def _restic(servers: dict, port: str, user: str, login: str, path: str, password: str, *args: str) -> int:
-    restic = _require_pinned("restic", ["version"], _pinned(REPO_ROOT / "platform/backups/restic-check.yaml", "restic/restic"))
+    restic = _require_pinned("restic", ["version"], _pinned(REPO_ROOT / "core/platform/backups/restic-check.yaml", "restic/restic"))
     env = {
         **os.environ,
         "RESTIC_REPOSITORY": f"rest:http://127.0.0.1:{servers[port]}/{path}",

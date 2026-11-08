@@ -79,7 +79,7 @@ def _forbid_unknown_fields(node: object) -> None:
 def _volsync_schema_location() -> str:
     """A kubeconform schema location holding the pinned VolSync CRDs as JSON schemas."""
     helmrelease = yaml.safe_load(
-        (REPO_ROOT / "platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
+        (REPO_ROOT / "core/platform/backups/controller/helmrelease.yaml").read_text(encoding="utf-8")
     )
     version = helmrelease["spec"]["chart"]["spec"]["version"]
     out = Path(tempfile.mkdtemp(prefix="volsync-schemas-"))
@@ -194,9 +194,9 @@ def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
 
 
 def _platform_helmreleases() -> dict[str, str]:
-    """HelmRelease name to metadata namespace, for objects under platform/."""
+    """HelmRelease name to metadata namespace, for objects under core/platform/."""
     found: dict[str, str] = {}
-    for path in sorted((REPO_ROOT / "platform").rglob("*.yaml")):
+    for path in sorted((REPO_ROOT / "core" / "platform").rglob("*.yaml")):
         for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
             if not isinstance(doc, dict) or doc.get("kind") != "HelmRelease":
                 continue
@@ -211,7 +211,7 @@ def _platform_helmreleases() -> dict[str, str]:
 
 
 def _helmrelease_gate_errors(found: dict[str, str]) -> list[str]:
-    """Each health-check HelmRelease exists under platform/, in flux-system."""
+    """Each health-check HelmRelease exists under core/platform/, in flux-system."""
     errors = []
     for check in PLATFORM_CONTROLLER_HEALTH_CHECKS:
         actual = found.get(check.name)
@@ -254,7 +254,7 @@ def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list
 
 
 def _platform_configs_errors(doc: dict, env: str) -> list[str]:
-    """The env's platform-configs path is platform/configs plus that env's SOPS secrets,
+    """The env's platform-configs path is core/platform/configs plus that env's SOPS secrets,
     and the opt-in off-host copy and App DNS. Its components (app hosting, app backup registrations) are
     env-schema's."""
     from jarvis.lib.switches import APP_DNS_DIR
@@ -272,11 +272,11 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     others = [
         item
         for item in resources
-        if item not in (configs, f"{CORE_SOURCE_DIR}/{OFFSITE_COPY_DIR}", f"{CORE_SOURCE_DIR}/{APP_DNS_DIR}")
+        if item not in (configs, OFFSITE_COPY_DIR, APP_DNS_DIR)
         and not (posixpath.dirname(item) == f"envs/{env}/secrets" and item.endswith(".sops.yaml"))
     ]
     if others:
-        errors.append(f"not platform/configs or an env SOPS secret: {others}")
+        errors.append(f"not core/platform/configs or an env SOPS secret: {others}")
     return errors
 
 
@@ -427,7 +427,7 @@ def test_health_checks_are_exactly_the_listed_helmreleases(tmp_path: Path, mutat
 
 
 def test_health_check_helmreleases_exist_under_platform() -> None:
-    """Each platform-controllers HelmRelease check exists under platform/, in flux-system."""
+    """Each platform-controllers HelmRelease check exists under core/platform/, in flux-system."""
     found = _platform_helmreleases()
     assert _helmrelease_gate_errors(found) == []
     missing = dict(found)
@@ -449,7 +449,7 @@ def test_env_00_deployment_health_check_fails() -> None:
 
 
 def test_env_platform_configs_adds_only_its_secrets(example_copy: ExampleCopy) -> None:
-    """Core components join platform/configs, not each env's list."""
+    """Core components join core/platform/configs, not each env's list."""
     for root, env in real_and_copy_envs(example_copy):
         path = root / "envs" / env / "flux" / "platform-configs" / "kustomization.yaml"
         assert _platform_configs_errors(yaml.safe_load(path.read_text(encoding="utf-8")), env) == []
@@ -487,7 +487,7 @@ def _assert_platform_configs_decrypts(env: str, root: Path | None = None) -> Non
 
 
 def test_helmrelease_substitute_disabled() -> None:
-    path = REPO_ROOT / "platform" / "flux-operator" / "helmrelease.yaml"
+    path = REPO_ROOT / "core" / "platform" / "flux-operator" / "helmrelease.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert (
         doc["metadata"]["annotations"]["kustomize.toolkit.fluxcd.io/substitute"]

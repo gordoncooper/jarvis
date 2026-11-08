@@ -154,7 +154,7 @@ def test_example_env_platform_configs_is_not_built_when_secrets_are_absent(tmp_p
 
 def test_a_tree_with_no_env_flux_directory_fails(tmp_path: Path) -> None:
     """Nothing to check is a failure, not a pass."""
-    (tmp_path / "platform").mkdir()
+    (tmp_path / "core" / "platform").mkdir(parents=True)
     assert [item.message for item in scan_flux_substitute(tmp_path)] == [
         "no envs/<env>/flux tree to check"
     ]
@@ -168,13 +168,13 @@ def test_an_env_flux_tree_that_builds_to_nothing_fails(tmp_path: Path) -> None:
 
 
 def test_bootstrapped_copy_scans_platform_configs(example_copy: ExampleCopy) -> None:
-    """A copy scans platform/configs. That repo contains only the copy."""
+    """A copy scans core/platform/configs. That repo contains only the copy."""
     assert [path.name for path in (example_copy.root / "envs").iterdir()] == [example_copy.name]
     assert scan_flux_substitute(example_copy.root) == []
 
 
 def test_undefined_var_in_platform_configs_fails_without_a_real_env(tmp_path: Path) -> None:
-    """An undefined ${var} in platform/configs fails on a repo that has only the copy."""
+    """An undefined ${var} in core/platform/configs fails on a repo that has only the copy."""
     copy = bootstrap_example_copy(tmp_path)
     assert [path.name for path in (copy.root / "envs").iterdir()] == [copy.name]
     assert scan_flux_substitute(copy.root) == []
@@ -185,15 +185,15 @@ def test_undefined_var_in_platform_configs_fails_without_a_real_env(tmp_path: Pa
 
 def _seed_unknown_platform_config(root: Path) -> None:
     # The env's platform-configs builds core/platform/configs. core links to the
-    # real repo, so swap in a core dir that links everything but a copied platform.
+    # real core, so swap in a core dir that links everything but a copied platform.
     core = root / "core"
     if core.is_symlink():
         core.unlink()
         core.mkdir()
-        for entry in REPO_ROOT.iterdir():
-            if entry.name not in {"platform", ".git"}:
+        for entry in (REPO_ROOT / "core").iterdir():
+            if entry.name != "platform":
                 (core / entry.name).symlink_to(entry)
-        shutil.copytree(REPO_ROOT / "platform", core / "platform", symlinks=True)
+        shutil.copytree(REPO_ROOT / "core" / "platform", core / "platform", symlinks=True)
     configs = core / "platform" / "configs"
     (configs / "seed.yaml").write_text(
         "apiVersion: v1\n"

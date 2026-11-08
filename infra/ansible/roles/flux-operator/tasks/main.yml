@@ -17,7 +17,7 @@
       - flux_git_ref | length > 0
     fail_msg: >-
       flux-operator role requires jarvis_env, flux_git_repo_url, and flux_git_ref
-      in cluster-vars, and the chart pin in platform/flux-operator/oci-repository.yaml.
+      in cluster-vars, and the chart pin in core/platform/flux-operator/oci-repository.yaml.
       flux_git_repo_url is https://, or ssh:// with the sealed deploy key
       secrets/flux-deploy-key.sops.yaml in the env.
 

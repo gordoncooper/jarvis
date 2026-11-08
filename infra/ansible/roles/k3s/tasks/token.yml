@@ -48,7 +48,7 @@
       - k3s_mode != 'server' or 'server_token' in _sealed_keys
     fail_msg: >-
       {{ k3s_token_file | basename }} for {{ jarvis_env }} is missing or lacks stringData.agent_token
-      (and stringData.server_token on the server). See platform/backups/CONTRACT.md, Rebuild a dead node.
+      (and stringData.server_token on the server). See core/platform/backups/CONTRACT.md, Rebuild a dead node.
   vars:
     _sealed_keys: "{{ (((lookup('file', k3s_token_file, errors='ignore') or '{}') | from_yaml).stringData | default({})) | list }}"
 
@@ -81,7 +81,7 @@
       The sealed server_token in {{ k3s_token_file | basename }} is the K10...::server: form,
       and {{ inventory_hostname }} has no k3s token file yet, so it would mint a new CA and
       reject that token. Nothing was changed. Seal only the passphrase after ::server: (see
-      platform/backups/CONTRACT.md, Rebuild a dead node).
+      core/platform/backups/CONTRACT.md, Rebuild a dead node).
     quiet: true
   when: k3s_mode == 'server'
 
@@ -112,6 +112,6 @@
     fail_msg: >-
       The k3s server token on {{ inventory_hostname }} differs from the sealed token in
       {{ k3s_token_file | basename }}. Nothing was changed. Seal this node's token, or follow
-      the rebuild steps in platform/backups/CONTRACT.md.
+      the rebuild steps in core/platform/backups/CONTRACT.md.
     quiet: true
   when: k3s_mode == 'server'

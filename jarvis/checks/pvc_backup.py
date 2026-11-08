@@ -17,12 +17,12 @@ BACKUP_NONE_VALUE = "none"
 
 # Observability volumes may opt out. Anywhere else, backup: none fails.
 BACKUP_NONE_ALLOWED_PREFIXES: tuple[str, ...] = (
-    "services/observability/victoria-metrics/",
-    "services/observability/victoria-logs/",
+    "addons/observability/victoria-metrics/",
+    "addons/observability/victoria-logs/",
 )
 
-_HANDWRITTEN_ROOTS = ("services/",)
-_POLICY_KUSTOMIZATION = "platform/backups/kustomization.yaml"
+_HANDWRITTEN_ROOTS = ("addons/",)
+_POLICY_KUSTOMIZATION = "core/platform/backups/kustomization.yaml"
 _POLICY_NAME = "pvc-backup"
 _VOLSYNC_KIND = re.compile(
     r"(?m)^[ \t]*kind:[ \t]*(ReplicationSource|ReplicationDestination)[ \t]*$"
@@ -106,7 +106,7 @@ def _enrollment_policy_listed(repo_root: Path) -> bool:
     for item in resources:
         if not isinstance(item, str) or "/" in item or item.startswith(".."):
             continue
-        path = repo_root / "platform" / "backups" / item
+        path = repo_root / "core" / "platform" / "backups" / item
         if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
             continue
         try:

@@ -22,7 +22,7 @@ _CHECKED_LINE = re.compile(
 def test_traefik_helmchartconfig_rules() -> None:
     docs = [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build("platform") + "\n---\n" + _kustomize_build("platform/optional/app-dns"))
+        for doc in yaml.safe_load_all(_kustomize_build("core/platform") + "\n---\n" + _kustomize_build("core/feature/app-dns"))
         if isinstance(doc, dict)
     ]
     assert not any(
@@ -69,7 +69,7 @@ def _k3s_mismatches(contract: str, versions: dict[str, str]) -> list[str]:
 
 def test_env_k3s_version_matches_traefik_contract(example_copy: ExampleCopy) -> None:
     """Each full env's k3s_version is the pin the Traefik contract checks."""
-    contract = (REPO_ROOT / "platform/traefik/CONTRACT.md").read_text(encoding="utf-8")
+    contract = (REPO_ROOT / "core/platform/traefik/CONTRACT.md").read_text(encoding="utf-8")
     versions = {
         env: k3s_release(load_cluster_vars(root, env=env))[0]
         for root, env in real_and_copy_envs(example_copy)
@@ -79,7 +79,7 @@ def test_env_k3s_version_matches_traefik_contract(example_copy: ExampleCopy) -> 
 
 
 def test_seeded_k3s_bump_without_contract_update_fails() -> None:
-    contract = (REPO_ROOT / "platform/traefik/CONTRACT.md").read_text(encoding="utf-8")
+    contract = (REPO_ROOT / "core/platform/traefik/CONTRACT.md").read_text(encoding="utf-8")
     pinned = _checked_k3s(contract)
     bumped = f"{pinned[:-1]}{int(pinned[-1]) + 1}"
     assert bumped != pinned
@@ -98,5 +98,5 @@ def test_k3s_renovate_rule_names_the_traefik_recheck() -> None:
     assert "prBodyNotes" not in rule
     description = rule["description"]
     assert "re-check" in description
-    assert "platform/traefik" in description
+    assert "core/platform/traefik" in description
     assert "CONTRACT.md" in description

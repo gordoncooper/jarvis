@@ -23,7 +23,7 @@ def _docs(path: Path) -> list[dict]:
 
 
 def test_kyverno_chart_pins_and_controllers() -> None:
-    source = (ROOT / "platform/kyverno/helmrelease.yaml").read_text(encoding="utf-8")
+    source = (ROOT / "core/platform/kyverno/helmrelease.yaml").read_text(encoding="utf-8")
     release = next(doc for doc in yaml.safe_load_all(source) if isinstance(doc, dict))
     chart = release["spec"]["chart"]["spec"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", chart["version"])
@@ -68,7 +68,7 @@ def test_kyverno_chart_pins_and_controllers() -> None:
         tags.add(tag)
     assert len(tags) == 1
     controllers = yaml.safe_load(
-        (ROOT / "platform/kustomization.yaml").read_text(encoding="utf-8")
+        (ROOT / "core/platform/kustomization.yaml").read_text(encoding="utf-8")
     )
     assert "kyverno" in controllers["resources"]
 
@@ -76,7 +76,7 @@ def test_kyverno_chart_pins_and_controllers() -> None:
 def test_kyverno_roles_aggregate_secret_and_replicationsource_permissions() -> None:
     roles = {
         doc["metadata"]["name"]: doc
-        for doc in _docs(ROOT / "platform/kyverno/rbac.yaml")
+        for doc in _docs(ROOT / "core/platform/kyverno/rbac.yaml")
     }
     assert set(roles) == {"kyverno:backup-generate"}
     generate = roles["kyverno:backup-generate"]
@@ -149,7 +149,7 @@ def _cluster(*extra: dict) -> list[dict]:
 
 
 def _generated(tmp_path: Path, claims: list[dict], cluster: list[dict]) -> dict[tuple[str, str, str], dict]:
-    policies = [substitute(doc, _ENV) for doc in _docs(ROOT / "platform/backups/enrollment.yaml")]
+    policies = [substitute(doc, _ENV) for doc in _docs(ROOT / "core/platform/backups/enrollment.yaml")]
     made = kyverno_generated(tmp_path, policies, claims, cluster)
     return {(doc["kind"], doc["metadata"]["namespace"], doc["metadata"]["name"]): doc for doc in made}
 
@@ -192,7 +192,7 @@ def test_enrollment_generates_a_secret_and_source_per_bound_claim(tmp_path: Path
     assert made[("ReplicationSource", "monitoring", "data")]["spec"] == _source("data")
     assert made[("ReplicationSource", "monitoring", "held")]["spec"] == _source("held", paused=True)
     assert made[("ReplicationSource", "app-notes", "db")]["spec"] == _source("db", schedule="15 4 * * *", daily="0")
-    assert "rest:http://" not in (ROOT / "platform/backups/enrollment.yaml").read_text(encoding="utf-8")
+    assert "rest:http://" not in (ROOT / "core/platform/backups/enrollment.yaml").read_text(encoding="utf-8")
 
 
 def test_rebuild_hold_pauses_every_source(tmp_path: Path) -> None:
@@ -207,7 +207,7 @@ def test_rebuild_hold_pauses_every_source(tmp_path: Path) -> None:
 def test_enrollment_policies_sync_and_skip_prune() -> None:
     """Rule: both policies generate for existing claims and keep what they made in sync; Flux
     force-replaces them and never prunes them."""
-    policies = _docs(ROOT / "platform/backups/enrollment.yaml")
+    policies = _docs(ROOT / "core/platform/backups/enrollment.yaml")
     assert [(doc["kind"], doc["metadata"]["name"]) for doc in policies] == [
         ("GeneratingPolicy", "pvc-backup"), ("GeneratingPolicy", "pvc-backup-app")]
     for policy in policies:
@@ -237,7 +237,7 @@ def _assert_enrollment_on_platform_configs(root, env: str) -> None:
     assert not any(doc.get("kind") == "ReplicationSource" for doc in docs)
     controllers = [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build("platform"))
+        for doc in yaml.safe_load_all(_kustomize_build("core/platform"))
         if isinstance(doc, dict)
     ]
     assert any(

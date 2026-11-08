@@ -15,7 +15,7 @@ _BODY = "testapp\n"
 def test_fixture_serves_known_file_on_the_default_certificate() -> None:
     docs = {
         (doc["kind"], doc["metadata"]["name"]): doc
-        for doc in yaml.safe_load_all(_kustomize_build("platform/testapp"))
+        for doc in yaml.safe_load_all(_kustomize_build("core/platform/testapp"))
         if isinstance(doc, dict) and isinstance(doc.get("metadata"), dict)
     }
     body = docs[("ConfigMap", "testapp")]["data"]["index.html"]

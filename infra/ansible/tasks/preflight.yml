@@ -69,5 +69,5 @@
       - flux_instance_file is file
       - flux_sync_file is file
     fail_msg: >-
-      flux/flux-instance.yaml (core's) or envs/{{ jarvis_env }}/flux/sync.yaml is missing.
+      core/flux/flux-instance.yaml (core's) or envs/{{ jarvis_env }}/flux/sync.yaml is missing.
       flux-operator applies them on a new cluster; commit sync.yaml before running site.yml.
