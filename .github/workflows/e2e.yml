@@ -75,10 +75,13 @@ jobs:
       - name: Install k3d
         env:
           # renovate: datasource=github-releases depName=k3d-io/k3d
-          K3D_VERSION: v5.8.3
+          K3D_VERSION: v5.9.0
+          # The k3d-linux-amd64 line of the release's checksums.txt. Bump it by hand in the version's PR.
+          K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
         run: |
           set -euo pipefail
           curl -fsSL -o "${RUNNER_TEMP}/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          echo "${K3D_SHA256}  ${RUNNER_TEMP}/k3d" | sha256sum -c -
           install -m 0755 "${RUNNER_TEMP}/k3d" "${HOME}/.local/bin/k3d"
 
       - name: Make the throwaway env and push its branch
