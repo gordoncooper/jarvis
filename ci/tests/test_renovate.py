@@ -426,14 +426,14 @@ def _unmanaged(rel: str, text: str, line: str) -> list[str]:
 
 
 def _tracked() -> dict[str, str]:
-    """Every tracked file outside ci/ and renovate.json, by path."""
+    """Every tracked file outside ci/ and the Renovate configs (renovate.json, renovate/), by path."""
     listed = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True, text=True
     ).stdout.split("\0")
     return {
         rel: (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
         for rel in listed
-        if rel and rel != "renovate.json" and not rel.startswith("ci/") and (ROOT / rel).is_file()
+        if rel and rel != "renovate.json" and not rel.startswith(("ci/", "renovate/")) and (ROOT / rel).is_file()
     }
 
 
@@ -469,3 +469,45 @@ def test_seeded_comment_a_manager_ignores_fails() -> None:
     rel = "platform/backups/restic-check.yaml"
     source = (ROOT / rel).read_text(encoding="utf-8").replace("depName=restic/restic", "depName=other/image")
     assert _unmanaged(rel, source, _RENOVATE_COMMENT)
+
+
+_INSTANCE_PRESET = ROOT / "renovate" / "instance.json"
+
+
+def _preset_matches(rel: str, text: str) -> list[re.Match[str]]:
+    preset = json.loads(_INSTANCE_PRESET.read_text(encoding="utf-8"))
+    return [
+        match
+        for manager in preset["customManagers"]
+        if any(re.search(p.strip("/"), rel) for p in manager["managerFilePatterns"])
+        for pattern in manager["matchStrings"]
+        for match in re.finditer(_js_to_python(pattern), text)
+    ]
+
+
+def test_instance_preset_reads_every_pin_an_env_holds() -> None:
+    """Rule: the instance preset opens PRs for an env's core tag (cluster-vars and the core
+    GitRepository alike), k3s and Flux; a core that follows a branch is not a pin it moves."""
+    cluster_vars = (ROOT / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8")
+    cluster_vars = re.sub(r"(?m)^core_git_ref:.*$", "core_git_ref: refs/tags/v1.2.3", cluster_vars)
+    core = {m.group("depName"): m.group("currentValue")
+            for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", cluster_vars) if "depName" in m.groupdict()}
+    assert core == {"example-owner/example-core": "v1.2.3"}
+    k3s = [m.group("currentValue") for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", cluster_vars)
+           if "depName" not in m.groupdict()]
+    assert k3s == [yaml.safe_load(cluster_vars)["k3s_version"]]
+    sync = (ROOT / "envs/env-00/flux/sync.yaml").read_text(encoding="utf-8")
+    core_source = sync.split("example-core", 1)
+    sync = core_source[0] + "example-core" + re.sub(r"name: refs/\S+", "name: refs/tags/v1.2.3", core_source[1], count=1)
+    assert [(m.group("depName"), m.group("currentValue")) for m in _preset_matches("envs/env-x/flux/sync.yaml", sync)] == [
+        ("example-owner/example-core", "v1.2.3")]
+    instance = (ROOT / "envs/env-00/flux/flux-instance.yaml").read_text(encoding="utf-8")
+    assert len(_preset_matches("envs/env-x/flux/flux-instance.yaml", instance)) == 1
+    branch = re.sub(r"(?m)^core_git_ref:.*$", "core_git_ref: refs/heads/main", cluster_vars)
+    assert not [m for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", branch) if "depName" in m.groupdict()]
+
+
+def test_instance_preset_moves_nothing_on_its_own() -> None:
+    preset = json.loads(_INSTANCE_PRESET.read_text(encoding="utf-8"))
+    assert preset["automerge"] is False
+    assert not any(rule.get("automerge") for rule in preset["packageRules"])

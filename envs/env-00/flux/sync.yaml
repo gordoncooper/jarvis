@@ -39,7 +39,7 @@ spec:
   # core_git_repo_url and core_git_ref in values/cluster-vars.yaml.
   url: https://github.com/example-owner/example-core
   ref:
-    name: refs/heads/example
+    name: refs/tags/v0.2.0
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization

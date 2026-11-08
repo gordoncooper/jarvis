@@ -2,13 +2,25 @@
 # Run every env-level check against the checkout INSTANCE names (an instance repo),
 # or against this checkout when INSTANCE is unset. An instance CI and a local run both
 # call this, so a new env-level check reaches every instance with no change there.
-#   INSTANCE=<path> bash ci/run-env-checks
+#   INSTANCE=<path> [ENVS=<env>] bash ci/run-env-checks
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 export PATH="${HOME}/.local/bin:${repo_root}/.venv/bin:${PATH}"
+
+# ENVS="<env> ..." limits the checks to those envs (each must exist), so an instance CI can check
+# each env against the core tag it pins. Unset, every env.
+if [[ -n "${ENVS:-}" ]]; then
+  instance="${INSTANCE:-$repo_root}"
+  for env in ${ENVS//,/ }; do
+    if [[ ! -d "${instance}/envs/${env}" ]]; then
+      echo "ENVS names ${env}, but ${instance}/envs/${env} does not exist" >&2
+      exit 1
+    fi
+  done
+fi
 
 # The checks that read envs/<env> through instance_root, in ci/checks/.
 env_checks=(env-schema addons app-hosting backup-isolation flux-identity flux-prune flux-substitute manifest-lint secret-scan)
