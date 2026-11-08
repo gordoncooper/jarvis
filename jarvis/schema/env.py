@@ -100,7 +100,6 @@ _CLUSTER_VARS_REQUIRED = frozenset(
         "backup_schedule",
         "pod_cidr",
         "service_cidr",
-        "app_dns_cluster_ip",
         "local_path_data",
         "flux_git_repo_url",
         "flux_git_ref",
@@ -125,6 +124,8 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "flux_known_hosts",
         "backup_check_schedule",
         "node_memory_reserve_percent",
+        # Required once values/switches.yaml lists app-dns.
+        "app_dns_cluster_ip",
         # Core's k3s release unless set, and then both together.
         "k3s_version",
         "k3s_sha256",
@@ -912,6 +913,17 @@ def _validate_switches(env_dir: Path, repo_root: Path, env_name: str, bootstrapp
             return []
         return [f"{env_name}: missing required file {_display_path(env_dir / _switches.SWITCHES_FILE, repo_root)}"]
     errors = switches_problems(env_dir, repo_root)
+    if _switches.APP_DNS in _switches.names(_switches.load(env_dir)[0], _switches.OPTIONAL):
+        cluster_vars_path = env_dir / "values" / "cluster-vars.yaml"
+        try:
+            cluster_vars = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            cluster_vars = {}  # the cluster-vars validator reports it
+        if isinstance(cluster_vars, dict) and not cluster_vars.get("app_dns_cluster_ip"):
+            errors.append(
+                f"{_display_path(cluster_vars_path, repo_root)}: app_dns_cluster_ip is required while "
+                f"{_switches.SWITCHES_FILE} lists {_switches.APP_DNS}"
+            )
     rel = _display_path(env_dir / _apps.APPS_VALUES, repo_root)
     flux = env_dir / "flux"
     # The other validators report a bad selection; without a valid one the wiring has no expected form.

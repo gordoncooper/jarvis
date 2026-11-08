@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 
-from jarvis.lib.env import reason, tool_env
+from jarvis.lib.env import json_object, reason, tool_env
 from jarvis.verify.common import CheckError, Context, Fetch, Issuer, Kubectl, items
 from jarvis.verify.registry import Check, register
 
@@ -23,6 +23,9 @@ FLUX_RESOURCES = (
 ENABLELB = "svccontroller.k3s.cattle.io/enablelb"
 CANARY_SHA256 = "60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7"
 HTTP_TIMEOUT_SECONDS = 30
+# k3s's bundled Traefik, which ServiceLB serves on the edge hosts.
+TRAEFIK_NAMESPACE = "kube-system"
+TRAEFIK_SERVICE = "traefik"
 PENDING_GRACE_SECONDS = 300
 
 
@@ -51,7 +54,9 @@ def _run(
         return CompletedProcess(list(argv), 1, "", f"{argv[0]} timed out")
 
 
-def _fetch(host: str, ca_file: Path) -> tuple[int, str]:
+def _fetch(host: str, ca_file: Path, address: str | None = None) -> tuple[int, str]:
+    """GET https://host/, resolving host to address when given (no App DNS: Traefik's address)."""
+    resolve = ["--resolve", f"{host}:443:{address}"] if address else []
     proc = _run(
         [
             "curl",
@@ -60,6 +65,7 @@ def _fetch(host: str, ca_file: Path) -> tuple[int, str]:
             str(HTTP_TIMEOUT_SECONDS),
             "--cacert",
             str(ca_file),
+            *resolve,
             f"https://{host}/",
         ]
     )
@@ -68,13 +74,13 @@ def _fetch(host: str, ca_file: Path) -> tuple[int, str]:
     return 0, proc.stdout
 
 
-def _issuer(host: str, ca_file: Path) -> tuple[int, str]:
+def _issuer(host: str, ca_file: Path, address: str | None = None) -> tuple[int, str]:
     proc = _run(
         [
             "openssl",
             "s_client",
             "-connect",
-            f"{host}:443",
+            f"{address or host}:443",
             "-servername",
             host,
             "-CAfile",
@@ -240,19 +246,34 @@ def check_pods(kubectl: Kubectl, now: datetime) -> None:
         raise CheckError("; ".join(sorted(stuck)))
 
 
+def traefik_address(kubectl: Kubectl) -> str:
+    """The address ServiceLB gives Traefik: what LAN clients reach when the env runs no App DNS."""
+    proc = kubectl(["get", "service", "-n", TRAEFIK_NAMESPACE, TRAEFIK_SERVICE, "-o", "json"])
+    if proc.returncode:
+        raise CheckError(f"Traefik Service: {reason(proc)}")
+    ingress = ((json_object(proc, "Traefik Service").get("status") or {}).get("loadBalancer") or {}).get("ingress") or []
+    address = next((item.get("ip") for item in ingress if isinstance(item, dict) and item.get("ip")), None)
+    if not address:
+        raise CheckError("Traefik Service has no LoadBalancer address")
+    return str(address)
+
+
 def check_https(
-    repo_root: Path, env: str, dns_suffix: str, fetch: Fetch, issuer: Issuer
+    repo_root: Path, env: str, dns_suffix: str, fetch: Fetch, issuer: Issuer, *, address: str | None = None
 ) -> str:
+    """The canary over HTTPS on the cluster CA: by name through the LAN's DNS (App DNS), or at
+    address when the env runs no App DNS."""
     host = f"testapp.{dns_suffix}"
     ca_file = repo_root / "envs" / env / "ca.crt"
     if not ca_file.is_file():
         raise CheckError(f"missing envs/{env}/ca.crt")
-    code, body = fetch(host, ca_file)
+    via = (address,) if address else ()
+    code, body = fetch(host, ca_file, *via)
     if code or not body:
         raise CheckError(f"LAN HTTPS {host}: {body or 'empty body'}")
     if hashlib.sha256(body.encode()).hexdigest() != CANARY_SHA256:
         raise CheckError(f"LAN HTTPS {host}: unexpected body")
-    code, cert_issuer = issuer(host, ca_file)
+    code, cert_issuer = issuer(host, ca_file, *via)
     if code or not cert_issuer:
         raise CheckError(f"certificate chain {host}: {cert_issuer or 'empty issuer'}")
     return cert_issuer

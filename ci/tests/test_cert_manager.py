@@ -85,7 +85,6 @@ def test_controller_list_lives_on_platform() -> None:
         "backups/controller",
         "kyverno",
         "cert-manager/controller",
-        "app-dns",
     ]
     operator = yaml.safe_load(
         (REPO_ROOT / "platform/flux-operator/kustomization.yaml").read_text(encoding="utf-8")
@@ -216,8 +215,17 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         else set()
     )
     hosting = app_hosting_listed(root / "envs" / env)
+    from jarvis.lib import switches as _switches
+
+    listed = _switches.names(_switches.load(root / "envs" / env)[0], _switches.OPTIONAL)
+    app_dns = (
+        {("Namespace", "", "platform-app-dns"), ("HelmRepository", "flux-system", "k8s-gateway"),
+         ("HelmRelease", "flux-system", "k8s-gateway"), ("ConfigMap", "kube-system", "coredns-custom")}
+        if _switches.APP_DNS in listed
+        else set()
+    )
     assert _idents(f"envs/{env}/flux/platform-configs", root=root) == (
-        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | (_APP_HOSTING if hosting else set()) | offsite
+        _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | (_APP_HOSTING if hosting else set()) | offsite | app_dns
     )
     suffix = str(load_cluster_vars(root, env=env)["dns_suffix"])
     for path in (REPO_ROOT / "platform/cert-manager").rglob("*"):

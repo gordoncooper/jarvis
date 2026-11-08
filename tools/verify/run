@@ -11,6 +11,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 from jarvis.lib import apps as _apps
+from jarvis.lib import switches as _switches
 from jarvis.lib.env import (
     EnvError,
     instance_root,
@@ -34,6 +35,7 @@ from jarvis.verify.platform import (  # noqa: F401
     _inventory,
     _issuer,
     check_https,
+    traefik_address,
 )
 from jarvis.verify.registry import collect, enabled_components, load_addons
 
@@ -126,8 +128,11 @@ def run(
         else:
             _line(f"PASS {label}")
     try:
+        # With App DNS off, the LAN's own DNS names apps; verify reaches Traefik's address directly.
+        switches, _ = _switches.load(repo_root / "envs" / env)
+        address = None if _switches.APP_DNS in _switches.names(switches, _switches.OPTIONAL) else traefik_address(kubectl)
         cert_issuer = check_https(
-            repo_root, env, str(values["dns_suffix"]), fetch, issuer
+            repo_root, env, str(values["dns_suffix"]), fetch, issuer, address=address
         )
     except (CheckError, KeyError, TypeError) as exc:
         _line(f"FAIL LAN HTTPS and certificate: {exc}")

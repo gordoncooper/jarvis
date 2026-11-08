@@ -29,7 +29,7 @@ def test_a_renovate_bump_runs_the_tests_its_file_reaches() -> None:
     name its folder, the manifest rules and the flux render."""
     tools = select("renovate/kubeconform", ["tools/versions.env"]).split()
     assert "ci/tests/test_install_deps.py" in tools and "ci/tests/test_renovate.py" in tools
-    image = select("renovate/k8s-gateway", ["platform/app-dns/helmrelease.yaml"]).split()
+    image = select("renovate/k8s-gateway", ["platform/optional/app-dns/helmrelease.yaml"]).split()
     assert {"ci/tests/test_app_dns.py", "ci/tests/test_flux_entry.py", "ci/tests/test_digest_pin.py",
             "ci/tests/test_renovate.py"} <= set(image)
     assert "ci/tests/test_k3s.py" not in image

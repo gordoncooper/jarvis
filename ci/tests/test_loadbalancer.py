@@ -32,9 +32,9 @@ def test_r28_extra_loadbalancer_under_an_allowed_folder_fails(tmp_path: Path) ->
 
 
 def test_r28_traefik_and_app_dns_owners_pass(tmp_path: Path) -> None:
-    (tmp_path / "platform" / "app-dns").mkdir(parents=True)
+    (tmp_path / "platform" / "optional" / "app-dns").mkdir(parents=True)
     (tmp_path / "platform" / "traefik").mkdir(parents=True)
-    (tmp_path / "platform" / "app-dns" / "helmrelease.yaml").write_text(
+    (tmp_path / "platform" / "optional" / "app-dns" / "helmrelease.yaml").write_text(
         """
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -87,7 +87,7 @@ spec:
 
 
 def test_r28_unlisted_helmrelease_under_app_dns_fails(tmp_path: Path) -> None:
-    path = tmp_path / "platform" / "app-dns" / "second.yaml"
+    path = tmp_path / "platform" / "optional" / "app-dns" / "second.yaml"
     path.parent.mkdir(parents=True)
     path.write_text(
         """

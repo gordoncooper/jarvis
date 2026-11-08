@@ -1066,3 +1066,19 @@ def test_k3s_release_is_cores_unless_the_env_sets_both_keys(tmp_path: Path) -> N
     assert "set both or neither" in str(excinfo.value)
     override = {**cv, "k3s_version": "v1.35.9+k3s1", "k3s_sha256": "0" * 64}
     assert k3s.release(override) == ("v1.35.9+k3s1", "0" * 64)
+
+
+def test_app_dns_cluster_ip_is_required_only_while_app_dns_is_listed(tmp_path: Path) -> None:
+    """Rule: app_dns_cluster_ip is optional, and required once values/switches.yaml lists app-dns."""
+    from support import set_switches
+
+    cv = _valid_cluster_vars()
+    cv.pop("app_dns_cluster_ip", None)
+    env = _write_env(tmp_path, cluster_vars=dict(cv))
+    (env / "secrets").mkdir(exist_ok=True)
+    _copy_flux_entry(env)
+    validate_env_tree(tmp_path)
+    set_switches(env, optional=["app-dns"])
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "app_dns_cluster_ip is required while values/switches.yaml lists app-dns" in str(excinfo.value)

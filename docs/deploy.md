@@ -17,7 +17,7 @@ curl -fsSL "https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256
 
 `site.yml` downloads that same `k3s` file and checks it against `k3s_sha256` ([infra/ansible/roles/k3s/tasks/main.yml](../infra/ansible/roles/k3s/tasks/main.yml)).
 
-- Router or LAN DNS forwards the env's DNS suffix (`dns_suffix`) to an edge node. App DNS answers that zone on UDP and TCP port 53 ([platform/app-dns/CONTRACT.md](../platform/app-dns/CONTRACT.md)).
+- Router or LAN DNS forwards the env's DNS suffix (`dns_suffix`) to an edge node. App DNS answers that zone on UDP and TCP port 53 ([platform/optional/app-dns/CONTRACT.md](../platform/optional/app-dns/CONTRACT.md)).
 
 ## Install tools
 
