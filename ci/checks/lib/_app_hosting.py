@@ -31,7 +31,7 @@ from _manifests import flux_paths, kustomize_build, namespace_of, postbuild_valu
 
 import _apps  # tools/lib, which schema.env (through _manifests) puts on the path
 from _app_file import SHIPPED_KINDS
-from schema.env import CORE_SOURCE_DIR
+from schema.env import CORE_SOURCE_DIR, env_flux_dirs
 
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
@@ -78,7 +78,7 @@ class AppHostingViolation:
 def scan_app_hosting(env_root: Path | str) -> list[AppHostingViolation]:
     root = Path(env_root).resolve()
     violations: list[AppHostingViolation] = []
-    for flux_dir in sorted(path for path in root.glob("envs/*/flux") if path.is_dir()):
+    for flux_dir in env_flux_dirs(root):
         env_rel = flux_dir.relative_to(root).as_posix()
         violations.extend(AppHostingViolation(env_rel, problem) for problem in _env_problems(root, env_rel))
     return sorted(violations, key=lambda item: (item.path, item.message))
