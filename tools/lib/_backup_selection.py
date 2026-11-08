@@ -293,7 +293,7 @@ def write_registration_files(env_dir: Path, enabled_namespaces: Sequence[str]) -
 
 
 def _overrides_generator(overrides: dict[str, Any]) -> str:
-    """The generated ConfigMap ClusterPolicy pvc-backup reads: one key per namespace with an override."""
+    """The generated ConfigMap the pvc-backup policies read: one key per namespace with an override."""
     literals = [
         "app-" + app + "=" + json.dumps(
             {key: value.strip() if isinstance(value, str) else value for key, value in values.items()},

@@ -20,48 +20,41 @@ description: Hosted apps; below every core and add-on pod, never preempts.
 # policies app-file and app-grants refuse any other class, so if Kyverno is down (Ignore) the
 # app's workloads are refused rather than run at core's priority; core requests never wait on
 # it. The VolSync controller's movers keep core's priority, as its other carve-outs do.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
 metadata:
   name: app-priority
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
-    pod-policies.kyverno.io/autogen-controllers: none
 spec:
-  webhookConfiguration:
-    failurePolicy: Ignore
-  background: false
-  rules:
-    - name: workloads
-      match:
-        any:
-          - resources:
-              kinds: [Deployment, StatefulSet, Job]
-              namespaces: [app-*]
-      exclude: &movers
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: volsync
-                namespace: volsync
-      mutate:
-        patchStrategicMerge:
-          spec:
-            template:
-              spec:
-                priorityClassName: hosted-app
-    - name: cronjobs
-      match:
-        any:
-          - resources:
-              kinds: [CronJob]
-              namespaces: [app-*]
-      exclude: *movers
-      mutate:
-        patchStrategicMerge:
-          spec:
-            jobTemplate:
-              spec:
-                template:
-                  spec:
-                    priorityClassName: hosted-app
+  failurePolicy: Ignore
+  # It matches the workloads themselves; no rule is generated for their pod templates.
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, statefulsets]
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [jobs, cronjobs]
+  matchConditions:
+    - name: app-namespace
+      expression: request.namespace.startsWith('app-')
+    - name: not-a-mover
+      expression: request.userInfo.username != 'system:serviceaccount:volsync:volsync'
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          [JSONPatch{
+            op: "add",
+            path: object.kind == "CronJob"
+              ? "/spec/jobTemplate/spec/template/spec/priorityClassName"
+              : "/spec/template/spec/priorityClassName",
+            value: "hosted-app"
+          }]

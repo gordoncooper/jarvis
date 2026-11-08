@@ -2,7 +2,7 @@
 
 On what each env's platform-configs path renders (and on the apps server core ships):
 
-- A pvc-backup rule that generates a Secret and can match an app- namespace reads only that
+- A GeneratingPolicy that generates a Secret and can match an app- namespace reads only that
   app's own platform-backups/backups-restic-<namespace>, never core's backups-restic.
 - Core's rest-server (Deployment restic) takes its users only from backups-restic.
 - The apps rest-server (Deployment restic-apps) runs --private-repos, never mounts backups-restic,
@@ -12,7 +12,7 @@ On what each env's platform-configs path renders (and on the apps server core sh
 
 from __future__ import annotations
 
-import fnmatch
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,13 +28,15 @@ import _app_backups  # noqa: E402
 
 CORE_SECRET = "backups-restic"
 CORE_SERVER = "restic"
-POLICY = "pvc-backup"
-APP_SECRET_URL = (
-    "/api/v1/namespaces/platform-backups/secrets/"
-    + _app_backups.secret_name("{{ request.object.metadata.namespace }}")
+APP_SECRET = _app_backups.secret_name("<namespace>")
+# The matchCondition that keeps a policy out of every app- namespace.
+_CORE_ONLY = "!object.metadata.namespace.startsWith('app-')"
+_SECRET_READ = re.compile(
+    r'resource\.(get|list)\(\s*"v1"\s*,\s*"secrets"\s*,\s*"platform-backups"\s*(?:,\s*"([^"]*)"\s*)?\)'
 )
-# A namespace name only an app- pattern can match.
-_PROBE_APP_NAMESPACE = "app-probe"
+# How a policy picks the app's own credential out of a list of platform-backups Secrets.
+_APP_FILTER = re.compile(r'\.metadata\.name\s*==\s*"' + re.escape(_app_backups.secret_name("")) + r'"\s*\+\s*object\.metadata\.namespace')
+_SECRET_KIND = re.compile(r'"kind"\s*:\s*(?:dyn\()?"Secret"')
 
 
 @dataclass(frozen=True)
@@ -73,7 +75,7 @@ def _render_violations(where: str, docs: list[dict]) -> list[Violation]:
     names = {(doc.get("kind"), (doc.get("metadata") or {}).get("name")) for doc in docs}
     for doc in docs:
         kind, name = doc.get("kind"), (doc.get("metadata") or {}).get("name")
-        if kind == "ClusterPolicy" and name == POLICY:
+        if kind == "GeneratingPolicy":
             found.extend(Violation(where, reason) for reason in _policy_reasons(doc))
         elif kind == "Deployment" and name == CORE_SERVER:
             for secret, _keys in _secret_volumes(doc):
@@ -92,43 +94,29 @@ def _render_violations(where: str, docs: list[dict]) -> list[Violation]:
 
 
 def _policy_reasons(policy: dict) -> list[str]:
-    reasons = []
-    for rule in (policy.get("spec") or {}).get("rules") or []:
-        generate = rule.get("generate") or {}
-        if generate.get("kind") != "Secret" or not _can_match_app(rule):
-            continue
-        urls = [
-            str((entry.get("apiCall") or {}).get("urlPath", ""))
-            for entry in rule.get("context") or []
-            if "/secrets/" in str((entry.get("apiCall") or {}).get("urlPath", ""))
-        ]
-        if urls != [APP_SECRET_URL]:
-            reasons.append(
-                f"rule {rule.get('name')} generates a Secret in an app- namespace from {urls or 'no Secret'}; "
-                f"it may read only that app's own credential, never {CORE_SECRET}"
-            )
-    return reasons
-
-
-def _can_match_app(rule: dict) -> bool:
-    match = rule.get("match") or {}
-    filters = [item.get("resources") or {} for key in ("any", "all") for item in match.get(key) or []]
-    filters = filters or [match.get("resources") or {}]
-    if not any(_namespace_matches(item.get("namespaces")) for item in filters):
-        return False
-    for item in (rule.get("exclude") or {}).get("any") or []:
-        resources = item.get("resources") or {}
-        if set(resources) == {"namespaces"} and _namespace_matches(resources["namespaces"]):
-            return False
-    return True
-
-
-def _namespace_matches(patterns: object) -> bool:
-    if patterns is None:
-        return True
-    return isinstance(patterns, list) and any(
-        isinstance(item, str) and fnmatch.fnmatchcase(_PROBE_APP_NAMESPACE, item) for item in patterns
+    spec = policy.get("spec") or {}
+    expressions = "\n".join(
+        str(item.get("expression", "")) for key in ("variables", "generate") for item in spec.get(key) or []
     )
+    if not _SECRET_KIND.search(expressions) or not _can_match_app(spec):
+        return []
+    reads = []
+    for verb, name in _SECRET_READ.findall(expressions):
+        if verb == "get":
+            reads.append(name)
+        else:
+            reads.append(APP_SECRET if _APP_FILTER.search(expressions) else "a list of platform-backups Secrets")
+    if reads != [APP_SECRET]:
+        return [
+            f"policy {(policy.get('metadata') or {}).get('name')} generates a Secret in an app- namespace from "
+            f"{reads or 'no Secret'}; it may read only that app's own credential, never {CORE_SECRET}"
+        ]
+    return []
+
+
+def _can_match_app(spec: dict) -> bool:
+    conditions = [" ".join(str(item.get("expression", "")).split()) for item in spec.get("matchConditions") or []]
+    return _CORE_ONLY not in conditions
 
 
 def _apps_server_reasons(doc: dict) -> list[str]:
