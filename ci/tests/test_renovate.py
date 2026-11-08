@@ -469,3 +469,12 @@ def test_seeded_comment_a_manager_ignores_fails() -> None:
     rel = "platform/backups/restic-check.yaml"
     source = (ROOT / rel).read_text(encoding="utf-8").replace("depName=restic/restic", "depName=other/image")
     assert _unmanaged(rel, source, _RENOVATE_COMMENT)
+
+
+def test_etcd_stays_on_the_minor_kubeadm_pairs_with_kubectl() -> None:
+    """Rule: the loopback etcd stays on 3.6 while kubectl is on 1.36; raise both together."""
+    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    caps = [rule["allowedVersions"] for rule in renovate["packageRules"] if rule.get("matchDepNames") == ["etcd-io/etcd"]]
+    assert caps == ["<3.7"]
+    versions = (ROOT / "tools/versions.env").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^etcd_version=3\.6\.", versions) and re.search(r"(?m)^kubectl_version=1\.36\.", versions)
