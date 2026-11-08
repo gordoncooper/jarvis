@@ -59,7 +59,7 @@ Without that name the env renders none of this: no App CRD, no app admission pol
 
 ## Expects
 
-- The apps repository at `apps_git_repo_url` (https, readable without a credential), branch `main`, one folder per app: `<name>/app.yaml` and `<name>/deploy/` (plain manifests, or a kustomization). Other files in the folder never reach the cluster.
+- The apps repository at `apps_git_repo_url` (https, readable without a credential), one folder per app, each deployed at its pinned tag `<name>/v<x.y.z>` (`versions:` in the env's `values/apps.yaml`), never a branch tip: `<name>/app.yaml` and `<name>/deploy/` (plain manifests, or a kustomization). Other files in the folder never reach the cluster.
 - The app's objects meet the rules above. `${app_host}` is the only variable they may use. The image and the probes are the app's own concern.
 - The env lists the app in `envs/<env>/values/switches.yaml` (names only) and commits the render, `envs/<env>/flux/generated/apps.yaml`, listed in its `flux/kustomization.yaml`.
 - An app with a `backup: true` volume has its own backup credential when the env selects it for backup ([platform/backups/CONTRACT.md](../../backups/CONTRACT.md), App credentials). A selected app without a credential gets no backup and `make verify` fails it. A listed app the env does not select (default-off `selected` mode, or `all_except` with it in `exclude`) is skipped: its PVC does not fail backup freshness for a missing credential.

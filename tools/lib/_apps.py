@@ -37,7 +37,11 @@ LAN_GRANTS = ("lan-all", "lan-target")
 # values/cluster-vars.yaml: the env's LAN ranges.
 LAN_CIDRS = "lan_cidrs"
 _PRIVATE = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
-_KEYS = frozenset({"apps", "exceptions", "backups"})
+_KEYS = frozenset({"apps", "exceptions", "backups", "versions"})
+# values/apps.yaml versions: each listed app's pinned release, <app>: v<major>.<minor>.<patch>.
+# Flux reads the app at the apps repository's tag <app>/v<version>; nothing follows a branch.
+VERSIONS = "versions"
+_VERSION = re.compile(r"^v\d+\.\d+\.\d+$")
 
 
 def wiring_name(app: str) -> str:
@@ -110,7 +114,7 @@ def validate(data: dict[str, Any], dns_suffix: str | None, lan_cidrs: list[str] 
     """The app list holds names only, each once; each exception line names a listed app and
     one known grant, once. A custom hostname stays outside the env's own zone; a LAN grant
     needs the env's lan_cidrs, and a lan-target's range sits inside them."""
-    errors = [f"unknown key {key!r} (allowed: apps, exceptions, backups)" for key in sorted(set(data) - _KEYS)]
+    errors = [f"unknown key {key!r} (allowed: exceptions, backups, versions)" for key in sorted(set(data) - _KEYS)]
     apps = data.get("apps")
     if apps is None:
         apps = []
@@ -225,6 +229,29 @@ def grants_for(data: dict[str, Any], app: str) -> list[str]:
     ]
 
 
+def version_problems(data: dict[str, Any]) -> list[str]:
+    """Every listed app has a pinned version, and no version names an app the env does not list."""
+    versions = data.get(VERSIONS)
+    if versions is None:
+        versions = {}
+    if not isinstance(versions, dict):
+        return [f"{VERSIONS} must map each listed app to v<major>.<minor>.<patch>"]
+    apps = [item for item in data.get("apps") or [] if isinstance(item, str)]
+    errors = [f"{VERSIONS}: {app} is listed but has no pinned version (its apps-repository tag {app}/v<version>)"
+              for app in apps if app not in versions]
+    for app, version in versions.items():
+        if app not in apps:
+            errors.append(f"{VERSIONS}: {app} is not a listed app")
+        elif not isinstance(version, str) or not _VERSION.fullmatch(version):
+            errors.append(f"{VERSIONS}: {app}: {version!r} is not v<major>.<minor>.<patch>")
+    return errors
+
+
+def app_ref(data: dict[str, Any], app: str) -> str:
+    """The apps-repository ref Flux reads the app at: its pinned tag."""
+    return f"refs/tags/{app}/{data[VERSIONS][app]}"
+
+
 def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) -> dict[str, str]:
     """The inline values one app's wiring reads: its name, its grants, and env values core
     does not publish in cluster-vars."""
@@ -242,6 +269,7 @@ def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) ->
         "app_service_cidr": str(cluster_vars["service_cidr"]),
         "app_lan_cidrs": ",".join(lan),
         "apps_git_repo_url": str(cluster_vars["apps_git_repo_url"]),
+        "app_ref": app_ref(data, app),
     }
 
 

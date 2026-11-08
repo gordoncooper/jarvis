@@ -20,6 +20,14 @@ if (
 ):
     os.environ["APPS_REPO"] = str(_FIXTURE_APPS)
 
+# Background git maintenance holds locks inside a test's repo while the test deletes it.
+_count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+for _key, _value in (("maintenance.auto", "false"), ("gc.auto", "0")):
+    os.environ[f"GIT_CONFIG_KEY_{_count}"] = _key
+    os.environ[f"GIT_CONFIG_VALUE_{_count}"] = _value
+    _count += 1
+os.environ["GIT_CONFIG_COUNT"] = str(_count)
+
 _TOOLS_LIB = _ROOT / "tools" / "lib"
 _CHECKS_LIB = _ROOT / "ci" / "checks" / "lib"
 for _entry in (_ROOT, _TOOLS_LIB, _CHECKS_LIB):

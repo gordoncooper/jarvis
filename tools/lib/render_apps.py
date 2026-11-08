@@ -27,7 +27,7 @@ def render_env(env_dir: Path) -> str | None:
     if errors:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(errors)}")
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
-    problems = _apps.validate(data, cluster_vars.get("dns_suffix"), _apps.lan_networks(cluster_vars))
+    problems = _apps.validate(data, cluster_vars.get("dns_suffix"), _apps.lan_networks(cluster_vars)) + _apps.version_problems(data)
     if problems:
         raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(problems)}")
     if not _apps.app_names(data):

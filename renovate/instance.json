@@ -12,6 +12,12 @@
       "prBodyNotes": ["Follow this release's **Upgrading** notes in core's `CHANGELOG.md`, then run operator commands from a checkout of the new tag."]
     },
     {
+      "description": "One PR per hosted-app release an env pins (values/apps.yaml versions). Tags read from the apps repository, which the instance names: add a packageRule matching depType jarvis-app with overridePackageName set to its apps_git_repo_url.",
+      "matchDepTypes": ["jarvis-app"],
+      "additionalBranchPrefix": "{{parentDir}}-",
+      "prBodyNotes": ["Read the app's changes between the two tags in the apps repository before merging; the app's file may ask for new grants."]
+    },
+    {
       "description": "k3s changes only after approval in the dependency dashboard. k3s_sha256 is bumped by hand in the same PR.",
       "matchDepNames": ["k3s-io/k3s"],
       "dependencyDashboardApproval": true,
@@ -38,6 +44,16 @@
       ],
       "datasourceTemplate": "github-tags",
       "depTypeTemplate": "jarvis-core"
+    },
+    {
+      "customType": "regex",
+      "description": "Each hosted app's pinned release in an env's values/apps.yaml versions: <app>: v<version>, the apps repository's tag <app>/v<version>.",
+      "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/apps\\.yaml$/"],
+      "matchStrings": ["(?m)^  (?<depName>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?): (?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s*$"],
+      "datasourceTemplate": "git-tags",
+      "packageNameTemplate": "{{{depName}}}",
+      "extractVersionTemplate": "^{{{depName}}}/(?<version>v\\d+\\.\\d+\\.\\d+)$",
+      "depTypeTemplate": "jarvis-app"
     },
     {
       "customType": "regex",

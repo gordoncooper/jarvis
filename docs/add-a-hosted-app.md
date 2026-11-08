@@ -70,6 +70,13 @@ In the env's repository:
      - <name>
    ```
 
+   Pin it to a released tag under `versions:` in `envs/<env>/values/apps.yaml`. The apps repository tags `<name>/v<VERSION>` from the app's `VERSION` file when a change merges, and the env runs that tag until the pin moves; the instance's Renovate preset opens a PR for each new tag:
+
+   ```yaml
+   versions:
+     <name>: v0.1.0
+   ```
+
 3. If the app asks for a risky item in `spec.risky`, a LAN port or LAN egress, add the matching exception line under `exceptions:` in `envs/<env>/values/apps.yaml`, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>`, `lan-port <listen>/<TCP|UDP>`, `lan-all` (for `lan: [all]`) or `lan-target <target> <cidr> <port>/<TCP|UDP>` (one line per port of a named target). Without it the cluster refuses the objects that use that item, or opens no LAN path. A LAN grant needs the env's ranges, `lan_cidrs` in `values/cluster-vars.yaml`, and a `lan-target` range inside them. To keep a web app out of the uptime check, add `- <name>: no-uptime-check`. Removing a line stops what runs on it within minutes (pods, Jobs, Services and Ingresses that need it, and its LAN allows), and keeps the app's volumes; adding it back restores them.
 4. If a volume is `backup: true`, select it under `backups:` in `values/apps.yaml`, list `apps-backup-server` under `optional`, and register the app's backup credential: `make bootstrap-secrets ENV=<env> APP=app-<name> INSTANCE=<path>` ([platform/backups/CONTRACT.md](../platform/backups/CONTRACT.md), App credentials). Until then that volume gets no backup, and `make verify` fails it, unless `backups:` leaves the app unselected, which skips it.
 5. Render the wiring: `INSTANCE=<path> .venv/bin/python tools/lib/render_switches.py --env <env>`.

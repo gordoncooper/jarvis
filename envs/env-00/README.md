@@ -4,6 +4,6 @@ Never-deployed example env. Copy this folder to `envs/<env>` in a private instan
 
 Replace the invented values in `values/` and the hosts in `inventory/hosts.yml`, and the placeholder URLs and refs in `values/cluster-vars.yaml` and `flux/sync.yaml`. Set `jarvis_env` to the new folder name. Every `envs/env-00/` path under `flux/` must use that name. `k3s_version`, `k3s_sha256`, and the Flux version pin are already set.
 
-`values/switches.yaml` names what the env enables. It lists the sample add-on `hello` and the sample apps so CI renders them. A copy empties `addons` and `apps`, takes `app-hosting` off `optional`, deletes `values/apps.yaml`, runs `tools/lib/render_switches.py`, and starts core-only.
+`values/switches.yaml` names what the env enables. It lists the sample add-on `hello` and the sample apps so CI renders them. A copy empties `addons` and `apps`, takes `app-hosting` off `optional`, deletes `values/apps.yaml` (exceptions, backups, app pins), runs `tools/lib/render_switches.py`, and starts core-only.
 
 Then follow [New env](../../docs/deploy.md#new-env).

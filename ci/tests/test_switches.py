@@ -34,22 +34,37 @@ def _objects(copy: ExampleCopy, rel: str) -> set[tuple[str, str]]:
     return {(doc["kind"], doc["metadata"]["name"]) for doc in yaml.safe_load_all(rendered) if isinstance(doc, dict)}
 
 
-def test_a_listed_app_takes_one_name_and_no_other_env_file(tmp_path: Path) -> None:
-    """Rule: one line under apps enables an app: only its wiring changes, with no per-env settings file,
-    and a second render changes nothing."""
+def _set_pin(env_dir: Path, app: str, version: str | None) -> None:
+    path = env_dir / "values" / "apps.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    versions = data.setdefault("versions", {})
+    if version is None:
+        versions.pop(app, None)
+    else:
+        versions[app] = version
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def test_a_listed_app_takes_its_name_and_its_pin(tmp_path: Path) -> None:
+    """Rule: an app's name under apps and its pinned version enable it: only those two files and its
+    wiring change, and a second render changes nothing."""
     copy = bootstrap_example_copy(tmp_path)
     set_switches(copy.env_dir, apps=["notes", "lan-demo"])
+    _set_pin(copy.env_dir, "hello-web", None)
     render_switches(copy.env_dir, copy.root)
     validate_one_env(copy.root, copy.name)
     before = _tree(copy)
     assert "app-hello-web-wiring" not in before["flux/generated/apps.yaml"]
 
     set_switches(copy.env_dir, apps=["notes", "lan-demo", "hello-web"])
+    _set_pin(copy.env_dir, "hello-web", "v0.1.0")
     render_switches(copy.env_dir, copy.root)
     after = _tree(copy)
     assert "app-hello-web-wiring" in after["flux/generated/apps.yaml"]
+    assert "refs/tags/hello-web/v0.1.0" in after["flux/generated/apps.yaml"]
     assert {path for path in after if after[path] != before.get(path)} == {
         "values/switches.yaml",
+        "values/apps.yaml",
         "flux/generated/apps.yaml",
     }
     validate_one_env(copy.root, copy.name)

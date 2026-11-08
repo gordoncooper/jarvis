@@ -266,3 +266,11 @@ def test_env_schema_requires_the_apps_repository_for_an_app(tmp_path: Path) -> N
     _product, instance = _tree(tmp_path)
     _edit(instance / "envs" / "env-00" / "values" / "cluster-vars.yaml", "apps_git_repo_url:", "# apps_git_repo_url:")
     assert any("sets apps_git_repo_url" in error for error in _schema_errors(instance))
+
+
+def test_every_listed_app_needs_one_pin_in_the_tag_form() -> None:
+    """Rule: versions pins each listed app as v<x.y.z>, and only listed apps."""
+    assert _apps.version_problems({"apps": ["web"], "versions": {"web": "v1.2.3"}}) == []
+    problems = _apps.version_problems({"apps": ["web", "db"], "versions": {"web": "1.2", "old": "v0.1.0"}})
+    text = "\n".join(problems)
+    assert "db" in text and "old" in text and "web" in text, problems

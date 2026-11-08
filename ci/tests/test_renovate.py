@@ -520,3 +520,10 @@ def test_instance_preset_moves_nothing_on_its_own() -> None:
     preset = json.loads(_INSTANCE_PRESET.read_text(encoding="utf-8"))
     assert preset["automerge"] is False
     assert not any(rule.get("automerge") for rule in preset["packageRules"])
+
+
+def test_instance_preset_reads_each_app_pin() -> None:
+    """Rule: the preset opens one PR per app pin under versions, and no exception line reads as one."""
+    text = (ROOT / "envs/env-00/values/apps.yaml").read_text(encoding="utf-8")
+    pins = {m.group("depName"): m.group("currentValue") for m in _preset_matches("envs/env-x/values/apps.yaml", text)}
+    assert pins == yaml.safe_load(text)["versions"]

@@ -16,7 +16,7 @@ from verify.apps import check_app_baseline, check_declared_unbacked  # noqa: E40
 from verify.common import CheckError, CheckWarning  # noqa: E402
 
 SUFFIX = "env-test.example"
-ENV = {"apps": ["notes"], "exceptions": [{"notes": "hostname notes.example.org"}]}
+ENV = {"apps": ["notes"], "exceptions": [{"notes": "hostname notes.example.org"}], "versions": {"notes": "v0.1.0"}}
 
 
 def _item(kind: str, namespace: str, name: str, **body: object) -> dict:
