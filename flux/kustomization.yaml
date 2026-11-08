@@ -1,0 +1,11 @@
+# Core's Flux base: what every env runs, at the core tag the env pins. An env's root
+# Kustomization (its flux/kustomization.yaml) lists this folder as ../../../core/flux, adds its
+# sync.yaml, the services stage and its generated files, and sets ${jarvis_env} by
+# postBuild.substitute in sync.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - flux-instance.yaml
+  - identities.yaml
+  - layers/platform-controllers.yaml
+  - layers/platform-configs.yaml

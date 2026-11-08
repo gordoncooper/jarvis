@@ -131,8 +131,8 @@
     },
     {
       "customType": "regex",
-      "description": "Flux distribution version in an env's FluxInstance. A bump merges only after the Flux Operator version that supports it is live, because the operator ships the manifests for each Flux version.",
-      "managerFilePatterns": ["/^envs\\/[^/]+\\/flux\\/flux-instance\\.yaml$/"],
+      "description": "Flux distribution version in core's FluxInstance (flux/flux-instance.yaml), which every env runs at its core tag. A bump merges only after the Flux Operator version that supports it is live, because the operator ships the manifests for each Flux version.",
+      "managerFilePatterns": ["/^flux\\/flux-instance\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],

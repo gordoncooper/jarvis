@@ -142,11 +142,14 @@ def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
     The root Kustomization in sync.yaml is not a layer; the env schema checks it. Nor is a hosted
     app's wiring, which the env renders from its app list; ci/checks/app-hosting checks those.
     """
+    from jarvis.checks.manifests import env_flux_docs
+
+    docs, error = env_flux_docs(REPO_ROOT if root is None else root, f"envs/{env}/flux")
+    assert error is None, error
     return [
         doc
-        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{env}/flux", root=root))
-        if isinstance(doc, dict)
-        and doc.get("kind") == "Kustomization"
+        for doc in docs
+        if doc.get("kind") == "Kustomization"
         and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION_API)
         and doc["metadata"]["name"] != "flux-system"
         and not doc["metadata"]["name"].endswith("-wiring")
@@ -220,8 +223,10 @@ def _helmrelease_gate_errors(found: dict[str, str]) -> list[str]:
 
 
 def _flux_instance(env: str, root: Path | None = None) -> dict:
+    # Core's FluxInstance, at the core the env's root artifact holds (core/ in a copy).
     repo = REPO_ROOT if root is None else root
-    path = repo / "envs" / env / "flux" / "flux-instance.yaml"
+    core = repo / "core" if (repo / "core").is_dir() else repo
+    path = core / "flux" / "flux-instance.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(doc, dict)
     return doc
@@ -673,10 +678,11 @@ def validate_env_flux(root: Path, env: str) -> None:
     services stage's path is built too, as on the cluster, with its postBuild values. A hosted
     app's own Kustomizations read the apps repository, which is not in this checkout.
     """
-    from jarvis.checks.manifests import ROOT_SOURCE, flux_paths, postbuild_values, substitute
+    from jarvis.checks.manifests import ROOT_SOURCE, env_flux_docs, flux_paths, postbuild_values, substitute
 
     env_rel = f"envs/{env}/flux"
-    env_docs = [doc for doc in yaml.safe_load_all(_kustomize_build(env_rel, root=root)) if isinstance(doc, dict)]
+    env_docs, error = env_flux_docs(root, env_rel)
+    assert error is None, error
     paths = flux_paths(root, env_rel, env_docs)
     assert paths
     pin = load_cluster_vars(root, env=env)["k3s_version"]

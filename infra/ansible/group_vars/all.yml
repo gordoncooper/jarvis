@@ -9,5 +9,6 @@ k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 k3s_data_dir: /var/lib/rancher/k3s
 jarvis_instance_root: "{{ playbook_dir }}/../.."
 jarvis_env_dir: "{{ jarvis_instance_root }}/envs/{{ jarvis_env }}"
-flux_instance_file: "{{ jarvis_env_dir }}/flux/flux-instance.yaml"
+# The FluxInstance is core's (flux/), at the checkout the operator runs from: the env's core tag.
+flux_instance_file: "{{ playbook_dir }}/../../flux/flux-instance.yaml"
 flux_sync_file: "{{ jarvis_env_dir }}/flux/sync.yaml"

@@ -826,7 +826,8 @@ def _copy_flux_entry(env: Path) -> None:
     )
     for path in (env / "flux").rglob("*.yaml"):
         text = path.read_text(encoding="utf-8")
-        path.write_text(text.replace(f"envs/{EXAMPLE_ENV}/", f"envs/{env.name}/"), encoding="utf-8")
+        text = text.replace(f"envs/{EXAMPLE_ENV}/", f"envs/{env.name}/")
+        path.write_text(text.replace(f"jarvis_env: {EXAMPLE_ENV}", f"jarvis_env: {env.name}"), encoding="utf-8")
     # A new env starts core-only, as docs/deploy.md has a copy empty the example's lists. No
     # off-host copy unless a test lists it, and with no hosted app no rendered app wiring either.
     _render_core_only(env)

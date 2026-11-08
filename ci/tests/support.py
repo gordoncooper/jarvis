@@ -210,7 +210,7 @@ def bootstrap_example_copy(
     if (root == repo or repo in root.parents) and not _git_ignored(repo, root):
         raise RuntimeError("refusing to write the example copy at a tracked path in the repo")
     root.mkdir()
-    for dirname in ("platform", "services"):
+    for dirname in ("flux", "platform", "services"):
         (root / dirname).symlink_to(repo / dirname)
     # The root source includes core here, as an instance checkout does.
     (root / CORE_SOURCE_DIR).symlink_to(repo)

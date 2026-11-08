@@ -313,6 +313,7 @@ def _example_tree(tmp_path: Path) -> Path:
     root.mkdir()
     shutil.copytree(REPO_ROOT / "platform", root / "platform", symlinks=True)
     (root / "services").symlink_to(REPO_ROOT / "services")
+    (root / "flux").symlink_to(REPO_ROOT / "flux")
     shutil.copytree(REPO_ROOT / "envs" / EXAMPLE_ENV / "flux", root / "envs" / EXAMPLE_ENV / "flux")
     return root
 

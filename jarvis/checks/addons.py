@@ -46,6 +46,7 @@ import yaml
 
 from jarvis.checks.manifests import (
     build_flux_path,
+    env_flux_docs,
     is_flux_kustomization,
     kustomize_build,
     namespace_of,
@@ -181,7 +182,7 @@ def _core_mentions(core: Path, names: tuple[str, ...]) -> Iterator[AddonViolatio
 
 
 def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
-    env_docs, error = kustomize_build(root, env_rel)
+    env_docs, error = env_flux_docs(root, env_rel)
     if error:
         yield error
         return

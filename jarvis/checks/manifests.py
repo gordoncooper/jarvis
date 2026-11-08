@@ -6,6 +6,7 @@ import posixpath
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,6 +101,34 @@ def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
     if proc.returncode != 0:
         return [], f"kustomize build {rel} failed: {(proc.stderr or proc.stdout).strip()}"
     return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)], None
+
+
+def env_flux_docs(root: Path, env_rel: str) -> tuple[list[dict], str | None]:
+    """What an env's root Kustomization applies: its flux/ built with core's Flux base, then the
+    root's postBuild.substitute (jarvis_env), as on the cluster.
+
+    flux/kustomization.yaml lists core's base as ../../../core/flux. An instance checkout holds
+    core at core/; in the product checkout core is the checkout itself, so the build runs on a
+    copy of the env's flux/ beside a core/ link to it.
+    """
+    if (root / CORE_SOURCE_DIR).is_dir():
+        docs, error = kustomize_build(root, env_rel)
+    else:
+        with tempfile.TemporaryDirectory() as work:
+            stage = Path(work)
+            (stage / CORE_SOURCE_DIR).symlink_to(root.resolve(), target_is_directory=True)
+            shutil.copytree(root / env_rel, stage / env_rel)
+            docs, error = kustomize_build(stage, env_rel)
+            if error:
+                error = error.replace(str(stage), str(root))
+    if error:
+        return [], error
+    values = next(
+        ((doc.get("spec") or {}).get("postBuild") or {}
+         for doc in docs if is_root_kustomization(doc)),
+        {},
+    ).get("substitute") or {}
+    return substitute(docs, {str(key): str(value) for key, value in values.items()}), None
 
 
 def _generated(target: Path) -> list[dict]:

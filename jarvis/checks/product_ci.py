@@ -10,6 +10,7 @@ from pathlib import Path
 _PRODUCT_ROOTS = (
     "tools/",
     "infra/",
+    "flux/",
     "platform/",
     "services/",
     "apps/",

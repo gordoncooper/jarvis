@@ -27,7 +27,15 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis.checks.manifests import flux_paths, kustomize_build, namespace_of, postbuild_values, ref_of, substitute
+from jarvis.checks.manifests import (
+    env_flux_docs,
+    flux_paths,
+    kustomize_build,
+    namespace_of,
+    postbuild_values,
+    ref_of,
+    substitute,
+)
 from jarvis.lib import apps as _apps
 from jarvis.lib.app_file import SHIPPED_KINDS
 from jarvis.schema.env import CORE_SOURCE_DIR, env_flux_dirs
@@ -88,7 +96,7 @@ def format_violations(violations: Iterable[AppHostingViolation]) -> list[str]:
 
 
 def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
-    env_docs, error = kustomize_build(root, env_rel)
+    env_docs, error = env_flux_docs(root, env_rel)
     if error:
         yield error
         return
