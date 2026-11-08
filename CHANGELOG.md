@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.3.0
+
 ### Added
 
 - `core_git_ref` pins a tag. `make site`, `verify`, `drill` and `restore` refuse a checkout that is
@@ -25,8 +27,9 @@ the upgrade.
 - `flux_known_hosts` in `cluster-vars.yaml`: the SSH host keys Flux trusts for an `ssh://` root
   (unset: GitHub's published key).
 - `ENVS=<env>...` limits the env-level checks to those envs.
-- An e2e job brings a k3d cluster up with Flux from the PR's commit, runs `make verify` and `make
-  drill`, and is a required check.
+- An e2e job brings a k3d cluster up with Flux from the PR's commit (on a release tag, core at the
+  tag), runs env-00's hosted apps at their pinned tags, `make verify` and `make drill`, and is a
+  required check.
 
 ### Upgrading
 

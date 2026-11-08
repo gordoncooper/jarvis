@@ -17,6 +17,8 @@ Core ships as tags (`v<major>.<minor>.<patch>`). An env runs exactly one: `core_
 
 3. `.github/workflows/release.yml` publishes the GitHub release with that section as its notes.
    A tag with no section fails the workflow; add the section and re-run it.
+4. The tag also runs `e2e` with the cluster's core source at the tag itself. A red run means the
+   release is broken: fix it on `main` and cut a patch release.
 
 ## Move an env to a release
 

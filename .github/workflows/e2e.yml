@@ -1,10 +1,15 @@
 name: e2e
 
 # A real cluster from this commit: k3d (k3s in Docker), the env's FluxInstance and sync.yaml
-# applied by the flux-operator role, every Kustomization and HelmRelease Ready, then
-# make verify and make drill. The env is a throwaway core-only copy of env-00 whose root
-# and core sources are a temporary branch of this repository; the job deletes the branch.
+# applied by the flux-operator role, every Kustomization and HelmRelease Ready, env-00's hosted
+# apps running at their pinned tags from the apps repository, then make verify and make drill.
+# The env is a throwaway copy of env-00 whose root source is a temporary branch of this
+# repository; its core source is that branch too, or on a release tag push the tag itself. The
+# job deletes the branch.
 on:
+  push:
+    tags:
+      - "v*"
   # Every pull request gets an e2e result, so the check can be required: one that touches none of
   # the paths the changes job lists reports e2e as skipped, which branch protection counts as passing.
   pull_request:
@@ -55,6 +60,8 @@ jobs:
     timeout-minutes: 45
     env:
       E2E_ENV: e2e
+      # The apps env-00 lists, at the tags its values/apps.yaml pins.
+      APPS_URL: https://github.com/${{ github.repository_owner }}/jarvis-apps
       E2E_BRANCH: e2e/${{ github.run_id }}-${{ github.run_attempt }}
       KUBECONFIG: /home/runner/.kube/jarvis-e2e.yaml
     steps:
@@ -84,15 +91,28 @@ jobs:
           echo "${K3D_SHA256}  ${RUNNER_TEMP}/k3d" | sha256sum -c -
           install -m 0755 "${RUNNER_TEMP}/k3d" "${HOME}/.local/bin/k3d"
 
+      # What ci/checkout-apps-for-instance.sh gives an instance: the default branch with every tag.
+      - name: Check out the apps repository with its tags
+        run: |
+          set -euo pipefail
+          git clone -q --filter=blob:none "${APPS_URL}" "${RUNNER_TEMP}/apps"
+          git -C "${RUNNER_TEMP}/apps" fetch -q --tags
+          echo "APPS_REPO=${RUNNER_TEMP}/apps" >> "${GITHUB_ENV}"
+
       - name: Make the throwaway env and push its branch
         run: |
           set -euo pipefail
           export PATH="${HOME}/.local/bin:${PATH}"
           age-keygen -o "${RUNNER_TEMP}/age.key" 2>/dev/null
           chmod 600 "${RUNNER_TEMP}/age.key"
+          # A release tag push runs Flux's core source at that tag; anything else at the branch.
+          core_ref="refs/heads/${E2E_BRANCH}"
+          [[ "${GITHUB_REF}" == refs/tags/v* ]] && core_ref="${GITHUB_REF}"
+          echo "core source: ${core_ref}" | tee -a "${GITHUB_STEP_SUMMARY}"
           .venv/bin/python ci/e2e/make-env --env "${E2E_ENV}" \
             --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
-            --ref "refs/heads/${E2E_BRANCH}" --key-file "${RUNNER_TEMP}/age.key" \
+            --ref "refs/heads/${E2E_BRANCH}" --core-ref "${core_ref}" \
+            --apps-url "${APPS_URL}" --key-file "${RUNNER_TEMP}/age.key" \
             --node "k3d-${E2E_ENV}-server-0"
           git config user.name "e2e"
           git config user.email "e2e@users.noreply.github.com"
@@ -123,7 +143,7 @@ jobs:
             node-role.jarvis.io/edge=true svccontroller.k3s.cattle.io/enablelb=true --overwrite
           # The LAN's DNS stand-in: the canary host at the node, where ServiceLB serves Traefik.
           address="$(kubectl get node "${node}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
-          echo "${address} testapp.$(read_var dns_suffix)" | sudo tee -a /etc/hosts
+          echo "${address} testapp.$(read_var dns_suffix) hello-web.apps.$(read_var dns_suffix)" | sudo tee -a /etc/hosts
 
       - name: Bootstrap Flux with the flux-operator role
         working-directory: infra/ansible
@@ -161,6 +181,40 @@ jobs:
           kubectl wait --for=condition=Ready kustomizations.kustomize.toolkit.fluxcd.io --all -A --timeout=10m
           kubectl wait --for=condition=Ready helmreleases.helm.toolkit.fluxcd.io --all -A --timeout=10m
 
+      - name: Each app runs at its pinned tag
+        run: |
+          set -euo pipefail
+          env_dir="envs/${E2E_ENV}"
+          pins="$(.venv/bin/python -c 'import sys, yaml; [print(a, v) for a, v in yaml.safe_load(open(sys.argv[1]))["versions"].items()]' "${env_dir}/values/apps.yaml")"
+          [[ -n "${pins}" ]] || { echo "no app pins"; exit 1; }
+          while read -r app version; do
+            # The env's wiring makes the app's Kustomizations; wait for them to exist, then apply.
+            for name in "app-${app}-file" "app-${app}"; do
+              for attempt in $(seq 1 60); do
+                kubectl -n flux-system get kustomization "${name}" >/dev/null 2>&1 && break
+                sleep 10
+              done
+              kubectl -n flux-system wait --for=condition=Ready "kustomization/${name}" --timeout=10m
+            done
+            for source in "app-${app}" "app-${app}-file"; do
+              revision="$(kubectl -n flux-system get gitrepository "${source}" -o jsonpath='{.status.artifact.revision}')"
+              echo "${source}: ${revision}"
+              [[ "${revision}" == "refs/tags/${app}/${version}@sha1:"* ]] || { echo "${source} is not at ${app}/${version}"; exit 1; }
+            done
+            kubectl -n "app-${app}" wait --for=condition=Available deployment --all --timeout=10m
+          done <<<"${pins}"
+          # hello-web through Traefik, on the cluster CA's certificate; then the app-to-app rules:
+          # notes is granted both ways, lan-demo is not (the default-deny egress drops it: 502 or 504).
+          host="hello-web.apps.$(sed -n 's/^dns_suffix:[[:space:]]*//p' "${env_dir}/values/cluster-vars.yaml")"
+          code() { curl -sS --cacert "${env_dir}/ca.crt" -o /dev/null -w '%{http_code}' --max-time 20 "https://${host}$1" || true; }
+          for attempt in $(seq 1 30); do
+            [[ "$(code /)" == 200 ]] && break
+            sleep 10
+          done
+          root="$(code /)"; notes="$(code /notes/)"; blocked="$(code /blocked/)"
+          echo "${host}: / ${root}, /notes/ ${notes}, /blocked/ ${blocked}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          [[ "${root}" == 200 && "${notes}" == 200 && "${blocked}" =~ ^50[24]$ ]]
+
       - name: make verify
         run: make verify ENV="${E2E_ENV}" ALLOW_UNPINNED=1
 
@@ -187,6 +241,7 @@ jobs:
         run: |
           kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io,gitrepositories.source.toolkit.fluxcd.io -A || true
           kubectl get pods -A || true
+          kubectl get apps.hosting.jarvis.io -A || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -n 60 || true
           kubectl -n flux-system logs deploy/kustomize-controller --tail=100 || true
           kubectl -n flux-system logs deploy/helm-controller --tail=100 || true
