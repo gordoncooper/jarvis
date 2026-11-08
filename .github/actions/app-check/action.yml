@@ -1,0 +1,35 @@
+name: app-check
+description: >-
+  Check every app folder of a Jarvis apps repository against the app rules of the core
+  release this Action is used at (platform/optional/app-hosting/CONTRACT.md).
+inputs:
+  path:
+    description: The apps repository checkout.
+    default: .
+  exclude:
+    description: Top-level folders that are not apps (the repository's own tooling), space-separated.
+    default: ci
+runs:
+  using: composite
+  steps:
+    - name: Install PyYAML and kustomize at the core pins
+      shell: bash
+      env:
+        CORE: ${{ github.action_path }}/../../..
+      run: |
+        set -euo pipefail
+        pyyaml="$(grep -m1 '^PyYAML==' "${CORE}/requirements-dev.txt")"
+        python3 -m venv "${RUNNER_TEMP}/app-check"
+        "${RUNNER_TEMP}/app-check/bin/pip" install -q "${pyyaml}"
+        python3 "${CORE}/tools/install-deps" kustomize
+    - name: app-check
+      shell: bash
+      env:
+        CORE: ${{ github.action_path }}/../../..
+        APPS: ${{ inputs.path }}
+        EXCLUDE: ${{ inputs.exclude }}
+      run: |
+        set -euo pipefail
+        args=()
+        for name in ${EXCLUDE}; do args+=(--exclude "${name}"); done
+        PATH="${HOME}/.local/bin:${PATH}" "${RUNNER_TEMP}/app-check/bin/python" "${CORE}/tools/app-check" --repo "${APPS}" "${args[@]}"
