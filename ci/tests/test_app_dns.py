@@ -6,8 +6,8 @@ import json
 import re
 
 import yaml
-
 from ansible_role_proof import REPO_ROOT
+
 from support import _kustomize_build, renovate_python_pattern
 
 

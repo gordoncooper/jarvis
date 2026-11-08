@@ -16,18 +16,18 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from ansible_role_proof import (
     FLUX_INSTANCE_NAME,
     FLUX_OPERATOR_ROLE_DIR,
+    PLATFORM_CONTROLLER_HEALTH_CHECKS,
     REPO_ROOT,
     env_name,
-    PLATFORM_CONTROLLER_HEALTH_CHECKS,
     example_flux_entry,
     load_cluster_vars,
     load_role_defaults,
     standard_flux_kustomization_paths,
 )
+
 from jarvis.lib.render_cluster_vars_configmap import (
     CLUSTER_VARS_PUBLISHED,
     cluster_vars_configmap,

@@ -17,15 +17,14 @@ import sys
 from pathlib import Path
 
 import pytest
+import test_app_admission as admission
 import yaml
-
-from support import REPO_ROOT, set_switches
 
 from jarvis.lib import apps as _apps
 from jarvis.lib.app_file import check_folder
 from jarvis.lib.render_apps import render_env
 from jarvis.schema import env as env_schema
-import test_app_admission as admission
+from support import REPO_ROOT, set_switches
 
 EXAMPLES = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 APPS = ["hello-web", "notes", "lan-demo"]

@@ -15,9 +15,9 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from jarvis.schema.env import instance_root, resolve_cluster_vars
 
-from jarvis.schema.env import instance_root, resolve_cluster_vars  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Keys the cluster reads. Substituted ${var}s on this tree, plus jarvis_env,
 # which verify, drill and restore read from the live ConfigMap.

@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from conftest import require_cli
+
 from support import REPO_ROOT, _rename_copied_env, load_tool
 
 SCRIPT = REPO_ROOT / "tools" / "prep-node"
@@ -767,7 +767,7 @@ def test_run_same_ansible_user_passes(
 ) -> None:
     """Recorded ops plus login ops keeps ops."""
     module = _load()
-    dest = _copy_example_env(tmp_path)
+    _copy_example_env(tmp_path)
     module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "ops")
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     _accept_default_ansible_user(module, monkeypatch)

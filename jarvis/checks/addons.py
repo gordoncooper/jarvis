@@ -38,9 +38,9 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator
 
 import yaml
 
@@ -54,7 +54,6 @@ from jarvis.checks.manifests import (
     substitute,
 )
 from jarvis.schema.env import (
-    env_flux_dirs,
     ADDON_SECRETS_PATH,
     ADDONS_DIR,
     CORE_SOURCE_DIR,
@@ -62,6 +61,7 @@ from jarvis.schema.env import (
     addon_names,
     addon_slots,
     core_dir,
+    env_flux_dirs,
     slot_names,
 )
 

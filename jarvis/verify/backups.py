@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import base64
 import binascii
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
+from jarvis.lib import apps as _apps
+from jarvis.lib import backup_selection as _backup_selection
 from jarvis.lib.app_backups import APPS_SERVER, rest_username
 from jarvis.lib.env import json_object, not_found, reason
-from jarvis.lib import apps as _apps  # noqa: E402
-from jarvis.lib import backup_selection as _backup_selection  # noqa: E402
 from jarvis.schema.env import app_registrations, apps_server_listed, backup_required_registrations, offsite_copy_listed
-
 from jarvis.verify.common import (
     CheckError,
     Context,
@@ -21,7 +20,7 @@ from jarvis.verify.common import (
     recent,
     scheduled_instants,
 )
-from jarvis.verify.registry import register
+from jarvis.verify.registry import Check, register
 
 HOLD_NAMESPACE = "kube-system"
 HOLD_NAME = "backup-rebuild-hold"
@@ -185,7 +184,7 @@ def _last_success_fresh(kubectl: Kubectl, name: str, what: str, now: datetime) -
     if completed.tzinfo is None:
         raise CheckError(f"{what} timestamp has no timezone")
     previous = scheduled_instants(schedule, zone, now, 2)
-    if now.astimezone(timezone.utc) - completed > previous[0] - previous[1] + CHECK_GRACE:
+    if now.astimezone(UTC) - completed > previous[0] - previous[1] + CHECK_GRACE:
         raise CheckError(f"{what} is stale; read the {name} Job logs")
 
 
@@ -199,10 +198,10 @@ def check_offsite_copy(kubectl: Kubectl, *, now: datetime) -> None:
 
 
 @register("backups")
-def backups_checks(ctx: Context) -> list[tuple[int, str, object]]:
+def backups_checks(ctx: Context) -> list[Check]:
     env_dir = ctx.repo_root / "envs" / ctx.env
     required: frozenset[str] | None
-    checks: list[tuple[int, str, object]]
+    checks: list[Check]
     if problems := _backup_selection.selection_problems(ctx.repo_root, env_dir, _apps.APPS_VALUES):
         def fail_selection() -> None:
             raise CheckError("; ".join(problems))

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
+from typing import NoReturn
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jarvis.lib.env import json_object
@@ -80,8 +81,8 @@ def _cron(schedule: str) -> tuple[set[int], set[int], set[int], set[int], set[in
     parts = schedule.split()
     if len(parts) != 5:
         raise CheckError(f"invalid five-field schedule {schedule!r}")
-    months = dict(zip("jan feb mar apr may jun jul aug sep oct nov dec".split(), range(1, 13)))
-    days = dict(zip("sun mon tue wed thu fri sat".split(), range(7)))
+    months: dict[str, int] = dict(zip("jan feb mar apr may jun jul aug sep oct nov dec".split(), range(1, 13), strict=True))
+    days: dict[str, int] = dict(zip("sun mon tue wed thu fri sat".split(), range(7), strict=True))
     minute, _ = _cron_field(parts[0], 0, 59)
     hour, _ = _cron_field(parts[1], 0, 23)
     dom, dom_any = _cron_field(parts[2], 1, 31)
@@ -101,7 +102,7 @@ def scheduled_instants(
     except ZoneInfoNotFoundError as exc:
         raise CheckError("invalid backup timestamp or time zone") from exc
     minute, hour, dom, month, dow, dom_any, dow_any = _cron(schedule)
-    cursor = now.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    cursor = now.astimezone(UTC).replace(second=0, microsecond=0)
     previous: list[datetime] = []
     for _ in range(2 * 366 * 24 * 60):
         local = cursor.astimezone(zone)
@@ -121,7 +122,7 @@ def scheduled_instants(
             previous.append(cursor)
             if len(previous) == count:
                 return previous
-        cursor = cursor.fromtimestamp(cursor.timestamp() - 60, timezone.utc)
+        cursor = cursor.fromtimestamp(cursor.timestamp() - 60, UTC)
     raise CheckError(f"schedule {schedule!r} has fewer than {count} runs in two years")
 
 
@@ -133,7 +134,7 @@ def recent(stamp: str, schedule: str, zone_name: str, now: datetime) -> bool:
     if completed.tzinfo is None:
         raise CheckError("backup timestamp has no timezone")
     previous = scheduled_instants(schedule, zone_name, now, 2)
-    return completed.astimezone(timezone.utc) >= previous[1]
+    return completed.astimezone(UTC) >= previous[1]
 
 
 def pending_first_run(
@@ -151,7 +152,7 @@ def pending_first_run(
         raise CheckError("backup timestamp has no timezone")
     previous = scheduled_instants(schedule, zone_name, now, 2)
     interval = previous[0] - previous[1]
-    age = now.astimezone(timezone.utc) - created.astimezone(timezone.utc)
+    age = now.astimezone(UTC) - created.astimezone(UTC)
     return age < interval + grace
 
 
@@ -162,7 +163,7 @@ def no_success_yet(
     now: datetime,
     what: str,
     grace: timedelta = timedelta(0),
-) -> None:
+) -> NoReturn:
     """A CronJob with no successful run: WARN inside its first interval plus grace while its
     first run is not scheduled yet or still running; FAIL once a run finished without success,
     or after the first interval plus grace."""

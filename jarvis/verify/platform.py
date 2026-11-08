@@ -6,14 +6,13 @@ import hashlib
 import json
 import subprocess
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 
 from jarvis.lib.env import reason, tool_env
-
 from jarvis.verify.common import CheckError, Context, Fetch, Issuer, Kubectl, items
-from jarvis.verify.registry import register
+from jarvis.verify.registry import Check, register
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FLUX_RESOURCES = (
@@ -218,7 +217,7 @@ def _older_than(stamp: object, now: datetime, seconds: int) -> bool:
         return True
     if created.tzinfo is None:
         return True
-    return (now.astimezone(timezone.utc) - created.astimezone(timezone.utc)).total_seconds() > seconds
+    return (now.astimezone(UTC) - created.astimezone(UTC)).total_seconds() > seconds
 
 
 def check_pods(kubectl: Kubectl, now: datetime) -> None:
@@ -260,7 +259,7 @@ def check_https(
 
 
 @register("platform")
-def platform_checks(ctx: Context) -> list[tuple[int, str, object]]:
+def platform_checks(ctx: Context) -> list[Check]:
     return [
         (10, "Flux Ready", lambda: check_flux(ctx.kubectl)),
         (

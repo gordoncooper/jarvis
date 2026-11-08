@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import yaml
 
-from jarvis.lib import switches as _switches  # noqa: E402
+from jarvis.lib import switches as _switches
 
 # envs/<env>/values/apps.yaml: exception lines and backup selection. The names are in values/switches.yaml.
 APPS_VALUES = "values/apps.yaml"
@@ -36,7 +37,7 @@ VALUE_GRANTS = ("hostname", "lan-port", "lan-target")
 LAN_GRANTS = ("lan-all", "lan-target")
 # values/cluster-vars.yaml: the env's LAN ranges.
 LAN_CIDRS = "lan_cidrs"
-_PRIVATE = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+_PRIVATE = tuple(ipaddress.IPv4Network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 _KEYS = frozenset({"apps", "exceptions", "backups", "versions"})
 # values/apps.yaml versions: each listed app's pinned release, <app>: v<major>.<minor>.<patch>.
 # Flux reads the app at the apps repository's tag <app>/v<version>; nothing follows a branch.
@@ -92,7 +93,7 @@ def lan_cidrs_problems(value: Any, pod_cidr: Any, service_cidr: Any) -> list[str
             network = ipaddress.ip_network(item, strict=True) if isinstance(item, str) else None
         except ValueError:
             network = None
-        if network is None or network.version != 4:
+        if not isinstance(network, ipaddress.IPv4Network):
             errors.append(f"{LAN_CIDRS}: {item!r} is not an IPv4 CIDR")
         elif not any(network.subnet_of(private) for private in _PRIVATE):
             errors.append(f"{LAN_CIDRS}: {item} is outside the private ranges 10/8, 172.16/12 and 192.168/16")

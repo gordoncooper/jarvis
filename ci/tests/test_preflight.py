@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from ansible_role_proof import (
     ANSIBLE_DIR,
     example_flux_entry,
@@ -21,6 +20,7 @@ from ansible_role_proof import (
     roles_inventory_path,
 )
 from conftest import require_cli
+
 from support import REPO_ROOT, bootstrap_example_copy
 
 _EXAMPLE_SYNC = REPO_ROOT / "envs" / "env-00" / "flux" / "sync.yaml"

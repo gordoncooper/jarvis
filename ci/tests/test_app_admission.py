@@ -21,11 +21,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT, kyverno_generated
-
+from jarvis.checks.manifests import substitute
 from jarvis.lib import apps as _apps
 from jarvis.lib.app_file import check_folder
-from jarvis.checks.manifests import substitute
+from support import REPO_ROOT, kyverno_generated
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
 POLICIES = REPO_ROOT / "platform" / "optional" / "app-hosting" / "policies"

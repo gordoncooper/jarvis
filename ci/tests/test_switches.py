@@ -7,10 +7,17 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jarvis.schema.env import ValidationError, validate_one_env
-from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app, render_switches, set_switches
 from jarvis.lib import app_backups as _app_backups
 from jarvis.lib import switches as _switches
+from jarvis.schema.env import ValidationError, validate_one_env
+from support import (
+    ExampleCopy,
+    _kustomize_build,
+    bootstrap_example_copy,
+    register_copy_app,
+    render_switches,
+    set_switches,
+)
 
 
 def _errors(copy: ExampleCopy) -> str:

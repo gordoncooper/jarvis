@@ -14,15 +14,16 @@ import re
 import subprocess
 import tarfile
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 from urllib.parse import urlparse
 
 import yaml
 
-from jarvis.lib import app_backups as _app_backups  # noqa: E402
-from jarvis.lib import apps as _apps  # noqa: E402
-from jarvis.lib.env import instance_root  # noqa: E402
+from jarvis.lib import app_backups as _app_backups
+from jarvis.lib import apps as _apps
+from jarvis.lib.env import instance_root
 
 BACKUPS_KEY = "backups"
 GENERATED_COMPONENT_REL = "generated/backup-selection"
@@ -182,12 +183,14 @@ def selection_problems(repo_root: Path, env_dir: Path, rel: str) -> list[str]:
         return [f"{rel}: {exc}"]
 
 
-def backup_eligible(apps_root: Path, app_name: str) -> bool:
+def backup_eligible(apps_root: Path | None, app_name: str) -> bool:
     """True when the app file declares at least one volume with backup: true.
 
-    A missing or unreadable file raises AppsRepoError: the checkout cannot answer, which must
-    not read as stateless and silently drop the app's backup.
+    No checkout, or a missing or unreadable file, raises AppsRepoError: the checkout cannot
+    answer, which must not read as stateless and silently drop the app's backup.
     """
+    if apps_root is None:
+        raise AppsRepoError(f"no apps checkout to read {app_name}'s app file (set APPS_REPO){STALE_HINT}")
     path = apps_root / app_name / "app.yaml"
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -282,7 +285,7 @@ def validate_section(
         if app not in enabled:
             errors.append(f"{rel}.{BACKUPS_KEY}.overrides.{app}: overrides apply only to backup-enabled apps")
     if mode == MODE_SELECTED:
-        for app in selected:
+        for app in selected or []:
             if not backup_eligible(apps_root, app):
                 errors.append(
                     f"{rel}.{BACKUPS_KEY}.selected: {app} has no backup-eligible volume "

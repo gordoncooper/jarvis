@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -19,7 +19,7 @@ import yaml
 from support import REPO_ROOT, load_tool
 
 SECRET_VALUE = "SHOULD_NOT_PRINT"
-NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 
 verify_tool = load_tool("verify_tool", REPO_ROOT / "tools" / "verify" / "run")
 

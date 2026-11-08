@@ -6,7 +6,6 @@ import os
 import shlex
 import shutil
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
 
@@ -16,7 +15,6 @@ import yaml
 from support import REPO_ROOT, load_tool
 
 BOOTSTRAP = REPO_ROOT / "tools" / "bootstrap-secrets"
-TOOLS_LIB = REPO_ROOT / "tools" / "lib"
 
 
 def _load_module():
@@ -24,8 +22,6 @@ def _load_module():
 
 
 def _load_sops():
-    if str(TOOLS_LIB) not in sys.path:
-        sys.path.insert(0, str(TOOLS_LIB))
     from jarvis.lib import sops as _sops
 
     return _sops

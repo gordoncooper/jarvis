@@ -6,12 +6,13 @@ render_switches.py writes it. The file holds names only: an app's settings stay 
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import yaml
 
-from jarvis.lib import app_backups as _app_backups  # noqa: E402
+from jarvis.lib import app_backups as _app_backups
 
 # envs/<env>/values/switches.yaml.
 SWITCHES_FILE = "values/switches.yaml"
@@ -98,7 +99,7 @@ def _dump(doc: dict[str, Any], note: str = "") -> str:
 def platform_configs(data: dict[str, Any], *, extra_components: Sequence[str] = ()) -> str:
     """The env's platform-configs list: core configs, the two sealed files bootstrap-secrets writes,
     and what each listed optional component adds. extra_components is the backup-selection wrapper."""
-    resources = list(_BOOTSTRAP_RESOURCES)
+    resources: list[str] = list(_BOOTSTRAP_RESOURCES)
     components: list[str] = []
     enabled = names(data, OPTIONAL)
     for name, adds in OPTIONAL_COMPONENTS.items():

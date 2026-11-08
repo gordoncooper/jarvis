@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from ansible_role_proof import (
     ANSIBLE_DIR,
     FLUX_OPERATOR_ROLE_DIR,
@@ -32,6 +31,7 @@ from ansible_role_proof import (
     playbook_recap_field,
 )
 from conftest import require_cli
+
 from jarvis.schema.env import DEFAULT_SSH_USER
 from support import REPO_ROOT
 

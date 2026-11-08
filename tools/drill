@@ -17,21 +17,23 @@ from subprocess import CompletedProcess
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-from jarvis.lib.env import (  # noqa: E402
+from jarvis.lib.env import (
     EnvError,
     instance_root,
     json_object,
     kubeconfig_for,
-    kubectl as run_kubectl,
     not_found,
     reason,
     repository_values,
     tool_env,
     validate_cluster,
 )
-from jarvis.lib.etcd_image import ImageError, etcd_snapshot_image  # noqa: E402
+from jarvis.lib.env import (
+    kubectl as run_kubectl,
+)
+from jarvis.lib.etcd_image import ImageError, etcd_snapshot_image
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 NAMESPACE = "platform-drill"
 PVC = "drill"

@@ -13,10 +13,10 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from jarvis.lib import apps as _apps
+from jarvis.schema.env import app_hosting_listed, instance_root, resolve_cluster_vars
 
-from jarvis.schema.env import app_hosting_listed, instance_root, resolve_cluster_vars  # noqa: E402
-from jarvis.lib import apps as _apps  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def render_env(env_dir: Path) -> str | None:

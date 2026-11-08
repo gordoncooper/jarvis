@@ -13,13 +13,13 @@ from urllib.parse import urlparse
 
 import yaml
 
-_PRODUCT_ROOT = Path(__file__).resolve().parents[2]
+from jarvis.lib import app_backups as _app_backups
+from jarvis.lib import apps as _apps
+from jarvis.lib import backup_selection as _backup_selection
+from jarvis.lib import switches as _switches
+from jarvis.lib.env import instance_root  # noqa: F401  (the one INSTANCE resolver)
 
-from jarvis.lib.env import instance_root  # noqa: E402,F401  (the one INSTANCE resolver)
-from jarvis.lib import app_backups as _app_backups  # noqa: E402
-from jarvis.lib import apps as _apps  # noqa: E402
-from jarvis.lib import backup_selection as _backup_selection  # noqa: E402
-from jarvis.lib import switches as _switches  # noqa: E402
+_PRODUCT_ROOT = Path(__file__).resolve().parents[2]
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"

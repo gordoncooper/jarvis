@@ -9,7 +9,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from ansible_role_proof import ANSIBLE_DIR
 from conftest import require_cli
 

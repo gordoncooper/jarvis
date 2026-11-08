@@ -24,16 +24,16 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-from jarvis.lib.env import instance_root  # noqa: E402
-from jarvis.lib.render_cluster_vars_configmap import render_document  # noqa: E402
-from jarvis.schema.env import (  # noqa: E402
+from jarvis.lib.env import instance_root
+from jarvis.lib.render_cluster_vars_configmap import render_document
+from jarvis.schema.env import (
     DEFAULT_SSH_USER,
     EXAMPLE_ENV,
     ValidationError,
     validate_env_tree,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 _TOOLS = ("ssh", "ssh-keygen", "git", "age-keygen")

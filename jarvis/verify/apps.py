@@ -6,9 +6,8 @@ make verify runs this component only for an env whose values/switches.yaml lists
 from __future__ import annotations
 
 from jarvis.lib import apps as _apps
-
 from jarvis.verify.common import CheckError, CheckWarning, Context, Kubectl, items
-from jarvis.verify.registry import register
+from jarvis.verify.registry import Check, register
 
 BASELINE_POLICIES = ("default-deny", "cluster-dns", "same-namespace")
 
@@ -94,7 +93,7 @@ def check_declared_unbacked(kubectl: Kubectl) -> None:
 
 
 @register("apps")
-def apps_checks(ctx: Context) -> list[tuple[int, str, object]]:
+def apps_checks(ctx: Context) -> list[Check]:
     data, errors = _apps.load_values(ctx.repo_root / "envs" / ctx.env)
     if errors:
         raise CheckError(f"values/apps.yaml: {'; '.join(errors)}")

@@ -8,9 +8,9 @@ or the chart `digest:` field. Chart versions and OCI chart tags are not images.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from jarvis.checks.manifests import helm_values, load_documents, pod_spec, ref_of
 

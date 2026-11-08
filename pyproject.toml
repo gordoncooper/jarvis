@@ -13,3 +13,35 @@ dependencies = ["PyYAML"]
 
 [tool.setuptools.packages.find]
 include = ["jarvis*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+# The extensionless commands, which ruff would not find by suffix.
+extend-include = [
+  "ci/e2e/make-env",
+  "ci/release-notes",
+  "ci/select-tests",
+  "tools/age-key-check",
+  "tools/app-check",
+  "tools/bootstrap-secrets",
+  "tools/drill",
+  "tools/install-deps",
+  "tools/pin-check",
+  "tools/prep-node",
+  "tools/restore",
+  "tools/seal",
+  "tools/verify/run",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# Long lines are mostly prose in messages and test docstrings; no formatter rewrites them.
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jarvis", "support"]
+
+[tool.pyright]
+include = ["jarvis"]
+pythonVersion = "3.12"

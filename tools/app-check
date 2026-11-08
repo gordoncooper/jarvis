@@ -16,8 +16,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-
-from jarvis.lib.app_file import check_folder  # noqa: E402
+from jarvis.lib.app_file import check_folder
 
 
 def repo_folders(repo: Path, exclude: list[str]) -> list[Path]:

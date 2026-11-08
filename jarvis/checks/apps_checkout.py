@@ -16,11 +16,11 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from jarvis.lib import apps as _apps
+from jarvis.lib import backup_selection as _backup_selection
+from jarvis.lib.env import instance_root
 
-from jarvis.lib import apps as _apps  # noqa: E402
-from jarvis.lib import backup_selection as _backup_selection  # noqa: E402
-from jarvis.lib.env import instance_root  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The wiring every env's app sources come from: its ref is the branch Flux deploys.
 
@@ -57,10 +57,12 @@ def source(instance: Path) -> tuple[str, str] | None:
     needing = _envs_needing_apps(instance)
     if not needing:
         return None
-    urls = {env_dir.name: _apps_url(env_dir) for env_dir in needing}
-    for env, url in urls.items():
+    urls: dict[str, str] = {}
+    for env_dir in needing:
+        url = _apps_url(env_dir)
         if url is None:
-            raise AppsCheckoutError(f"envs/{env}: lists apps but has no readable apps_git_repo_url")
+            raise AppsCheckoutError(f"envs/{env_dir.name}: lists apps but has no readable apps_git_repo_url")
+        urls[env_dir.name] = url
     if len(set(urls.values())) > 1:
         # One APPS_REPO serves one run: checking an env against another's repository proves nothing.
         raise AppsCheckoutError(f"envs read different apps repositories: {sorted(urls)}")

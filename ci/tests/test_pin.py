@@ -9,11 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.lib.pin import PinError, require_pin
 from support import REPO_ROOT
-
-sys.path.insert(0, str(REPO_ROOT / "tools"))
-
-from jarvis.lib.pin import PinError, require_pin  # noqa: E402
 
 
 def _git(repo: Path, *args: str) -> str:

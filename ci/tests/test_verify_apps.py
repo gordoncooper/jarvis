@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import json
-import sys
 from subprocess import CompletedProcess
 
 import pytest
 
-from support import REPO_ROOT
-
-sys.path.insert(0, str(REPO_ROOT / "tools"))
-
-from jarvis.verify.apps import check_app_baseline, check_declared_unbacked  # noqa: E402
-from jarvis.verify.common import CheckError, CheckWarning  # noqa: E402
+from jarvis.verify.apps import check_app_baseline, check_declared_unbacked
+from jarvis.verify.common import CheckError, CheckWarning
 
 SUFFIX = "env-test.example"
 ENV = {"apps": ["notes"], "exceptions": [{"notes": "hostname notes.example.org"}], "versions": {"notes": "v0.1.0"}}

@@ -8,7 +8,6 @@ import textwrap
 from pathlib import Path
 
 import yaml
-
 from ansible_role_proof import (
     ANSIBLE_DIR,
     FLUX_OPERATOR_ROLE_DIR,

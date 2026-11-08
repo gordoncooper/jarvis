@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from ansible_role_proof import (
     ANSIBLE_DIR,
     K3S_ROLE_DIR,
@@ -22,13 +21,14 @@ from ansible_role_proof import (
     ansible_render_template,
     env_name,
     inventory_path,
-    non_example_env_names,
     load_cluster_vars,
     load_role_defaults,
+    non_example_env_names,
     playbook_recap_field,
     roles_inventory_path,
 )
 from conftest import require_cli
+
 from support import ExampleCopy
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"

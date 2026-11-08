@@ -23,10 +23,10 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-
 from conftest import ci_mode
-from support import REPO_ROOT
 from test_app_admission import POLICIES, _app, _docs, _job, _pod, _wiring
+
+from support import REPO_ROOT
 
 VOLSYNC = "system:serviceaccount:volsync:volsync"
 SCHEDULER = "system:kube-scheduler"

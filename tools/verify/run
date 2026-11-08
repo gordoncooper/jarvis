@@ -6,27 +6,28 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-from jarvis.lib.env import (  # noqa: E402
+from jarvis.lib import apps as _apps
+from jarvis.lib.env import (
     EnvError,
     instance_root,
     kubeconfig_for,
-    kubectl as run_kubectl,
     repository_values,
     validate_cluster,
 )
-from jarvis.lib import apps as _apps  # noqa: E402
-from jarvis.verify import apps as _apps_checks  # noqa: E402, F401
-from jarvis.verify import backups as _backups  # noqa: E402, F401
-from jarvis.verify import platform as _platform  # noqa: E402, F401
-from jarvis.verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE  # noqa: E402, F401  (tests read them here)
-from jarvis.verify.common import CheckError, CheckWarning, Context  # noqa: E402
-from jarvis.verify.platform import (  # noqa: E402, F401
+from jarvis.lib.env import (
+    kubectl as run_kubectl,
+)
+from jarvis.schema.env import enabled_addons
+from jarvis.verify import apps as _apps_checks  # noqa: F401
+from jarvis.verify import backups as _backups  # noqa: F401
+from jarvis.verify import platform as _platform  # noqa: F401
+from jarvis.verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE  # noqa: F401  (tests read them here)
+from jarvis.verify.common import CheckError, CheckWarning, Context
+from jarvis.verify.platform import (  # noqa: F401
     ENABLELB,
     FLUX_RESOURCES,
     _fetch,
@@ -34,8 +35,9 @@ from jarvis.verify.platform import (  # noqa: E402, F401
     _issuer,
     check_https,
 )
-from jarvis.verify.registry import collect, enabled_components, load_addons  # noqa: E402
-from jarvis.schema.env import enabled_addons  # noqa: E402
+from jarvis.verify.registry import collect, enabled_components, load_addons
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 REQUEST_TIMEOUT = "30s"
 KUBECTL_TIMEOUT = 60.0
@@ -93,7 +95,7 @@ def run(
         env=env,
         kubectl=kubectl,
         values=values,
-        now=now or datetime.now(timezone.utc),
+        now=now or datetime.now(UTC),
         roles=roles,
     )
     try:

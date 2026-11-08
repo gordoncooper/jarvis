@@ -7,10 +7,11 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from jarvis.schema.env import ADDONS_DIR, addon_names
-
 from jarvis.verify.common import CheckError, Context
 
-Builder = Callable[[Context], list[tuple[int, str, Callable[[], object]]]]
+# One check: its order, its label, and the call that raises CheckError or CheckWarning.
+Check = tuple[int, str, Callable[[], object]]
+Builder = Callable[[Context], list[Check]]
 
 DEFAULT_ENABLED = ("platform", "backups")
 COMPONENTS: dict[str, Builder] = {}

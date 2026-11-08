@@ -17,10 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis.checks.manifests import build_flux_path, kustomize_build, pod_spec
+from jarvis.lib import app_backups as _app_backups
 from jarvis.schema.env import CORE_SOURCE_DIR, env_dirs
-
-
-from jarvis.lib import app_backups as _app_backups  # noqa: E402
 
 CORE_SECRET = "backups-restic"
 CORE_SERVER = "restic"
@@ -130,10 +128,10 @@ def _apps_server_reasons(doc: dict) -> list[str]:
     return reasons
 
 
-def _secret_volumes(doc: dict) -> list[tuple[str, list[str] | None]]:
+def _secret_volumes(doc: dict) -> list[tuple[str, list[str | None] | None]]:
     """(Secret name, keys or None for all) for each Secret a workload reads: volumes, projected
     volumes, env secretKeyRef and envFrom secretRef."""
-    found: list[tuple[str, list[str] | None]] = []
+    found: list[tuple[str, list[str | None] | None]] = []
     pod = pod_spec(doc) or {}
     for container in (pod.get("containers") or []) + (pod.get("initContainers") or []):
         for item in container.get("env") or []:

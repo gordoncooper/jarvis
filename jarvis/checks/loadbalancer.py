@@ -8,9 +8,9 @@ DNS name or an address.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from jarvis.checks.manifests import helm_values, load_documents, ref_of
 
@@ -53,7 +53,7 @@ def format_violations(violations: Iterable[LoadBalancerViolation]) -> list[str]:
 
 
 def _identity(doc: dict) -> tuple[str, str, str]:
-    metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+    metadata = metadata_raw if isinstance(metadata_raw := doc.get("metadata"), dict) else {}
     return (
         str(doc.get("kind") or ""),
         str(metadata.get("namespace") or ""),

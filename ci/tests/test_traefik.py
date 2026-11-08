@@ -6,8 +6,8 @@ import json
 import re
 
 import yaml
-
 from ansible_role_proof import REPO_ROOT, load_cluster_vars
+
 from support import ExampleCopy, _kustomize_build, real_and_copy_envs
 
 # The example env's pin is the contract pin. The check runs on real envs and a copy.

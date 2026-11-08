@@ -12,8 +12,6 @@ import textwrap
 from pathlib import Path
 
 import yaml
-
-from conftest import require_cli
 from ansible_role_proof import (
     ANSIBLE_DIR,
     ansible_render_template,
@@ -23,6 +21,7 @@ from ansible_role_proof import (
     load_role_defaults,
     playbook_recap_field,
 )
+from conftest import require_cli
 
 ROLE_TEMPLATES = ANSIBLE_DIR / "roles" / "base-os" / "templates"
 

@@ -56,6 +56,9 @@ jobs:
       - name: Run ci/checks
         run: bash ci/run-checks
 
+      - name: ruff and pyright
+        run: bash ci/lint
+
       - name: pytest
         if: steps.select.outputs.tests != 'none'
         env:
