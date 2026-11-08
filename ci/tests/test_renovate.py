@@ -426,14 +426,14 @@ def _unmanaged(rel: str, text: str, line: str) -> list[str]:
 
 
 def _tracked() -> dict[str, str]:
-    """Every tracked file outside ci/ and renovate.json, by path."""
+    """Every tracked file outside ci/ and the Renovate configs (renovate.json, renovate/), by path."""
     listed = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True, text=True
     ).stdout.split("\0")
     return {
         rel: (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
         for rel in listed
-        if rel and rel != "renovate.json" and not rel.startswith("ci/") and (ROOT / rel).is_file()
+        if rel and rel != "renovate.json" and not rel.startswith(("ci/", "renovate/")) and (ROOT / rel).is_file()
     }
 
 
