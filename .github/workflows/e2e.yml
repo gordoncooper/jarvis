@@ -144,7 +144,9 @@ jobs:
         run: |
           set -euo pipefail
           # k3s's own schedule is every 12 h and the copy runs after it; the drill restores the newest copy.
-          docker exec "k3d-${E2E_ENV}-server-0" k3s etcd-snapshot save --name e2e
+          backup_path="$(sed -n 's/^backup_path:[[:space:]]*//p' "envs/${E2E_ENV}/values/cluster-vars.yaml")"
+          # The save subcommand does not read the server's flags; give it the same snapshot dir.
+          docker exec "k3d-${E2E_ENV}-server-0" k3s etcd-snapshot save --name e2e --etcd-snapshot-dir "${backup_path}/etcd-snapshots"
           kubectl -n platform-backups create job etcd-snapshots-e2e --from=cronjob/etcd-snapshots
           kubectl -n platform-backups wait --for=condition=complete job/etcd-snapshots-e2e --timeout=10m
 
