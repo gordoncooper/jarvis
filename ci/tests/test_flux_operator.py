@@ -1781,3 +1781,10 @@ def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
     assert "Stat the age private key file" not in output
     assert sentinel not in output
     assert "create" not in log.read_text(encoding="utf-8")
+
+
+def test_example_env_known_hosts_is_the_role_default() -> None:
+    """Rule: the example env's flux_known_hosts is the role default, so a GitHub key rotation
+    updates both or the copy an env starts from trusts a stale key."""
+    example = yaml.safe_load((REPO_ROOT / "envs" / "env-00" / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
+    assert example["flux_known_hosts"] == load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"]
