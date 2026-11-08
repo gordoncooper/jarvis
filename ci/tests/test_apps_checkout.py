@@ -95,7 +95,8 @@ def _helper(tmp_path: Path, instance: Path) -> subprocess.CompletedProcess[str]:
     (product / "ci" / "checks").mkdir(parents=True)
     shutil.copy(REPO_ROOT / "ci" / "checkout-apps-for-instance.sh", product / "ci")
     shutil.copytree(REPO_ROOT / "ci" / "checks" / "lib", product / "ci" / "checks" / "lib")
-    shutil.copytree(REPO_ROOT / "tools" / "lib", product / "tools" / "lib")
+    # The helper runs jarvis.checks.apps_checkout from the product root.
+    shutil.copytree(REPO_ROOT / "jarvis", product / "jarvis", ignore=shutil.ignore_patterns("__pycache__"))
     return subprocess.run(
         ["bash", str(product / "ci" / "checkout-apps-for-instance.sh")],
         env={**os.environ, "INSTANCE": str(instance)},
