@@ -31,13 +31,40 @@ jobs:
       - name: Install pinned CLIs and Python test deps
         run: make deps
 
+      # A docs-only PR runs no tests and a Renovate PR only the tests its files reach (ci/select-tests);
+      # every other PR, and main, runs the whole suite. make deps and the rule checks always run.
+      - name: Select tests
+        id: select
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
+            mapfile -t changed < <(git diff --name-only "origin/${BASE_REF}...HEAD")
+            tests="$(python3 ci/select-tests --branch "${HEAD_REF}" "${changed[@]}")"
+          else
+            tests=all
+          fi
+          echo "tests=${tests}" >> "${GITHUB_OUTPUT}"
+          echo "pytest: ${tests}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
       - name: Fetch the loopback API server for the admission test
+        if: steps.select.outputs.tests == 'all' || contains(steps.select.outputs.tests, 'test_app_admission_apiserver.py')
         run: ci/fetch-test-apiserver
 
       - name: Run ci/checks
         run: bash ci/run-checks
 
       - name: pytest
+        if: steps.select.outputs.tests != 'none'
+        env:
+          TESTS: ${{ steps.select.outputs.tests }}
         run: |
           export PATH="${HOME}/.local/bin:${PATH}"
-          .venv/bin/pytest -ra
+          if [[ "${TESTS}" == all ]]; then
+            .venv/bin/pytest -ra
+          else
+            # shellcheck disable=SC2086
+            .venv/bin/pytest -ra ${TESTS}
+          fi
