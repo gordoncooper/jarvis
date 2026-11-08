@@ -10,13 +10,14 @@ A real env lives in a private instance checkout. `INSTANCE=<path>` points the sc
   - `values/switches.yaml` — what the env enables, by name only (below).
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that bootstrap-secrets and Flux decrypt.
   - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `ci/checks/env-schema` rejects an IP used as a host name and any other host key.
-- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `lan_cidrs`, `chrony_nts`, `backup_check_schedule`, and `node_memory_reserve_percent`.
+- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `lan_cidrs`, `chrony_nts`, `flux_known_hosts`, `backup_check_schedule`, and `node_memory_reserve_percent`.
 - Default `ssh_user: ubuntu` when omitted. The example env still sets `ssh_user`.
 - Default `backup_check_schedule: 30 6 * * 3` when omitted. The example env still sets `backup_check_schedule`.
 - Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller. The example env still sets `age_key_file`.
 - Rejection of a `time_zone` that is not an IANA zone, and of a `k3s_version` that is not a k3s version string (`v<major>.<minor>.<patch>+k3s<n>`).
 - `apps_git_repo_url`, when set, is https and validated like `flux_git_repo_url`. The two URLs use one owner handle. When `apps_git_repo_url` is unset, that handle comes from `flux_git_repo_url`. It is required once the env lists a hosted app.
 - Every sealed file under `envs/<env>/secrets/` has a reader: the bootstrap secrets (`k3s-token`, `cert-manager-ca`, `backups-restic`), the deploy key of an `ssh://` root, `backups-offsite` while the off-host copy is listed, the files in each folder an enabled add-on decrypts, and each registered app credential. Any other sealed file fails `ci/checks/env-schema`; delete it, or enable what uses it.
+- `flux_known_hosts`, when set, is one or more `<host> <key type> <base64 key>` lines, and an `ssh://` `flux_git_repo_url`'s host is among them. Unset, Flux trusts GitHub's published key (the flux-operator role default), so an `ssh://` root on another host must set it. Ansible reads it; it is not published to the cluster.
 - `lan_cidrs`, when set, is a non-empty list of IPv4 CIDRs, each inside RFC 1918 and clear of `pod_cidr` and `service_cidr`. It is required once `values/apps.yaml` grants `lan-all` or `lan-target`.
 
 ## Expects
@@ -83,6 +84,7 @@ A required key that is present but null counts as unset and fails.
 | `core_git_ref` | yes | Git ref of the core source: a release tag, `refs/tags/<tag>`. A branch ref passes the schema, but `make site`, `verify`, `drill` and `restore` refuse it, and any checkout not at the tag, without `ALLOW_UNPINNED=1` (`tools/pin-check`, [docs/releasing.md](../docs/releasing.md)). |
 | `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
 | `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
+| `flux_known_hosts` | no | SSH `known_hosts` lines Flux trusts for an `ssh://` root; the root's host must be among them. Unset: GitHub's published key. Host-only (Ansible). |
 | `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
 | `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
 | `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. Its `memory.available` is raised to the node memory reserve below when that is larger. |

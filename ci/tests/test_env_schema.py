@@ -401,6 +401,7 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
 _OPTIONAL_CLUSTER_KEYS = (
     "apps_git_repo_url",
     "lan_cidrs",
+    "flux_known_hosts",
 )
 
 
@@ -416,7 +417,7 @@ def test_optional_cluster_key_may_be_omitted(tmp_path: Path, key: str):
 
 
 def test_optional_cluster_keys_may_all_be_omitted(tmp_path: Path):
-    """An env can deploy with no AI vendor, apps repo, or LLM host."""
+    """An env can deploy with none of the optional keys."""
     cv = _valid_cluster_vars()
     for key in _OPTIONAL_CLUSTER_KEYS:
         del cv[key]
@@ -974,3 +975,34 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     assert "--diff" in args
     bad, recorded = _run_site(tmp_path, "ENV=env-00", "CHECK=true")
     assert bad.returncode != 0 and recorded == "" and "CHECK must be empty or 1" in bad.stderr
+
+
+_GITHUB_KEY = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+
+
+@pytest.mark.parametrize(
+    ("root", "known_hosts", "problem"),
+    [
+        ("https://github.com/o/r", "github.com AAAA", "lines must be"),
+        ("ssh://git@git.example.lan/o/r", _GITHUB_KEY, "no key for git.example.lan"),
+        ("ssh://git@git.example.lan/o/r", "git.example.lan ssh-ed25519 AAAAC3Nza=", None),
+        ("ssh://git@github.com/o/r", _GITHUB_KEY + "\ngitlab.com ssh-ed25519 AAAAC3NzaB", None),
+        ("ssh://git@git.example.lan/o/r", None, "set flux_known_hosts"),
+        ("ssh://git@github.com/o/r", None, None),
+    ],
+    ids=["malformed", "root-host-missing", "own-forge", "several-lines", "unset-off-github", "unset-on-github"],
+)
+def test_flux_known_hosts_trusts_the_root_host(tmp_path: Path, root: str, known_hosts: str | None, problem: str | None):
+    """Rule: flux_known_hosts holds '<host> <type> <key>' lines, and an ssh:// root's host is one of them;
+    unset, it is GitHub's key, so an ssh:// root elsewhere must set it."""
+    cv = _valid_cluster_vars()
+    cv["flux_known_hosts"] = known_hosts
+    if known_hosts is None:
+        del cv["flux_known_hosts"]
+    cv["flux_git_repo_url"] = root
+    errors = env_schema._validate_cluster_vars(cv, "cluster-vars.yaml", "env-test")[0]
+    found = [item for item in errors if "flux_known_hosts" in item]
+    if problem is None:
+        assert found == []
+    else:
+        assert any(problem in item for item in found), errors
