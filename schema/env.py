@@ -132,6 +132,7 @@ _CLUSTER_VARS_OPTIONAL = frozenset(
         "apps_git_repo_url",
         "lan_cidrs",
         "chrony_nts",
+        "flux_known_hosts",
         "backup_check_schedule",
         "node_memory_reserve_percent",
     }
@@ -478,6 +479,7 @@ def _validate_cluster_vars(
     flux_errors, flux_owner = _validate_repo_url(
         rel_path, "flux_git_repo_url", data.get("flux_git_repo_url"), ssh=True
     )
+    errors.extend(_validate_known_hosts(rel_path, data.get("flux_known_hosts"), data.get("flux_git_repo_url")))
     core_errors, _core_owner = _validate_repo_url(
         rel_path, "core_git_repo_url", data.get("core_git_repo_url")
     )
@@ -1262,6 +1264,33 @@ def repo_owner_handle(url: str) -> str | None:
     if len(parts) < 2:
         return None
     return parts[0]
+
+
+_KNOWN_HOSTS_LINE = re.compile(r"^(\S+) (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+=*$")
+
+
+def _validate_known_hosts(rel_path: str, value: Any, root_url: Any) -> list[str]:
+    """flux_known_hosts, when set, is one or more '<host> <key type> <base64 key>' lines, and an
+    ssh:// root's host is among them, so Flux trusts the env repository's host and only it.
+    Unset, the role's default is GitHub's key, which serves only an ssh:// root on github.com."""
+    if value is None:
+        host = urlparse(root_url).hostname if isinstance(root_url, str) and root_url.startswith("ssh://") else None
+        if host and host != "github.com":
+            return [f"{rel_path}: flux_git_repo_url is on {host}; set flux_known_hosts to its SSH host key"]
+        return []
+    if not isinstance(value, str) or not value.strip():
+        return [f"{rel_path}: flux_known_hosts must be a non-empty string"]
+    hosts = set()
+    for line in value.strip().splitlines():
+        match = _KNOWN_HOSTS_LINE.match(line.strip())
+        if match is None:
+            return [f"{rel_path}: flux_known_hosts lines must be '<host> <key type> <base64 key>'"]
+        hosts.update(match.group(1).split(","))
+    if isinstance(root_url, str) and root_url.startswith("ssh://"):
+        host = urlparse(root_url).hostname
+        if host and host not in hosts:
+            return [f"{rel_path}: flux_known_hosts holds no key for {host}, the host of flux_git_repo_url"]
+    return []
 
 
 def _validate_repo_url(
