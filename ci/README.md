@@ -14,6 +14,10 @@ pytest runs on every CPU (`pytest-xdist`, `-n auto` in `pytest.ini`). Each test 
 
 Tests that build a throwaway env copy refuse a tracked path in the repo. Where the temp dir must sit inside a worktree, point pytest at a git-ignored one: `pytest --basetemp=.scratch/tmp`.
 
+## End to end
+
+`.github/workflows/e2e.yml` brings up a real cluster from the commit under test: k3d (k3s in Docker, at the env's `k3s_version`), the flux-operator role applying the env's FluxInstance and `sync.yaml`, every Kustomization and HelmRelease Ready, then `make verify` and `make drill`. The env is a throwaway core-only copy of `env-00` (`ci/e2e/make-env`) with secrets sealed to an age key that lives only on the runner. Its root and core sources are a temporary branch of this repository holding the commit and that env; the job deletes the branch. It runs on pull requests that touch platform, add-on, env, Flux-role, tool or schema code, nightly, and by hand. A fork's pull request cannot push the branch, so it is skipped there.
+
 ## Coding-agent deny lists
 
 `.claude/settings.json` and `.cursor/cli.json` hold the same short deny list, each in its client's own syntax: no commands that reach real hosts or a cluster (`ssh`, `scp`, `ansible` ad-hoc, `kubectl`, `helm`, `flux`, the host-running `make` targets and tools), no secret decryption (`sops`, `age -d`) or reads of the age key, kubeconfigs and SSH keys, and no force-push or merge. They are a speed bump, not the guard: a coding agent never holds the age key, a kubeconfig or an SSH key. No check proves them; keep the two files in step by hand.
