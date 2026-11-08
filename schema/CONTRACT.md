@@ -133,7 +133,7 @@ The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluste
 
 The published set is `CLUSTER_VARS_PUBLISHED` in `tools/lib/render_cluster_vars_configmap.py`. Every other known key in `jarvis/schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.
 
-In `flux/sync.yaml`, the root `GitRepository` `flux-system` url and `ref.name` match `flux_git_repo_url` and `flux_git_ref`, its `core` `GitRepository` matches `core_git_repo_url` and `core_git_ref` and has no `secretRef`, the root includes `core` at `toPath: core`, an `ssh://` root names a `secretRef`, and the root Kustomization `flux-system` applies `./envs/<env>/flux` from `flux-system`. `site.yml` preflight requires the file.
+`flux/sync.yaml` is exactly what `tools/lib/render_switches.py` renders from `cluster-vars.yaml`: the root `GitRepository` `flux-system` at `flux_git_repo_url` and `flux_git_ref` (with the deploy key's `secretRef` when the URL is `ssh://`), including `core` at `toPath: core`; the public `core` `GitRepository` at `core_git_repo_url` and `core_git_ref`; and the root Kustomization `flux-system` applying `./envs/<env>/flux` from `flux-system` with `postBuild.substitute: {jarvis_env: <env>}`. A hand edit fails. `site.yml` preflight requires the file.
 
 `validate_env_tree(..., pre_host=True)` skips the missing `.sops.yaml` recipient requirement and the generated ConfigMap match. Other `.sops.yaml` checks still run. `tools/prep-node` uses that mode before it contacts a host, then runs the full check at the end.
 

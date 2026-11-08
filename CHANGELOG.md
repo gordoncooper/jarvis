@@ -21,6 +21,8 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- `flux/sync.yaml` is generated from `cluster-vars.yaml` (`render_switches.py`), and env-schema
+  requires the render, so the Flux sources' URLs and refs have one source.
 
 ### Fixed
 
@@ -32,8 +34,7 @@ the upgrade.
 - Run `make deps` again in the core checkout, so the venv has the package.
 - In each env, delete `flux/flux-instance.yaml`, `flux/identities.yaml`,
   `flux/kustomizations/platform-controllers.yaml` and `flux/kustomizations/platform-configs.yaml`;
-  add `postBuild: {substitute: {jarvis_env: <env>}}` to the root Kustomization `flux-system` in
-  `flux/sync.yaml`; and render again (`tools/lib/render_switches.py`). Move the env's core pin in
+  and render again (`tools/lib/render_switches.py`), which now writes `flux/sync.yaml` too. Move the env's core pin in
   the same commit: the env's `flux/` and core's now depend on each other.
 
 ## v0.3.0
