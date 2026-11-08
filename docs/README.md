@@ -34,7 +34,7 @@
 | [../core/platform/testapp/CONTRACT.md](../core/platform/testapp/CONTRACT.md) | Platform canary |
 | [../core/platform/traefik/CONTRACT.md](../core/platform/traefik/CONTRACT.md) | Ingress exposure |
 | [../addons/CONTRACT.md](../addons/CONTRACT.md) | Add-ons: what every add-on meets |
-| [../addons/hello/CONTRACT.md](../addons/hello/CONTRACT.md) | Sample add-on |
+| [../ci/tests/fixtures/addons/hello/CONTRACT.md](../ci/tests/fixtures/addons/hello/CONTRACT.md) | Sample add-on (a test fixture) |
 
 ## Env docs
 

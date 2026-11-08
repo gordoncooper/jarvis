@@ -210,9 +210,9 @@ def bootstrap_example_copy(
     if (root == repo or repo in root.parents) and not _git_ignored(repo, root):
         raise RuntimeError("refusing to write the example copy at a tracked path in the repo")
     root.mkdir()
-    # core/ and addons/ where the root artifact holds them (sync.yaml includes them by fromPath).
-    for dirname in ("core", "addons"):
-        (root / dirname).symlink_to(repo / dirname)
+    # core/ and addons/ where the root artifact holds them (sync.yaml includes them by fromPath),
+    # with the fixture add-on beside core's own.
+    link_core_with_fixture_addons(root)
     dest = root / "envs" / name
     shutil.copytree(repo / "envs" / EXAMPLE_ENV, dest)
     _rename_copied_env(dest, EXAMPLE_ENV, name)
@@ -220,6 +220,8 @@ def bootstrap_example_copy(
         (dest / "inventory" / "hosts.yml").write_text(hosts_text, encoding="utf-8")
     if core_only:
         _drop_addons(dest)
+    else:
+        _list_fixture_addons(dest)
     _write_copy_sops_rule(root, name, _throwaway_age_public(tmp_path))
     _bootstrap_copy(root, name)
     _seal_copy_offsite(root, name)
@@ -249,6 +251,32 @@ def render_switches(env_dir: Path, root: Path) -> None:
     render_env(env_dir, root)
 
 
+FIXTURE_ADDONS = REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"
+
+
+def link_core_with_fixture_addons(root: Path) -> None:
+    """root/core links to core, and root/addons holds core's add-ons and the fixture ones (hello):
+    the product ships no sample add-on, so tests run the add-on rules on the fixture."""
+    if not (root / "core").exists():
+        (root / "core").symlink_to(REPO_ROOT / "core")
+    addons = root / "addons"
+    addons.mkdir(exist_ok=True)
+    for source in (REPO_ROOT / "addons", FIXTURE_ADDONS):
+        for entry in source.iterdir():
+            if entry.name != "__pycache__" and not (addons / entry.name).exists():
+                (addons / entry.name).symlink_to(entry)
+
+
+def _list_fixture_addons(env_dir: Path) -> None:
+    """The copy lists the fixture add-on, so every check on add-ons has one to check."""
+    from jarvis.lib import switches as _switches
+    from jarvis.schema.env import SERVICES_KUSTOMIZATION
+
+    names = sorted(entry.name for entry in FIXTURE_ADDONS.iterdir() if entry.is_dir())
+    set_switches(env_dir, addons=names)
+    (env_dir / "flux" / SERVICES_KUSTOMIZATION).write_text(_switches.services({"addons": names}), encoding="utf-8")
+
+
 def _drop_addons(env_dir: Path) -> None:
     from jarvis.lib import switches as _switches
     from jarvis.schema.env import SERVICES_KUSTOMIZATION
@@ -263,7 +291,7 @@ def _seal_copy_addons(root: Path, name: str) -> None:
     from jarvis.schema.env import addon_documents, addon_secret_namespaces, enabled_addons
 
     for addon in enabled_addons(root / "envs" / name):
-        for namespace in addon_secret_namespaces(addon_documents(REPO_ROOT, addon)):
+        for namespace in addon_secret_namespaces(addon_documents(root, addon)):
             secret = f"{namespace}-fixture"
             document = {
                 "apiVersion": "v1",

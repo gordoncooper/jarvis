@@ -16,8 +16,6 @@ spec:
     name: flux-system
   dependsOn:
   - name: platform-configs
-  components:
-  - hello
   postBuild:
     substituteFrom:
     - kind: ConfigMap

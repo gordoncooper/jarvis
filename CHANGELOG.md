@@ -21,6 +21,10 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- e2e builds its env from only `values/`, `inventory/hosts.yml` and `.sops.yaml`: bootstrap-secrets
+  and `tools/render` generate the rest, so a new env is its hand-written files plus encrypted secrets.
+- The `hello` sample add-on is a test fixture (`ci/tests/fixtures/addons/hello/`), not part of the
+  product: `addons/` ships no add-on, and env-00 lists none. The tests run every add-on rule on it.
 - Names: the `optional` section of `values/switches.yaml` is `features` (the optional core
   components are features), and `tools/seal` / `make seal` are `tools/encrypt` / `make encrypt`.
   The old names still work for this release and say they are going.
@@ -48,6 +52,7 @@ the upgrade.
 
 ### Fixed
 
+- `tools/render` on a new env with no `flux/` yet creates `flux/platform-configs/` instead of failing.
 - Backup selection with no apps checkout fails with the missing-checkout error instead of a
   `TypeError`.
 

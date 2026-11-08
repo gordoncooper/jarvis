@@ -3,14 +3,13 @@
 # it (schema/CONTRACT.md); an unknown name fails. Everything else about a piece is in its own file.
 # Core is on in every env, so it is not listed. features are off until listed (app-dns, app-hosting,
 # offsite-backup-copy, apps-backup-server).
-# This example lists the sample add-on and apps so CI renders them; a new env empties addons and apps
-# (docs/deploy.md).
+# This example lists the sample apps so CI renders them; a new env empties apps (docs/deploy.md).
+# The sample add-on lives with the tests, not here (docs/add-an-addon.md).
 features:
   - app-dns
   - app-hosting
   - offsite-backup-copy
-addons:
-  - hello
+addons: []
 # Hosted apps: untrusted, held to their app file by the cluster. Add-ons and core are the trusted zone.
 apps:
   - hello-web
