@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from _manifests import build_flux_path, kustomize_build, pod_spec
-from schema.env import CORE_SOURCE_DIR
+from schema.env import CORE_SOURCE_DIR, env_dirs
 
 _TOOLS_LIB = Path(__file__).resolve().parents[3] / "tools" / "lib"
 if str(_TOOLS_LIB) not in sys.path:
@@ -53,8 +53,7 @@ def scan_backup_isolation(root: Path) -> list[Violation]:
     if error:
         found.append(Violation(_app_backups.APPS_SERVER_DIR, error))
     found.extend(_render_violations(_app_backups.APPS_SERVER_DIR, docs))
-    envs = root / "envs"
-    for env_dir in sorted(p for p in envs.iterdir() if p.is_dir()) if envs.is_dir() else []:
+    for env_dir in env_dirs(root):
         rel = f"envs/{env_dir.name}/flux/platform-configs"
         if not (root / rel).is_dir():
             continue

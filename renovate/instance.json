@@ -1,0 +1,61 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared preset for a Jarvis instance repository: extend it from the instance's renovate.json as github>OWNER/jarvis//renovate/instance.json#<core tag>. It opens one PR per pin an env holds: the core release tag, k3s and Flux. Nothing merges on its own.",
+  "extends": ["config:recommended"],
+  "automerge": false,
+  "packageRules": [
+    {
+      "description": "A core release moves cluster-vars core_git_ref and the core GitRepository in flux/sync.yaml together, per env. Read that release's Upgrading notes in CHANGELOG.md before merging.",
+      "groupName": "jarvis core",
+      "matchDepTypes": ["jarvis-core"],
+      "additionalBranchPrefix": "{{parentDir}}-",
+      "prBodyNotes": ["Follow this release's **Upgrading** notes in core's `CHANGELOG.md`, then run operator commands from a checkout of the new tag."]
+    },
+    {
+      "description": "k3s changes only after approval in the dependency dashboard. k3s_sha256 is bumped by hand in the same PR.",
+      "matchDepNames": ["k3s-io/k3s"],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": ["Set `k3s_sha256` to the `k3s` line of the release's `sha256sum-amd64.txt` in this PR."]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The core tag an env pins: core_git_ref in values/cluster-vars.yaml, after core_git_repo_url.",
+      "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
+      "matchStrings": [
+        "core_git_repo_url:\\s*https://github\\.com/(?<depName>[^/\\s]+/[^/\\s]+?)(?:\\.git)?\\s*\\n(?:[^\\n]*\\n)*?core_git_ref:\\s*refs/tags/(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "github-tags",
+      "depTypeTemplate": "jarvis-core"
+    },
+    {
+      "customType": "regex",
+      "description": "The same pin on the core GitRepository in flux/sync.yaml.",
+      "managerFilePatterns": ["/^envs\\/[^/]+\\/flux\\/sync\\.yaml$/"],
+      "matchStrings": [
+        "url:\\s*https://github\\.com/(?<depName>[^/\\s]+/[^/\\s]+?)(?:\\.git)?\\s*\\n\\s*ref:\\s*\\n\\s*name:\\s*refs/tags/(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "github-tags",
+      "depTypeTemplate": "jarvis-core"
+    },
+    {
+      "customType": "regex",
+      "description": "k3s version in an env's cluster-vars.yaml.",
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "k3s-io/k3s",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$",
+      "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
+      "matchStrings": ["k3s_version:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+\\+k3s\\d+)"]
+    },
+    {
+      "customType": "regex",
+      "description": "Flux distribution version in an env's FluxInstance. Merge only once the Flux Operator version the env's core tag ships supports it.",
+      "managerFilePatterns": ["/^envs\\/[^/]+\\/flux\\/flux-instance\\.yaml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "extractVersionTemplate": "^v?(?<version>.*)$"
+    }
+  ]
+}
