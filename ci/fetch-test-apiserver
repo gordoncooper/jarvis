@@ -9,10 +9,13 @@ import os
 import shutil
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_ATTEMPTS = 4
 
 
 def _versions() -> dict[str, str]:
@@ -28,11 +31,27 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _download(url: str, dest: Path) -> None:
+    """url's bytes in dest. A server or network error is retried (the hosts answer 504 at times)."""
+    for attempt in range(1, _ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response, dest.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+            return
+        except urllib.error.HTTPError as error:
+            if error.code < 500 or attempt == _ATTEMPTS:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == _ATTEMPTS:
+                raise
+        print(f"{url}: attempt {attempt} failed, retrying", file=sys.stderr)
+        time.sleep(10 * attempt)
+
+
 def _fetch(url: str, dest: Path, expected: str) -> None:
     """dest holds url's bytes at the pinned digest, or this stops with dest gone."""
     if not dest.is_file() or _sha256(dest) != expected:
-        with urllib.request.urlopen(url) as response, dest.open("wb") as handle:
-            shutil.copyfileobj(response, handle)
+        _download(url, dest)
     actual = _sha256(dest)
     if actual != expected:
         dest.unlink()
