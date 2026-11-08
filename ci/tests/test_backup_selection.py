@@ -555,7 +555,7 @@ def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> Non
 def _render_cli(copy: ExampleCopy, **env: str) -> subprocess.CompletedProcess[str]:
     clean = {key: value for key, value in os.environ.items() if key != "APPS_REPO"}
     return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "tools" / "lib" / "render_backup_selection.py"), "--env", copy.name],
+        [sys.executable, str(REPO_ROOT / "tools" / "render"), "--env", copy.name],
         env={**clean, "INSTANCE": str(copy.root), **env},
         capture_output=True,
         text=True,

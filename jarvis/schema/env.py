@@ -749,7 +749,7 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
         if manual:
             errors.append(
                 f"{rel}: lists {sorted(manual)!r} under components; with backups in values/apps.yaml, "
-                f"run tools/lib/render_backup_selection.py instead of hand-copying registrations"
+                f"run tools/render instead of hand-copying registrations"
             )
         if expected and wrapper not in components:
             errors.append(
@@ -942,7 +942,7 @@ def _validate_switches(env_dir: Path, repo_root: Path, env_name: str, bootstrapp
         if path.is_file() and path.read_text(encoding="utf-8") != expected:
             errors.append(
                 f"{_display_path(path, repo_root)}: does not match {_switches.SWITCHES_FILE}; "
-                f"re-render with tools/lib/render_switches.py --env {env_name}"
+                f"re-render with tools/render --env {env_name}"
             )
     return errors
 
@@ -1080,7 +1080,7 @@ def _validate_apps(
     if not generated.is_file() or generated.read_text(encoding="utf-8") != _apps.render(
         data, resolve_cluster_vars(cluster_vars)
     ):
-        errors.append(f"{generated_rel}: missing or does not match {rel}; re-render with tools/lib/render_apps.py")
+        errors.append(f"{generated_rel}: missing or does not match {rel}; re-render with tools/render")
     return errors
 
 
@@ -1118,7 +1118,7 @@ def _validate_backup_selection_render(
         ):
             errors.append(
                 f"{env_name}: {_display_path(component, repo_root)} is missing or differs; "
-                "re-render with tools/lib/render_backup_selection.py"
+                "re-render with tools/render"
             )
     expected_components = [
         f"../../platform-configs/{_app_backups.REGISTRATION_DIR}/{namespace}" for namespace in enabled
@@ -1129,12 +1129,12 @@ def _validate_backup_selection_render(
         if rendered_components != expected_components:
             errors.append(
                 f"{generated_rel}: stale wrapper lists {rendered_components!r}, expected {expected_components!r}; "
-                "re-render with tools/lib/render_backup_selection.py"
+                "re-render with tools/render"
             )
             return errors
     if not generated.is_file() or generated.read_text(encoding="utf-8") != expected:
         errors.append(
-            f"{generated_rel}: missing or does not match {rel}; re-render with tools/lib/render_backup_selection.py"
+            f"{generated_rel}: missing or does not match {rel}; re-render with tools/render"
         )
         return errors
     return errors
@@ -1181,7 +1181,7 @@ def _validate_flux_sources(
 
     del docs  # parsed only to report invalid YAML
     if path.read_text(encoding="utf-8") != _switches.sync(cluster_vars, env_name):
-        return [f"{rel}: does not match values/cluster-vars.yaml; re-render with tools/lib/render_switches.py --env {env_name}"]
+        return [f"{rel}: does not match values/cluster-vars.yaml; re-render with tools/render --env {env_name}"]
     return []
 
 
@@ -1214,7 +1214,7 @@ def _validate_committed_configmap(
         return []
     return [
         f"{rel}: does not match values/cluster-vars.yaml; "
-        f"re-render with tools/lib/render_cluster_vars_configmap.py"
+        f"re-render with tools/render"
     ]
 
 

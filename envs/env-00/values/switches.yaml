@@ -1,4 +1,4 @@
-# What this env enables, by name only. tools/lib/render_switches.py renders the Flux wiring from
+# What this env enables, by name only. tools/render renders the Flux wiring from
 # it (schema/CONTRACT.md); an unknown name fails. Everything else about a piece is in its own file.
 # Core is on in every env, so it is not listed. optional is off until listed (app-dns, app-hosting,
 # offsite-backup-copy, apps-backup-server).
