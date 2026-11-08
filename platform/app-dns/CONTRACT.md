@@ -11,7 +11,7 @@ A second CoreDNS, with the k8s_gateway plugin, answers `${dns_suffix}` from Ingr
 
 ## Expects
 
-- `dns_suffix` and `app_dns_cluster_ip` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode them (`ci/checks/core-names`).
+- `dns_suffix` and `app_dns_cluster_ip` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode them.
 - Traefik's LoadBalancer Service and Ingress class `traefik` (the exposure contract).
 - The `edge` role. The k3s role sets `svccontroller.k3s.cattle.io/enablelb=true` on those nodes only.
 - Edge hosts do not use the systemd-resolved stub (`127.0.0.53`). base-os sets `DNSStubListener=no` and links `/etc/resolv.conf` to `/run/systemd/resolve/resolv.conf`.

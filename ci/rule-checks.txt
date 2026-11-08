@@ -1,9 +1,7 @@
 addons
 app-hosting
 backup-isolation
-cli-deny
 contract-md
-core-names
 digest-pin
 env-schema
 flux-identity
@@ -11,7 +9,6 @@ flux-prune
 flux-substitute
 loadbalancer
 manifest-lint
-plan-codes
 product-ci
 python-pins
 pvc-backup

@@ -14,9 +14,7 @@ Tests that build a throwaway env copy refuse a tracked path in the repo. Where t
 
 ## Coding-agent deny lists
 
-`ci/checks/cli-deny` proves `.cursor/cli.json` and `.claude/settings.json` against one corpus, `ci/checks/fixtures/guard-corpus.tsv`. To add a category, add `block` rows that name it (the bare command and the wrapper forms both clients see), add `allow` rows for the everyday commands nearest to it, then add entries to both files until the check passes. Leave a form neither client can block out of the corpus and describe it by category only. A failure names the client, category and corpus line, never the command.
-
-Write each entry so it names a command position, not a word anywhere in the line: a guarded word also appears in commit messages, search patterns, test selectors and file paths, and an allow rule cannot carve an exception out of a deny rule in either client. A deny entry that fires on a wrapper names both the wrapper and the program it wraps, so an unrelated command that merely mentions the program stays allowed.
+`.claude/settings.json` and `.cursor/cli.json` hold the same short deny list, each in its client's own syntax: no commands that reach real hosts or a cluster (`ssh`, `scp`, `ansible` ad-hoc, `kubectl`, `helm`, `flux`, the host-running `make` targets and tools), no secret decryption (`sops`, `age -d`) or reads of the age key, kubeconfigs and SSH keys, and no force-push or merge. They are a speed bump, not the guard: a coding agent never holds the age key, a kubeconfig or an SSH key. No check proves them; keep the two files in step by hand.
 
 ## Known weak spots
 
@@ -29,7 +27,5 @@ These are gaps a maintainer should know about when a change looks green.
 - **The node token read is not run.** The `slurp` of the control plane's node token in `token.yml` needs a real k3s server. Only the name resolution and the URL are tested.
 - **Host tools are faked.** Role tests put a fake `systemctl` or `findmnt` first on `PATH`. They prove the role reacts to the answers it is given, not that the real tools answer that way.
 - **Renovate config is checked by regex only.** The tests run each manager's pattern against the files it targets. They do not run Renovate. Run `renovate-config-validator` after any edit to `renovate.json`.
-- **`cli-deny` proves a model of each client, not the client.** The model follows each client's documented matching; where Claude Code's docs are silent it takes the stricter reading for each verdict. A client release that matches differently is not caught.
-- **`core-names` matches whole tokens.** A value written in an encoded or split form is not matched. Binary files and files that are not UTF-8 are skipped.
 - **Tests that need `sops`, `age-keygen`, `kustomize` or `ansible-playbook` skip when the tool is missing, except in CI, where a missing tool fails.** A green local run on a machine without them proves less than CI does.
 - **`test_app_admission_apiserver.py` skips without its API server, except in CI.** It alone runs the hosted-app policies on a real `kube-apiserver`, which validates them as the kyverno CLI does not. Run `ci/fetch-test-apiserver` first to run it locally: it downloads the pinned binaries into `.scratch/apiserver/`.

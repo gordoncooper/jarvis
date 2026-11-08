@@ -12,7 +12,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 ## Expects
 
 - Secret `cert-manager-ca` (`tls.crt` and `tls.key`) from `make bootstrap-secrets`. The public root is `envs/<env>/ca.crt`. The private key is not written there.
-- `dns_suffix` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode it (`ci/checks/core-names`).
+- `dns_suffix` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode it.
 - Namespace `platform-cert-manager` from the cert-manager controller.
 
 ## Health

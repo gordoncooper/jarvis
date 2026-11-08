@@ -35,8 +35,6 @@ jobs:
         run: ci/fetch-test-apiserver
 
       - name: Run ci/checks
-        env:
-          OWNER_NAME: ${{ vars.OWNER_NAME }}
         run: bash ci/run-checks
 
       - name: pytest

@@ -31,7 +31,7 @@ Callers may rely on these six capabilities from the active provider. Rows marked
 ## Expects
 
 - Both repos exist on the provider before env values reference them.
-- Flux reconciles cluster state from Git only. Agents do not write to the cluster directly (`ci/checks/cli-deny`).
+- Flux reconciles cluster state from Git only. Agents do not write to the cluster directly (the deny lists in `.claude/settings.json` and `.cursor/cli.json`).
 - Credentials for the planned code-factory jobs stay outside CI: the lane job holds a Cursor key and a read-only GitHub token; the publish job holds a short-lived App token; the builder has no push credentials. Git holds no plaintext secret.
 
 ## Health
