@@ -14,7 +14,7 @@ Rules here are prose only for what `ci/checks/`, `.cursor/cli.json`, and `.claud
 - **Plan codes stay out of Markdown docs, READMEs and `docs/` (not `AGENTS.md` or `.github/`):** `ci/checks/plan-codes`. Code and comments carry none either; no check enforces that.
 - **No plaintext secrets in Git:** `ci/checks/secret-scan`.
 - **Product trees do not use `ci/`:** `ci/checks/product-ci`.
-- **The backup ClusterPolicy enrolls every PVC, or the PVC is `backup: none`:** `ci/checks/pvc-backup`.
+- **The backup GeneratingPolicy enrolls every PVC, or the PVC is `backup: none`:** `ci/checks/pvc-backup`.
 - **Deferred on purpose:** don't add a model-name rule to `core-names` until a brief asks for it.
 
 ## Stay lean

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT
+from support import REPO_ROOT, kyverno_generated
 
 import _apps
 from _app_file import check_folder
@@ -92,19 +92,19 @@ _RESTRICTED = {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL
 
 
 def _mutated(tmp_path: Path, docs: list[dict], user: str | None = None) -> list[dict]:
-    """docs as ClusterPolicy app-priority leaves them at admission (kyverno apply), written by
+    """docs as MutatingPolicy app-priority leaves them at admission (kyverno apply), written by
     user (default: the tenant of the first doc's namespace)."""
     work = tmp_path / f"mutate-{len(list(tmp_path.glob('mutate-*')))}"
     work.mkdir()
     user = user or TENANT.format(app=docs[0]["metadata"]["namespace"].removeprefix("app-"))
     (work / "resources.yaml").write_text(yaml.safe_dump_all(docs), encoding="utf-8")
     # kyverno apply loads no policy from a file that also holds the PriorityClass.
-    policy = next(doc for doc in _docs(PRIORITY) if doc["kind"] == "ClusterPolicy")
+    policy = next(doc for doc in _docs(PRIORITY) if doc["kind"] == "MutatingPolicy")
     (work / "policy.yaml").write_text(yaml.safe_dump(policy), encoding="utf-8")
     command = [_kyverno(), "apply", str(work / "policy.yaml"), "--resource", str(work / "resources.yaml"),
                "--remove-color", "-o", str(work / "out.yaml"), "--userinfo", str(_userinfo(work / "userinfo.yaml", user))]
     proc = subprocess.run(command, capture_output=True, text=True, check=False)
-    assert proc.returncode == 0 and "Applying 2 policy rule(s)" in proc.stdout, proc.stdout + proc.stderr
+    assert proc.returncode == 0 and ", error: 0," in proc.stdout, proc.stdout + proc.stderr
     out = work / "out.yaml"
     changed = {(doc["kind"], doc["metadata"]["name"]): doc for doc in _docs(out)} if out.is_file() else {}
     return [changed.get((doc["kind"], doc["metadata"]["name"]), doc) for doc in docs]
@@ -677,51 +677,37 @@ def test_app_file_and_app_grants_share_their_match_and_variables() -> None:
         assert policies["app-file"][field] == policies["app-grants"][field], field
 
 
-def _generate_test(tmp_path: Path, policy: Path, resources: list[dict], values: dict, results: list[tuple[str, dict | None]]) -> None:
-    """kyverno test of a generate or mutate-existing policy: results are (rule, expected object or None for skip)."""
-    work = tmp_path / policy.stem
-    work.mkdir(parents=True)
-    (work / "resources.yaml").write_text(yaml.safe_dump_all(resources), encoding="utf-8")
-    (work / "values.yaml").write_text(
-        yaml.safe_dump({"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Value", "metadata": {"name": "v"}, **values}), encoding="utf-8"
-    )
-    entries = []
-    for index, (rule, (trigger, expected)) in enumerate(results):
-        entry = {"policy": yaml.safe_load(policy.read_text(encoding="utf-8"))["metadata"]["name"],
-                 "rule": rule, "kind": trigger["kind"], "resources": [trigger["metadata"]["name"]],
-                 "result": "pass" if expected is not None else "skip"}
-        if expected is not None:
-            name = f"expected-{index}.yaml"
-            (work / name).write_text(yaml.safe_dump(expected), encoding="utf-8")
-            entry["generatedResource" if expected["kind"] != "Namespace" else "patchedResources"] = name
-        entries.append(entry)
-    test = {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Test", "metadata": {"name": policy.stem},
-            "policies": [str(policy)], "resources": ["resources.yaml"], "variables": "values.yaml", "results": entries}
-    targets = [doc for doc in resources if doc["kind"] == "Namespace"]
-    if targets:
-        (work / "targets.yaml").write_text(yaml.safe_dump_all(targets), encoding="utf-8")
-        test["targetResources"] = ["targets.yaml"]
-        test["resources"] = ["triggers.yaml"]
-        (work / "triggers.yaml").write_text(yaml.safe_dump_all([doc for doc in resources if doc["kind"] != "Namespace"]), encoding="utf-8")
-    (work / "kyverno-test.yaml").write_text(yaml.safe_dump(test), encoding="utf-8")
-    proc = subprocess.run([_kyverno(), "test", str(work), "--remove-color", "--detailed-results"],
-                          capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    # The CLI skips a policy with a bad variable and still counts that as a pass.
-    assert "Invalid Policy" not in proc.stdout, proc.stdout
-
-
 def _network_policy(app: str, name: str, spec: dict) -> dict:
     return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
             "metadata": {"name": name, "namespace": f"app-{app}"}, "spec": {"podSelector": {}, **spec}}
 
 
-def _namespace_notes(apps: dict[str, list[str]]) -> dict:
-    """kyverno test values: each App's namespace annotations, as its wiring renders them with
-    the env's exception lines for it."""
-    return {"policies": [{"name": "app-derive", "resources": [
-        {"name": app, "values": {"notes": next(doc for doc in _wiring(app, grants) if doc["kind"] == "Namespace")["metadata"]["annotations"]}}
-        for app, grants in apps.items()]}]}
+def _namespaces(apps: dict[str, list[str]]) -> list[dict]:
+    """Each App's namespace as its wiring renders it with the env's exception lines for it, and
+    platform-backups: what app-derive reads."""
+    return [*(next(doc for doc in _wiring(app, grants) if doc["kind"] == "Namespace") for app, grants in apps.items()),
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "platform-backups"}}]
+
+
+_DERIVED = {"quota": "app", "web": "app-web", "internet": "app-internet", "lan-all": "app-lan-all", "lan": "app-lan",
+            "apps": "app-apps", "callers": "app-callers", "ports": "app-ports", "backups": "app-backups"}
+
+
+def _derive_test(tmp_path: Path, triggers: list[dict], apps: dict[str, list[str]],
+                 results: list[tuple[str, tuple[dict, dict | None]]]) -> None:
+    """What the app-derive policies make for the triggers: results are (object, (trigger, the
+    object made, or None for none)), the object named as _DERIVED names it."""
+    made = {(doc["metadata"]["namespace"], doc["kind"], doc["metadata"]["name"]): doc
+            for doc in kyverno_generated(tmp_path / "derive", _docs(POLICIES / "derive.yaml"), triggers, _namespaces(apps))}
+    for item, (trigger, expected) in results:
+        name = trigger["metadata"]["name"]
+        namespace = name.removeprefix("backups-restic-") if trigger["kind"] == "Secret" else trigger["metadata"]["namespace"]
+        kind = "ResourceQuota" if item == "quota" else "NetworkPolicy"
+        found = made.get((namespace, kind, _DERIVED[item]))
+        if expected is None:
+            assert found is None, (item, name, found)
+        else:
+            assert found == expected, (item, name, found)
 
 
 def _quota(app: str, cpu: str, memory: str, lbs: str = "0") -> dict:
@@ -755,9 +741,9 @@ def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
     partial, ungranted = (_app(name, network=lan["spec"]["network"]) for name in ("lan-partial", "lan-ungranted"))
     partial_ports = _network_policy("lan-partial", "app-ports", {"policyTypes": ["Ingress"], "ingress": [{
         "from": [{"ipBlock": {"cidr": "0.0.0.0/0"}}], "ports": [{"port": 8080, "protocol": "TCP"}]}]})
-    _generate_test(tmp_path, POLICIES / "derive.yaml", [notes, photos, web, lan, offline, credential, partial, ungranted],
-                   _namespace_notes({"notes": [], "photos": [], "web-demo": [], "lan": _ENV["lan"][1], "offline": [],
-                                     "lan-partial": ["lan-port 443/TCP"], "lan-ungranted": []}), [
+    _derive_test(tmp_path, [notes, photos, web, lan, offline, credential, partial, ungranted],
+                 {"notes": [], "photos": [], "web-demo": [], "lan": _ENV["lan"][1], "offline": [],
+                  "lan-partial": ["lan-port 443/TCP"], "lan-ungranted": []}, [
         ("quota", (notes, _quota("notes", "1", "1Gi"))),
         ("quota", (lan, _quota("lan", "500m", "512Mi", "2"))),
         ("apps", (notes, _network_policy("notes", "app-apps", {"policyTypes": ["Egress"], "egress": [{"to": [{"namespaceSelector": peers(["photos"])}]}]}))),
@@ -812,9 +798,9 @@ def test_derive_opens_internet_and_lan_only_as_asked_and_granted(tmp_path: Path)
     nas = _network_policy("named", "app-lan", {"policyTypes": ["Egress"], "egress": [
         {"to": [{"ipBlock": {"cidr": "10.200.0.10/32"}}], "ports": [{"port": 137, "protocol": "UDP"}]},
         {"to": [{"ipBlock": {"cidr": "10.200.0.10/32"}}], "ports": [{"port": 445, "protocol": "TCP"}]}]})
-    _generate_test(tmp_path, POLICIES / "derive.yaml", [surfer, whole, whole_ungranted, named, named_ungranted],
-                   _namespace_notes({"surfer": [], "whole": ["lan-all"], "whole-ungranted": _LAN_TARGETS,
-                                     "named": _LAN_TARGETS, "named-ungranted": ["lan-all"]}), [
+    _derive_test(tmp_path, [surfer, whole, whole_ungranted, named, named_ungranted],
+                 {"surfer": [], "whole": ["lan-all"], "whole-ungranted": _LAN_TARGETS,
+                  "named": _LAN_TARGETS, "named-ungranted": ["lan-all"]}, [
         ("internet", (surfer, internet)),
         ("lan-all", (surfer, None)),
         ("lan", (surfer, None)),
@@ -826,7 +812,7 @@ def test_derive_opens_internet_and_lan_only_as_asked_and_granted(tmp_path: Path)
         ("lan", (named_ungranted, None)),
         ("lan-all", (named_ungranted, None)),
     ])
-    # What the generated allows let through (kyverno test held them equal to these).
+    # What the generated allows let through (kyverno apply made them equal to these).
     assert _allows(internet, "203.0.113.7", 22, "TCP") and _allows(internet, "198.51.100.9", 5000, "UDP")
     for address in ("10.200.0.10", "192.168.1.1", "10.80.0.5", "10.81.0.1", "169.254.169.254", "100.64.0.1"):
         assert not _allows(internet, address, 443, "TCP"), address
@@ -849,30 +835,9 @@ def test_uptime_opt_out_reaches_the_namespace_the_uptime_check_reads() -> None:
     assert opt_out(["no-uptime-check"]) == "true"
 
 
-@pytest.mark.parametrize("hosting", [True, False], ids=["hosting-on", "hosting-off"])
-def test_privileged_movers_only_for_an_app_with_a_credential(tmp_path: Path, hosting: bool) -> None:
-    """Rule: pvc-backup marks an app- namespace for privileged movers only once the env registers
-    the app's credential, also for a namespace left after app hosting is switched off; a core
-    namespace as before. The rule as the env renders it."""
-    from test_app_hosting import render_platform
-
-    enrollment = tmp_path / "pvc-backup.yaml"
-    enrollment.write_text(yaml.safe_dump(render_platform(tmp_path / "render", hosting=hosting)[("ClusterPolicy", "pvc-backup")]),
-                          encoding="utf-8")
-    namespace = lambda name: {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": name}}  # noqa: E731
-    marked = lambda name: {**namespace(name), "metadata": {"name": name, "annotations": {"volsync.backube/privileged-movers": "true"}}}  # noqa: E731
-    registered, unregistered, core = _pvc("data", "notes"), _pvc("data", "web-demo"), _pvc("data", "x")
-    core["metadata"]["namespace"] = "monitoring"
-    for claim in (registered, unregistered, core):
-        claim["metadata"]["name"] = f"data-{claim['metadata']['namespace']}"
-    values = {"policies": [{"name": "pvc-backup", "resources": [
-        {"name": registered["metadata"]["name"], "values": {"appCredential": "true"}},
-        {"name": unregistered["metadata"]["name"], "values": {"appCredential": "false"}},
-        {"name": core["metadata"]["name"], "values": {"appCredential": "false"}},
-    ]}]}
-    _generate_test(tmp_path, enrollment, [registered, unregistered, core, namespace("app-notes"), namespace("app-web-demo"), namespace("monitoring")],
-                   values, [
-        ("privileged-movers", (registered, marked("app-notes"))),
-        ("privileged-movers", (unregistered, None)),
-        ("privileged-movers", (core, marked("monitoring"))),
-    ])
+def test_app_namespace_lets_backup_movers_run_privileged() -> None:
+    """Rule: the app's namespace lets VolSync's movers run privileged (local-path ignores
+    fsGroup); only pvc-backup-app makes a ReplicationSource there, and only with the app's own
+    credential (test_backup_enrollment.py)."""
+    namespace = next(doc for doc in _wiring("notes", []) if doc["kind"] == "Namespace")
+    assert namespace["metadata"]["annotations"]["volsync.backube/privileged-movers"] == "true"
