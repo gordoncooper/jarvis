@@ -1,10 +1,12 @@
 # The app's namespace. The label brings it under admission policies app-file and app-grants,
 # whose cluster-wide bindings match it. Its annotations hold the env's exception lines for this
 # app, one source for all readers: app-grants reads them at admission (a missing annotation
-# grants nothing), ClusterPolicy app-derive reads the env, the env's CIDRs and LAN ranges and
+# grants nothing), the app-derive policies read the env, the env's CIDRs and LAN ranges and
 # the LAN grants, and the uptime check reads its opt-out. No tenant can edit a Namespace.
 # Prune stays off: removing the app from the env's list keeps the namespace and its volumes
 # until the operator deletes them.
+# The backup movers run privileged (local-path ignores fsGroup). Only pvc-backup-app makes a
+# ReplicationSource here, and only once the env registers the app's backup credential.
 # Pod Security warns and audits at restricted; app-file and app-grants enforce the baseline,
 # because a Pod Security label cannot admit the VolSync mover and refuse a tenant pod alike.
 apiVersion: v1
@@ -17,6 +19,7 @@ metadata:
     pod-security.kubernetes.io/audit: restricted
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
+    volsync.backube/privileged-movers: "true"
     hosting.jarvis.io/host: ${app_name}.apps.${dns_suffix}
     hosting.jarvis.io/env: ${jarvis_env}
     hosting.jarvis.io/pod-cidr: ${app_pod_cidr}

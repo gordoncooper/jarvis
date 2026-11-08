@@ -84,13 +84,14 @@ def test_core_only_env_renders_no_app_workload(example_copy: ExampleCopy) -> Non
 
 
 def _drop_app_exclude(docs: list[dict]) -> None:
-    rule = next(rule for rule in _find(docs, "ClusterPolicy", "pvc-backup")["spec"]["rules"] if rule["name"] == "restic-secret")
-    rule["exclude"]["any"] = [item for item in rule["exclude"]["any"] if "namespaces" not in item["resources"]]
+    spec = _find(docs, "GeneratingPolicy", "pvc-backup")["spec"]
+    spec["matchConditions"] = [item for item in spec["matchConditions"] if item["name"] != "core-namespace"]
 
 
 def _app_rule_reads_core(docs: list[dict]) -> None:
-    rule = next(rule for rule in _find(docs, "ClusterPolicy", "pvc-backup")["spec"]["rules"] if rule["name"] == "restic-secret-app")
-    rule["context"][0]["apiCall"]["urlPath"] = "/api/v1/namespaces/platform-backups/secrets/backups-restic"
+    variables = _find(docs, "GeneratingPolicy", "pvc-backup-app")["spec"]["variables"]
+    credentials = next(item for item in variables if item["name"] == "credentials")
+    credentials["expression"] = '[resource.get("v1", "secrets", "platform-backups", "backups-restic")]'
 
 
 def _app_secret_in_core_server(docs: list[dict]) -> None:
@@ -126,8 +127,8 @@ def _no_apps_server(docs: list[dict]) -> None:
 @pytest.mark.parametrize(
     ("seed", "reason"),
     [
-        (_drop_app_exclude, "rule restic-secret generates a Secret in an app- namespace"),
-        (_app_rule_reads_core, "rule restic-secret-app generates a Secret in an app- namespace"),
+        (_drop_app_exclude, "policy pvc-backup generates a Secret in an app- namespace"),
+        (_app_rule_reads_core, "policy pvc-backup-app generates a Secret in an app- namespace"),
         (_app_secret_in_core_server, "core's rest-server mounts Secret backups-restic-app-notes"),
         (_core_secret_in_apps_server, "the apps server mounts Secret backups-restic;"),
         (_app_password_in_apps_server, "the apps server mounts backups-restic-app-notes keys None; only htpasswd"),

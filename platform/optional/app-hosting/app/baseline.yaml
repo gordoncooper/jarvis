@@ -1,7 +1,7 @@
 # The network and size baseline every app namespace starts from, before its App is read:
 # deny all traffic, then allow the namespace to itself and to cluster DNS. The allows the
 # App asks for (web from Traefik, internet, other apps, LAN ports, backups) and the quota
-# come from ClusterPolicy app-derive.
+# come from GeneratingPolicy app-derive.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
