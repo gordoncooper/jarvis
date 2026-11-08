@@ -1022,3 +1022,27 @@ def test_flux_known_hosts_trusts_the_root_host(tmp_path: Path, root: str, known_
         assert found == []
     else:
         assert any(problem in item for item in found), errors
+
+
+@pytest.mark.parametrize(
+    "post_build",
+    [None, {"substitute": {"jarvis_env": "env-00"}}, {"substitute": {"jarvis_env": "env-test", "extra": "x"}}],
+    ids=["missing", "other-env", "extra-key"],
+)
+def test_root_kustomization_sets_only_its_own_jarvis_env(tmp_path: Path, post_build: dict | None) -> None:
+    """Rule: the root Kustomization sets postBuild.substitute to jarvis_env: <env> and nothing else."""
+    env = _write_env(tmp_path)
+    (env / "secrets").mkdir(exist_ok=True)
+    _copy_flux_entry(env)
+    validate_env_tree(tmp_path)
+    sync = env / "flux" / "sync.yaml"
+    docs = list(yaml.safe_load_all(sync.read_text(encoding="utf-8")))
+    root = next(doc for doc in docs if doc and doc["kind"] == "Kustomization")
+    if post_build is None:
+        root["spec"].pop("postBuild")
+    else:
+        root["spec"]["postBuild"] = post_build
+    sync.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "must set spec.postBuild.substitute to jarvis_env: env-test" in "\n".join(excinfo.value.messages)
