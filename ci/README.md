@@ -4,6 +4,8 @@
 
 Run `bash ci/run-checks` and the tests near your change before pushing. CI at the head SHA is the test record.
 
+pytest runs on every CPU (`pytest-xdist`, `-n auto` in `pytest.ini`). Each test gets its own `tmp_path`, so tests must not share a fixed path. `-n 0` runs serially, for a debugger or a single slow test.
+
 `ci/run-env-checks` runs the env-level checks (the ones that read `envs/<env>` through `INSTANCE`) in one go: `INSTANCE=<path> bash ci/run-env-checks`. An instance repo's CI calls it, so a check added to its list reaches every instance.
 
 `ci/checkout-apps-for-instance.sh` runs first in instance CI and on an operator's checkout before `make verify`. It fetches the tip of the instance's `apps_git_repo_url`, at the branch `platform/optional/app-hosting/app/flux.yaml` deploys, logs the checked SHA, and prints the directory to export as `APPS_REPO`. It prints nothing for a core-only instance, which needs no apps checkout, and refuses envs that read different apps repositories. Product CI never runs it; product tests use fixtures.
