@@ -36,7 +36,8 @@ def _env(tmp_path: Path, *, lan_line: bool = True) -> tuple[Path, Path, dict]:
     shutil.copytree(REPO_ROOT / "envs" / "env-00", env_dir)
     (instance / "core").symlink_to(REPO_ROOT)
     values = {"apps": APPS, "exceptions": [{"lan-demo": "lan-port 8080/TCP"}] if lan_line else []}
-    (env_dir / _apps.APPS_VALUES).write_text(yaml.safe_dump({"exceptions": values["exceptions"]}), encoding="utf-8")
+    (env_dir / _apps.APPS_VALUES).write_text(
+        yaml.safe_dump({"exceptions": values["exceptions"], "versions": {app: "v0.1.0" for app in APPS}}), encoding="utf-8")
     set_switches(env_dir, apps=APPS)
     text = render_env(env_dir)
     assert text is not None

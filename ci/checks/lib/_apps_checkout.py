@@ -24,7 +24,6 @@ import _backup_selection  # noqa: E402
 from _env import instance_root  # noqa: E402
 
 # The wiring every env's app sources come from: its ref is the branch Flux deploys.
-_WIRING = REPO_ROOT / "platform" / "optional" / "app-hosting" / "app" / "flux.yaml"
 
 
 class AppsCheckoutError(Exception):
@@ -53,16 +52,9 @@ def _apps_url(env_dir: Path) -> str | None:
     return url.strip() if isinstance(url, str) and url.strip() else None
 
 
-def _wiring_branch() -> str:
-    docs = yaml.safe_load_all(_WIRING.read_text(encoding="utf-8"))
-    branches = {doc["spec"]["ref"]["branch"] for doc in docs if doc["kind"] == "GitRepository"}
-    if len(branches) != 1:
-        raise AppsCheckoutError(f"{_WIRING}: expected one apps branch, found {sorted(branches)}")
-    return branches.pop()
-
-
 def source(instance: Path) -> tuple[str, str] | None:
-    """The (url, branch) to check out, or None when no env lists an app."""
+    """The (url, ref) to check out, or None when no env lists an app: the repository's default
+    branch, whose tags hold each app's pinned release."""
     needing = _envs_needing_apps(instance)
     if not needing:
         return None
@@ -73,7 +65,7 @@ def source(instance: Path) -> tuple[str, str] | None:
     if len(set(urls.values())) > 1:
         # One APPS_REPO serves one run: checking an env against another's repository proves nothing.
         raise AppsCheckoutError(f"envs read different apps repositories: {sorted(urls)}")
-    return next(iter(urls.values())), _wiring_branch()
+    return next(iter(urls.values())), "HEAD"
 
 
 def require(instance: Path) -> None:

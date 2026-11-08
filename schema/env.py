@@ -1044,6 +1044,7 @@ def _validate_apps(
             data, dns_suffix if isinstance(dns_suffix, str) else None, _apps.lan_networks(cluster_vars)
         )
     )
+    errors.extend(f"{rel}: {problem}" for problem in _apps.version_problems(data))
     apps = _apps.app_names(data)
     if apps and not app_hosting_listed(env_dir):
         errors.append(

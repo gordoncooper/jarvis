@@ -34,6 +34,7 @@ spec:
       app_service_cidr: 10.81.0.0/16
       app_lan_cidrs: 10.200.0.0/24
       apps_git_repo_url: https://github.com/example-owner/example-apps
+      app_ref: refs/tags/hello-web/v0.1.0
     substituteFrom:
     - kind: ConfigMap
       name: cluster-vars
@@ -71,6 +72,7 @@ spec:
       app_service_cidr: 10.81.0.0/16
       app_lan_cidrs: 10.200.0.0/24
       apps_git_repo_url: https://github.com/example-owner/example-apps
+      app_ref: refs/tags/notes/v0.1.0
     substituteFrom:
     - kind: ConfigMap
       name: cluster-vars
@@ -108,6 +110,7 @@ spec:
       app_service_cidr: 10.81.0.0/16
       app_lan_cidrs: 10.200.0.0/24
       apps_git_repo_url: https://github.com/example-owner/example-apps
+      app_ref: refs/tags/lan-demo/v0.1.0
     substituteFrom:
     - kind: ConfigMap
       name: cluster-vars

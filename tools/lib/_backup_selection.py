@@ -7,9 +7,13 @@ registration Components and the platform-configs wrapper from this intent.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
+import subprocess
+import tarfile
+import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import urlparse
@@ -42,7 +46,7 @@ _RETENTION = re.compile(r"^[0-9]+$")
 # Deleting the section must not read as turning an app's backups off.
 SECTION_REMOVED = "backups is gone from values/apps.yaml but apps still register; set mode: selected with selected: [] and re-render first"
 _APPS_REPO_ENV = "APPS_REPO"
-STALE_HINT = "; eligibility needs the live tip of apps_git_repo_url, so check the checkout is not stale"
+STALE_HINT = "; eligibility reads the app at its pinned tag, so check the apps checkout has its tags"
 
 
 class AppsRepoError(Exception):
@@ -94,18 +98,51 @@ def _resolve_apps_checkout(repo_root: Path, env_dir: Path) -> Path | None:
     return None
 
 
+_PINNED_VIEWS: dict[tuple[Path, tuple[tuple[str, str], ...]], Path] = {}
+
+
+def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
+    """The app folders the env runs, each at its pinned tag, when the checkout is a git
+    repository and the env pins its apps (values/apps.yaml versions); otherwise the checkout as
+    it is (a fixture tree). A pinned tag the checkout lacks fails: the checks must read the
+    release the cluster runs, not the tip."""
+    if env_dir is None or not (checkout / ".git").exists():
+        return checkout
+    data, errors = _apps.load_values(env_dir)
+    versions = data.get(_apps.VERSIONS) if not errors else None
+    if not isinstance(versions, dict) or not versions:
+        return checkout
+    pins = tuple(sorted((str(app), str(version)) for app, version in versions.items()))
+    key = (checkout, pins)
+    if key in _PINNED_VIEWS:
+        return _PINNED_VIEWS[key]
+    view = Path(tempfile.mkdtemp(prefix="jarvis-apps-pinned-"))
+    for app, version in pins:
+        tag = f"refs/tags/{app}/{version}"
+        archive = subprocess.run(["git", "-C", str(checkout), "archive", "--format=tar", tag, app],
+                                 capture_output=True, check=False)
+        if archive.returncode:
+            raise AppsRepoError(f"{checkout}: no tag {app}/{version} with an {app}/ folder; "
+                                "fetch the apps repository's tags")
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(view, filter="data")
+    _PINNED_VIEWS[key] = view
+    return view
+
+
 def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
-    """Directory of app folders (<name>/app.yaml).
+    """Directory of app folders (<name>/app.yaml), each app as the env pins it.
 
     APPS_REPO overrides for tests and operators. Otherwise resolve a local checkout of
-    apps_git_repo_url beside the instance or product checkout.
+    apps_git_repo_url beside the instance or product checkout. A git checkout is read at each
+    app's pinned tag (_pinned_view).
     """
     override = os.environ.get(_APPS_REPO_ENV)
     if override:
         path = Path(override).expanduser().resolve()
         if not _looks_like_apps_repo(path):
             raise AppsRepoError(f"{_APPS_REPO_ENV}={override!r} is not an apps repository checkout")
-        return path
+        return _pinned_view(path, env_dir)
     if env_dir is None:
         raise AppsRepoError(
             f"set {_APPS_REPO_ENV} to a checkout of the env's apps_git_repo_url, "
@@ -113,7 +150,7 @@ def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
         )
     resolved = _resolve_apps_checkout(repo_root, env_dir)
     if resolved is not None:
-        return resolved
+        return _pinned_view(resolved, env_dir)
     raise AppsRepoError(
         f"set {_APPS_REPO_ENV} to a checkout of apps_git_repo_url, "
         "or clone the apps repository beside this checkout"

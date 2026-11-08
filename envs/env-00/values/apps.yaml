@@ -1,5 +1,11 @@
 # The names of the hosted apps this env runs are in values/switches.yaml. Everything else about
 # an app is in its own app file in the apps repository; this file holds what the env decides for it.
+# The release each listed app runs: its apps-repository tag <app>/v<version>. Every listed app has
+# one; Flux never follows a branch. jarvis-apps tags an app when its VERSION changes on main.
+versions:
+  hello-web: v0.1.0
+  notes: v0.1.0
+  lan-demo: v0.1.0
 # Exception lines, '<app>: <grant>', one grant each. A grant takes effect only for an app
 # whose app file asks for the same item. Grants: privileged, root, host-network,
 # host-path, hostname <name>, lan-port <port>/<TCP|UDP>, lan-all,

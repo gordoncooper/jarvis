@@ -3,6 +3,8 @@
 # carries another app's folder. The deploy Kustomization waits on the app file, because
 # admission reads the App and refuses the app's objects until it exists.
 # No substitution source and no decryption: the one value an app reads is ${app_host}.
+# Both read the app at its pinned tag (${app_ref}: refs/tags/<app>/v<version>, from the env's
+# values/apps.yaml versions), never a branch.
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -15,7 +17,7 @@ spec:
   interval: 5m
   url: ${apps_git_repo_url}
   ref:
-    branch: main
+    name: ${app_ref}
   ignore: |
     /*
     !/${app_name}/
@@ -33,7 +35,7 @@ spec:
   interval: 5m
   url: ${apps_git_repo_url}
   ref:
-    branch: main
+    name: ${app_ref}
   ignore: |
     /*
     !/${app_name}/

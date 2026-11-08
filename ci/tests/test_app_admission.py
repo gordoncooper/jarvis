@@ -65,7 +65,7 @@ def _app(name: str, **spec: object) -> dict:
 
 def _wiring(app: str, grants: list[str]) -> list[dict]:
     """What the app's wiring applies, rendered with the env's exception lines for it."""
-    data = {"apps": [app], "exceptions": [{app: grant} for grant in grants]}
+    data = {"apps": [app], "exceptions": [{app: grant} for grant in grants], "versions": {app: "v0.1.0"}}
     values = {**_apps.substitutes(data, app, CLUSTER_VARS), "dns_suffix": SUFFIX, "jarvis_env": "env-00"}
     return substitute(_docs(WIRING / "namespace.yaml"), values)
 
