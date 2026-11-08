@@ -46,10 +46,10 @@ def render_env(env_dir: Path, repo_root: Path) -> str | None:
     if problems:
         raise SystemExit("; ".join(problems))
     switches, _ = _switches.load(env_dir)
-    if enabled and _switches.APPS_BACKUP_SERVER not in _switches.names(switches, _switches.OPTIONAL):
+    if enabled and _switches.APPS_BACKUP_SERVER not in _switches.names(switches, _switches.FEATURES):
         raise SystemExit(
             f"{env_dir}: backups select {enabled}, so {_switches.SWITCHES_FILE} lists "
-            f"{_switches.APPS_BACKUP_SERVER} under {_switches.OPTIONAL}"
+            f"{_switches.APPS_BACKUP_SERVER} under {_switches.FEATURES}"
         )
     _backup_selection.write_registration_files(env_dir, enabled)
     wrapper = (_backup_selection.WRAPPER_ENTRY,) if enabled else ()

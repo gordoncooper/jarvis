@@ -10,7 +10,7 @@ NEED_VENV = test -x "$(VENV)/bin/python" || { echo "no venv at $(VENV): run 'mak
 export INSTANCE
 INSTANCE_ROOT = $(abspath $(or $(INSTANCE),$(CURDIR)))
 
-.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets seal restore restore-all age-key-check render site
+.PHONY: help deps ci-verify verify drill drill-cleanup bootstrap-secrets encrypt seal restore restore-all age-key-check render site
 help:
 	@echo "JARVIS Makefile"
 	@echo
@@ -23,7 +23,8 @@ help:
 	@echo "  make restore            Restore PVCs (ENV and APP required; optional AS_OF=RFC3339, NODE)"
 	@echo "  make restore-all        Restore all PVCs (ENV required; optional AS_OF=RFC3339, RETIRE, ACCEPT_EMPTY, NODE)"
 	@echo "  make bootstrap-secrets  Create missing env bootstrap SOPS secrets (ENV=<env> required; ROTATE_RESTIC=1 mints a new restic password; APP=app-<name> mints only that hosted app's backup credential)"
-	@echo "  make seal NAME=...      Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required; NAMESPACE=<ns> for an add-on's Secret)"
+	@echo "  make encrypt NAME=...   Encrypt a Secret manifest from stdin or FILE=... (ENV=<env> required; NAMESPACE=<ns> for an add-on's Secret)"
+	@echo "  make seal               The old name of make encrypt, for one release"
 	@echo "  make age-key-check      Test-decrypt one secret; prints PASS or FAIL (ENV and KEY required; owner only)"
 	@echo "  make render             Render the env's generated files from its values (ENV required; CHECK=1 lists stale ones)"
 	@echo "  ALLOW_UNPINNED=1        Let site, verify, drill and restore run from a checkout that is not the env's core tag"
@@ -61,6 +62,11 @@ drill-cleanup:
 	@$(PIN_CHECK)
 	@"$(VENV)/bin/python" tools/drill --env "$(ENV)" --cleanup-only
 
+# The old name of encrypt, for one release.
+seal:
+	@echo "make seal is now make encrypt; this name goes in the next release" >&2
+	@$(MAKE) --no-print-directory encrypt
+
 restore:
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@test -n "$(APP)" || (echo "APP is required" >&2; exit 1)
@@ -96,14 +102,14 @@ age-key-check:
 	@$(NEED_VENV)
 	@"$(VENV)/bin/python" tools/age-key-check --env "$(ENV)" --key-file "$(KEY)"
 
-seal:
+encrypt:
 	@test -n "$(NAME)" || (echo "NAME is required (<component>-<purpose>)" >&2; exit 1)
 	@test -n "$(ENV)" || (echo "ENV is required" >&2; exit 1)
 	@$(NEED_VENV)
 	@if [ -n "$(FILE)" ]; then \
-		"$(VENV)/bin/python" tools/seal --env "$(ENV)" --name "$(NAME)" $(if $(NAMESPACE),--namespace "$(NAMESPACE)") "$(FILE)"; \
+		"$(VENV)/bin/python" tools/encrypt --env "$(ENV)" --name "$(NAME)" $(if $(NAMESPACE),--namespace "$(NAMESPACE)") "$(FILE)"; \
 	else \
-		"$(VENV)/bin/python" tools/seal --env "$(ENV)" --name "$(NAME)" $(if $(NAMESPACE),--namespace "$(NAMESPACE)"); \
+		"$(VENV)/bin/python" tools/encrypt --env "$(ENV)" --name "$(NAME)" $(if $(NAMESPACE),--namespace "$(NAMESPACE)"); \
 	fi
 
 site:

@@ -234,6 +234,10 @@ def set_switches(env_dir: Path, **sections: list[str]) -> None:
 
     path = env_dir / "values" / "switches.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    # optional= is the old name of the features section; write the current one.
+    if "optional" in sections:
+        sections = {("features" if key == "optional" else key): value for key, value in sections.items()}
+    data.pop("optional", None)
     data.update(sections)
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
@@ -294,7 +298,7 @@ def _git_ignored(repo: Path, path: Path) -> bool:
 
 
 def _seal_copy_offsite(root: Path, name: str) -> None:
-    """The owner seals backups-offsite with make seal; the copy gets a placeholder to the same key."""
+    """The owner seals backups-offsite with make encrypt; the copy gets a placeholder to the same key."""
     from jarvis.lib.sops import encrypt_secret_to_file
 
     document = {
@@ -385,7 +389,7 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
     set_switches(
         copy.env_dir,
         apps=list(dict.fromkeys([*switches["apps"], app])),
-        optional=list(dict.fromkeys([*switches["optional"], "apps-backup-server"])),
+        optional=list(dict.fromkeys([*switches["features"], "apps-backup-server"])),
     )
     render_switches(copy.env_dir, copy.root)
     sops = shutil.which("sops")

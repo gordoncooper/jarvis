@@ -81,7 +81,7 @@ def test_a_listed_app_takes_its_name_and_its_pin(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("section", "bad"),
-    [("optional", "observability"), ("addons", "nope"), ("apps", "not-in-the-apps-repo")],
+    [("features", "observability"), ("addons", "nope"), ("apps", "not-in-the-apps-repo")],
 )
 def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: str, bad: str) -> None:
     """Rule: a name core or the apps repository does not hold fails, before the render writes anything."""
@@ -113,8 +113,8 @@ def test_an_optional_backup_piece_renders_only_from_its_name(name: str, folder: 
 
     assert folder.startswith("core/feature/") and has_object(folder)
     assert not has_object("core/platform/configs")
-    assert folder in _switches.platform_configs({"optional": [name]})
-    assert folder not in _switches.platform_configs({"optional": []})
+    assert folder in _switches.platform_configs({"features": [name]})
+    assert folder not in _switches.platform_configs({"features": []})
 
 
 def test_core_has_no_switch(tmp_path: Path) -> None:
@@ -125,7 +125,7 @@ def test_core_has_no_switch(tmp_path: Path) -> None:
 
 
 def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:
-    """Rule: an optional component is off until named; one name turns it on and brings its objects."""
+    """Rule: a feature is off until named; one name turns it on and brings its objects."""
     copy = bootstrap_example_copy(tmp_path)
     assert ("CronJob", "restic-offsite") in _objects(copy, "platform-configs")
     (copy.env_dir / "values" / "apps.yaml").unlink()
@@ -208,3 +208,18 @@ def test_an_exception_line_for_an_unlisted_app_refuses_the_render(tmp_path: Path
     with pytest.raises(SystemExit, match="not on this env's app list"):
         render_switches(copy.env_dir, copy.root)
     assert _tree(copy) == before
+
+
+def test_optional_is_read_as_features_for_one_release_and_not_beside_it(tmp_path: Path) -> None:
+    """Rule: switches.yaml's old section name optional reads as features; both together fail."""
+    from jarvis.lib import switches as _switches
+
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "values").mkdir()
+    path = env / _switches.SWITCHES_FILE
+    path.write_text("optional:\n  - app-dns\n", encoding="utf-8")
+    data, errors = _switches.load(env)
+    assert errors == [] and _switches.names(data, _switches.FEATURES) == ["app-dns"]
+    path.write_text("optional: [app-dns]\nfeatures: [app-hosting]\n", encoding="utf-8")
+    assert _switches.load(env)[1]

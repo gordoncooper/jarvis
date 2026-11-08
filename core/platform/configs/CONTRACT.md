@@ -8,7 +8,7 @@ The one list of core components on the platform-configs Flux stage. A new platfo
 
 ## Expects
 
-- Each env's `envs/<env>/flux/platform-configs/kustomization.yaml`, rendered from `values/switches.yaml`, lists `core/platform/configs`, that env's own SOPS secrets, and the optional components it names, nothing else. The env's Flux `platform-configs` Kustomization names that env folder as its path, decrypts with `sops-age`, depends on `platform-controllers`, and substitutes from `cluster-vars`. The health checks sit on `platform-controllers`: HelmReleases `cert-manager`, `kyverno` and `volsync` in `flux-system` must be Ready (timeout 15m). `platform-configs` waits only through that `dependsOn`.
+- Each env's `envs/<env>/flux/platform-configs/kustomization.yaml`, rendered from `values/switches.yaml`, lists `core/platform/configs`, that env's own SOPS secrets, and the features it names, nothing else. The env's Flux `platform-configs` Kustomization names that env folder as its path, decrypts with `sops-age`, depends on `platform-controllers`, and substitutes from `cluster-vars`. The health checks sit on `platform-controllers`: HelmReleases `cert-manager`, `kyverno` and `volsync` in `flux-system` must be Ready (timeout 15m). `platform-configs` waits only through that `dependsOn`.
 - The CRDs these objects use come from `platform-controllers` (`core/platform/kustomization.yaml`). Nothing in this list is also on that path.
 
 ## Health

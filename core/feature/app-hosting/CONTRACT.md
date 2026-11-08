@@ -2,7 +2,7 @@
 
 Hosted apps are untrusted: built by the code factory or third-party, kept in the apps repository, one folder each. Core and add-ons are the trusted zone ([addons/CONTRACT.md](../../../addons/CONTRACT.md)) and are unaffected by anything here except the cluster-wide policy objects. How to write one and turn it on: [docs/add-a-hosted-app.md](../../../docs/add-a-hosted-app.md).
 
-App hosting is an optional core component, **off by default**. An env turns it on with one name in `envs/<env>/values/switches.yaml`, the file where it turns on the apps backup server:
+App hosting is a feature, **off by default**. An env turns it on with one name in `envs/<env>/values/switches.yaml`, the file where it turns on the apps backup server:
 
 ```yaml
 optional:

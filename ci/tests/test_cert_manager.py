@@ -217,7 +217,7 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
     hosting = app_hosting_listed(root / "envs" / env)
     from jarvis.lib import switches as _switches
 
-    listed = _switches.names(_switches.load(root / "envs" / env)[0], _switches.OPTIONAL)
+    listed = _switches.names(_switches.load(root / "envs" / env)[0], _switches.FEATURES)
     app_dns = (
         {("Namespace", "", "platform-app-dns"), ("HelmRepository", "flux-system", "k8s-gateway"),
          ("HelmRelease", "flux-system", "k8s-gateway"), ("ConfigMap", "kube-system", "coredns-custom")}

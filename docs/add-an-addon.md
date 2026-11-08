@@ -26,7 +26,7 @@ In the env's repository:
      - <name>
    ```
 
-2. Seal each Secret it reads, one folder per namespace, in the same commit: the add-on's `-secrets` Kustomization is not Ready until its folder holds a file. `make seal ENV=<env> NAMESPACE=<namespace> NAME=<name>-<purpose> FILE=<manifest> INSTANCE=<path>`. The manifest carries `kustomize.toolkit.fluxcd.io/prune: disabled`.
+2. Seal each Secret it reads, one folder per namespace, in the same commit: the add-on's `-secrets` Kustomization is not Ready until its folder holds a file. `make encrypt ENV=<env> NAMESPACE=<namespace> NAME=<name>-<purpose> FILE=<manifest> INSTANCE=<path>`. The manifest carries `kustomize.toolkit.fluxcd.io/prune: disabled`.
 3. Run `INSTANCE=<path> bash ci/run-env-checks`, then commit and push.
 
 ## Turn it off

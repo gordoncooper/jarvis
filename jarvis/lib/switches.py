@@ -16,10 +16,12 @@ from jarvis.lib import app_backups as _app_backups
 
 # envs/<env>/values/switches.yaml.
 SWITCHES_FILE = "values/switches.yaml"
-OPTIONAL = "optional"
+# The features an env turns on. "optional" is the old name, read for one release.
+FEATURES = "features"
+LEGACY_FEATURES = "optional"
 ADDONS = "addons"
 APPS = "apps"
-SECTIONS = (OPTIONAL, ADDONS, APPS)
+SECTIONS = (FEATURES, ADDONS, APPS)
 # The rendered wiring, under envs/<env>/flux/.
 ROOT_REL = "kustomization.yaml"
 SERVICES_REL = "kustomizations/services.yaml"
@@ -35,11 +37,11 @@ OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
 APPS_BACKUP_SERVER = "apps-backup-server"
 # From an env's flux/platform-configs/ to the root artifact, which holds core/ and addons/.
 _CORE_PATH = "../../../../"
-# What each optional core component adds to the env's platform-configs. One name, one row.
+# What each feature adds to the env's platform-configs. One name, one row.
 # App DNS (k8s_gateway): the LAN resolves app hostnames through it. Off, the LAN's own DNS does.
 APP_DNS = "app-dns"
 APP_DNS_DIR = "core/feature/app-dns"
-OPTIONAL_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
+FEATURE_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
     APP_DNS: {"resources": (_CORE_PATH + APP_DNS_DIR,)},
     APP_HOSTING: {"components": (_CORE_PATH + APP_HOSTING_DIR,)},
     OFFSITE_COPY: {"resources": (_CORE_PATH + OFFSITE_COPY_DIR, f"../../secrets/{OFFSITE_SECRET_FILE}")},
@@ -67,6 +69,10 @@ def load(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
         return {}, []
     if not isinstance(data, dict):
         return {}, [f"expected a mapping with {', '.join(SECTIONS)}"]
+    if LEGACY_FEATURES in data:
+        if FEATURES in data:
+            return {}, [f"{FEATURES} and {LEGACY_FEATURES} both set; {LEGACY_FEATURES} is the old name of {FEATURES}, so keep only {FEATURES}"]
+        data = {FEATURES if key == LEGACY_FEATURES else key: value for key, value in data.items()}
     return data, []
 
 
@@ -79,7 +85,7 @@ def validate(data: dict[str, Any], addons: Sequence[str]) -> list[str]:
     """Each section is a list of names, each once, optional and addons only what core ships. Core
     itself is on in every env, so it has no section. _apps validates the shape of an app name."""
     errors = [f"unknown key {key!r} (allowed: {', '.join(SECTIONS)})" for key in sorted(set(data) - set(SECTIONS), key=str)]
-    known = {OPTIONAL: tuple(OPTIONAL_COMPONENTS), ADDONS: addons}
+    known = {FEATURES: tuple(FEATURE_COMPONENTS), ADDONS: addons}
     for section in SECTIONS:
         value = data.get(section)
         if value is None:
@@ -106,11 +112,11 @@ def _dump(doc: dict[str, Any], note: str = "") -> str:
 
 def platform_configs(data: dict[str, Any], *, extra_components: Sequence[str] = ()) -> str:
     """The env's platform-configs list: core configs, the two sealed files bootstrap-secrets writes,
-    and what each listed optional component adds. extra_components is the backup-selection wrapper."""
+    and what each listed feature adds. extra_components is the backup-selection wrapper."""
     resources: list[str] = list(_BOOTSTRAP_RESOURCES)
     components: list[str] = []
-    enabled = names(data, OPTIONAL)
-    for name, adds in OPTIONAL_COMPONENTS.items():
+    enabled = names(data, FEATURES)
+    for name, adds in FEATURE_COMPONENTS.items():
         if name in enabled:
             resources.extend(adds.get("resources", ()))
             components.extend(adds.get("components", ()))

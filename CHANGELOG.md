@@ -21,6 +21,11 @@ the upgrade.
   `${jarvis_env}`. An env's `flux/` keeps `sync.yaml`, `kustomization.yaml` (which lists
   `../../../core/flux`), `kustomizations/services.yaml`, `platform-configs/` and its generated
   files. Renovate bumps Flux in core; the instance preset no longer reads a FluxInstance.
+- Names: the `optional` section of `values/switches.yaml` is `features` (the optional core
+  components are features), and `tools/seal` / `make seal` are `tools/encrypt` / `make encrypt`.
+  The old names still work for this release and say they are going.
+- The add-on contract states the feature-or-add-on rule: an add-on ships nothing cluster-scoped
+  but its own Namespaces (`ci/checks/addons`); one that needs more is a feature.
 - Layout: core's universal part is `core/` (`core/flux`, `core/platform`, and `core/feature` for
   the optional components, which were `platform/optional/`), and add-ons are top-level `addons/`
   (was `services/`). The root source includes the core repository twice, `fromPath: core` and
@@ -55,6 +60,8 @@ the upgrade.
   the same commit: the env's `flux/` and core's now depend on each other.
 - Run `tools/render --env <env>` where you ran `tools/lib/render_switches.py` or
   `render_cluster_vars_configmap.py`.
+- Rename `optional:` to `features:` in `values/switches.yaml` (the old name works for this release),
+  and use `make encrypt` where you used `make seal`.
 - Render again (`tools/render --env <env>`): `sync.yaml` gains the two includes, and the services
   stage and `platform-configs` name `./addons` and `core/feature/`.
 - Optional: add `# yaml-language-server: $schema=https://raw.githubusercontent.com/<owner>/jarvis/<tag>/schema/<name>.schema.json`
