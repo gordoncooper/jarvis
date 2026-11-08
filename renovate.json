@@ -110,11 +110,11 @@
     },
     {
       "customType": "regex",
-      "description": "k3s version in an env's cluster-vars.yaml. k3s_sha256 is bumped by hand in the same PR.",
+      "description": "Core's k3s release in infra/ansible/group_vars/all.yml, which every env runs unless it overrides it. k3s_sha256 is bumped by hand in the same PR.",
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "k3s-io/k3s",
       "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$",
-      "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
+      "managerFilePatterns": ["/^infra\\/ansible\\/group_vars\\/all\\.yml$/"],
       "matchStrings": ["k3s_version:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+\\+k3s\\d+)"]
     },
     {

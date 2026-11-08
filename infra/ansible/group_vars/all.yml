@@ -12,3 +12,7 @@ jarvis_env_dir: "{{ jarvis_instance_root }}/envs/{{ jarvis_env }}"
 # The FluxInstance is core's (flux/), at the checkout the operator runs from: the env's core tag.
 flux_instance_file: "{{ playbook_dir }}/../../flux/flux-instance.yaml"
 flux_sync_file: "{{ jarvis_env_dir }}/flux/sync.yaml"
+# Core's k3s release: every env runs it unless its cluster-vars sets both keys (amd64; the sha256 is the
+# `k3s` line of the release's sha256sum-amd64.txt, bumped by hand in the version's PR).
+k3s_version: v1.36.5+k3s1
+k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313

@@ -1,5 +1,5 @@
-# Example env. Identity values are invented. k3s_version and k3s_sha256 are the
-# pin platform/traefik/CONTRACT.md checks, so a copy can run.
+# Example env. Identity values are invented. It runs core's k3s release
+# (infra/ansible/group_vars/all.yml); an env that needs another sets k3s_version and k3s_sha256 together.
 jarvis_env: env-00
 dns_suffix: env-00.example
 time_zone: Etc/UTC
@@ -13,8 +13,6 @@ backup_retention_monthly: 3
 backup_schedule: 0 0 * * *
 backup_check_schedule: 30 6 * * 3
 
-k3s_version: v1.36.5+k3s1
-k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
 pod_cidr: 10.80.0.0/16
 service_cidr: 10.81.0.0/16
 app_dns_cluster_ip: 10.81.0.53

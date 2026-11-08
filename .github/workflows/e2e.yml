@@ -127,7 +127,8 @@ jobs:
           export PATH="${HOME}/.local/bin:${PATH}"
           vars="envs/${E2E_ENV}/values/cluster-vars.yaml"
           read_var() { sed -n "s/^$1:[[:space:]]*//p" "${vars}" | tr -d "\"'"; }
-          image="rancher/k3s:$(read_var k3s_version | tr '+' '-')"
+          # The env's k3s release: core's unless its cluster-vars overrides it.
+          image="rancher/k3s:$(.venv/bin/python -m jarvis.lib.k3s "${vars}" | tr '+' '-')"
           mkdir -p "$(dirname "${KUBECONFIG}")"
           k3d cluster create "${E2E_ENV}" --image "${image}" --wait --timeout 300s \
             --k3s-arg "--cluster-cidr=$(read_var pod_cidr)@server:0" \

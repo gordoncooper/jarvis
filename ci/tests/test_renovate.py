@@ -196,10 +196,9 @@ def test_every_tool_version_in_versions_env_is_a_renovate_pin() -> None:
     assert not _manager_matches("tools/versions.env", unreadable)
 
 
-def test_each_env_k3s_version_is_a_renovate_pin() -> None:
-    paths = sorted(ROOT.glob("envs/*/values/cluster-vars.yaml"))
-    assert paths
-    for path in paths:
+def test_core_k3s_version_is_a_renovate_pin() -> None:
+    """Rule: Renovate reads core's k3s release (group_vars), the default every env runs."""
+    for path in [ROOT / "infra/ansible/group_vars/all.yml"]:
         rel = path.relative_to(ROOT).as_posix()
         text = path.read_text(encoding="utf-8")
         found = _manager_matches(rel, text)
@@ -242,9 +241,7 @@ def test_kubectl_stays_on_the_k3s_minor() -> None:
         r"^kubectl_version=(\S+)$", (ROOT / "tools/versions.env").read_text(encoding="utf-8"), re.M
     )
     assert pinned
-    paths = sorted(ROOT.glob("envs/*/values/cluster-vars.yaml"))
-    assert paths
-    for path in paths:
+    for path in [ROOT / "infra/ansible/group_vars/all.yml"]:
         k3s = yaml.safe_load(path.read_text(encoding="utf-8"))["k3s_version"]
         k3s_version = k3s.removeprefix("v").split("+")[0]
         assert _same_minor(pinned.group(1), k3s_version), path
@@ -493,9 +490,12 @@ def test_instance_preset_reads_every_pin_an_env_holds() -> None:
     core = {m.group("depName"): m.group("currentValue")
             for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", cluster_vars) if "depName" in m.groupdict()}
     assert core == {"example-owner/example-core": "v1.2.3"}
-    k3s = [m.group("currentValue") for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", cluster_vars)
+    # k3s: an env that overrides core's release holds the pin, and the preset reads it.
+    assert not [m for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", cluster_vars) if "depName" not in m.groupdict()]
+    overridden = cluster_vars + "k3s_version: v1.36.5+k3s1\nk3s_sha256: " + "0" * 64 + "\n"
+    k3s = [m.group("currentValue") for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", overridden)
            if "depName" not in m.groupdict()]
-    assert k3s == [yaml.safe_load(cluster_vars)["k3s_version"]]
+    assert k3s == ["v1.36.5+k3s1"]
     sync = (ROOT / "envs/env-00/flux/sync.yaml").read_text(encoding="utf-8")
     core_source = sync.split("example-core", 1)
     sync = core_source[0] + "example-core" + re.sub(r"name: refs/\S+", "name: refs/tags/v1.2.3", core_source[1], count=1)

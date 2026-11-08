@@ -28,6 +28,7 @@ from ansible_role_proof import (
     standard_flux_kustomization_paths,
 )
 
+from jarvis.lib.k3s import release as k3s_release
 from jarvis.lib.render_cluster_vars_configmap import (
     CLUSTER_VARS_PUBLISHED,
     cluster_vars_configmap,
@@ -610,7 +611,7 @@ def _record_object_identities(
 def test_helmchartconfig_schema_accepts_upstream_fields_only() -> None:
     """The pinned catalog accepts upstream spec fields. A misspelled spec key fails."""
     kubeconform = _require_tool("kubeconform")
-    version = kubernetes_version_from_k3s(load_cluster_vars()["k3s_version"])
+    version = kubernetes_version_from_k3s(k3s_release(load_cluster_vars())[0])
     good = """\
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
@@ -657,7 +658,7 @@ def test_kubernetes_version_matches_k3s_pin() -> None:
 @pytest.mark.parametrize("kind", ["ReplicationSource", "ReplicationDestination"])
 def test_volsync_spec_is_checked_against_the_upstream_crd(kind: str) -> None:
     """A VolSync spec field the pinned CRD does not know fails; a known one (moverVolumes) passes."""
-    version = kubernetes_version_from_k3s(load_cluster_vars()["k3s_version"])
+    version = kubernetes_version_from_k3s(k3s_release(load_cluster_vars())[0])
     doc = {
         "apiVersion": "volsync.backube/v1alpha1",
         "kind": kind,
@@ -685,7 +686,7 @@ def validate_env_flux(root: Path, env: str) -> None:
     assert error is None, error
     paths = flux_paths(root, env_rel, env_docs)
     assert paths
-    pin = load_cluster_vars(root, env=env)["k3s_version"]
+    pin = k3s_release(load_cluster_vars(root, env=env))[0]
     assert isinstance(pin, str)
     version = kubernetes_version_from_k3s(pin)
     assert version is not None

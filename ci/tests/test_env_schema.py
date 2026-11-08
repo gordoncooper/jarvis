@@ -1047,3 +1047,22 @@ def test_root_kustomization_sets_only_its_own_jarvis_env(tmp_path: Path, post_bu
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "envs/env-test/flux/sync.yaml: does not match values/cluster-vars.yaml" in "\n".join(excinfo.value.messages)
+
+
+def test_k3s_release_is_cores_unless_the_env_sets_both_keys(tmp_path: Path) -> None:
+    """Rule: an env runs core's k3s release; k3s_version and k3s_sha256 override it together."""
+    from jarvis.lib import k3s
+
+    cv = _valid_cluster_vars()
+    cv.pop("k3s_version", None)
+    cv.pop("k3s_sha256", None)
+    assert k3s.release(cv) == k3s.core_release()
+    _write_env(tmp_path, cluster_vars=dict(cv))
+    validate_env_tree(tmp_path)
+    shutil.rmtree(tmp_path / "envs")
+    _write_env(tmp_path, cluster_vars={**cv, "k3s_version": "v1.36.5+k3s1"})
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert "set both or neither" in str(excinfo.value)
+    override = {**cv, "k3s_version": "v1.35.9+k3s1", "k3s_sha256": "0" * 64}
+    assert k3s.release(override) == ("v1.35.9+k3s1", "0" * 64)

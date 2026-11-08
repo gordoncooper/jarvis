@@ -9,7 +9,7 @@ From a fresh copy of this repo to a running cluster, then `make verify`, `make d
 - Encrypting needs the public age recipient in `.sops.yaml`. The private key decrypts. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. Every `TAGS=k3s` or untagged run of `site.yml`, including `CHECK=1` and adding a node, needs the private key on the controller to decrypt `envs/<env>/secrets/k3s-token.sops.yaml`. A label-only run (`TAGS=labels`) does not. `site.yml` reads the private key whenever that file exists, including when `flux-system/sops-age` is already present, and it refuses a file that is not mode 0600 or not owned by the user running the play. It keeps only the identities whose public key is the env's `.sops.yaml` recipient, and refuses a file with none. When the secret is absent, it creates the secret with those identities. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. `tools/prep-node` can create a missing key or read one that is already there. Keep the private key offline except for those reads.
 - Inventory hostnames must resolve from the controller and from every node.
 - A private instance repository for the env (see [New env](#new-env)). Flux reads it over `ssh://` with one read-only deploy key, or over `https://` when it needs no credential. `flux_git_repo_url` is that remote. Flux reads core from this repository over `https://` with no credential (`core_git_repo_url`).
-- `k3s_sha256` for the chosen `k3s_version` (`v<major>.<minor>.<patch>+k3s<n>`). Encode `+` as `%2B` in the URL. The line named `k3s` is the digest:
+- Nothing for k3s: an env runs core's release (`k3s_version` and `k3s_sha256` in `infra/ansible/group_vars/all.yml`). To run another, set both in `values/cluster-vars.yaml`; `k3s_sha256` is the line named `k3s` for that `k3s_version` (`v<major>.<minor>.<patch>+k3s<n>`; encode `+` as `%2B` in the URL):
 
 ```bash
 curl -fsSL "https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256sum-amd64.txt"
@@ -54,7 +54,7 @@ The FluxInstance, both GitRepositories and the root Kustomization carry `kustomi
 
 `sync.yaml` holds two Flux sources and the root Kustomization. The root `GitRepository` `flux-system` is the instance repository. It includes the core `GitRepository` `core` (this repository, public) at `core/`, so each Flux path reads env files and core files from one artifact, decrypted by the one `sops-age` key. The root Kustomization `flux-system` applies `./envs/<env>/flux` as kustomize-controller. `site.yml` applies `flux-instance.yaml` and then `sync.yaml` once on a new cluster, and stops before any change when either is missing; Flux reconciles both from Git after that.
 
-`k3s_version`, `k3s_sha256`, and the Flux version pin are already set. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). A second `make bootstrap-secrets` changes nothing once the files exist.
+The k3s release and the Flux version come with the core tag. Key rules are in [schema/CONTRACT.md](../schema/CONTRACT.md). A second `make bootstrap-secrets` changes nothing once the files exist.
 
 ### Deploy key
 
