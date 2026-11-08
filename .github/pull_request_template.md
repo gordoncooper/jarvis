@@ -1,14 +1,11 @@
 ## Brief
 
-- **ID:**
 - **Goal:**
 - **Why:**
-- **Advances:** (exit check text or checkpoint)
 - **Depends on:**
 - **Touches:**
 - **Hard limits:**
 - **Done checks:**
-- **Timebox:**
 
 ## Evidence
 

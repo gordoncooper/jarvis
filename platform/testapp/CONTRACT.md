@@ -12,7 +12,7 @@ It answers `https://testapp.<dns_suffix>/` through one Traefik Ingress. The cert
 
 ## Expects
 
-- Flux `platform-configs`, which depends on `platform-controllers` and substitutes `dns_suffix` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode the suffix (`ci/checks/core-names`).
+- Flux `platform-configs`, which depends on `platform-controllers` and substitutes `dns_suffix` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode the suffix.
 - TLSStore `default` and Certificate `wildcard` in `platform-cert-manager` (the cert-manager contract).
 - Traefik Ingress class `traefik` and entrypoint `websecure` (the exposure contract). Chart v40 enables TLS on that entrypoint.
 - App DNS publishes Ingress hosts in the zone. This fixture does not add a Gatus check. That check is planned.

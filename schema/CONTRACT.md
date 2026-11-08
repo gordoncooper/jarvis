@@ -1,6 +1,6 @@
 # CONTRACT: Env schema
 
-Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic (`ci/checks/core-names`); env specifics live only under `envs/`. Config with no consumer is not in the schema; each piece arrives with the code that uses it.
+Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic; env specifics live only under `envs/`. Config with no consumer is not in the schema; each piece arrives with the code that uses it.
 
 A real env lives in a private instance checkout. `INSTANCE=<path>` points the schema, the env-level checks and every env tool at `<path>/envs/<env>` and `<path>/.sops.yaml`. Unset, they read this checkout, which holds only the example env. `instance_root` in `tools/lib/_env.py` is the one resolver.
 
@@ -58,7 +58,7 @@ A required key that is present but null counts as unset and fails.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). A lowercase DNS name. Never hardcoded in core (`ci/checks/core-names`). |
+| `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). A lowercase DNS name. Never hardcoded in core. |
 | `time_zone` | yes | IANA time zone name for the node, and VolSync schedules (e.g. `<time_zone>`). Unknown names fail validation. |
 | `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`). |
 | `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap and the k3s token read. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
@@ -135,17 +135,9 @@ In `flux/sync.yaml`, the root `GitRepository` `flux-system` url and `ref.name` m
 
 `validate_env_tree(..., pre_host=True)` skips the missing `.sops.yaml` recipient requirement and the generated ConfigMap match. Other `.sops.yaml` checks still run. `tools/prep-node` uses that mode before it contacts a host, then runs the full check at the end.
 
-### Identity values and product rules
+### Identity values
 
-`ci/checks/core-names` reads identity values from every env except the example env: the env folder name, inventory hostnames, `ssh_user` (env and per-host), `dns_suffix`, and the owner handle in `flux_git_repo_url` and `apps_git_repo_url`. The owner's personal name is not in the repo. It comes from the `OWNER_NAME` environment variable (a GitHub Actions repository variable of the same name in CI). The check fails when that variable is unset or empty, and the failure text does not include the value.
-
-Every tracked file is scanned except `.github/CODEOWNERS` and `.mailmap`; that includes root-level files such as `Makefile`, `renovate.json`, `AGENTS.md`, `.sops.yaml`, and the `.cursor/` and `.claude/` folders. Env names may appear under `envs/**` and `docs/**`, and in the `path_regex` field of `.sops.yaml` (the field alone on its line, no comment after it) and nowhere else in that file. Hostnames, `dns_suffix`, the owner handle, and `ssh_user` forms may appear only under the `envs/<env>/` they were read from. The personal name may appear nowhere.
-
-Matching is case-insensitive, on tokens made of letters, digits, underscores, and hyphens. A dot is a boundary, so a DNS suffix inside a longer hostname fails, and a value inside a longer token passes. `ssh_user` matches only as `/home/<user>`, `<user>@<host>`, or `~<user>`.
-
-Repo URLs outside `envs/<env>/` fail because they contain the owner handle. Bare repo names are not identity values.
-
-Product rules in the same check: the word `bastion`, and any hardcoded `/home/` path. This file and `ci/checks/lib/_core_names.py` name those tokens. That pair is the one exemption, and it covers only the product rules.
+Core holds no env name, hostname, `dns_suffix`, `ssh_user`, owner handle or personal name. Each comes from `envs/<env>/` at render or run time. No check enforces this; reviewers do.
 
 `.sops.yaml` has one age creation rule per non-example env, keyed on `envs/<env>/secrets/`. The example env has no root rule. A creation rule that names an env folder that does not exist fails.
 
@@ -181,4 +173,3 @@ Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`,
 - Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, and an unknown host key.
 - A drift test fails when the known role set gains a role the example env does not declare.
 - `ansible-inventory --graph` on the example env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles`.
-- `ci/checks/core-names` rejects identity values on the scanned paths and fails when `OWNER_NAME` is unset.

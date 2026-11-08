@@ -25,7 +25,7 @@ CI runs every check and the full suite at the head commit. Fill in the pull requ
 
 ## Coding agents
 
-Agents start at [AGENTS.md](AGENTS.md) and follow [rulebooks/coding-agents.md](rulebooks/coding-agents.md).
+Agents start at [AGENTS.md](AGENTS.md) and follow [agents/coding-agents.md](agents/coding-agents.md).
 
 ## License
 
