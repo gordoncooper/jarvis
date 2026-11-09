@@ -22,7 +22,8 @@ gitleaks = "8.30.1"
 # Backups: the same releases as the restic and rest-server images (a test checks they match).
 restic = "0.19.1"
 # rest-server is not in mise's registry; the github backend still records its checksums.
-"github:restic/rest-server" = "0.14.0"
+# bin names the binary so mise marks it executable (the release tarball ships it 0644).
+"github:restic/rest-server" = { version = "0.14.0", bin = "rest-server" }
 # CI: the e2e cluster and the workflow linter.
 k3d = "5.9.0"
 actionlint = "1.7.12"

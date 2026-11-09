@@ -533,9 +533,9 @@ def test_sops_secret_leaves_stay_encrypted(example_copy: ExampleCopy) -> None:
 
 
 def test_secret_scan_rejects_planted_age_key(tmp_path: Path) -> None:
-    gitleaks = Path.home() / ".local" / "bin" / "gitleaks"
+    gitleaks = shutil.which("gitleaks")
     age_keygen = shutil.which("age-keygen")
-    if not gitleaks.is_file() or age_keygen is None:
+    if gitleaks is None or age_keygen is None:
         pytest.fail("gitleaks and age-keygen are required (run make deps)")
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
