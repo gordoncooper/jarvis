@@ -25,7 +25,7 @@ _PRODUCT_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
 DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
-# Weekly repository check, hours away from midnight-to-01:00 backups and the 00:05/12:05 etcd copy.
+# Weekly repository check, hours away from midnight-to-01:00 backups and the etcd copy's prunes after each k3s snapshot.
 DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
 # The share of each node's memory no pod is scheduled into (the k3s role's eviction-hard).
 DEFAULT_NODE_MEMORY_RESERVE_PERCENT = 10

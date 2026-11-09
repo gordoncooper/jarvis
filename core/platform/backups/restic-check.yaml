@@ -9,7 +9,8 @@ metadata:
     app.kubernetes.io/name: restic-check
 spec:
   # backup_check_schedule (default Wednesday 06:30): hours away from the nightly
-  # backup_schedule runs and from the etcd copy (00:05 and 12:05), which also prunes.
+  # backup_schedule runs and from the etcd copy's prunes, which follow each k3s snapshot
+  # (00:00 and 12:00 by default).
   # --no-lock takes no repository lock, so a run that does overlap blocks nothing;
   # it can only fail and be retried.
   schedule: "${backup_check_schedule}"

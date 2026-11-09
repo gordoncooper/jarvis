@@ -7,6 +7,24 @@ the upgrade.
 
 ## Unreleased
 
+### Changed
+
+- The etcd snapshot copy (CronJob `platform-backups/etcd-snapshots`) runs hourly on its own
+  schedule instead of five minutes after k3s's default snapshot time, so it no longer depends
+  on k3s's snapshot schedule. `restic backup --skip-if-unchanged` makes a restic snapshot only
+  when k3s wrote a new one, and `forget --prune` prunes only when `forget` removed one.
+  `make verify` now expects a successful copy within about two hours.
+- The instance preset makes a core release one PR: every env's `core_git_ref`, the instance
+  workflow and the preset's own ref (group `jarvis core`). An app release still opens one PR
+  per env, now named after the env (`renovate/env-01-notes-0.x`), not its `values` folder.
+- The instance workflow's header adds `workflow_dispatch:` to the caller, to re-check on
+  demand.
+
+### Upgrading
+
+- In the instance CI caller, add `workflow_dispatch:` under `on:`. Renovate moves the preset
+  ref and the workflow pin in the core release's PR.
+
 ## v0.4.0
 
 ### Added

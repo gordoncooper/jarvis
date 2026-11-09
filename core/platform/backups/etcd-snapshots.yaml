@@ -8,8 +8,10 @@ metadata:
   labels:
     app.kubernetes.io/name: etcd-snapshots
 spec:
-  # Five minutes after k3s_etcd_snapshot_schedule_cron (role default "0 */12 * * *").
-  schedule: "5 */12 * * *"
+  # Hourly, on its own clock: it copies whatever k3s has written since the last run, so it
+  # needs no knowledge of k3s's snapshot schedule. An hour with no new k3s snapshot makes no
+  # restic snapshot (--skip-if-unchanged), and forget --prune prunes only when forget removed one.
+  schedule: "15 * * * *"
   timeZone: ${time_zone}
   concurrencyPolicy: Forbid
   jobTemplate:
@@ -75,7 +77,6 @@ spec:
                 - name: RESTIC_HOST
                   value: etcd-snapshots
               # cat config exit 10 means the repository is missing.
-              # Separate restic prune every run, because forget --prune skips prune when nothing was removed.
               command:
                 - /bin/sh
                 - -c
@@ -88,12 +89,11 @@ spec:
                   elif [ "$status" -ne 0 ]; then
                     exit "$status"
                   fi
-                  restic backup /snapshots
-                  restic forget \
+                  restic backup --skip-if-unchanged /snapshots
+                  restic forget --prune \
                     --keep-daily=${backup_retention_daily} \
                     --keep-weekly=${backup_retention_weekly} \
                     --keep-monthly=${backup_retention_monthly}
-                  restic prune
               volumeMounts:
                 - name: snapshots
                   mountPath: /snapshots

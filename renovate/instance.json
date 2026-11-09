@@ -6,16 +6,21 @@
   "gitIgnoredAuthors": ["jarvis-render@noreply.invalid"],
   "packageRules": [
     {
-      "description": "A core release moves cluster-vars core_git_ref, per env. Core's instance workflow renders the env's flux/ (sync.yaml included) at the new tag and pushes it to the PR. Read that release's Upgrading notes in CHANGELOG.md before merging.",
+      "description": "A core release is one PR: every env's core_git_ref, plus the instance workflow and this preset (the two rules below share its group). Core's instance workflow renders each env's flux/ at the new tag and pushes it to the PR. To move one env later than the rest, add a packageRule with matchFileNames [\"envs/<env>/**\"] and enabled false, and remove it when that env should follow.",
       "groupName": "jarvis core",
       "matchDepTypes": ["jarvis-core"],
-      "additionalBranchPrefix": "{{parentDir}}-",
       "prBodyNotes": ["Follow this release's **Upgrading** notes in core's `CHANGELOG.md`, then run operator commands from a checkout of the new tag."]
+    },
+    {
+      "description": "The instance workflow (uses: <owner>/jarvis/.github/workflows/instance.yml@<tag>) and this preset's own ref move with the core release.",
+      "groupName": "jarvis core",
+      "matchManagers": ["github-actions", "renovate-config"],
+      "matchDepNames": ["/^[^/]+/jarvis$/"]
     },
     {
       "description": "One PR per hosted-app release an env pins (values/apps.yaml versions); core's instance workflow renders the app wiring for it. Tags read from the apps repository, which the instance names: add a packageRule matching depType jarvis-app with overridePackageName set to its apps_git_repo_url.",
       "matchDepTypes": ["jarvis-app"],
-      "additionalBranchPrefix": "{{parentDir}}-",
+      "additionalBranchPrefix": "{{{replace '^envs/([^/]+)/.*$' '$1-' packageFileDir}}}",
       "prBodyNotes": ["Read the app's changes between the two tags in the apps repository before merging; the app's file may ask for new grants."]
     },
     {
