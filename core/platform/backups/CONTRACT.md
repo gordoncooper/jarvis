@@ -12,7 +12,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - CronJob `etcd-snapshots`: a read-only copy of the k3s snapshot directory into repository `host-etcd-snapshots`.
 - GeneratingPolicies `pvc-backup` (core and add-on namespaces) and `pvc-backup-app` (`app-` namespaces) enroll every PVC: one restic Secret and one VolSync `ReplicationSource` in that PVC's namespace. A PVC in an `app-` namespace gets them only from that app's own registered credential, never from `backups-restic`; with no registered credential it gets neither.
 - Opt-in apps rest-server (`core/feature/apps-backup-server`): Deployment and ClusterIP Service `restic-apps` on port 8000, with `--private-repos`. Off by default; nothing for apps runs until an env lists it.
-- One credential per hosted app that keeps data (Secret `platform-backups/backups-restic-app-<name>`), minted by `make bootstrap-secrets APP=app-<name>`. It opens only `ns-app-<name>/` on the apps server.
+- One credential per hosted app that keeps data (Secret `platform-backups/backups-restic-app-<name>`), minted by `jarvis secrets --app app-<name>`. It opens only `ns-app-<name>/` on the apps server.
 - A StatefulSet volume gets one `ReplicationSource` per PVC Kubernetes creates (`<template>-<statefulset>-<ordinal>`). Git does not list the ordinals.
 - Opt-in CronJob `restic-offsite` (`core/feature/offsite-backup-copy`): a nightly `restic copy` of every local repository to the env's off-host restic backend (Operations, Off-host copy).
 - Opt-out for rebuildable observability data: the unprefixed annotation `backup: none` on a PVC, or on a `volumeClaimTemplate`'s `metadata`. Allowed only under `addons/observability/victoria-metrics/` and `addons/observability/victoria-logs/`.
@@ -28,8 +28,8 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - An env that lists `offsite-backup-copy` in `values/switches.yaml` also holds `envs/<env>/secrets/backups-offsite.sops.yaml` (`ci/checks/env-schema` requires the file once the env is bootstrapped). CronJob `restic-offsite` has the same backup-role affinity and dedicated toleration as `restic-check`.
 - An env that registers an app credential lists `apps-backup-server` in `values/switches.yaml`, selects the app under `backups:` in `values/apps.yaml`, holds the generated `flux/generated/backup-selection/`, and holds `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` (`ci/checks/env-schema`, App credentials below). `restic-apps` has the rest-server's backup-role affinity and dedicated toleration.
 - A mover needs egress to the server its volume uses, TCP 8000, plus cluster DNS: a core or add-on namespace to Service `restic.platform-backups.svc.cluster.local`, an `app-<name>` namespace to Service `restic-apps.platform-backups.svc.cluster.local` only. A network policy that blocks this fails that namespace's backups. With app hosting on, an app namespace is default-deny; its NetworkPolicy `app-backups` (GeneratingPolicy `app-derive-backups`, [core/feature/app-hosting/CONTRACT.md](../../feature/app-hosting/CONTRACT.md)) allows exactly this while Secret `backups-restic-app-<name>` exists, and its `cluster-dns` the DNS.
-- A hosted app's PVC is one its app file declares. A volume declared `backup: false` carries annotation `backup: none` (admission refuses it otherwise), is never enrolled, and `make verify` reports it as declared rather than failing it. This is the third case of `backup: none`, besides the observability allow-list below; it holds only in `app-` namespaces and only for a declared volume.
-- `make restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `tools/restore` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
+- A hosted app's PVC is one its app file declares. A volume declared `backup: false` carries annotation `backup: none` (admission refuses it otherwise), is never enrolled, and `jarvis verify` reports it as declared rather than failing it. This is the third case of `backup: none`, besides the observability allow-list below; it holds only in `app-` namespaces and only for a declared volume.
+- `jarvis restore` needs CronJob `platform-backups/etcd-snapshots` deployed. `jarvis/backups/restore.py` reads that CronJob once in `run()`, before it changes anything, and stops when the CronJob is missing or its image is not digest-pinned `restic/restic` (`restic/restic@sha256:` or `restic/restic:<version>@sha256:`, and 64 hex digits).
 
 ## Health
 
@@ -40,14 +40,14 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - Kyverno admission is Ready.
 - A PVC without `backup: none` has Secret `restic-<pvc>` and ReplicationSource `<pvc>`, and that source completes a sync.
 - A PVC annotated `backup: none` has neither.
-- A PVC in an `app-` namespace whose app has no registered credential has neither, and `make verify` fails it (`<namespace>/<pvc>: not backed up; <namespace> has no registered backup credential`). When `values/apps.yaml` declares `backups:`, `make verify` holds only the enabled apps to this and to freshness, and fails its `backup selection` line while the selection is invalid or the apps checkout is missing or cannot answer for an app.
-- `make verify` checks the static half of app isolation: no user in `backups-restic`'s htpasswd is an app user (`ns-app-*`; only user names are read, nothing is printed), and, where the env lists the apps server, Deployment `restic-apps` runs `--private-repos` and mounts no `backups-restic`.
+- A PVC in an `app-` namespace whose app has no registered credential has neither, and `jarvis verify` fails it (`<namespace>/<pvc>: not backed up; <namespace> has no registered backup credential`). When `values/apps.yaml` declares `backups:`, `jarvis verify` holds only the enabled apps to this and to freshness, and fails its `backup selection` line while the selection is invalid or the apps checkout is missing or cannot answer for an app.
+- `jarvis verify` checks the static half of app isolation: no user in `backups-restic`'s htpasswd is an app user (`ns-app-*`; only user names are read, nothing is printed), and, where the env lists the apps server, Deployment `restic-apps` runs `--private-repos` and mounts no `backups-restic`.
 - Where the env lists the apps server: Service `restic-apps` has a ready endpoint. Its log line `app users: <n>` counts the registered apps.
-- During `make restore`, that PVC's ReplicationSource stays paused until the destination finishes. It stays paused longer while the rebuild hold exists.
-- `make drill` deletes a scratch volume, restores it, and compares checksums.
+- During `jarvis restore`, that PVC's ReplicationSource stays paused until the destination finishes. It stays paused longer while the rebuild hold exists.
+- `jarvis drill` deletes a scratch volume, restores it, and compares checksums.
 - A Job from CronJob `etcd-snapshots` completes, and `restic snapshots` on `host-etcd-snapshots` lists a snapshot that holds the newest k3s snapshot file.
-- A Job from CronJob `restic-check` (on `backup_check_schedule` in `time_zone`, default Wednesday 06:30, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories, app repositories included, and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. An app repository whose app has no registered credential prints `FAIL <path>: no backup credential registered for its app`. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `make verify` fails when its last success is older than one schedule interval plus 12 hours. With no success yet, `make verify` warns while the first run is pending or running inside the first interval plus 12 hours, and fails once a run finished without success or that time has passed. The `etcd-snapshots` check uses the same first-run rule without the 12 hours.
-- Where the env lists the off-host copy: a Job from CronJob `restic-offsite` (daily 04:00 in `time_zone`) completes and prints `PASS` for every repository. `make verify` checks its last success with the `restic-check` rule (one interval plus 12 hours, same first-run warning).
+- A Job from CronJob `restic-check` (on `backup_check_schedule` in `time_zone`, default Wednesday 06:30, on the backup-role node) completes. It runs `restic check --no-lock --read-data-subset=<n>/12` on every repository under `backup_path/restic` (the PVC repositories, app repositories included, and `host-etcd-snapshots`) through a read-only mount, and prints only `PASS` or `FAIL` per repository. An app repository whose app has no registered credential prints `FAIL <path>: no backup credential registered for its app`. It takes no lock, so it never blocks a backup, prune, or restore; a prune that runs at the same time can fail it, and the Job retries. `jarvis verify` fails when its last success is older than one schedule interval plus 12 hours. With no success yet, `jarvis verify` warns while the first run is pending or running inside the first interval plus 12 hours, and fails once a run finished without success or that time has passed. The `etcd-snapshots` check uses the same first-run rule without the 12 hours.
+- Where the env lists the off-host copy: a Job from CronJob `restic-offsite` (daily 04:00 in `time_zone`) completes and prints `PASS` for every repository. `jarvis verify` checks its last success with the `restic-check` rule (one interval plus 12 hours, same first-run warning).
 
 ## Config
 
@@ -63,7 +63,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - The apps server `restic-apps` runs the same pinned image on the same hostPath `backup_path/restic`, as root, with `--private-repos` and without `--append-only`: user `ns-app-<name>` can init, back up, forget and prune under `ns-app-<name>/` and nothing else. It never mounts `backups-restic`.
 - Its htpasswd is built at start, in a memory-backed `emptyDir`, from the `htpasswd` key of each registered credential, mounted at `/credentials/app-<name>/htpasswd`. The user name is `ns-` plus that folder name; the name in the sealed line is ignored, so a credential can only ever be its own app's user. Only folders named `app-[a-z0-9-]*` count.
 - A registration change edits the `restic-apps` pod template, so the Deployment restarts with the new user list (`Recreate`). rest-server reloads a changed htpasswd file, but the list is only rebuilt at start.
-- An app's repository URL is `rest:http://restic-apps.platform-backups.svc.cluster.local:8000/ns-app-<name>/pvc-<pvc>`, the same `ns-<namespace>/pvc-<pvc>` layout on the same disk, so the rebuild hold, `make restore` and `restore-all` see app repositories like any other.
+- An app's repository URL is `rest:http://restic-apps.platform-backups.svc.cluster.local:8000/ns-app-<name>/pvc-<pvc>`, the same `ns-<namespace>/pvc-<pvc>` layout on the same disk, so the rebuild hold, `jarvis restore` and `jarvis restore --all` see app repositories like any other.
 - Secret `backups-restic-app-<name>` holds `RESTIC_PASSWORD` (that app's own), `RESTIC_REPOSITORY` (the apps server prefix), `RESTIC_REST_USERNAME` (`ns-app-<name>`), `RESTIC_REST_PASSWORD`, and bcrypt `htpasswd`.
 - `restic-check` and `restic-offsite` open an `ns-app-<name>/...` repository with that app's own password, mounted at `/credentials/app-<name>/RESTIC_PASSWORD`, with core's password removed from that command's environment. Core repositories use core's password as before. Each job mounts only the `RESTIC_PASSWORD` key of an app credential, and the apps server only the `htpasswd` key.
 - Retention counts are the env settings `backup_retention_daily`, `backup_retention_weekly`, and `backup_retention_monthly`, or a hosted app's own override (App credentials, Overrides).
@@ -118,12 +118,12 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - `ci/tests/test_restic_rest_server.py` (rest-server rules and the etcd CronJob rules) and `ci/tests/test_bootstrap_secrets.py`.
 - `ci/checks/pvc-backup` and `ci/tests/test_pvc_backup.py` (policy present, `backup: none` allow-list, no ReplicationSource in Git, no hand-written VolSync object or restic repository URL under `addons/`).
 - `ci/tests/test_backup_enrollment.py` (Kyverno controllers, aggregated roles; the policies run with the pinned CLI on seeded claims and credentials: what each claim gets, `backup: paused` and the hold set `spec.paused`).
-- `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails from mover status; `AS_OF` restores a live volume; `restore-all` keeps, retires, or lifts the hold).
+- `ci/tests/test_restore.py` (restore pauses the source, then applies a Direct destination with `restoreAsOf` before the PVC creation time and `enableFileDeletion`; no snapshot fails from mover status; `AS_OF` restores a live volume; `jarvis restore --all` keeps, retires, or lifts the hold).
 - `ci/tests/test_verify.py` (read-only, fail-closed standing checks, including enrollment freshness and the rebuild hold).
 - `ci/tests/test_restic_rest_server.py` (off-host copy renders only where the env lists it; the copy script initialises a missing destination, copies each repository, prints only `PASS`/`FAIL`, and fails every repository at once when the target is down; the source-password key wiring), `ci/tests/test_env_schema.py` (listing it requires the sealed file), `ci/tests/test_verify.py` (its freshness).
-- `ci/tests/test_drill.py` and `make drill ENV=<env>` (real restore target, checksum comparisons, etcd-copy check, and in-cluster cleanup).
+- `ci/tests/test_drill.py` and `jarvis drill --env <env>` (real restore target, checksum comparisons, etcd-copy check, and in-cluster cleanup).
 - `ci/checks/backup-isolation` (on every env's rendered platform-configs and on `core/feature/apps-backup-server`) and `ci/tests/test_backup_isolation.py`: a registered app renders its Secret and mounts only where needed; a core-only env renders nothing for apps; seeded failures for a Secret-generating policy that can reach an `app-` namespace from `backups-restic`, an app credential in core's server, `backups-restic` in the apps server, the apps server without `--private-repos`, and an app credential without the apps server; and env-schema's registration rules.
-- `ci/tests/test_rest_server_isolation.py`: the pinned `rest-server` and `restic` (installed by `make deps`) run as the manifests configure them, core's server plus the apps server's own start script on one data directory. An app login inits, backs up, forgets and prunes its own repository. It cannot open, forget or prune a core repository or another app's on either server, even with the right restic password. It cannot create a core repository. A sealed line naming core's user is still served only as `ns-app-<name>`.
+- `ci/tests/test_rest_server_isolation.py`: the pinned `rest-server` and `restic` (installed by the deps task) run as the manifests configure them, core's server plus the apps server's own start script on one data directory. An app login inits, backs up, forgets and prunes its own repository. It cannot open, forget or prune a core repository or another app's on either server, even with the right restic password. It cannot create a core repository. A sealed line naming core's user is still served only as `ns-app-<name>`.
 - `ci/tests/test_backup_enrollment.py` (`pvc-backup-app` reads only the app's own Secret and makes nothing without one), `ci/tests/test_restic_rest_server.py` (check and copy use the app's own password with core's unset, and fail an unregistered app's repository alone), `ci/tests/test_bootstrap_secrets.py` (`APP=` mints the app's own credential once and refuses a recorded one), `ci/tests/test_verify.py` (the app-isolation check and an unregistered app PVC), `ci/tests/test_backup_selection.py` (selection modes, render, env-schema, verify required vs excluded apps, each malformed section, and an unreadable app file or missing checkout failing closed).
 
 ## Operations
@@ -134,38 +134,38 @@ Do not merge a change to the `pvc-backup` policies during a restore. A policy Fl
 
 Each hosted app that keeps data gets its own restic password, its own apps-server login and its own repositories, before it stores data. Owner-run, needs the age public key only.
 
-**Selection.** The env declares which hosted apps register a credential in `values/apps.yaml` under `backups:` (see [schema/CONTRACT.md](../../../schema/CONTRACT.md)). `mode: selected` turns backups off by default and registers only the `selected` apps that declare a `backup: true` volume. `mode: all_except` registers every backup-eligible listed app except those in `exclude`. Eligibility reads each app's `app.yaml` from a checkout of `apps_git_repo_url` (or `APPS_REPO` when set); an app file the checkout is missing or cannot parse fails the check and refuses the render, so it never reads as stateless. `make verify` reads the same files, so it needs the live tip of that repository: a stale checkout can fail a selected app or answer for an old app file. `INSTANCE=<path> bash ci/checkout-apps-for-instance.sh` fetches the tip and prints the directory to export as `APPS_REPO`. Stateless apps never belong on `selected`; `exclude` reads no app file, so an exclusion stays valid whatever that file later says. Optional per-app `overrides` set `backup_schedule` and retention counts for that app's ReplicationSources (Overrides, below). Shared schedule, retention and destination otherwise come from `cluster-vars.yaml`. `tools/render` writes the registration Components and `flux/generated/backup-selection/`; `make bootstrap-secrets APP=app-<name>` still mints each sealed credential once. Removing an app from the selection removes its registration: `restic-apps` restarts without that user, so that app's backups stop, and `make verify` stops requiring them. Disable never deletes restic repositories on disk, and any it leaves make `restic-check` and `restic-offsite` fail as in Retire step 2.
+**Selection.** The env declares which hosted apps register a credential in `values/apps.yaml` under `backups:` (see [schema/CONTRACT.md](../../../schema/CONTRACT.md)). `mode: selected` turns backups off by default and registers only the `selected` apps that declare a `backup: true` volume. `mode: all_except` registers every backup-eligible listed app except those in `exclude`. Eligibility reads each app's `app.yaml` from a checkout of `apps_git_repo_url` (or `APPS_REPO` when set); an app file the checkout is missing or cannot parse fails the check and refuses the render, so it never reads as stateless. `jarvis verify` reads the same files, so it needs the live tip of that repository: a stale checkout can fail a selected app or answer for an old app file. `INSTANCE=<path> bash ci/checkout-apps-for-instance.sh` fetches the tip and prints the directory to export as `APPS_REPO`. Stateless apps never belong on `selected`; `exclude` reads no app file, so an exclusion stays valid whatever that file later says. Optional per-app `overrides` set `backup_schedule` and retention counts for that app's ReplicationSources (Overrides, below). Shared schedule, retention and destination otherwise come from `cluster-vars.yaml`. `jarvis render` writes the registration Components and `flux/generated/backup-selection/`; `jarvis secrets --app app-<name>` still mints each sealed credential once. Removing an app from the selection removes its registration: `restic-apps` restarts without that user, so that app's backups stop, and `jarvis verify` stops requiring them. Disable never deletes restic repositories on disk, and any it leaves make `restic-check` and `restic-offsite` fail as in Retire step 2.
 
-**Overrides.** `backups.overrides.<app>` in `values/apps.yaml` may set `backup_schedule`, `backup_retention_daily`, `backup_retention_weekly` and `backup_retention_monthly` for a backup-enabled app. `tools/render` writes them into the generated wrapper as ConfigMap `platform-backups/backup-overrides`, one key per namespace holding that app's values as JSON, and env-schema refuses a wrapper that differs from the env's file. An env with no override has no such ConfigMap and its wrapper does not change. `pvc-backup` reads the ConfigMap in both ReplicationSource rules (`kyverno:backup-generate` may get it; no tenant can reach `platform-backups`). A field the app does not override, and every field of a core PVC or an app with no entry, keeps the `cluster-vars.yaml` value. A missing ConfigMap or a forbidden read means no override. Only schedule and retention change: `retain.within: 7d`, `pruneIntervalDays`, the credential and the repository stay as they are. An override schedule keeps the same distance from `backup_check_schedule` that `backup_schedule` does, and `make verify` judges freshness from each source's own schedule.
+**Overrides.** `backups.overrides.<app>` in `values/apps.yaml` may set `backup_schedule`, `backup_retention_daily`, `backup_retention_weekly` and `backup_retention_monthly` for a backup-enabled app. `jarvis render` writes them into the generated wrapper as ConfigMap `platform-backups/backup-overrides`, one key per namespace holding that app's values as JSON, and env-schema refuses a wrapper that differs from the env's file. An env with no override has no such ConfigMap and its wrapper does not change. `pvc-backup` reads the ConfigMap in both ReplicationSource rules (`kyverno:backup-generate` may get it; no tenant can reach `platform-backups`). A field the app does not override, and every field of a core PVC or an app with no entry, keeps the `cluster-vars.yaml` value. A missing ConfigMap or a forbidden read means no override. Only schedule and retention change: `retain.within: 7d`, `pruneIntervalDays`, the credential and the repository stay as they are. An override schedule keeps the same distance from `backup_check_schedule` that `backup_schedule` does, and `jarvis verify` judges freshness from each source's own schedule.
 
 To change one: edit the override, re-render, commit and push. Generate does not re-run on a ConfigMap change, so a PVC that already exists takes the new values on its next update; annotate it once (`kubectl annotate pvc -n app-<name> <pvc> backup-overrides=<date> --overwrite`). Check with `kubectl get replicationsource -n app-<name> <pvc> -o yaml`. A new PVC takes them when it binds.
 
-Turn the apps server on and add an app: list `apps-backup-server` under `features` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `INSTANCE=<path> .venv/bin/python tools/render --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
+Turn the apps server on and add an app: list `apps-backup-server` under `features` in `values/switches.yaml` once per env, put the app on `selected` (or leave it off `exclude`), run `jarvis render --env <env>` (it does step 2), run step 1, commit and push, then steps 3 and 4.
 
-1. `make bootstrap-secrets ENV=<env> APP=app-<name>`. It seals `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` and writes `envs/<env>/flux/platform-configs/backups/app-<name>/kustomization.yaml`, the Component that applies that Secret and mounts it in `restic-apps`, `restic-check` and `restic-offsite`. Nothing is printed but the created paths. A second run changes nothing. If that app's sealed file is missing and git already records it, it refuses: the app's repositories open only with the first password.
+1. `jarvis secrets --env <env> --app app-<name>`. It seals `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` and writes `envs/<env>/flux/platform-configs/backups/app-<name>/kustomization.yaml`, the Component that applies that Secret and mounts it in `restic-apps`, `restic-check` and `restic-offsite`. Nothing is printed but the created paths. A second run changes nothing. If that app's sealed file is missing and git already records it, it refuses: the app's repositories open only with the first password.
 2. The render lists `../../../../core/feature/apps-backup-server` under `resources:` of `envs/<env>/flux/platform-configs/kustomization.yaml`, and the generated wrapper carries the registration.
 3. After Flux applies it: `restic-apps` restarts with the new user (`app users: <n>`). The app's PVCs get Secret `restic-<pvc>` and ReplicationSource `<pvc>` when they bind. A PVC that existed before step 2 is enrolled on its next update; annotate it once (`kubectl annotate pvc -n app-<name> <pvc> backup-credential=registered --overwrite`).
-4. `make verify ENV=<env>` passes, with no `not backed up` line for that app.
+4. `jarvis verify --env <env>` passes, with no `not backed up` line for that app.
 
 How to tell it worked: `restic-apps` has a ready endpoint, the app's ReplicationSource completes a sync, and the next `restic-check` prints `PASS ns-app-<name>/pvc-<pvc>`.
 
 Retire an app (after its app is removed and its data is no longer wanted):
 
-1. Take the app off the selection and re-run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`. Commit and push. `restic-apps` restarts without that user, so its login stops working. Flux keeps Secret `backups-restic-app-<name>` (prune disabled); delete it with `kubectl -n platform-backups delete secret backups-restic-app-<name>`.
+1. Take the app off the selection and re-run `jarvis render --env <env>`. Commit and push. `restic-apps` restarts without that user, so its login stops working. Flux keeps Secret `backups-restic-app-<name>` (prune disabled); delete it with `kubectl -n platform-backups delete secret backups-restic-app-<name>`.
 2. The repositories stay on disk, and `restic-check` and `restic-offsite` print `FAIL ns-app-<name>/...: no backup credential registered for its app` until they are removed. Remove `<backup_path>/restic/ns-app-<name>` as root on the backup-role node once the data is not needed. The off-host copy keeps its copy until the owner removes it there.
-3. Leave `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` in place. Re-adding that app name later reuses it (step 1 of adding writes only the Component), so any repositories still on disk open again. Once Git has recorded that file, `make bootstrap-secrets` never mints a new one for that name.
+3. Leave `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` in place. Re-adding that app name later reuses it (step 1 of adding writes only the Component), so any repositories still on disk open again. Once Git has recorded that file, `jarvis secrets` never mints a new one for that name.
 
 When the last app is retired, remove `apps-backup-server` from `values/switches.yaml` too and re-render. Flux prunes Service `restic-apps` and keeps Deployment `restic-apps` (prune disabled); delete the Deployment by hand.
 
 ### Restore one namespace
 
-From the repo root, with `~/.kube/jarvis-<env>.yaml` present:
+From the instance repository, with `~/.kube/jarvis-<env>.yaml` present:
 
 ```bash
-make restore ENV=<env> APP=<namespace>
+jarvis restore --env <env> --app <namespace>
 ```
 
-`APP` is the namespace. Optional `AS_OF=<RFC3339>` sets `restoreAsOf` for every selected PVC. The default is one second before the PVC `creationTimestamp`, which is the right point for a claim that was deleted and recreated. A volume that was not recreated needs `AS_OF`, because that default is before its first snapshot.
+`--app` is the namespace. Optional `--as-of <RFC3339>` sets `restoreAsOf` for every selected PVC. The default is one second before the PVC `creationTimestamp`, which is the right point for a claim that was deleted and recreated. A volume that was not recreated needs `--as-of`, because that default is before its first snapshot.
 
 Before any change, restore checks the repository env marker and the cluster's `flux-system/cluster-vars` `jarvis_env` marker, then reads CronJob `platform-backups/etcd-snapshots`. It stops if that CronJob is missing or its image is not digest-pinned `restic/restic`.
 
@@ -180,52 +180,52 @@ What it changes, for each selected PVC:
 - On success it deletes the destination, restores replica counts and CronJob suspension, and resumes the Flux Kustomization. It removes `backup: paused`, including one set on purpose, unless the rebuild hold still exists.
 - On failure or interruption it leaves the pause and quiesced state and prints one environment-bound command for each remaining undo action.
 
-`make restore` does not lift the rebuild hold. While the hold exists, a successful `make restore` leaves `backup: paused` in place.
+`jarvis restore` does not lift the rebuild hold. While the hold exists, a successful `jarvis restore` leaves `backup: paused` in place.
 
 How to tell it worked: a `PASS restore <namespace>/<pvc> snapshot <id>` line, then `SUMMARY restored=... accepted=... retired=...`, and exit 0.
 
 ### Restore every enrolled PVC
 
 ```bash
-make restore-all ENV=<env>
+jarvis restore --all --env <env>
 ```
 
-Optional `RETIRE=ns-<namespace>/pvc-<name>[,...]`, `ACCEPT_EMPTY=<namespace>/<pvc>[,...]`, and `NODE=<node>`. One `NODE` pins every unbound PVC in the run to that single node.
+Optional `--retire ns-<namespace>/pvc-<name>[,...]`, `--accept-empty <namespace>/<pvc>[,...]`, and `--node <node>`. One `--node` pins every unbound PVC in the run to that single node.
 
-`restore-all` selects every PVC that is not `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`, including one that is not bound yet. It reads the etcd CronJob image once, before any change, the same way `make restore` does.
+`jarvis restore --all` selects every PVC that is not `backup: none` and not labeled `app.kubernetes.io/created-by: volsync`, including one that is not bound yet. It reads the etcd CronJob image once, before any change, the same way `jarvis restore` does.
 
-What it changes: the same per-PVC restore as above. `No eligible snapshots found` fails unless `ACCEPT_EMPTY` names that exact `namespace/pvc`. This acceptance is separate from `RETIRE`.
+What it changes: the same per-PVC restore as above. `No eligible snapshots found` fails unless `--accept-empty` names that exact `namespace/pvc`. This acceptance is separate from `--retire`.
 
-`RETIRE` is only for a held repository that no longer has a PVC, such as an app removed from Git. `ACCEPT_EMPTY` is only for selected PVCs whose empty state the owner accepts. `--retire` and `--accept-empty` are only valid with `restore-all`.
+`--retire` is only for a held repository that no longer has a PVC, such as an app removed from Git. `--accept-empty` is only for selected PVCs whose empty state the owner accepts. `--retire` and `--accept-empty` are only valid with `--all`.
 
-`make restore-all` deletes the hold only after every restore has succeeded or was explicitly accepted empty and every listed repository has a PVC or is named in `RETIRE`. It then removes `backup: paused`. Sources cannot report unpaused while the hold exists, so restore deletes the hold before removing those annotations and checking every source. If resume or that check fails, it re-adds the annotations and restores the hold. If rollback itself fails, it prints the exact environment-bound recovery commands and exits nonzero. A listed repository that is neither restored, accepted empty, nor retired keeps the hold, and the restored PVCs stay `backup: paused`.
+`jarvis restore --all` deletes the hold only after every restore has succeeded or was explicitly accepted empty and every listed repository has a PVC or is named in `RETIRE`. It then removes `backup: paused`. Sources cannot report unpaused while the hold exists, so restore deletes the hold before removing those annotations and checking every source. If resume or that check fails, it re-adds the annotations and restores the hold. If rollback itself fails, it prints the exact environment-bound recovery commands and exits nonzero. A listed repository that is neither restored, accepted empty, nor retired keeps the hold, and the restored PVCs stay `backup: paused`.
 
-How to tell it worked: `HOLD lifted` when a hold was set, `SUMMARY` with restored, accepted-empty, and retired counts, and exit 0. With no hold and no PVC (a fresh env), one line `nothing to restore: no rebuild hold and no PVC` and exit 0. `make restore APP=<namespace>` with no match still fails.
+How to tell it worked: `HOLD lifted` when a hold was set, `SUMMARY` with restored, accepted-empty, and retired counts, and exit 0. With no hold and no PVC (a fresh env), one line `nothing to restore: no rebuild hold and no PVC` and exit 0. `jarvis restore --app <namespace>` with no match still fails.
 
 ### Drill
 
 ```bash
-make drill ENV=<env>
+jarvis drill --env <env>
 ```
 
-Uses `~/.kube/jarvis-<env>.yaml` and checks both env markers. Before any change, including `make drill-cleanup`, it reads CronJob `platform-backups/etcd-snapshots` and stops when that CronJob is missing or its image is not digest-pinned `restic/restic`. `make drill` refuses a rebuild hold, an existing `platform-drill` namespace, leftover drill pods in `platform-backups`, or an existing drill repository path. Leftovers point to `make drill-cleanup ENV=<env>`.
+Uses `~/.kube/jarvis-<env>.yaml` and checks both env markers. Before any change, including `jarvis drill --cleanup-only`, it reads CronJob `platform-backups/etcd-snapshots` and stops when that CronJob is missing or its image is not digest-pinned `restic/restic`. `jarvis drill` refuses a rebuild hold, an existing `platform-drill` namespace, leftover drill pods in `platform-backups`, or an existing drill repository path. Leftovers point to `jarvis drill --cleanup-only --env <env>`.
 
 Repository preflight uses its own short-lived backup-node pod with the rest-server hostPath mounted read-only, and removes that pod before continuing. The pod image comes from the live `etcd-snapshots` CronJob.
 
 What it changes:
 
 - Writes a scratch payload and waits for a fresh ReplicationSource sync.
-- Deletes and recreates the paused PVC, runs `make restore ENV=<env> APP=platform-drill NODE=<node>` with the node the writer pod ran on, and compares checksums it computed itself.
+- Deletes and recreates the paused PVC, runs `jarvis restore --env <env> --app platform-drill --node <node>` with the node the writer pod ran on, and compares checksums it computed itself.
 - Separately, a freshly created (never reused) scratch pod in `platform-backups`, where `backups-restic` exists, restores the newest snapshot file from `host-etcd-snapshots` and compares it with the file on the read-only backup path.
 - The tool never reads or copies Secret data client-side, never runs a cluster reset, and never prints Secret values.
 - On success, failure, SIGINT, SIGTERM, or SIGHUP, it removes the scratch namespace with a bounded wait, then runs a short-lived pod on the backup-role node that mounts the rest-server data path and removes `ns-platform-drill/pvc-drill`.
-- If either cleanup cannot finish, it prints `make drill-cleanup ENV=<env>` for an env-bound retry. Adopters do not clean a drill repository on a node by hand.
+- If either cleanup cannot finish, it prints `jarvis drill --cleanup-only --env <env>` for an env-bound retry. Adopters do not clean a drill repository on a node by hand.
 
 How to tell it worked: `PASS drill cleanup complete` and exit 0. The volume checksums match. After the two etcd checksums match, the tool prints one `ETCD snapshot ... checksum` line. When the newest k3s snapshot file is not in the latest restic snapshot yet, the drill fails with `newest etcd snapshot <file> is not yet in the restic copy`; run it again after the next `etcd-snapshots` run.
 
 ### etcd cluster reset
 
-Owner-run. It is not a make target and it is not part of the drill. Do not print Secret values. Do not run it as a drill on the live env.
+Owner-run. It is not a jarvis command and it is not part of the drill. Do not print Secret values. Do not run it as a drill on the live env.
 
 k3s writes snapshot files on the server node to `<backup_path>/etcd-snapshots`. That directory is `etcd-snapshot-dir` in the k3s config. The reset uses one of those files. It does not use restic, and it does not need the cluster to be up. Run these steps as root on the server node.
 
@@ -240,13 +240,13 @@ k3s secrets-encryption is on, so restoring onto a rebuilt node also needs the or
 
 ### Rebuild a dead node
 
-Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `make bootstrap-secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `make encrypt ENV=<env> NAME=k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` and `stringData.agent_token`. Seal only the passphrase in `server_token`: the part of `/var/lib/rancher/k3s/server/token` after `::server:`. The full `K10<ca-hash>::server:<passphrase>` form pins the cluster CA hash, so it fails on any rebuild that mints a fresh CA (see [k3s token](https://docs.k3s.io/cli/token)). The passphrase is the same value, so older snapshots stay restorable. The k3s role refuses a `K10…` server token on a server that has no token file yet. A new env gets an agent token that is a separate random value. A cluster sealed from its node may have an agent token equal to its server token until the agent token is rotated at its next rebuild.
+Owner-run. Do not print a token. It needs `envs/<env>/secrets/k3s-token.sops.yaml` to hold this cluster's server token. k3s uses that token as the passphrase for its datastore and snapshots, so a server with a new token cannot read them. `jarvis secrets` mints tokens only for a new env. For a cluster that already exists, the owner seals its token before any loss: `jarvis encrypt --env <env> --name k3s-token` from a mode `0600` Secret manifest with `stringData.server_token` and `stringData.agent_token`. Seal only the passphrase in `server_token`: the part of `/var/lib/rancher/k3s/server/token` after `::server:`. The full `K10<ca-hash>::server:<passphrase>` form pins the cluster CA hash, so it fails on any rebuild that mints a fresh CA (see [k3s token](https://docs.k3s.io/cli/token)). The passphrase is the same value, so older snapshots stay restorable. The k3s role refuses a `K10…` server token on a server that has no token file yet. A new env gets an agent token that is a separate random value. A cluster sealed from its node may have an agent token equal to its server token until the agent token is rotated at its next rebuild.
 
 **Server.**
 
-1. Reinstall the node, mount a surviving data disk at `/var/lib/jarvis`, and run `tools/prep-node` (`docs/deploy.md`). If the data disk is lost too, prepare a new one and, before step 2, `restic restore` a snapshot file from repository `host-etcd-snapshots` on the backup host (password: `RESTIC_PASSWORD` in `backups-restic`) into `<backup_path>/etcd-snapshots`. When the server is also the backup host, that disk held the only copy.
-2. `make site ENV=<env>`. The server starts with the sealed token, and agents join with the agent token. When the backup host still has restic repositories and there is no root `GitRepository` (`flux-system/flux-system`) yet, `site.yml` creates the rebuild hold.
-3. Once Flux has reconciled, run `make restore-all ENV=<env>` (above).
+1. Reinstall the node, mount a surviving data disk at `/var/lib/jarvis`, and run `jarvis node prep` (`docs/deploy.md`). If the data disk is lost too, prepare a new one and, before step 2, `restic restore` a snapshot file from repository `host-etcd-snapshots` on the backup host (password: `RESTIC_PASSWORD` in `backups-restic`) into `<backup_path>/etcd-snapshots`. When the server is also the backup host, that disk held the only copy.
+2. `jarvis site --env <env>`. The server starts with the sealed token, and agents join with the agent token. When the backup host still has restic repositories and there is no root `GitRepository` (`flux-system/flux-system`) yet, `site.yml` creates the rebuild hold.
+3. Once Flux has reconciled, run `jarvis restore --all --env <env>` (above).
 
 With the same token, the etcd cluster reset above can also restore a snapshot onto the rebuilt server.
 
@@ -256,15 +256,15 @@ With the same token, the etcd cluster reset above can also restore a snapshot on
 2. The k3s role installs the pinned binary and its own unit, not upstream `install.sh`, so the node has no `k3s-uninstall.sh`. Fetch `install.sh` at the pinned tag (`https://raw.githubusercontent.com/k3s-io/k3s/<k3s_version>/install.sh`, `+` as `%2B`) and let it write only the scripts: `INSTALL_K3S_SKIP_DOWNLOAD=true INSTALL_K3S_SKIP_ENABLE=true INSTALL_K3S_SKIP_START=true INSTALL_K3S_BIN_DIR=/usr/local/bin sh install.sh`. It finds the existing binary, rewrites the unit, and writes `/usr/local/bin/k3s-uninstall.sh` and `k3s-killall.sh`. It does not start k3s.
 3. Run `/usr/local/bin/k3s-uninstall.sh`. At the current pin it stops k3s and its pods, unmounts and removes `/run/k3s`, `/var/lib/kubelet/pods` and `/var/lib/kubelet/plugins`, removes `/var/lib/rancher/k3s` (the k3s data dir), `/etc/rancher/k3s`, `/var/lib/kubelet`, `/var/lib/cni` and `/run/flannel`, the binary, and the unit. It touches nothing under `/var/lib/jarvis`, which holds local volume data (`local_path_data`). `backup_path`, with the restic repositories and the etcd snapshot files, stays too unless it sits inside one of the removed directories. It skips the removal when another `k3s*.service` unit exists.
 4. Check that the restic repositories under `<backup_path>/restic` and the snapshot files in `<backup_path>/etcd-snapshots` are intact, and that `restic snapshots` counts match step 1.
-5. `make site ENV=<env>`, then `make restore-all ENV=<env>` as above.
+5. `jarvis site --env <env>`, then `jarvis restore --all --env <env>` as above.
 
-The new cluster starts from an empty datastore with the sealed tokens, and restores no etcd snapshot. An older etcd snapshot stays restorable as long as `server_token` is unchanged. When the env has no PVCs, `restore-all` is a clean no-op (`nothing to restore: no rebuild hold and no PVC`, exit 0).
+The new cluster starts from an empty datastore with the sealed tokens, and restores no etcd snapshot. An older etcd snapshot stays restorable as long as `server_token` is unchanged. When the env has no PVCs, `jarvis restore --all` is a clean no-op (`nothing to restore: no rebuild hold and no PVC`, exit 0).
 
 When the rebuild ships with a change to Flux sources or paths, suspend every Flux Kustomization before that change merges, so the new sources do not prune objects the old paths applied. When the CA was rotated, trust the new `ca.crt` on clients and remove the old one.
 
-**Agents.** While the server is down, agents keep their pods running but cannot reach the API. They reconnect when it is back. An agent reinstalled under the same hostname is refused by the server's stored node password. Delete its Node (`kubectl delete node <host>`) or Secret `kube-system/<host>.node-password.k3s` first, then run `make site ENV=<env> LIMIT=<host>`.
+**Agents.** While the server is down, agents keep their pods running but cannot reach the API. They reconnect when it is back. An agent reinstalled under the same hostname is refused by the server's stored node password. Delete its Node (`kubectl delete node <host>`) or Secret `kube-system/<host>.node-password.k3s` first, then run `jarvis site --env <env> --limit <host>`.
 
-How to tell it worked: `make site` exits 0, `restore-all` prints `HOLD lifted` and `SUMMARY` and exits 0, and then `make verify ENV=<env>` passes. A planned bench rehearsal with the data disk kept proves OS loss only, not disk loss.
+How to tell it worked: `jarvis site` exits 0, `jarvis restore --all` prints `HOLD lifted` and `SUMMARY` and exits 0, and then `jarvis verify --env <env>` passes. A planned bench rehearsal with the data disk kept proves OS loss only, not disk loss.
 
 ### Rotate the restic password
 
@@ -272,7 +272,7 @@ This rotation covers core repositories only. Wherever a step below lists reposit
 
 Every core repository uses the one password in Secret `platform-backups/backups-restic`. Kyverno copies it into each `restic-<pvc>` Secret (`synchronize: true` on an apiCall). CronJob `etcd-snapshots` reads that same Secret and writes repository `host-etcd-snapshots`. Changing the Secret changes every repository at once.
 
-`make bootstrap-secrets` never replaces a `backups-restic` file that exists, with or without `ROTATE_RESTIC=1`. If the file is missing and git already records it, the tool refuses unless `ROTATE_RESTIC=1`. That flag mints a new password and does not add it to existing repositories. A live rotation is the steps below. Do not point them at the drill repository: `make drill` creates and deletes `ns-platform-drill/pvc-drill` in the same run, and this rotation does not run `make drill`. Keep the old key until the last step. While any Secret still holds the old password, that key still opens every repository.
+`jarvis secrets` never replaces a `backups-restic` file that exists, with or without `ROTATE_RESTIC=1`. If the file is missing and git already records it, the tool refuses unless `ROTATE_RESTIC=1`. That flag mints a new password and does not add it to existing repositories. A live rotation is the steps below. Do not point them at the drill repository: `jarvis drill` creates and deletes `ns-platform-drill/pvc-drill` in the same run, and this rotation does not run `jarvis drill`. Keep the old key until the last step. While any Secret still holds the old password, that key still opens every repository.
 
 Run the `restic` and `find` commands as root on the backup-role node. `restic` must be installed there. The rest-server data is the hostPath `backup_path/restic`, and that hostPath is root-owned. `<backup_path>` is the env setting `backup_path`. Password files are mode `0600` and are not printed. `sops` decrypts with `SOPS_AGE_KEY_FILE` when that is set, otherwise with the default age key path.
 
@@ -336,7 +336,7 @@ KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl -n platform-backups create job --fr
 KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl -n platform-backups wait --for=condition=complete job/restic-password-rotation --timeout=600s
 ```
 
-VolSync has no on-demand backup. Do not set `trigger.manual`. After the hashes match, pick one repository that step 1 already listed, other than `host-etcd-snapshots`. Its directory is `<backup_path>/restic/ns-<namespace>/pvc-<pvc>`, and its ReplicationSource is `<pvc>` in that namespace. Record `status.lastSyncTime`. Wait until that field is a later time. If a sync was already running when the Secret changed, wait for one more change, so the mover started after the hash matched. The mover reads Secret `restic-<pvc>`. That later sync is the proof VolSync is using the new password on that existing repository. `make verify` is not this proof. Its backup freshness check only asks whether the last sync falls inside the schedule window, and a sync from before the change can still pass.
+VolSync has no on-demand backup. Do not set `trigger.manual`. After the hashes match, pick one repository that step 1 already listed, other than `host-etcd-snapshots`. Its directory is `<backup_path>/restic/ns-<namespace>/pvc-<pvc>`, and its ReplicationSource is `<pvc>` in that namespace. Record `status.lastSyncTime`. Wait until that field is a later time. If a sync was already running when the Secret changed, wait for one more change, so the mover started after the hash matched. The mover reads Secret `restic-<pvc>`. That later sync is the proof VolSync is using the new password on that existing repository. `jarvis verify` is not this proof. Its backup freshness check only asks whether the last sync falls inside the schedule window, and a sync from before the change can still pass.
 
 ```bash
 KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl -n <namespace> get replicationsource <pvc> -o jsonpath='{.status.lastSyncTime}{"\n"}'
@@ -374,6 +374,7 @@ Credentials: the local password is `RESTIC_PASSWORD` from `backups-restic` for c
 
 - `RESTIC_REPOSITORY`: the off-host prefix, ending in `/`, for example `rest:http://<user>:<password>@<host>:8000/` (`https` also works), or `s3:https://<endpoint>/<bucket>/`. `sftp:` is not supported.
 - rest-server setup: one rest-server per env, run without `--private-repos` (it serves only two path levels, and the user-name level would break `ns-<ns>/pvc-<pvc>`). `RESTIC_REPOSITORY` is the server root ending in `/`. Append-only mode is fine because the copy never forgets or prunes.
+- The target is the owner's, outside core: nothing in core installs or runs it. Give its rest-server a binary of its own at a path its service owns (or a container image), not a controller's toolchain copy: the jarvis CLI's tools move with every core release and live under version-named paths, so a service started from one stops starting after an upgrade.
 - `RESTIC_PASSWORD`: the off-host restic password. It is not the local one.
 - The backend's own variables: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for `s3:`; `RESTIC_REST_USERNAME` and `RESTIC_REST_PASSWORD` for `rest:` when the login is not in the URL.
 - The Secret is read only as environment variables; nothing is mounted from it.
@@ -383,15 +384,15 @@ Turn it on (owner-run, needs the age public key only):
 
 1. Set up the target: an empty bucket or a rest-server that only this env writes, and a login for it.
 2. Write a mode `0600` Secret manifest outside the repo: `kind: Secret`, `metadata.name: backups-offsite`, `metadata.namespace: platform-backups`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, and the `stringData` keys above. Generate the off-host password new (`openssl rand -base64 32`).
-3. `make encrypt ENV=<env> NAME=backups-offsite FILE=<manifest>`, then delete the manifest.
-4. List `offsite-backup-copy` under `features` in `envs/<env>/values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`, commit, and push.
+3. `jarvis encrypt --env <env> --name backups-offsite <manifest>`, then delete the manifest.
+4. List `offsite-backup-copy` under `features` in `envs/<env>/values/switches.yaml`, run `jarvis render --env <env>`, commit, and push.
 5. After Flux applies it: `kubectl -n platform-backups create job --from=cronjob/restic-offsite restic-offsite-first`, wait for it to complete, and read its log: one `PASS` line per repository. `restic snapshots` against the target lists each repository.
 
 Keep-safe: the off-host restic password goes on the owner's offline keep-safe list (`envs/<env>/secrets/README.md`). The sealed copy needs the age key, so a lost controller and a lost age key otherwise lose the off-host copy too.
 
 #### Restore from the off-host copy into the drill namespace
 
-Owner-run. It copies one off-host repository back to the local drill repository `ns-platform-drill/pvc-drill`, then restores it with `make restore`. Run it only when `make drill` is not running and `platform-drill` does not exist.
+Owner-run. It copies one off-host repository back to the local drill repository `ns-platform-drill/pvc-drill`, then restores it with `jarvis restore`. Run it only when `jarvis drill` is not running and `platform-drill` does not exist.
 
 1. Create namespace `platform-drill` and PVC `drill` in it, annotated `backup: paused`, with the size and storage class of the PVC being restored.
 2. Apply this Job with `<image>` from CronJob `restic-offsite`, `<backup_path>` from the env, and `<source>` the repository path such as `ns-<namespace>/pvc-<pvc>`:
@@ -446,11 +447,11 @@ spec:
           hostPath: {path: <backup_path>/restic, type: Directory}
 ```
 
-3. When its log says `PASS`, delete the Job and run `make restore ENV=<env> APP=platform-drill NODE=<node>`.
+3. When its log says `PASS`, delete the Job and run `jarvis restore --env <env> --app platform-drill --node <node>`.
 4. Mount PVC `drill` in a short-lived pod and compare its files with the source volume.
-5. `make drill-cleanup ENV=<env>` removes the namespace and `ns-platform-drill/pvc-drill`.
+5. `jarvis drill --cleanup-only --env <env>` removes the namespace and `ns-platform-drill/pvc-drill`.
 
-How to tell it worked: `PASS <source>` from the Job, then `PASS restore platform-drill/drill snapshot <id>` and exit 0 from `make restore`, and the files match.
+How to tell it worked: `PASS <source>` from the Job, then `PASS restore platform-drill/drill snapshot <id>` and exit 0 from `jarvis restore`, and the files match.
 
 ## Limits
 
@@ -459,9 +460,9 @@ How to tell it worked: `PASS <source>` from the Job, then `PASS restore platform
 - While the rest-server's data sits on the same disk as the k3s snapshot files, the etcd restic copy adds retention and dedup, not disk-failure protection.
 - There is no on-demand backup. The policy does not set `trigger.manual`. VolSync ignores the schedule while `trigger.manual` is set.
 - Restore uses no VolumeSnapshot, volume populator, or snapshot class.
-- etcd cluster-reset is not a make target and is not part of the drill.
+- etcd cluster-reset is not a jarvis command and is not part of the drill.
 - An older snapshot that exists only in the restic copy has no owner-run path yet.
 - App isolation is at the rest-server login: both servers run as root on one hostPath, so isolation holds as long as neither process is compromised. Core is trusted the other way: core's login on `restic` (no `--private-repos`) can delete `ns-app-*` files, though it cannot decrypt them.
-- A retired app's repositories left on disk make `restic-check` fail, so `make verify`'s repository check fails until they are removed (App credentials, Retire). An app's mover still runs privileged in its own namespace. App repositories have no size cap, and nothing retires them automatically.
+- A retired app's repositories left on disk make `restic-check` fail, so `jarvis verify`'s repository check fails until they are removed (App credentials, Retire). An app's mover still runs privileged in its own namespace. App repositories have no size cap, and nothing retires them automatically.
 - An app login can forget and prune its own repositories (no `--append-only`), the same as core's.
 - Kyverno's background controller can read every Secret, app credentials included, as it already reads `backups-restic`.

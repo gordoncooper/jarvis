@@ -1,7 +1,7 @@
-# The jarvis package: the Python behind core's tools, checks, schema and verify. It is not
-# published; `make deps` installs it editable into the repo's .venv with uv (uv.lock pins every
-# package with hashes; Renovate updates pyproject.toml and uv.lock together). A core release is
-# its git tag (CHANGELOG.md), so the version here never moves.
+# The jarvis package: the jarvis CLI and the Python behind it, its checks, schema and verify. It
+# is not published; `make deps` installs it editable into the repo's .venv with uv (uv.lock pins
+# every package with hashes; Renovate updates pyproject.toml and uv.lock together). A core release
+# is its git tag (CHANGELOG.md), so the version here never moves.
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"
@@ -17,8 +17,11 @@ dependencies = [
   "bcrypt==5.0.0",
 ]
 
+[project.scripts]
+jarvis = "jarvis.cli.main:main"
+
 [dependency-groups]
-# Ansible, for make site and the role tests.
+# Ansible, for jarvis site and the role tests.
 ops = [
   "ansible==14.6.0",
   "ansible-core==2.21.6",
@@ -40,20 +43,7 @@ module-root = ""
 target-version = "py312"
 line-length = 120
 # The extensionless commands, which ruff would not find by suffix.
-extend-include = [
-  "ci/e2e/make-env",
-  "ci/release-notes",
-  "ci/select-tests",
-  "tools/age-key-check",
-  "tools/app-check",
-  "tools/bootstrap-secrets",
-  "tools/drill",
-  "tools/pin-check",
-  "tools/prep-node",
-  "tools/restore",
-  "tools/encrypt",
-  "tools/verify/run",
-]
+extend-include = ["ci/e2e/make-env", "ci/release-notes", "ci/select-tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -48,29 +47,36 @@ def test_a_single_failing_check_fails_the_run(tmp_path: Path) -> None:
     assert "check failed: last" in proc.stderr
 
 
-def test_run_env_checks_runs_every_env_check_against_instance(tmp_path: Path) -> None:
-    """One entry point runs all env-level checks on INSTANCE, names each failure, and fails."""
-    names = ("env-schema", "addons", "flux-identity", "flux-prune", "flux-substitute", "manifest-lint", "secret-scan")
-    root = _repo(tmp_path, {name: 1 if name == "flux-prune" else 0 for name in names})
-    shutil.copy(REPO_ROOT / "ci" / "run-env-checks", root / "ci" / "run-env-checks")
-    for name in names:
-        check = root / "ci" / "checks" / name
-        check.write_text(
-            f'#!/usr/bin/env bash\necho "ran-{name} on $INSTANCE"\n'
-            f"exit {1 if name == 'flux-prune' else 0}\n",
-            encoding="utf-8",
-        )
-    proc = subprocess.run(
-        ["bash", str(root / "ci" / "run-env-checks")],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "INSTANCE": "/instance-fixture"},
-    )
-    assert proc.returncode != 0
-    assert all(f"ran-{name} on /instance-fixture" in proc.stdout for name in names)
-    assert "FAIL flux-prune" in proc.stderr
-    assert "FAIL env-schema" not in proc.stderr
+def test_validate_runs_every_env_check_and_names_each_failure(tmp_path: Path, monkeypatch, capsys) -> None:
+    """jarvis validate runs every env-level check on the instance, names each failure, and fails."""
+    from jarvis.env import validate
+
+    ran: list[tuple[str, Path]] = []
+
+    def check(name: str):
+        def run(instance: Path) -> list[str]:
+            ran.append((name, instance))
+            return ["it broke"] if name == "flux-prune" else []
+
+        return run
+
+    monkeypatch.setattr(validate, "CHECKS", {name: check(name) for name in validate.CHECKS})
+    assert validate.run(tmp_path) == 1
+    assert ran == [(name, tmp_path) for name in validate.CHECKS]
+    out = capsys.readouterr().out
+    assert "FAIL flux-prune\n  it broke" in out
+    assert "PASS env-schema" in out
+
+
+def test_each_env_check_is_a_rule_check_core_runs_by_name() -> None:
+    """Rule: every check jarvis validate runs is also ci/checks/<name>, so core's CI runs the same code."""
+    from jarvis.env import validate
+
+    listed = (REPO_ROOT / "ci" / "rule-checks.txt").read_text(encoding="utf-8").split()
+    for name in validate.CHECKS:
+        assert name in listed, name
+        script = (REPO_ROOT / "ci" / "checks" / name).read_text(encoding="utf-8")
+        assert f"python3 -m jarvis.env.validate --only {name}" in script, name
 
 
 def test_all_passing_checks_pass_the_run(tmp_path: Path) -> None:

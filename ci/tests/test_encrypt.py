@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import shlex
 import shutil
@@ -13,14 +14,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT, load_tool
-
-ENCRYPT = REPO_ROOT / "tools" / "encrypt"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 
 
 def _load_encrypt():
-    return load_tool("encrypt_tool", ENCRYPT)
+    return importlib.import_module("jarvis.secrets.encrypt")
 
 
 def _require_tool(name: str) -> str:

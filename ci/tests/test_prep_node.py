@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import subprocess
@@ -11,9 +12,7 @@ from pathlib import Path
 import pytest
 from conftest import require_cli
 
-from support import REPO_ROOT, _rename_copied_env, load_tool
-
-SCRIPT = REPO_ROOT / "tools" / "prep-node"
+from support import REPO_ROOT, _rename_copied_env
 
 _HOSTS = """\
 # inventory header
@@ -48,7 +47,7 @@ backup_path: /var/lib/jarvis/backup
 
 
 def _load():
-    return load_tool("prep_node", SCRIPT)
+    return importlib.import_module("jarvis.node.prep")
 
 
 def test_env_update_renames_host_and_keeps_comments(tmp_path: Path) -> None:
@@ -91,7 +90,7 @@ def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
 
     module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
 
-    from jarvis.lib.render_cluster_vars_configmap import render_document
+    from jarvis.render.cluster_vars import render_document
 
     rendered = render_document(cluster)
     assert "backup_path: /var/lib/jarvis/backup" in rendered
@@ -219,7 +218,7 @@ def test_unresolvable_host_exits_before_any_change() -> None:
     )
 
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--env", "env-00", "--host", host, "--login-user", "tester"],
+        [sys.executable, "-m", "jarvis.node.prep", "--env", "env-00", "--host", host, "--login-user", "tester"],
         cwd=REPO_ROOT,
         input="\n",
         capture_output=True,
@@ -249,7 +248,7 @@ def test_resolved_host_missing_from_inventory_exits_before_ssh() -> None:
     before_ssh = _ssh_snapshot()
 
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--env", "env-00", "--host", "localhost", "--login-user", "tester"],
+        [sys.executable, "-m", "jarvis.node.prep", "--env", "env-00", "--host", "localhost", "--login-user", "tester"],
         cwd=REPO_ROOT,
         input="\n",
         capture_output=True,

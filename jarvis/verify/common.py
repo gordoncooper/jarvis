@@ -10,7 +10,7 @@ from subprocess import CompletedProcess
 from typing import NoReturn
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from jarvis.lib.env import json_object
+from jarvis.env.runtime import json_object
 
 Kubectl = Callable[..., CompletedProcess[str]]
 # (host, ca_file[, address]): an address connects there in place of resolving host.

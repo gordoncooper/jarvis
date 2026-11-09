@@ -395,7 +395,7 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
     msg = "\n".join(excinfo.value.messages)
     assert "cluster-vars-configmap.yaml" in msg
     assert "re-render" in msg
-    assert "tools/render" in msg
+    assert "jarvis render" in msg
 
 
 _OPTIONAL_CLUSTER_KEYS = (
@@ -834,8 +834,8 @@ def _copy_flux_entry(env: Path) -> None:
 
 
 def _render_core_only(env: Path, *features: str) -> None:
-    from jarvis.lib import apps as _apps
-    from jarvis.lib import switches as _switches
+    from jarvis.apps import values as _apps
+    from jarvis.env import switches as _switches
 
     data = {"features": list(features), "addons": [], "apps": []}
     (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
@@ -877,61 +877,14 @@ def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Pa
 
 def test_cli_requires_env() -> None:
     commands = (
-        [sys.executable, "tools/bootstrap-secrets"],
-        [sys.executable, "tools/encrypt", "--name", "example"],
-        [sys.executable, "tools/render"],
+        [sys.executable, "jarvis/secrets/mint.py"],
+        [sys.executable, "jarvis/secrets/encrypt.py", "--name", "example"],
+        [sys.executable, "-m", "jarvis.render.env"],
     )
     for cmd in commands:
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         assert proc.returncode != 0, cmd
         assert "--env" in proc.stderr + proc.stdout
-
-
-def test_make_targets_require_env() -> None:
-    env = os.environ.copy()
-    env.pop("ENV", None)
-    commands = (
-        ["make", "bootstrap-secrets"],
-        ["make", "encrypt", "NAME=example"],
-        ["make", "verify"],
-        ["make", "drill"],
-        ["make", "drill-cleanup"],
-        ["make", "site"],
-    )
-    for cmd in commands:
-        proc = subprocess.run(
-            cmd, cwd=REPO_ROOT, capture_output=True, text=True, env=env
-        )
-        assert proc.returncode != 0, cmd
-        assert "ENV is required" in proc.stderr
-
-
-def _run_site(tmp_path, *extra: str):
-    log, stub = tmp_path / "ap.log", tmp_path / "ansible-playbook"
-    log.unlink(missing_ok=True)
-    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"${CALL_LOG}\"\n")
-    stub.chmod(0o755)
-    # A throwaway VENV whose python is this interpreter, so the test needs no repo .venv.
-    venv = tmp_path / "venv"
-    (venv / "bin").mkdir(parents=True, exist_ok=True)
-    (venv / "bin" / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
-    (venv / "bin" / "python").chmod(0o755)
-    env = os.environ.copy()
-    env["CALL_LOG"] = str(log)
-    for key in ("ENV", "TAGS", "LIMIT", "CHECK", "VENV", "INSTANCE"):
-        env.pop(key, None)
-    proc = subprocess.run(
-        ["make", "site", f"ANSIBLE_PLAYBOOK={stub}", f"VENV={venv}", *extra],
-        cwd=REPO_ROOT, capture_output=True, text=True, env=env,
-    )
-    return proc, log.read_text() if log.exists() else ""
-
-
-def test_make_site_names_a_missing_venv(tmp_path) -> None:
-    """A VENV without bin/python fails with the make deps hint and runs nothing."""
-    proc, recorded = _run_site(tmp_path, "ENV=env-00", f"VENV={tmp_path / 'nope'}")
-    assert proc.returncode != 0 and recorded == ""
-    assert "make deps" in proc.stderr and "VENV=" in proc.stderr
 
 
 def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
@@ -945,19 +898,27 @@ def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
     assert "creation rule" in str(excinfo.value)
 
 
-def test_make_site_schema_error_skips_playbook(tmp_path) -> None:
-    """A schema error skips ansible-playbook."""
-    proc, recorded = _run_site(tmp_path, "ENV=missing-env")
-    assert proc.returncode != 0 and recorded == "" and "unknown env" in proc.stdout + proc.stderr
-    proc, recorded = _run_site(tmp_path, "ENV=../etc")
-    assert proc.returncode != 0 and recorded == "" and "invalid env name" in proc.stdout + proc.stderr
+def _run_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> tuple[int, list[str]]:
+    """jarvis site with a stub ansible-playbook first on PATH; returns its exit code and the stub's argv."""
+    from jarvis.node import site
+
+    log = tmp_path / "ap.log"
+    log.unlink(missing_ok=True)
+    stub = tmp_path / "bin" / "ansible-playbook"
+    stub.parent.mkdir(exist_ok=True)
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"${CALL_LOG}\"\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("CALL_LOG", str(log))
+    monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("INSTANCE", raising=False)
+    code = site.main(["--env", "env-00", *args])
+    return code, log.read_text().splitlines() if log.exists() else []
 
 
-def test_make_site_passes_inventories_tags(tmp_path) -> None:
-    """A valid env passes -i hosts then roles, -e, TAGS, LIMIT, and CHECK."""
-    proc, recorded = _run_site(tmp_path, "ENV=env-00")
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    args = recorded.splitlines()
+def test_site_passes_inventories_tags_limit_and_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid env passes -i hosts then roles, -e, --tags, --limit, and --check --diff."""
+    code, args = _run_site(tmp_path, monkeypatch)
+    assert code == 0
     assert args[1] == "site.yml"
     dash_i = [i for i, a in enumerate(args) if a == "-i"]
     assert args[dash_i[0] + 1] == f"{REPO_ROOT}/envs/env-00/inventory/hosts.yml"
@@ -966,16 +927,24 @@ def test_make_site_passes_inventories_tags(tmp_path) -> None:
     assert f"jarvis_instance_root={REPO_ROOT}" in args
     assert "--tags" not in args and "--limit" not in args and "--check" not in args
     assert "--diff" not in args
-    flagged, recorded = _run_site(
-        tmp_path, "ENV=env-00", "TAGS=base-os,k3s", "LIMIT=cp-1", "CHECK=1"
-    )
-    assert flagged.returncode == 0, flagged.stdout + flagged.stderr
-    args = recorded.splitlines()
+    code, args = _run_site(tmp_path, monkeypatch, "--tags", "base-os,k3s", "--limit", "cp-1", "--check")
+    assert code == 0
     assert args[args.index("--tags") + 1] == "base-os,k3s"
     assert args[args.index("--limit") + 1] == "cp-1" and "--check" in args
     assert "--diff" in args
-    bad, recorded = _run_site(tmp_path, "ENV=env-00", "CHECK=true")
-    assert bad.returncode != 0 and recorded == "" and "CHECK must be empty or 1" in bad.stderr
+
+
+def test_site_refuses_an_invalid_env_before_ansible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Rule: the env schema runs first; an invalid env runs no playbook and exits 3."""
+    from jarvis.node import site
+
+    def invalid(root, name):
+        raise ValidationError(["envs/env-00: broken"])
+
+    monkeypatch.setattr(site, "validate_one_env", invalid)
+    code, args = _run_site(tmp_path, monkeypatch)
+    assert code == 3 and args == []
+    assert "REFUSE site" in capsys.readouterr().out
 
 
 def test_envs_limits_the_env_checks_to_the_named_envs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -1051,7 +1020,7 @@ def test_root_kustomization_sets_only_its_own_jarvis_env(tmp_path: Path, post_bu
 
 def test_k3s_release_is_cores_unless_the_env_sets_both_keys(tmp_path: Path) -> None:
     """Rule: an env runs core's k3s release; k3s_version and k3s_sha256 override it together."""
-    from jarvis.lib import k3s
+    from jarvis.env import k3s
 
     cv = _valid_cluster_vars()
     cv.pop("k3s_version", None)

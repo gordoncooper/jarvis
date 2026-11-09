@@ -7,20 +7,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-_PRODUCT_ROOTS = (
-    "tools/",
-    "infra/",
-    "core/",
-    "addons/",
-    "apps/",
-    "envs/",
-    "schema/",
-    # The jarvis package's product half; jarvis/checks/ is CI's own code.
-    "jarvis/__init__.py",
-    "jarvis/lib/",
-    "jarvis/schema/",
-    "jarvis/verify/",
-)
+_PRODUCT_ROOTS = ("infra/", "core/", "addons/", "apps/", "envs/", "schema/", "jarvis/")
+# The jarvis package is product code, except jarvis/checks/: CI's own code.
+_CI_ROOTS = ("jarvis/checks/",)
 
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _IMPORT = re.compile(r"(?:^|\s)(?:import\s+ci\b|from\s+ci\b)")
@@ -40,7 +29,7 @@ def scan_product_ci(repo_root: Path | str) -> list[ProductCiViolation]:
     root = Path(repo_root).resolve()
     violations: list[ProductCiViolation] = []
     for rel_path in _git_tracked_files(root):
-        if not rel_path.startswith(_PRODUCT_ROOTS):
+        if not rel_path.startswith(_PRODUCT_ROOTS) or rel_path.startswith(_CI_ROOTS):
             continue
         abs_path = root / rel_path
         if not abs_path.is_file():

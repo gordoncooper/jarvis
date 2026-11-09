@@ -2,7 +2,7 @@
 # k3s_binary_path: k3s and flux-operator. k3s_kubeconfig_path: k3s, kubeconfig, and flux-operator.
 # k3s_data_dir: k3s and node-disk.
 # jarvis_instance_root (on the controller): the checkout that holds envs/<env> and .sops.yaml.
-# make site passes it from INSTANCE; the default is this product checkout.
+# jarvis site passes the instance repo; the default is this product checkout.
 # jarvis_env_dir, flux_instance_file, flux_sync_file: preflight, k3s, and flux-operator.
 k3s_binary_path: /usr/local/bin/k3s
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml

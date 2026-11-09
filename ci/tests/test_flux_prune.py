@@ -21,7 +21,7 @@ def test_addon_secret_without_the_annotation_is_reported(tmp_path) -> None:
 
     import yaml
 
-    from jarvis.lib.sops import encrypt_secret_to_file
+    from jarvis.secrets.sops import encrypt_secret_to_file
     from support import bootstrap_example_copy
 
     copy_env = bootstrap_example_copy(tmp_path)

@@ -90,8 +90,8 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf-8",
     )
     python = sys.executable
-    _run(python, "tools/render", "--env", args.env)
-    _run(python, "tools/bootstrap-secrets", "--env", args.env)
+    _run(python, "-m", "jarvis.render.env", "--env", args.env)
+    _run(python, "-m", "jarvis.secrets.mint", "--env", args.env)
     _run(python, "-c", "from jarvis.schema.env import main; raise SystemExit(main())", "--env", args.env)
     return 0
 

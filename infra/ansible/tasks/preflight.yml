@@ -7,7 +7,7 @@
     fail_msg: >-
       control_plane has {{ groups['control_plane'] | default([]) | length }} hosts;
       expected exactly one.
-      Pass both inventories with make site ENV=<env>
+      Pass both inventories with jarvis site --env <env>
       (hosts file, then infra/inventory/roles).
 
 - name: Collect host architecture

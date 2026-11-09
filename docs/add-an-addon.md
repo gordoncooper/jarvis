@@ -12,22 +12,22 @@ An add-on is an optional piece Jarvis ships on top of core. Each env turns it on
    - when it has Secrets, a second Kustomization `addon-<name>-secrets` with `path: ./envs/${jarvis_env}/secrets/<namespace>` and `decryption` with `sops-age`.
 3. Put its objects under `addons/<name>/<dir>/`: namespaced, in its own namespaces, with no RBAC or Flux objects. An Ingress follows [core/platform/testapp](../core/platform/testapp/CONTRACT.md): host `<name>.${dns_suffix}`, entrypoint `websecure`, no TLS secret.
 4. If it fills a slot, label its Kustomizations `addons.jarvis.io/slot: <slot>` and meet `addons/slots/<slot>/CONTRACT.md`. Depend on slots and platform contracts, never on another add-on by name. Core never names your add-on.
-5. Optional standing checks: `addons/<name>/verify.py` registers a component named `<name>` with `verify.registry.register`. `make verify` runs it only on envs that enable the add-on.
+5. Optional standing checks: `addons/<name>/verify.py` registers a component named `<name>` with `verify.registry.register`. `jarvis verify` runs it only on envs that enable the add-on.
 6. Run `bash ci/run-checks` and the tests. `ci/checks/addons` reports every rule the add-on breaks.
 
 ## Turn it on in an env
 
 In the env's repository:
 
-1. Add the add-on under `addons` in `envs/<env>/values/switches.yaml`, then run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`:
+1. Add the add-on under `addons` in `envs/<env>/values/switches.yaml`, then run `jarvis render --env <env>`:
 
    ```yaml
    addons:
      - <name>
    ```
 
-2. Seal each Secret it reads, one folder per namespace, in the same commit: the add-on's `-secrets` Kustomization is not Ready until its folder holds a file. `make encrypt ENV=<env> NAMESPACE=<namespace> NAME=<name>-<purpose> FILE=<manifest> INSTANCE=<path>`. The manifest carries `kustomize.toolkit.fluxcd.io/prune: disabled`.
-3. Run `INSTANCE=<path> bash ci/run-env-checks`, then commit and push.
+2. Seal each Secret it reads, one folder per namespace, in the same commit: the add-on's `-secrets` Kustomization is not Ready until its folder holds a file. `jarvis encrypt --env <env> --namespace <namespace> --name <name>-<purpose> <manifest>`. The manifest carries `kustomize.toolkit.fluxcd.io/prune: disabled`.
+3. Run `jarvis validate`, then commit and push.
 
 ## Turn it off
 

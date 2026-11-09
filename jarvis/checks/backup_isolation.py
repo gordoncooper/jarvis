@@ -16,8 +16,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.backups import app_credentials as _app_backups
 from jarvis.checks.manifests import build_flux_path, kustomize_build, pod_spec
-from jarvis.lib import app_backups as _app_backups
 from jarvis.schema.env import env_dirs
 
 CORE_SECRET = "backups-restic"

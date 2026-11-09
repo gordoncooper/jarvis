@@ -1,4 +1,4 @@
-"""make verify's hosted-app component, against a stubbed kubectl (read-only calls only)."""
+"""jarvis verify's hosted-app component, against a stubbed kubectl (read-only calls only)."""
 
 from __future__ import annotations
 

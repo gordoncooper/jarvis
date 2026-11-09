@@ -13,5 +13,5 @@ _apps_repo_prepare() {
     echo "env check: APPS_REPO must not point at core test fixtures when INSTANCE is set" >&2
     return 1
   fi
-  PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m jarvis.checks.apps_checkout require
+  PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m jarvis.apps.checkout require
 }

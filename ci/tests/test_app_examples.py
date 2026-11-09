@@ -2,7 +2,7 @@
 apps repository owns them and checks its own with the app-check Action) against jarvis's own tools.
 
 env-00 lists hello-web, notes and lan-demo with lan-demo's exception line, so:
-- tools/app-check passes each folder;
+- jarvis/apps/check.py passes each folder;
 - the env's wiring renders, matches what is committed, and env-schema passes it;
 - each app's deploy/ objects pass the admission policies with the env's grants;
 - lan-demo's LAN Service is refused without the env's line;
@@ -20,9 +20,9 @@ import pytest
 import test_app_admission as admission
 import yaml
 
-from jarvis.lib import apps as _apps
-from jarvis.lib.app_file import check_folder
-from jarvis.lib.render_apps import render_env
+from jarvis.apps import values as _apps
+from jarvis.apps.app_file import check_folder
+from jarvis.render.apps import render_env
 from jarvis.schema import env as env_schema
 from support import REPO_ROOT, link_core_trees, set_switches
 
@@ -103,7 +103,7 @@ def test_app_check_repo_mode_checks_every_folder_but_the_excluded(tmp_path: Path
     (repo / ".github").mkdir()
 
     def run(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, str(REPO_ROOT / "tools" / "app-check"), "--repo", str(repo), *args],
+        return subprocess.run([sys.executable, "-m", "jarvis.apps.check", "--repo", str(repo), *args],
                               capture_output=True, text=True, check=False)
 
     refused = run()

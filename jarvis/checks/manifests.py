@@ -111,7 +111,7 @@ def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
         return _generated(target), None
     kustomize = shutil.which("kustomize")
     if kustomize is None:
-        return [], "kustomize not found on PATH (run make deps)"
+        return [], "kustomize not found on PATH (run jarvis doctor)"
     proc = subprocess.run(
         [kustomize, "build", "--load-restrictor", "LoadRestrictionsNone", str(root / rel)],
         capture_output=True,

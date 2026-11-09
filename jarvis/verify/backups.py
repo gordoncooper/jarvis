@@ -6,10 +6,10 @@ import base64
 import binascii
 from datetime import UTC, datetime, timedelta
 
-from jarvis.lib import apps as _apps
-from jarvis.lib import backup_selection as _backup_selection
-from jarvis.lib.app_backups import APPS_SERVER, rest_username
-from jarvis.lib.env import json_object, not_found, reason
+from jarvis.apps import values as _apps
+from jarvis.backups import selection as _backup_selection
+from jarvis.backups.app_credentials import APPS_SERVER, rest_username
+from jarvis.env.runtime import json_object, not_found, reason
 from jarvis.schema.env import app_registrations, apps_server_listed, backup_required_registrations, offsite_copy_listed
 from jarvis.verify.common import (
     CheckError,

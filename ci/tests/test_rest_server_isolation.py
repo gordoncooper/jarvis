@@ -8,6 +8,7 @@ Throwaway passwords; nothing is printed.
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import secrets
@@ -20,7 +21,7 @@ import pytest
 import yaml
 from conftest import require_cli
 
-from support import REPO_ROOT, load_tool
+from support import REPO_ROOT
 
 APPS_MANIFEST = REPO_ROOT / "core/feature/apps-backup-server/rest-server-apps.yaml"
 
@@ -62,7 +63,7 @@ def servers(tmp_path: Path):
     image = re.compile(r"image: restic/rest-server:\S+")
     core_manifest = REPO_ROOT / "core/platform/backups/rest-server.yaml"
     assert image.findall(APPS_MANIFEST.read_text(encoding="utf-8")) == image.findall(core_manifest.read_text(encoding="utf-8"))
-    tool = load_tool("bootstrap_secrets_isolation", REPO_ROOT / "tools" / "bootstrap-secrets")
+    tool = importlib.import_module("jarvis.secrets.mint")
     data, creds, auth = tmp_path / "data", tmp_path / "credentials", tmp_path / "auth"
     for folder in (data, creds, auth):
         folder.mkdir()

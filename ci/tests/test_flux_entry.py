@@ -28,8 +28,8 @@ from ansible_role_proof import (
     standard_flux_kustomization_paths,
 )
 
-from jarvis.lib.k3s import release as k3s_release
-from jarvis.lib.render_cluster_vars_configmap import (
+from jarvis.env.k3s import release as k3s_release
+from jarvis.render.cluster_vars import (
     CLUSTER_VARS_PUBLISHED,
     cluster_vars_configmap,
     render_document,
@@ -257,7 +257,7 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
     """The env's platform-configs path is core/platform/configs plus that env's SOPS secrets,
     and the opt-in off-host copy and App DNS. Its components (app hosting, app backup registrations) are
     env-schema's."""
-    from jarvis.lib.switches import APP_DNS_DIR
+    from jarvis.env.switches import APP_DNS_DIR
     from jarvis.schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
 
     base = f"envs/{env}/flux/platform-configs"

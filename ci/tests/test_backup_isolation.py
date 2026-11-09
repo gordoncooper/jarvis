@@ -8,6 +8,7 @@ apps server runs --private-repos; an app credential is sealed only in its own na
 from __future__ import annotations
 
 import copy as copy_module
+import importlib
 import shutil
 from pathlib import Path
 
@@ -16,7 +17,7 @@ import yaml
 
 from jarvis.checks.backup_isolation import _render_violations, scan_backup_isolation
 from jarvis.schema.env import ValidationError, validate_one_env
-from support import REPO_ROOT, ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app
+from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app
 
 APP = "app-notes"
 
@@ -176,7 +177,7 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
 
     original = component.read_text(encoding="utf-8")
     component.write_text(original.replace("name: restic-apps", "name: restic"), encoding="utf-8")
-    assert "differs from the registration make bootstrap-secrets APP=app-notes writes" in _schema_errors(copy)
+    assert "differs from the registration jarvis secrets --app app-notes writes" in _schema_errors(copy)
     component.write_text(original, encoding="utf-8")
 
     _set_components(copy, [f"backups/{APP}"], apps_server=False)
@@ -200,19 +201,17 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     assert "an app credential is sealed only in its own folder" in errors
     shutil.move(moved, sealed)
 
-    from jarvis.lib.render_backup_selection import render_env
+    from jarvis.render.backup_selection import render_env
 
     render_env(copy.env_dir, copy.root)
     validate_one_env(copy.root, copy.name)
 
 
-def test_bootstrap_app_mints_once_and_refuses_a_non_app_name(app_copy: ExampleCopy) -> None:
+def test_bootstrap_app_mints_once_and_refuses_a_non_app_name(app_copy: ExampleCopy, monkeypatch) -> None:
     """A second run changes nothing; a name outside app- is refused before any write."""
-    from support import load_tool
-
-    mod = load_tool("bootstrap_secrets_app_rerun", REPO_ROOT / "tools" / "bootstrap-secrets")
-    mod.REPO_ROOT = app_copy.root
-    mod._repo_root = lambda: app_copy.root
+    mod = importlib.import_module("jarvis.secrets.mint")
+    monkeypatch.setattr(mod, "REPO_ROOT", app_copy.root)
+    monkeypatch.setattr(mod, "_repo_root", lambda: app_copy.root)
     sealed = app_copy.env_dir / "secrets" / APP / f"backups-restic-{APP}.sops.yaml"
     before = sealed.read_bytes()
     assert mod.bootstrap_app(app_copy.name, APP, sops_bin=shutil.which("sops")) == []

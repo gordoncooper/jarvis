@@ -1,5 +1,5 @@
 """Hosted-app admission, offline: every rule in core/feature/app-hosting/policies against seeded
-good and bad objects, with the pinned kyverno CLI, and tools/app-check on the same objects.
+good and bad objects, with the pinned kyverno CLI, and jarvis/apps/check.py on the same objects.
 
 The namespaces are rendered from the real per-app wiring (core/feature/app-hosting/app) with the
 env's values, so app-grants sees the annotations the cluster gets. The CLI cannot run two parts
@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from jarvis.apps import values as _apps
+from jarvis.apps.app_file import check_folder
 from jarvis.checks.manifests import substitute
-from jarvis.lib import apps as _apps
-from jarvis.lib.app_file import check_folder
 from support import REPO_ROOT, kyverno_generated
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
@@ -556,7 +556,7 @@ def _apply(tmp_path: Path, policy: str, resource: dict, *, user: str | None = No
 
 @pytest.mark.parametrize("app", ["web-demo", "notes", "photos"])
 def test_app_check_passes_the_sample_apps(app: str) -> None:
-    """Rule: tools/app-check passes each sample app folder."""
+    """Rule: jarvis/apps/check.py passes each sample app folder."""
     assert check_folder(APPS / app) == []
 
 
@@ -620,7 +620,7 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
          "ingress-no-class", "ingress-middleware", "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
-    """Rule: tools/app-check fails, on the folder alone, each object the cluster refuses for the
+    """Rule: jarvis/apps/check.py fails, on the folder alone, each object the cluster refuses for the
     file's sake (the cases above)."""
     problems = check_folder(_folder(tmp_path, _ENV[app][0], [obj]))
     assert any(expected in problem for problem in problems), problems

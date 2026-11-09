@@ -215,7 +215,7 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         else set()
     )
     hosting = app_hosting_listed(root / "envs" / env)
-    from jarvis.lib import switches as _switches
+    from jarvis.env import switches as _switches
 
     listed = _switches.names(_switches.load(root / "envs" / env)[0], _switches.FEATURES)
     app_dns = (

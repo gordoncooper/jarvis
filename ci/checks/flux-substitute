@@ -1,21 +1,10 @@
 #!/usr/bin/env bash
 # CI rule check: every ${name} Flux substitutes is a key the env publishes.
+# The check itself lives in jarvis/env/validate.py, which jarvis validate runs on an instance.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
-
-python3 - <<'PY'
-from pathlib import Path
-
-from jarvis.checks.flux_substitute import format_violations, scan_flux_substitute
-from jarvis.schema.env import instance_root
-
-violations = scan_flux_substitute(instance_root(Path(".")))
-if violations:
-    for line in format_violations(violations):
-        print(line, flush=True)
-    raise SystemExit(1)
-PY
+exec python3 -m jarvis.env.validate --only flux-substitute

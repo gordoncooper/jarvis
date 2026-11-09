@@ -1,6 +1,0 @@
-#!/usr/bin/env python3
-"""Render every generated file of an env, or --check them (jarvis.lib.render)."""
-
-from jarvis.lib.render import main
-
-raise SystemExit(main())

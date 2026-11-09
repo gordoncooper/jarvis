@@ -21,13 +21,13 @@ App hosting's health checks are in its own contract, and the two backup pieces' 
 
 ## Config
 
-To enable a piece, list its name under `features` in `values/switches.yaml`, run `INSTANCE=<path> .venv/bin/python tools/render --env <env>`, then commit and push. `ci/checks/env-schema` fails an unknown name and a committed wiring that differs from the render. A new piece adds one row to `OPTIONAL_COMPONENTS` in `jarvis/lib/switches.py` and no bundle to any env.
+To enable a piece, list its name under `features` in `values/switches.yaml`, run `jarvis render --env <env>`, then commit and push. `ci/checks/env-schema` fails an unknown name and a committed wiring that differs from the render. A new piece adds one row to `OPTIONAL_COMPONENTS` in `jarvis/env/switches.py` and no bundle to any env.
 
 ### Observability
 
 Observability (metrics, logs, dashboards, uptime checks and alerts) is a feature, not an add-on. It stays off in an env until that env lists `observability` under `features`, by the same steps as above.
 
-It is not built yet. `observability` has no row in `OPTIONAL_COMPONENTS`, so env-schema and the render refuse the name today and no env can turn it on. The build adds that row and puts its files in `core/feature/observability/`. Core never depends on it: core's own health is `make verify`.
+It is not built yet. `observability` has no row in `OPTIONAL_COMPONENTS`, so env-schema and the render refuse the name today and no env can turn it on. The build adds that row and puts its files in `core/feature/observability/`. Core never depends on it: core's own health is `jarvis verify`.
 
 ## Proven by
 

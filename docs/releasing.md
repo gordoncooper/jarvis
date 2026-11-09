@@ -25,7 +25,7 @@ Core ships as tags (`v<major>.<minor>.<patch>`). An env runs exactly one: `core_
 1. Follow the release's **Upgrading** notes in the instance repository.
 2. Set `core_git_ref` and the core source's `spec.ref.name` to `refs/tags/<tag>`, and merge.
    env-schema checks the two match.
-3. Run operator commands from a core checkout of that tag (`git checkout <tag>`). `make site`,
-   `verify`, `drill` and `restore` refuse any other commit, uncommitted changes, or an env that
-   follows a branch (`tools/pin-check`). `ALLOW_UNPINNED=1` runs anyway, with a warning, for a
-   deliberate run from a branch.
+3. Nothing else: every jarvis command runs the release the env pins, from a cached checkout of
+   the tag when the installed CLI is not it, and refuses an env that follows a branch.
+   `jarvis --core <path>` runs a local checkout anyway, with a warning, for a deliberate run of
+   unreleased core.

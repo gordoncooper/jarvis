@@ -7,13 +7,14 @@ from __future__ import annotations
 import json
 import re
 from functools import cache
-from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as SchemaError
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schema"
+from jarvis.paths import PRODUCT_ROOT
+
+SCHEMA_DIR = PRODUCT_ROOT / "schema"
 CLUSTER_VARS = "cluster-vars"
 
 

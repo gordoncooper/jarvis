@@ -19,7 +19,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 2
-      # make verify allows this plus a margin after the scheduled time (jarvis/verify/backups.py).
+      # jarvis verify allows this plus a margin after the scheduled time (jarvis/verify/backups.py).
       activeDeadlineSeconds: 21600
       template:
         metadata:

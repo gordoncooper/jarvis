@@ -11,7 +11,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 
 ## Expects
 
-- Secret `cert-manager-ca` (`tls.crt` and `tls.key`) from `make bootstrap-secrets`. The public root is `envs/<env>/ca.crt`. The private key is not written there.
+- Secret `cert-manager-ca` (`tls.crt` and `tls.key`) from `jarvis secrets`. The public root is `envs/<env>/ca.crt`. The private key is not written there.
 - `dns_suffix` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode it.
 - Namespace `platform-cert-manager` from the cert-manager controller.
 
@@ -23,7 +23,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 
 - Helm chart `cert-manager` `v1.21.3` from `https://charts.jetstack.io`, installed into `platform-cert-manager`. `crds.enabled` is true. The chart's empty `clusterResourceNamespace` selects the release namespace.
 - Controller, webhook, cainjector, startupapicheck, and acmesolver images are `quay.io/jetstack/cert-manager-*` at chart appVersion `v1.21.3`, digest-pinned. Renovate updates the chart, the tags and the digests in one PR.
-- CA lifetime is 10 years, set when `bootstrap-secrets` generates the key. The leaf lifetime is cert-manager's default.
+- CA lifetime is 10 years, set when `jarvis secrets` generates the key. The leaf lifetime is cert-manager's default.
 - TLSStore name `default` is the one Traefik uses. The HelmChartConfig limits the default store to this namespace.
 
 ## Proven by
@@ -31,16 +31,16 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 - `ci/tests/test_cert_manager.py` (controller, issuer, wildcard, TLSStore).
 - `ci/tests/test_bootstrap_secrets.py` (public root, no key, no rewrite).
 - `ci/tests/test_traefik.py` (env `k3s_version` matches the checked line in the Traefik contract).
-- Certificate Ready and the chain to `ca.crt` are a post-merge drill (`make verify`).
+- Certificate Ready and the chain to `ca.crt` are a post-merge drill (`jarvis verify`).
 
 ## Operations
 
 ### Rotate the CA
 
-`bootstrap-secrets` keeps an existing `envs/<env>/ca.crt` and does not write a new one over it. Rotation deletes that file first. The private key is never written there. cert-manager v1.21.3 does not reissue a leaf when the issuer CA changes.
+`jarvis secrets` keeps an existing `envs/<env>/ca.crt` and does not write a new one over it. Rotation deletes that file first. The private key is never written there. cert-manager v1.21.3 does not reissue a leaf when the issuer CA changes.
 
 1. Delete `envs/<env>/secrets/cert-manager-ca.sops.yaml` and `envs/<env>/ca.crt`.
-2. From the repo root, run `make bootstrap-secrets ENV=<env>`.
+2. From the repo root, run `jarvis secrets --env <env>`.
 3. Commit the new secret and `envs/<env>/ca.crt`, and push to the branch `flux_git_ref` names. Flux syncs from that remote.
 4. Wait until Flux has applied Secret `platform-cert-manager/cert-manager-ca` and its `tls.crt` matches `ca.crt`.
 5. Secret `platform-cert-manager/wildcard-tls` (and `wildcard-apps-tls` with app hosting on) keeps serving the old leaf until cert-manager renews it (about day 60, the default). Those are the only leaves this CA signs today. Delete them so cert-manager issues new leaves. Each certificate is missing until its write finishes.

@@ -27,6 +27,8 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.apps import values as _apps
+from jarvis.apps.app_file import SHIPPED_KINDS
 from jarvis.checks.manifests import (
     env_flux_docs,
     flux_paths,
@@ -36,8 +38,6 @@ from jarvis.checks.manifests import (
     ref_of,
     substitute,
 )
-from jarvis.lib import apps as _apps
-from jarvis.lib.app_file import SHIPPED_KINDS
 from jarvis.schema.env import env_flux_dirs
 
 FLUX_NAMESPACE = "flux-system"

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
 import json
-import os
 import subprocess
 import zlib
 from collections.abc import Sequence
@@ -13,9 +13,7 @@ from subprocess import CompletedProcess
 import pytest
 import yaml
 
-from support import REPO_ROOT, load_tool
-
-restore_tool = load_tool("restore_tool", REPO_ROOT / "tools" / "restore")
+restore_tool = importlib.import_module("jarvis.backups.restore")
 
 
 def _completed(
@@ -290,27 +288,11 @@ def test_kubectl_is_bound_to_the_environment_file(monkeypatch) -> None:
 
 
 def test_restore_pauses_before_direct_destination(capsys) -> None:
-    env = os.environ.copy()
-    env.pop("APP", None)
-    missing = subprocess.run(
-        ["make", "restore"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert missing.returncode != 0
-    assert "ENV is required" in missing.stderr
-
-    missing_app = subprocess.run(
-        ["make", "restore", "ENV=env-00"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert missing_app.returncode != 0
-    assert "APP is required" in missing_app.stderr
+    for argv in (["--env", "env-00"], ["--env", "env-00", "--app", "demo", "--all"]):
+        with pytest.raises(SystemExit) as refused:
+            restore_tool.main(argv)
+        assert refused.value.code == 2
+    assert "one of the arguments --app --all is required" in capsys.readouterr().err
 
     long_name = "p" * 60
     assert restore_tool.job_name("drill") == "volsync-src-drill"
@@ -403,34 +385,6 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     )
     restored = {doc["metadata"]["namespace"] + "/" + doc["spec"]["restic"]["destinationPVC"] for doc in everyone.applied}
     assert restored == {"demo/drill", "other/keep"}
-
-
-@pytest.mark.parametrize(
-    "target",
-    [["restore", "ENV=env-00", "APP=demo"], ["restore-all", "ENV=env-00"]],
-)
-def test_make_forwards_node_only_when_set(target: list[str]) -> None:
-    """NODE=<node> reaches tools/restore as --node; make restore passes AS_OF as --as-of."""
-    env = {key: value for key, value in os.environ.items() if key not in {"NODE", "AS_OF"}}
-
-    def recipe(*extra: str) -> str:
-        proc = subprocess.run(
-            ["make", "-n", *target, *extra],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            env=env,
-            check=True,
-        )
-        # make -n prints the recipe, with its continuation lines, instead of running it.
-        assert "tools/restore" in proc.stdout
-        return proc.stdout
-
-    assert '--node "node-a"' in recipe("NODE=node-a")
-    assert "--node" not in recipe()
-    if target[0] == "restore":
-        assert '--as-of "2026-10-29T12:00:00Z"' in recipe("AS_OF=2026-10-29T12:00:00Z")
-        assert "--as-of" not in recipe()
 
 
 def _run(cluster: _Cluster, **kwargs: object) -> int:

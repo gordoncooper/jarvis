@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import shutil
 import signal
 import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -15,13 +17,11 @@ from subprocess import CompletedProcess
 import pytest
 import yaml
 
-from support import REPO_ROOT, load_tool
-
 PAYLOAD = b"fixture payload"
 SUM = hashlib.sha256(PAYLOAD.hex().encode()).hexdigest()
 OTHER = "b" * 64
 
-drill_tool = load_tool("drill_tool", REPO_ROOT / "tools" / "drill")
+drill_tool = importlib.import_module("jarvis.backups.drill")
 
 _DEDICATED_TOLERATION = {
     "key": "node-role.jarvis.io/dedicated",
@@ -393,7 +393,7 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     code, restores = _run(tmp_path, monkeypatch, cluster)
     assert code == 0
     assert restores == [
-        ["make", "restore", "ENV=env-test", "APP=platform-drill", "NODE=node-a"]
+        [sys.executable, "-m", "jarvis.backups.restore", "--env", "env-test", "--app", "platform-drill", "--node", "node-a"]
     ]
     etcd_pod = next(
         body
@@ -426,7 +426,7 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     ("cluster", "restore_rc", "message"),
     [
         (Cluster(reader_sum=OTHER), 0, "restored volume checksum mismatch"),
-        (Cluster(), 1, "make restore failed"),
+        (Cluster(), 1, "jarvis restore failed"),
         (Cluster(interrupt="keyboard"), 0, "interrupted"),
     ],
 )
@@ -452,7 +452,7 @@ def test_failure_and_interrupt_cleanup(
         (Cluster(hold=True), "backup rebuild hold is present"),
         (
             Cluster(namespace=True),
-            "run make drill-cleanup ENV=env-test first.",
+            "run jarvis drill --cleanup-only --env env-test first.",
         ),
     ],
 )
@@ -480,8 +480,8 @@ def test_cleanup_failure_prints_exact_env_bound_recovery(
     assert code != 0
     assert ("namespace", drill_tool.NAMESPACE) in cluster.deleted
     output = capsys.readouterr().out
-    assert "FAIL drill: make restore failed" in output
-    assert "RECOVERY make drill-cleanup ENV=env-test" in output
+    assert "FAIL drill: jarvis restore failed" in output
+    assert "RECOVERY jarvis drill --cleanup-only --env env-test" in output
 
 
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP])
@@ -603,8 +603,8 @@ def test_namespace_cleanup_timeout_is_bounded_and_preserves_original_error(
     )
     assert f"--timeout={drill_tool.DELETE_TIMEOUT_SECONDS}s" in namespace_delete
     output = capsys.readouterr().out
-    assert "FAIL drill: make restore failed" in output
-    assert "RECOVERY make drill-cleanup ENV=env-test" in output
+    assert "FAIL drill: jarvis restore failed" in output
+    assert "RECOVERY jarvis drill --cleanup-only --env env-test" in output
 
 
 @pytest.mark.parametrize(
@@ -622,7 +622,7 @@ def test_preflight_refuses_leftover_backup_namespace_drill_pods(
     assert code != 0
     assert restores == []
     assert (
-        "FAIL drill: run make drill-cleanup ENV=env-test first."
+        "FAIL drill: run jarvis drill --cleanup-only --env env-test first."
         in capsys.readouterr().out
     )
 
@@ -647,7 +647,7 @@ def test_preflight_refuses_leftover_repository_path_and_cleans_probe(
     assert mount == {"name": "data", "mountPath": "/data", "readOnly": True}
     assert probe["spec"]["volumes"][0]["hostPath"]["type"] == "Directory"
     assert (
-        "FAIL drill: run make drill-cleanup ENV=env-test first."
+        "FAIL drill: run jarvis drill --cleanup-only --env env-test first."
         in capsys.readouterr().out
     )
 
@@ -922,4 +922,4 @@ def test_second_signal_during_cleanup_preserves_original_exit_and_recovers(
     assert code == 128 + signal.SIGTERM
     output = capsys.readouterr().out
     assert "FAIL drill: interrupted by SIGTERM" in output
-    assert "RECOVERY make drill-cleanup ENV=env-test" in output
+    assert "RECOVERY jarvis drill --cleanup-only --env env-test" in output
