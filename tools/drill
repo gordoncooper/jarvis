@@ -47,8 +47,11 @@ HOLD_NAME = "backup-rebuild-hold"
 POLL_SECONDS = 2.0
 WAIT_SECONDS = 20 * 60
 DELETE_TIMEOUT_SECONDS = 60
-# The etcd pod prints this and the snapshot name when the restic copy does not hold it yet.
+# The etcd pod prints this and the snapshot name when the restic copy does not hold it yet: no
+# repository, no snapshot in it, or a latest snapshot without the newest file.
 NOT_COPIED = "ETCD-NOT-COPIED"
+# The etcd pod prints this when k3s has written no snapshot yet (a new cluster, before its first).
+NO_SNAPSHOT = "ETCD-NO-SNAPSHOT"
 Kubectl = Callable[..., CompletedProcess[str]]
 Restore = Callable[[Sequence[str]], CompletedProcess[str]]
 
@@ -315,8 +318,20 @@ for file in /snapshots/*; do
   [ -f "$file" ] || continue
   if [ -z "$latest" ] || [ "$file" -nt "$latest" ]; then latest="$file"; fi
 done
-[ -n "$latest" ]
+if [ -z "$latest" ]; then
+  printf '%s\n' "$2"
+  exit 3
+fi
 name=${latest##*/}
+# Not copied yet: no repository (cat config exits 10) or no snapshot in it. Any other restic
+# failure fails the step, so a broken copy never reads as "not copied yet".
+status=0
+restic cat config >/dev/null || status=$?
+if [ "$status" -eq 10 ] || { [ "$status" -eq 0 ] && [ "$(restic snapshots --json)" = "[]" ]; }; then
+  printf '%s %s\n' "$1" "$name"
+  exit 3
+fi
+[ "$status" -eq 0 ]
 copied=$(restic ls latest /snapshots)
 if ! printf '%s\n' "$copied" | grep -Fx "/snapshots/$name" >/dev/null; then
   printf '%s %s\n' "$1" "$name"
@@ -341,7 +356,7 @@ printf 'ETCD %s %s %s\n' "$original" "$restored" "$name"
                     "image": template["image"],
                     "securityContext": {"runAsUser": 0},
                     "env": template["env"],
-                    "command": ["/bin/sh", "-c", command, "etcd-check", NOT_COPIED],
+                    "command": ["/bin/sh", "-c", command, "etcd-check", NOT_COPIED, NO_SNAPSHOT],
                     "volumeMounts": [
                         {"name": "snapshots", "mountPath": "/snapshots", "readOnly": True},
                         {"name": "restore", "mountPath": "/restore"},
@@ -548,18 +563,27 @@ def _restore_command(args: Sequence[str]) -> CompletedProcess[str]:
     )
 
 
-def _raise_if_not_copied(kubectl: Kubectl) -> None:
-    """A failed etcd pod that found the newest snapshot missing from the restic copy says so."""
+def _raise_for_etcd_pod(kubectl: Kubectl) -> None:
+    """Explain a failed etcd pod before cleanup deletes it: no k3s snapshot yet, a snapshot not
+    yet copied, or else its log, so the reason outlives the pod."""
     proc = kubectl(["logs", ETCD_POD, "-n", BACKUP_NAMESPACE])
     if proc.returncode:
         return
     for line in proc.stdout.splitlines():
         parts = line.split()
+        if parts == [NO_SNAPSHOT]:
+            raise DrillError(
+                "k3s has written no etcd snapshot yet; it writes one on its snapshot schedule"
+                " (k3s_etcd_snapshot_schedule_cron, default 00:00 and 12:00), and make site takes"
+                " one on a new cluster. Run the drill again after the next etcd-snapshots run"
+            )
         if len(parts) == 2 and parts[0] == NOT_COPIED:
             raise DrillError(
                 f"newest etcd snapshot {parts[1]} is not yet in the restic copy;"
                 " run the drill again after the next etcd-snapshots run"
             )
+    for line in proc.stdout.splitlines()[-20:]:
+        _line(f"LOG {ETCD_POD}: {line}")
 
 
 def _checksum_line(text: str, prefix: str) -> str:
@@ -695,7 +719,7 @@ def _run(
                 "etcd restore pod",
             )
         except DrillError:
-            _raise_if_not_copied(kubectl)
+            _raise_for_etcd_pod(kubectl)
             raise
         etcd = _logs(kubectl, ETCD_POD, BACKUP_NAMESPACE)
         line = next((line for line in etcd.splitlines() if line.startswith("ETCD ")), "")

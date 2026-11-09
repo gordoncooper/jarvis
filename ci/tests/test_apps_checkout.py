@@ -137,6 +137,26 @@ def test_a_pin_the_checkout_lacks_fails(tmp_path: Path) -> None:
         _backup_selection._pinned_view(checkout, instance / "envs" / "env-b")
 
 
+def test_a_pin_newer_than_the_clone_fetches_its_tags_once(tmp_path: Path) -> None:
+    """Rule: an operator's clone that predates a pinned tag fetches the remote's tags and reads
+    the app at it, instead of asking the operator to fetch; it moves no branch."""
+    from jarvis.lib import backup_selection as _backup_selection
+
+    remote = tmp_path / "remote"
+    _apps_remote(remote)
+    clone = tmp_path / "clone"
+    subprocess.run([*_GIT, "clone", "-q", str(remote), str(clone)], check=True, capture_output=True)
+    head = subprocess.run([*_GIT, "rev-parse", "HEAD"], cwd=clone, check=True, capture_output=True, text=True).stdout
+    subprocess.run([*_GIT, "tag", "-a", "notes/v0.1.1", "notes/v0.1.0", "-m", "notes/v0.1.1"], cwd=remote, check=True)
+    instance = tmp_path / "instance"
+    _write_env(instance, "env-b", f"file://{remote}", ["notes"])
+    (instance / "envs" / "env-b" / "values" / "apps.yaml").write_text("versions:\n  notes: v0.1.1\n", encoding="utf-8")
+    view = _backup_selection._pinned_view(clone, instance / "envs" / "env-b")
+    assert (view / "notes" / "app.yaml").is_file()
+    after = subprocess.run([*_GIT, "rev-parse", "HEAD"], cwd=clone, check=True, capture_output=True, text=True).stdout
+    assert after == head
+
+
 def test_helper_is_silent_for_a_core_only_instance(tmp_path: Path) -> None:
     """Rule: with no env listing an app the helper checks out nothing and succeeds."""
     instance = tmp_path / "instance"
