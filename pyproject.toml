@@ -1,18 +1,40 @@
 # The jarvis package: the Python behind core's tools, checks, schema and verify. It is not
-# published; make deps installs it editable into the repo's venv, and a core release is its git
-# tag (CHANGELOG.md), so the version here never moves. Pins live in requirements-dev.txt.
+# published; `make deps` installs it editable into the repo's .venv with uv (uv.lock pins every
+# package with hashes; Renovate updates pyproject.toml and uv.lock together). A core release is
+# its git tag (CHANGELOG.md), so the version here never moves.
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
 
 [project]
 name = "jarvis"
 version = "0"
 requires-python = ">=3.12"
-dependencies = ["PyYAML", "jsonschema"]
+# What the operator tools and the app-check Action import.
+dependencies = [
+  "PyYAML==6.0.3",
+  "jsonschema==4.26.0",
+  "bcrypt==5.0.0",
+]
 
-[tool.setuptools.packages.find]
-include = ["jarvis*"]
+[dependency-groups]
+# Ansible, for make site and the role tests.
+ops = [
+  "ansible==14.6.0",
+  "ansible-core==2.21.6",
+]
+# Everything `make deps` installs: the tools, Ansible and the test and lint tooling.
+dev = [
+  {include-group = "ops"},
+  "pytest==9.2.0",
+  "pytest-xdist==3.8.0",
+  "pyright==1.1.414",
+  "ruff==0.17.4",
+]
+
+[tool.uv.build-backend]
+module-name = "jarvis"
+module-root = ""
 
 [tool.ruff]
 target-version = "py312"
@@ -26,12 +48,10 @@ extend-include = [
   "tools/app-check",
   "tools/bootstrap-secrets",
   "tools/drill",
-  "tools/install-deps",
   "tools/pin-check",
   "tools/prep-node",
   "tools/restore",
   "tools/encrypt",
-  "tools/seal",
   "tools/verify/run",
 ]
 

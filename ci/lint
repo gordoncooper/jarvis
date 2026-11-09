@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ruff and pyright at the pins in requirements-dev.txt, configured in pyproject.toml.
+# ruff and pyright at the pins in uv.lock, configured in pyproject.toml.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -9,3 +9,7 @@ k3s_token_file: "{{ jarvis_env_dir }}/secrets/k3s-token.sops.yaml"
 # k3s v1.36.5+k3s1 built-in defaults; snapshot dir comes from backup_path.
 k3s_etcd_snapshot_schedule_cron: "0 */12 * * *"
 k3s_etcd_snapshot_retention: 5
+
+# The node's memory in MiB, for the kubelet eviction reserve. Read from ansible_facts, not the
+# injected ansible_memtotal_mb variable, which ansible-core 2.24 drops (INJECT_FACTS_AS_VARS).
+k3s_node_memtotal_mb: "{{ ansible_facts['memtotal_mb'] }}"

@@ -44,7 +44,7 @@ jobs:
           run=true
           if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
             changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-            pattern='^(core/|addons/|envs/|infra/ansible/roles/flux-operator/|tools/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$)'
+            pattern='^(core/|addons/|envs/|infra/ansible/roles/flux-operator/|tools/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$|mise\.(toml|lock)$|uv\.lock$|pyproject\.toml$)'
             grep -Eq "${pattern}" <<<"${changed}" || run=false
           fi
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
@@ -76,26 +76,19 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Restore pinned CLIs
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install the pinned CLIs (mise.lock), k3d included
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          path: ~/.local/bin
-          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps') }}
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.11.5
+          install_args: --locked
+          # The tools' own directories on PATH, not shims, which resolve per directory.
+          add_shims_to_path: false
 
-      - name: Install pinned CLIs and Python deps
-        run: make deps
-
-      - name: Install k3d
-        env:
-          # renovate: datasource=github-releases depName=k3d-io/k3d
-          K3D_VERSION: v5.9.0
-          # The k3d-linux-amd64 line of the release's checksums.txt. Bump it by hand in the version's PR.
-          K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
+      - name: Python packages (uv.lock), and the pinned CLIs on PATH
         run: |
-          set -euo pipefail
-          curl -fsSL -o "${RUNNER_TEMP}/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
-          echo "${K3D_SHA256}  ${RUNNER_TEMP}/k3d" | sha256sum -c -
-          install -m 0755 "${RUNNER_TEMP}/k3d" "${HOME}/.local/bin/k3d"
+          mise bin-paths >> "${GITHUB_PATH}"
+          mise exec -- uv sync --frozen
 
       # What ci/checkout-apps-for-instance.sh gives an instance: the default branch with every tag.
       - name: Check out the apps repository with its tags
@@ -110,7 +103,6 @@ jobs:
           APP_DNS_FLAG: ${{ matrix.app_dns == 'on' && '--app-dns' || '' }}
         run: |
           set -euo pipefail
-          export PATH="${HOME}/.local/bin:${PATH}"
           age-keygen -o "${RUNNER_TEMP}/age.key" 2>/dev/null
           chmod 600 "${RUNNER_TEMP}/age.key"
           # Core at the commit under test, on its own temporary branch; a release tag push reads the tag.
@@ -136,7 +128,6 @@ jobs:
       - name: Create the k3d cluster at the env's k3s version
         run: |
           set -euo pipefail
-          export PATH="${HOME}/.local/bin:${PATH}"
           vars="envs/${E2E_ENV}/values/cluster-vars.yaml"
           read_var() { sed -n "s/^$1:[[:space:]]*//p" "${vars}" | tr -d "\"'"; }
           # The env's k3s release: core's unless its cluster-vars overrides it.
@@ -162,7 +153,6 @@ jobs:
         working-directory: infra/ansible
         run: |
           set -euo pipefail
-          export PATH="${HOME}/.local/bin:${PATH}"
           SOPS_AGE_KEY_FILE="${RUNNER_TEMP}/age.key" ../../.venv/bin/ansible-playbook ../../ci/e2e/flux.yml \
             -i ../../ci/e2e/hosts.yml \
             -e jarvis_env="${E2E_ENV}" \
@@ -173,7 +163,7 @@ jobs:
             -e flux_sync_file="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/flux/sync.yaml" \
             -e k3s_binary_path="${GITHUB_WORKSPACE}/ci/e2e/k3s" \
             -e k3s_kubeconfig_path="${KUBECONFIG}" \
-            -e helm_binary_path="${HOME}/.local/bin/helm" \
+            -e helm_binary_path="${RUNNER_TEMP}/helm" \
             -e helm_binary_owner="$(id -un)" -e helm_binary_group="$(id -gn)"
 
       - name: Wait for every Kustomization and HelmRelease

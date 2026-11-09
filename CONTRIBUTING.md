@@ -5,7 +5,7 @@ Changes come as pull requests against `main`. The repository owner reviews and m
 ## Before you start
 
 - Read [docs/deploy.md](docs/deploy.md) for what this repository runs, and the `CONTRACT.md` of each component you touch ([docs/README.md](docs/README.md) lists them).
-- Run `make deps` once. It installs the pinned CLIs into `~/.local/bin` and the Python dev dependencies into `.venv`.
+- Install [mise](https://mise.jdx.dev/getting-started.html), then run `make deps` once. It installs the pinned CLIs (`mise.toml`, checksums in `mise.lock`) and every Python package (`uv.lock`) into `.venv`. Outside `make`, run a tool with `mise exec -- <command>`.
 
 ## Making a change
 

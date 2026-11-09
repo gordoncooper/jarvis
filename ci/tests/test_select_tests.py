@@ -25,10 +25,9 @@ def test_a_non_renovate_change_runs_everything() -> None:
 
 
 def test_a_renovate_bump_runs_the_tests_its_file_reaches() -> None:
-    """Rule: a CLI pin runs the tests of those CLIs and Renovate's; an image runs the tests that
-    name its folder, the manifest rules and the flux render."""
-    tools = select("renovate/kubeconform", ["tools/versions.env"]).split()
-    assert "ci/tests/test_install_deps.py" in tools and "ci/tests/test_renovate.py" in tools
+    """Rule: a CLI or Python pin runs the whole suite (any test may run that CLI or import that
+    package); an image runs the tests that name its folder, the manifest rules and the flux render."""
+    assert select("renovate/kubeconform", ["mise.toml", "mise.lock"]) == "all"
     image = select("renovate/k8s-gateway", ["core/feature/app-dns/helmrelease.yaml"]).split()
     assert {"ci/tests/test_app_dns.py", "ci/tests/test_flux_entry.py", "ci/tests/test_digest_pin.py",
             "ci/tests/test_renovate.py"} <= set(image)
@@ -39,4 +38,4 @@ def test_a_renovate_change_it_cannot_place_runs_everything() -> None:
     """Rule: a file no test names, or one every test can reach, runs the whole suite."""
     # Built here, so this file does not name it.
     assert select("renovate/x", ["/".join(("unplaced", "new.file"))]) == "all"
-    assert select("renovate/python-dev", ["requirements-dev.txt"]) == "all"
+    assert select("renovate/python-dev", ["pyproject.toml", "uv.lock"]) == "all"

@@ -2,6 +2,7 @@ import copy
 import json
 import re
 import subprocess
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -182,18 +183,43 @@ def _manager_matches(rel: str, text: str) -> list[re.Match[str]]:
     ]
 
 
-def test_every_tool_version_in_versions_env_is_a_renovate_pin() -> None:
-    """A *_version line without a renovate comment, or a comment Renovate can't read, fails."""
-    text = (ROOT / "tools/versions.env").read_text(encoding="utf-8")
-    declared = dict(re.findall(r"^(\w+_version)=(\S+)$", text, flags=re.MULTILINE))
-    assert declared
-    found = {
-        match.group(0).splitlines()[-1].split("=", 1)[0]: match.group("currentValue")
-        for match in _manager_matches("tools/versions.env", text)
+def _mise_tools() -> dict[str, str]:
+    """Each tool mise.toml pins and its version (a table's version key, or the plain value)."""
+    tools = tomllib.loads((ROOT / "mise.toml").read_text(encoding="utf-8"))["tools"]
+    return {name: str(value["version"] if isinstance(value, dict) else value) for name, value in tools.items()}
+
+
+def test_mise_pins_every_tool_exactly() -> None:
+    """Rule: every CLI is one exact release, so mise.lock holds one checksum per platform for it
+    and Renovate moves it by PR. A range or "latest" would install whatever is newest."""
+    tools = _mise_tools()
+    assert {"uv", "sops", "age", "kubectl", "kustomize", "kubeconform", "kyverno", "gitleaks", "restic"} <= set(tools)
+    for name, version in tools.items():
+        assert re.fullmatch(r"\d+\.\d+\.\d+", version), (name, version)
+    settings = tomllib.loads((ROOT / "mise.toml").read_text(encoding="utf-8"))["settings"]
+    assert settings["lockfile"] is True
+
+
+def test_cli_pins_match_the_cluster_images() -> None:
+    """Rule: the restic, rest-server and kyverno CLIs the tests run are the releases the cluster
+    runs, and Renovate moves each CLI in its image's group."""
+    tools = _mise_tools()
+    images = {
+        "restic": ("core/platform/backups/restic-check.yaml", r"image: restic/restic:(\d+\.\d+\.\d+)@"),
+        "github:restic/rest-server": ("core/platform/backups/rest-server.yaml", r"image: restic/rest-server:(\d+\.\d+\.\d+)@"),
+        "kyverno": ("core/platform/kyverno/helmrelease.yaml", r'tag: "v(\d+\.\d+\.\d+)@'),
     }
-    assert found == declared
-    unreadable = text.replace("depName=", "dep=")
-    assert not _manager_matches("tools/versions.env", unreadable)
+    for tool, (rel, pattern) in images.items():
+        found = set(re.findall(pattern, (ROOT / rel).read_text(encoding="utf-8")))
+        assert found == {tools[tool]}, (tool, rel, found)
+    groups = {
+        name: rule["groupName"]
+        for rule in _renovate_config()["packageRules"]
+        if rule.get("matchManagers") == ["mise"] and "groupName" in rule
+        for name in rule["matchDepNames"]
+    }
+    assert groups["restic"] == groups["github:restic/rest-server"] == "restic"
+    assert groups["kyverno"] == "kyverno"
 
 
 def test_core_k3s_version_is_a_renovate_pin() -> None:
@@ -215,8 +241,8 @@ def test_ansible_core_stays_on_the_2_21_line() -> None:
         for item in renovate["packageRules"]
         if item.get("matchPackageNames") == ["ansible-core"]
     )
-    assert rule["matchManagers"] == ["pip_requirements"]
-    assert rule["matchFileNames"] == ["requirements-dev.txt"]
+    assert rule["matchManagers"] == ["pep621"]
+    assert rule["matchFileNames"] == ["pyproject.toml"]
     assert rule["allowedVersions"] == "<2.22"
     assert "2.21" in rule["description"]
 
@@ -230,36 +256,31 @@ def _same_minor(left: str, right: str) -> bool:
     return tuple(left.split(".")[:2]) == tuple(right.split(".")[:2])
 
 
+def test_the_flux_cli_is_the_cluster_flux_version() -> None:
+    """Rule: make deps installs the flux CLI at the version core's FluxInstance runs, and Renovate
+    moves both in one PR (both read the package fluxcd/flux2)."""
+    instance = yaml.safe_load((ROOT / "core/flux/flux-instance.yaml").read_text(encoding="utf-8"))
+    assert _mise_tools()["flux2"] == instance["spec"]["distribution"]["version"]
+    rule = next(item for item in _renovate_config()["packageRules"] if item.get("groupName") == "flux")
+    assert rule["matchPackageNames"] == ["fluxcd/flux2"]
+
+
 def test_kubectl_stays_on_the_k3s_minor() -> None:
-    """Renovate offers no kubectl minor ahead of k3s, and the pin and the cap match each env's k3s."""
+    """Renovate offers no kubectl minor ahead of k3s, kube-apiserver moves with kubectl, and the
+    pin and the cap match core's k3s release."""
     rule = next(
         item
         for item in _renovate_config()["packageRules"]
-        if item.get("matchDepNames") == ["kubernetes/kubernetes"]
+        if item.get("matchDepNames") == ["kubectl", "aqua:kubernetes/kubernetes/kube-apiserver"]
     )
-    pinned = re.search(
-        r"^kubectl_version=(\S+)$", (ROOT / "tools/versions.env").read_text(encoding="utf-8"), re.M
-    )
-    assert pinned
+    tools = _mise_tools()
+    pinned = tools["kubectl"]
+    assert tools["aqua:kubernetes/kubernetes/kube-apiserver"] == pinned
     for path in [ROOT / "infra/ansible/group_vars/all.yml"]:
         k3s = yaml.safe_load(path.read_text(encoding="utf-8"))["k3s_version"]
         k3s_version = k3s.removeprefix("v").split("+")[0]
-        assert _same_minor(pinned.group(1), k3s_version), path
+        assert _same_minor(pinned, k3s_version), path
         assert rule["allowedVersions"] == _next_minor_cap(k3s_version), path
-
-
-def test_only_kustomize_prefixed_tags_are_kustomize_releases() -> None:
-    """The kustomize repo also tags api/, cmd/config/ and old unprefixed releases."""
-    rule = next(
-        item
-        for item in _renovate_config()["packageRules"]
-        if item.get("matchDepNames") == ["kubernetes-sigs/kustomize"]
-    )
-    pattern = re.compile(_js_to_python(rule["extractVersion"]))
-    match = pattern.match("kustomize/v5.6.0")
-    assert match and match.group("version") == "5.6.0"
-    for tag in ("api/v0.19.0", "cmd/config/v0.19.0", "v4.5.7"):
-        assert pattern.match(tag) is None, tag
 
 
 def test_managed_image_without_a_version_tag_fails() -> None:
@@ -391,12 +412,13 @@ def test_grant_revoke_python_image_is_a_renovate_pin() -> None:
 
 @pytest.mark.parametrize(
     ("group", "dep"),
-    [("cert-manager", "cert-manager"), ("kyverno", "kyverno"), ("kyverno", "kyverno/kyverno")],
+    [("cert-manager", "cert-manager"), ("kyverno", "kyverno"), ("kyverno", "ghcr.io/kyverno/kyverno")],
 )
 def test_chart_cli_and_images_update_in_one_pr(group: str, dep: str) -> None:
-    """Merged alone, a chart, CLI or image bump would leave its release's other pins behind."""
-    rule = next(item for item in _renovate_config()["packageRules"] if item.get("groupName") == group)
-    assert dep in rule["matchDepNames"]
+    """Merged alone, a chart, CLI or image bump would leave its release's other pins behind. The
+    CLI's rule (mise) shares the group with the chart's and images' (custom.regex)."""
+    rules = [item for item in _renovate_config()["packageRules"] if item.get("groupName") == group]
+    assert any(dep in rule["matchDepNames"] for rule in rules)
 
 
 _RENOVATE_COMMENT = r"# renovate:[^\n]*"
@@ -462,10 +484,10 @@ def test_seeded_comment_a_manager_ignores_fails() -> None:
 def test_etcd_stays_on_the_minor_kubeadm_pairs_with_kubectl() -> None:
     """Rule: the loopback etcd stays on 3.6 while kubectl is on 1.36; raise both together."""
     renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    caps = [rule["allowedVersions"] for rule in renovate["packageRules"] if rule.get("matchDepNames") == ["etcd-io/etcd"]]
+    caps = [rule["allowedVersions"] for rule in renovate["packageRules"] if rule.get("matchDepNames") == ["etcd"]]
     assert caps == ["<3.7"]
-    versions = (ROOT / "tools/versions.env").read_text(encoding="utf-8")
-    assert re.search(r"(?m)^etcd_version=3\.6\.", versions) and re.search(r"(?m)^kubectl_version=1\.36\.", versions)
+    tools = _mise_tools()
+    assert tools["etcd"].startswith("3.6.") and tools["kubectl"].startswith("1.36.")
 
 
 _INSTANCE_PRESET = ROOT / "renovate" / "instance.json"

@@ -22,17 +22,38 @@ jobs:
           # ci/checks/secret-scan reads the whole history, so it needs every commit.
           fetch-depth: 0
 
-      - name: Restore pinned CLIs
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install mise
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          path: ~/.local/bin
-          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/versions.env', 'tools/install-deps') }}
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.11.5
+          install: false
+          # The tools' own directories go on PATH (below), not shims: a shim picks its version
+          # from the current directory's mise.toml, and tests run CLIs in temporary directories.
+          add_shims_to_path: false
 
-      - name: Install pinned CLIs and Python test deps
-        run: make deps
+      # mise.lock must hold every tool's checksum for every platform mise.toml serves. On a
+      # mismatch the step prints the lock to commit (Renovate's PRs update it themselves).
+      - name: mise.lock matches mise.toml
+        run: |
+          set -euo pipefail
+          mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64
+          if ! git diff --quiet -- mise.lock || [[ -n "$(git status --porcelain -- mise.lock)" ]]; then
+            echo "::error file=mise.lock::mise.lock does not match mise.toml; commit the lock below (mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64)"
+            cat mise.lock
+            exit 1
+          fi
+
+      - name: Install the pinned CLIs and Python packages
+        run: |
+          make deps
+          mise bin-paths >> "${GITHUB_PATH}"
+
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
 
       # A docs-only PR runs no tests and a Renovate PR only the tests its files reach (ci/select-tests);
-      # every other PR, and main, runs the whole suite. make deps and the rule checks always run.
+      # every other PR, and main, runs the whole suite. The installs and the rule checks always run.
       - name: Select tests
         id: select
         env:
@@ -49,10 +70,6 @@ jobs:
           echo "tests=${tests}" >> "${GITHUB_OUTPUT}"
           echo "pytest: ${tests}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
-      - name: Fetch the loopback API server for the admission test
-        if: steps.select.outputs.tests == 'all' || contains(steps.select.outputs.tests, 'test_app_admission_apiserver.py')
-        run: ci/fetch-test-apiserver
-
       - name: Run ci/checks
         run: bash ci/run-checks
 
@@ -64,7 +81,6 @@ jobs:
         env:
           TESTS: ${{ steps.select.outputs.tests }}
         run: |
-          export PATH="${HOME}/.local/bin:${PATH}"
           if [[ "${TESTS}" == all ]]; then
             .venv/bin/pytest -ra
           else

@@ -34,10 +34,8 @@ def instance_root(product_root: Path) -> Path:
 
 def tool_env(repo_root: Path) -> dict[str, str]:
     env = os.environ.copy()
-    prefix = os.pathsep.join(
-        (str(repo_root / ".venv" / "bin"), str(Path.home() / ".local" / "bin"))
-    )
-    env["PATH"] = prefix + os.pathsep + env.get("PATH", "")
+    # The CLIs come from mise (make puts its bin paths on PATH); only the venv is ours to add.
+    env["PATH"] = str(repo_root / ".venv" / "bin") + os.pathsep + env.get("PATH", "")
     return env
 
 

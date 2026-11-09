@@ -67,7 +67,7 @@ def test_k3s_config_template_encodes_p0a12_rules() -> None:
         "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
         "k3s_server_token": "fixture-server",
         "k3s_agent_token": "fixture-agent",
-        "ansible_memtotal_mb": 16384,
+        "k3s_node_memtotal_mb": 16384,
     }
     rendered = render_k3s_config(variables)
     assert 'token: "fixture-server"' in rendered.splitlines()
@@ -100,7 +100,7 @@ def test_agent_config_template_encodes_join_rules() -> None:
             "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
             "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
             "node_memory_reserve_percent": cluster["node_memory_reserve_percent"],
-            "ansible_memtotal_mb": 16384,
+            "k3s_node_memtotal_mb": 16384,
         },
         templates_dir=K3S_ROLE_TEMPLATES,
     )
@@ -130,8 +130,8 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
         "      ssh_user: alice\n      k3s_kubelet_kube_reserved: cpu=50m\n"
         "      k3s_kubelet_system_reserved: cpu=25m\n"
         "      k3s_kubelet_eviction_hard: memory.available<250Mi\n"
-        "      ansible_memtotal_mb: 2048\n"
-        "    plain:\n      node_roles: [workers]\n      ansible_memtotal_mb: 16384\n"
+        "      k3s_node_memtotal_mb: 2048\n"
+        "    plain:\n      node_roles: [workers]\n      k3s_node_memtotal_mb: 16384\n"
     )
     dest = tmp_path / "out"
     dest.mkdir()
@@ -915,7 +915,7 @@ _AGENT_TOKEN = "fixture-agent-passphrase"
 _CONFIG_KEYS = ("pod_cidr", "service_cidr", "k3s_kubelet_kube_reserved",
                 "k3s_kubelet_system_reserved", "k3s_kubelet_eviction_hard", "node_memory_reserve_percent")
 # The memory fact the role's kubelet reserve reads; these plays gather no facts.
-_MEMORY_FACT = {"ansible_memtotal_mb": 16384}
+_MEMORY_FACT = {"k3s_node_memtotal_mb": 16384}
 
 
 def _sealed_tokens(tmp_path: Path, server: str = _SERVER_TOKEN) -> tuple[Path, Path]:
@@ -1160,7 +1160,7 @@ def _render_reserve(tmp_path: Path, cluster_vars: str, memtotal_mb: int) -> subp
         ),
         encoding="utf-8",
     )
-    extra = {"ansible_memtotal_mb": memtotal_mb, "inventory_hostname": "node", "k3s_server_url": "https://cp-1:6443",
+    extra = {"k3s_node_memtotal_mb": memtotal_mb, "inventory_hostname": "node", "k3s_server_url": "https://cp-1:6443",
              "k3s_server_token": "fixture-server", "k3s_agent_token": "fixture-agent", "pod_cidr": "10.80.0.0/16",
              "service_cidr": "10.81.0.0/16", "local_path_data": "/fixture/local", "backup_path": "/fixture/backup",
              **{key: value for key, value in load_role_defaults(K3S_ROLE_DIR).items() if key.startswith("k3s_etcd")}}

@@ -4,6 +4,11 @@
   "automerge": false,
   "packageRules": [
     {
+      "description": "The flux CLI (mise.toml) moves with the Flux version core's FluxInstance runs (custom.regex), so an operator's CLI matches the cluster.",
+      "groupName": "flux",
+      "matchPackageNames": ["fluxcd/flux2"]
+    },
+    {
       "description": "k3s host binary is pinned in cluster-vars.yaml and changes only by PR, opened after approval in the dependency dashboard. A bump has to re-check core/platform/traefik and update the bundled chart and k3s versions in core/platform/traefik/CONTRACT.md.",
       "matchDatasources": ["github-releases"],
       "matchPackageNames": ["k3s-io/k3s"],
@@ -25,22 +30,28 @@
       ]
     },
     {
-      "description": "The restic and rest-server images and the matching CLI pins in tools/versions.env move in one PR, because the rest-server isolation test requires them equal. Bump the CLI sha256 lines by hand in that PR.",
+      "description": "The restic and rest-server images and the matching CLI pins in mise.toml move in one PR, because the rest-server isolation test requires them equal. Renovate updates mise.lock in the same PR.",
       "groupName": "restic",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["restic/restic", "restic/rest-server"]
     },
     {
-      "description": "One PR updates the Kyverno chart, every Kyverno image digest pin and the matching CLI pin in tools/versions.env. Bump the CLI sha256 line by hand in that PR.",
+      "description": "The restic and rest-server CLIs in mise.toml, grouped with their images (rule above).",
+      "groupName": "restic",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["restic", "github:restic/rest-server"]
+    },
+    {
+      "description": "One PR updates the Kyverno chart, every Kyverno image digest pin and the matching CLI pin in mise.toml (rule below); Renovate updates mise.lock in the same PR.",
       "groupName": "kyverno",
       "matchManagers": ["custom.regex"],
-      "matchDepNames": [
-        "kyverno",
-        "kyverno/kyverno",
-        "ghcr.io/kyverno/kyverno",
-        "ghcr.io/kyverno/kyvernopre",
-        "ghcr.io/kyverno/background-controller"
-      ]
+      "matchDepNames": ["kyverno", "ghcr.io/kyverno/kyverno", "ghcr.io/kyverno/kyvernopre", "ghcr.io/kyverno/background-controller"]
+    },
+    {
+      "description": "The kyverno CLI in mise.toml, grouped with the chart and images (rule above).",
+      "groupName": "kyverno",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["kyverno"]
     },
     {
       "description": "One PR updates the cert-manager chart and every cert-manager image digest pin.",
@@ -62,30 +73,35 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "The kustomize repo tags other modules too (api/v0.x, cmd/config/v0.x) and older releases without a prefix. Only kustomize/v tags are kustomize releases.",
-      "matchDepNames": ["kubernetes-sigs/kustomize"],
-      "extractVersion": "^kustomize/v(?<version>.+)$"
-    },
-    {
-      "description": "kubectl stays on the k3s minor. Raise this cap, and kubectl_version in tools/versions.env, in the same PR that moves k3s_version to the next minor. A test fails if they drift apart.",
-      "matchDepNames": ["kubernetes/kubernetes"],
+      "description": "kubectl and the admission test's kube-apiserver (mise.toml) move together and stay on the k3s minor. Raise this cap in the same PR that moves k3s_version to the next minor. A test fails if they drift apart.",
+      "groupName": "kubernetes",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["kubectl", "aqua:kubernetes/kubernetes/kube-apiserver"],
       "allowedVersions": "<1.37"
     },
     {
-      "description": "The admission test's loopback etcd is the one kubeadm pairs with kubectl's minor (1.36: etcd 3.6). Raise this cap in the PR that moves kubectl to a minor kubeadm pairs with etcd 3.7.",
-      "matchDepNames": ["etcd-io/etcd"],
-      "allowedVersions": "<3.7"
+      "description": "Renovate reads aqua:kubernetes/kubernetes/kube-apiserver as the repository kubernetes/kubernetes/kube-apiserver, which does not exist; its releases are kubernetes/kubernetes's.",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["aqua:kubernetes/kubernetes/kube-apiserver"],
+      "overridePackageName": "kubernetes/kubernetes",
+      "extractVersion": "^v(?<version>.+)$"
     },
     {
-      "description": "Python dev dependencies in requirements-dev.txt update as one PR. Exact == pins stay exact.",
+      "description": "The admission test's loopback etcd is the one kubeadm pairs with kubectl's minor (1.36: etcd 3.6). Raise this cap in the PR that moves kubectl to a minor kubeadm pairs with etcd 3.7.",
+      "matchDepNames": ["etcd"],
+      "allowedVersions": "<3.7",
+      "matchManagers": ["mise"]
+    },
+    {
+      "description": "Python packages in pyproject.toml update as one PR; Renovate updates uv.lock with them. Exact == pins stay exact.",
       "groupName": "python-dev",
-      "matchManagers": ["pip_requirements"],
-      "matchFileNames": ["requirements-dev.txt"]
+      "matchManagers": ["pep621"],
+      "matchFileNames": ["pyproject.toml"]
     },
     {
       "description": "ansible 14.x requires ansible-core 2.21.x. Raise this cap in the same PR as an ansible major bump. Patch updates inside 2.21 still flow.",
-      "matchManagers": ["pip_requirements"],
-      "matchFileNames": ["requirements-dev.txt"],
+      "matchManagers": ["pep621"],
+      "matchFileNames": ["pyproject.toml"],
       "matchPackageNames": ["ansible-core"],
       "allowedVersions": "<2.22"
     }
@@ -93,19 +109,15 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Tool versions in a workflow's env block (k3d in e2e.yml). The matching *_SHA256 line is bumped by hand in the same PR.",
-      "managerFilePatterns": ["/^\\.github\\/workflows\\/[^/]+\\.ya?ml$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)\\s*\\n\\s*[A-Z0-9_]+_VERSION: (?<currentValue>\\S+)"
-      ]
+      "description": "The mise release jdx/mise-action installs (its version input), in the workflows and the app-check Action.",
+      "managerFilePatterns": ["/^\\.github\\/(workflows\\/[^/]+|actions\\/[^/]+\\/action)\\.ya?ml$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*version: (?<currentValue>\\S+)"]
     },
     {
       "customType": "regex",
       "description": "Pinned CLI versions in tools/versions.env. Renovate bumps the version only. The sha256 lines are bumped by hand in the same PR.",
       "managerFilePatterns": ["/^tools\\/versions\\.env$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)\\s*\\n\\w+_version=(?<currentValue>\\S+)"
-      ],
+      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)\\s*\\n\\w+_version=(?<currentValue>\\S+)"],
       "extractVersionTemplate": "^v?(?<version>.*)$"
     },
     {
@@ -120,10 +132,7 @@
     {
       "customType": "regex",
       "description": "Datasource comments in Ansible defaults and Flux OCIRepository.",
-      "managerFilePatterns": [
-        "/^infra\\/ansible\\/roles\\/flux-operator\\/defaults\\/main\\.yml$/",
-        "/^core\\/platform\\/flux-operator\\/oci-repository\\.yaml$/"
-      ],
+      "managerFilePatterns": ["/^infra\\/ansible\\/roles\\/flux-operator\\/defaults\\/main\\.yml$/", "/^core\\/platform\\/flux-operator\\/oci-repository\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version: (?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
@@ -242,5 +251,9 @@
         "# renovate: datasource=docker depName=(?<depName>nginxinc/nginx-unprivileged)\\n\\s*image: nginxinc/nginx-unprivileged:(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.]+)*)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
     }
-  ]
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "description": "Weekly PR refreshing the packages uv.lock and mise.lock hold beyond the direct pins (Python's transitive dependencies)."
+  }
 }
