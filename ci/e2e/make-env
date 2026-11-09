@@ -49,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:
         core_url=args.repo_url,
         core_tag="",
         core_ref=args.core_ref or args.ref,
-        # One node holds every role a single-node env needs.
-        nodes=[scaffold.Node.parse(args.node, only=True)],
+        # The one k3d node, with the roles the job labels it with.
+        nodes=[scaffold.Node.parse(f"{args.node}:control_plane,backup,edge", only=True)],
         ssh_user="e2e",
         features=["app-dns", "app-hosting"] if args.app_dns else ["app-hosting"],
         apps_repo_url=args.apps_url,

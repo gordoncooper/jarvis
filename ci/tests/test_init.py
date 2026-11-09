@@ -143,7 +143,7 @@ def test_env_add_refuses_an_existing_name(tmp_path: Path, controller: Path) -> N
     [
         (["cp:control_plane", "wk:workers,edge"], "backup role"),
         (["a:control_plane,backup,edge,workers", "b:control_plane"], "control_plane role, found 2"),
-        (["a:control_plane,backup,workers"], "no node holds edge"),
+        (["a:control_plane,backup,workers"], "no node holds the edge role"),
         (["a", "b:workers"], "give its roles"),
         (["a:master"], "unknown role master"),
     ],

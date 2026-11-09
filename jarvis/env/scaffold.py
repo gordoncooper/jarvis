@@ -91,9 +91,9 @@ class EnvSpec:
             count = sum(role in node.roles for node in self.nodes)
             if count != 1:
                 raise ScaffoldError(f"exactly one node needs the {role} role, found {count}")
-        missing = [role for role in ("workers", "edge") if role not in held]
-        if missing:
-            raise ScaffoldError(f"no node holds {', '.join(missing)}")
+        # The schema's rule: one control plane, one backup host, at least one edge host.
+        if "edge" not in held:
+            raise ScaffoldError("no node holds the edge role")
 
 
 def cluster_vars(spec: EnvSpec) -> str:
