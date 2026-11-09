@@ -256,6 +256,15 @@ def _same_minor(left: str, right: str) -> bool:
     return tuple(left.split(".")[:2]) == tuple(right.split(".")[:2])
 
 
+def test_the_flux_cli_is_the_cluster_flux_version() -> None:
+    """Rule: make deps installs the flux CLI at the version core's FluxInstance runs, and Renovate
+    moves both in one PR (both read the package fluxcd/flux2)."""
+    instance = yaml.safe_load((ROOT / "core/flux/flux-instance.yaml").read_text(encoding="utf-8"))
+    assert _mise_tools()["flux2"] == instance["spec"]["distribution"]["version"]
+    rule = next(item for item in _renovate_config()["packageRules"] if item.get("groupName") == "flux")
+    assert rule["matchPackageNames"] == ["fluxcd/flux2"]
+
+
 def test_kubectl_stays_on_the_k3s_minor() -> None:
     """Renovate offers no kubectl minor ahead of k3s, kube-apiserver moves with kubectl, and the
     pin and the cap match core's k3s release."""

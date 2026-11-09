@@ -11,8 +11,10 @@ uv = "0.13.7"
 # Secrets: sops encrypts with age.
 sops = "3.13.3"
 age = "1.3.2"
-# Cluster access and manifest checks.
+# Cluster access and manifest checks. flux is the CLI for the Flux version core's FluxInstance
+# runs (core/flux/flux-instance.yaml); Renovate moves both in one PR.
 kubectl = "1.36.6"
+flux2 = "2.10.0"
 kustomize = "5.8.3"
 kubeconform = "0.8.0"
 kyverno = "1.19.2"

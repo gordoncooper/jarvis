@@ -25,7 +25,7 @@ curl -fsSL "https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256
 make deps
 ```
 
-Installs every pinned CLI with mise (`mise.toml`; `mise.lock` holds each one's checksum for Linux and macOS on amd64 and arm64): `sops`, `age`, `kubectl`, `kustomize`, `kubeconform`, `kyverno`, `gitleaks`, `restic`, `rest-server`, `uv` and the CI tools. Then uv installs every Python package from `uv.lock`, Ansible included, into `.venv`. It changes nothing outside this checkout and mise's own directory.
+Installs every pinned CLI with mise (`mise.toml`; `mise.lock` holds each one's checksum for Linux and macOS on amd64 and arm64): `sops`, `age`, `kubectl`, `flux` (at the cluster's Flux version), `kustomize`, `kubeconform`, `kyverno`, `gitleaks`, `restic`, `rest-server`, `uv` and the CI tools. Then uv installs every Python package from `uv.lock`, Ansible included, into `.venv`. It changes nothing outside this checkout and mise's own directory.
 
 `make` targets put those CLIs on `PATH` themselves. To run a script or tool directly, use `mise exec -- <command>` from the checkout (or `mise activate` in your shell), and `.venv/bin/python` for the Python tools as written.
 
