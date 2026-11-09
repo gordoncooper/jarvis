@@ -6,16 +6,13 @@ copy from each other. Ansible role renders stay in ansible_role_proof.
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
+import importlib
 import re
 import shutil
 import subprocess
-import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
@@ -34,17 +31,6 @@ def instance_apps_repo_for_checks(instance_root: Path) -> Path:
 _RENOVATE_NAMED_GROUP = re.compile(r"\(\?<([A-Za-z_]\w*)>")
 
 
-def load_tool(module_name: str, path: Path) -> ModuleType:
-    """Load a repo script that is not an importable package."""
-    loader = importlib.machinery.SourceFileLoader(module_name, str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def renovate_python_pattern(pattern: str) -> str:
     """Renovate's RE2 named group `(?<name>...)` as Python `re` `(?P<name>...)`.
 
@@ -59,7 +45,7 @@ def _kustomize_build(rel_path: str, *, root: Path | None = None) -> str:
     repo = REPO_ROOT if root is None else root
     kustomize = shutil.which("kustomize")
     if not kustomize:
-        pytest.fail("kustomize not found on PATH (run make deps)")
+        pytest.fail("kustomize not found on PATH (run jarvis doctor)")
     proc = subprocess.run(
         [
             kustomize,
@@ -250,7 +236,7 @@ def set_switches(env_dir: Path, **sections: list[str]) -> None:
 
 def render_switches(env_dir: Path, root: Path) -> None:
     """Render the env's Flux wiring from its switches, as an owner would."""
-    from jarvis.lib.render_switches import render_env
+    from jarvis.render.switches import render_env
 
     render_env(env_dir, root)
 
@@ -273,7 +259,7 @@ def link_core_with_fixture_addons(root: Path) -> None:
 
 def _list_fixture_addons(env_dir: Path) -> None:
     """The copy lists the fixture add-on, so every check on add-ons has one to check."""
-    from jarvis.lib import switches as _switches
+    from jarvis.env import switches as _switches
     from jarvis.schema.env import SERVICES_KUSTOMIZATION
 
     names = sorted(entry.name for entry in FIXTURE_ADDONS.iterdir() if entry.is_dir())
@@ -282,7 +268,7 @@ def _list_fixture_addons(env_dir: Path) -> None:
 
 
 def _drop_addons(env_dir: Path) -> None:
-    from jarvis.lib import switches as _switches
+    from jarvis.env import switches as _switches
     from jarvis.schema.env import SERVICES_KUSTOMIZATION
 
     set_switches(env_dir, addons=[])
@@ -291,8 +277,8 @@ def _drop_addons(env_dir: Path) -> None:
 
 def _seal_copy_addons(root: Path, name: str) -> None:
     """One placeholder Secret, sealed to the copy's throwaway key, per namespace an enabled add-on decrypts."""
-    from jarvis.lib.sops import encrypt_secret_to_file
     from jarvis.schema.env import addon_documents, addon_secret_namespaces, enabled_addons
+    from jarvis.secrets.sops import encrypt_secret_to_file
 
     for addon in enabled_addons(root / "envs" / name):
         for namespace in addon_secret_namespaces(addon_documents(root, addon)):
@@ -330,8 +316,8 @@ def _git_ignored(repo: Path, path: Path) -> bool:
 
 
 def _seal_copy_offsite(root: Path, name: str) -> None:
-    """The owner seals backups-offsite with make encrypt; the copy gets a placeholder to the same key."""
-    from jarvis.lib.sops import encrypt_secret_to_file
+    """The owner seals backups-offsite with jarvis encrypt; the copy gets a placeholder to the same key."""
+    from jarvis.secrets.sops import encrypt_secret_to_file
 
     document = {
         "apiVersion": "v1",
@@ -396,7 +382,7 @@ def _bootstrap_copy(root: Path, name: str) -> None:
     sops = shutil.which("sops")
     if not sops:
         raise RuntimeError("sops not found on PATH (run make deps)")
-    mod = load_tool("bootstrap_secrets_example_copy", REPO_ROOT / "tools" / "bootstrap-secrets")
+    mod = importlib.import_module("jarvis.secrets.mint")
     previous_root = mod.REPO_ROOT
     previous_repo_root = mod._repo_root
     mod.REPO_ROOT = root
@@ -427,14 +413,18 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
     sops = shutil.which("sops")
     if not sops:
         raise RuntimeError("sops not found on PATH (run make deps)")
-    mod = load_tool("bootstrap_secrets_app_copy", REPO_ROOT / "tools" / "bootstrap-secrets")
+    mod = importlib.import_module("jarvis.secrets.mint")
+    previous_root, previous_repo_root = mod.REPO_ROOT, mod._repo_root
     mod.REPO_ROOT = copy.root
     mod._repo_root = lambda: copy.root
-    mod.bootstrap_app(copy.name, namespace, sops_bin=sops)
+    try:
+        mod.bootstrap_app(copy.name, namespace, sops_bin=sops)
+    finally:
+        mod.REPO_ROOT, mod._repo_root = previous_root, previous_repo_root
 
 
 def _render_copy(env_dir: Path) -> None:
-    from jarvis.lib.render_cluster_vars_configmap import render_document
+    from jarvis.render.cluster_vars import render_document
 
     source = env_dir / "values" / "cluster-vars.yaml"
     output = env_dir / "flux" / "generated" / "cluster-vars-configmap.yaml"

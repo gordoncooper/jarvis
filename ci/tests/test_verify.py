@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import os
 import subprocess
@@ -18,12 +19,12 @@ import yaml
 
 from jarvis.verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE
 from jarvis.verify.platform import ENABLELB, FLUX_RESOURCES
-from support import REPO_ROOT, load_tool
+from support import REPO_ROOT
 
 SECRET_VALUE = "SHOULD_NOT_PRINT"
 NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 
-verify_tool = load_tool("verify_tool", REPO_ROOT / "tools" / "verify" / "run")
+verify_tool = importlib.import_module("jarvis.verify.run")
 
 
 def _completed(
@@ -986,7 +987,7 @@ def test_sleeping_kubectl_times_out_cleanly(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    env_mod = sys.modules["jarvis.lib.env"]
+    env_mod = sys.modules["jarvis.env.runtime"]
     monkeypatch.setattr(verify_tool, "KUBECTL_TIMEOUT", 0.05)
 
     def sleeper(argv: object, **kwargs: object) -> CompletedProcess[str]:
@@ -1132,10 +1133,10 @@ def test_verify_kubectl_adds_timeouts(
 
 
 def test_verify_starts_from_its_real_entry_point(tmp_path: Path) -> None:
-    """Rule: make verify runs tools/verify/run as a script, with no test's import path to lean on."""
+    """Rule: jarvis verify starts from the installed CLI, with no test's import path to lean on."""
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     done = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "tools/verify/run"), "--help"],
+        [str(Path(sys.executable).parent / "jarvis"), "verify", "--help"],
         cwd=tmp_path, env=env, capture_output=True, text=True,
     )
     assert done.returncode == 0, done.stderr

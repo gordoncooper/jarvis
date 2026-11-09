@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from jarvis.backups import selection as _backup_selection
 from jarvis.checks.manifests import substitute
-from jarvis.lib import backup_selection as _backup_selection
 from jarvis.schema.env import ValidationError, validate_env_tree, validate_one_env
 from jarvis.verify.backups import backups_checks, check_backups
 from jarvis.verify.common import CheckError
@@ -41,7 +41,7 @@ def _write_apps(copy: ExampleCopy, section: dict) -> None:
 
 
 def _render_selection(copy: ExampleCopy) -> None:
-    from jarvis.lib.render_backup_selection import render_env
+    from jarvis.render.backup_selection import render_env
 
     set_switches(copy.env_dir, features=["app-hosting", "offsite-backup-copy", "apps-backup-server"])
     render_env(copy.env_dir, copy.root)
@@ -55,7 +55,7 @@ def test_selected_mode_requires_credential_for_eligible_app(tmp_path: Path) -> N
     with pytest.raises(ValidationError) as exc:
         validate_one_env(copy.root, copy.name)
     assert "app-notes" in "\n".join(exc.value.messages)
-    assert "bootstrap-secrets APP=app-notes" in "\n".join(exc.value.messages)
+    assert "jarvis secrets --app app-notes" in "\n".join(exc.value.messages)
 
 
 def test_excluded_app_does_not_require_credential(tmp_path: Path) -> None:
@@ -74,7 +74,7 @@ def test_all_except_requires_credential_for_unexcluded_app(tmp_path: Path) -> No
     _render_selection(copy)
     with pytest.raises(ValidationError) as exc:
         validate_one_env(copy.root, copy.name)
-    assert "bootstrap-secrets APP=app-notes" in "\n".join(exc.value.messages)
+    assert "jarvis secrets --app app-notes" in "\n".join(exc.value.messages)
 
 
 def test_overrides_on_disabled_app_rejected(tmp_path: Path) -> None:
@@ -490,7 +490,7 @@ def _verify_checks(copy: ExampleCopy) -> dict[str, object]:
 
 
 def test_verify_builds_no_selection_failure_for_valid_selection(tmp_path: Path) -> None:
-    """Rule: a valid selection adds no failing check to make verify."""
+    """Rule: a valid selection adds no failing check to jarvis verify."""
     copy = bootstrap_example_copy(tmp_path)
     _write_apps(copy, {"mode": "selected", "selected": ["notes"]})
     assert "backup selection" not in _verify_checks(copy)
@@ -538,7 +538,7 @@ def test_render_cli_without_checkout_refuses_cleanly(tmp_path: Path) -> None:
 def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> None:
     """Rule: this render rewrites the env's wiring from its switches, so an unknown name refuses before
     any write, rather than silently dropping an optional piece."""
-    from jarvis.lib.render_backup_selection import render_env
+    from jarvis.render.backup_selection import render_env
 
     copy = bootstrap_example_copy(tmp_path)
     _write_apps(copy, {"mode": "selected", "selected": ["notes"]})
@@ -555,7 +555,7 @@ def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> Non
 def _render_cli(copy: ExampleCopy, **env: str) -> subprocess.CompletedProcess[str]:
     clean = {key: value for key, value in os.environ.items() if key != "APPS_REPO"}
     return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "tools" / "render"), "--env", copy.name],
+        [sys.executable, "-m", "jarvis.render.env", "--env", copy.name],
         env={**clean, "INSTANCE": str(copy.root), **env},
         capture_output=True,
         text=True,

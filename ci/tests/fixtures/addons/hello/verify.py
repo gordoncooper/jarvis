@@ -1,8 +1,8 @@
-"""Standing checks for the hello add-on. make verify loads this file only when the env enables hello."""
+"""Standing checks for the hello add-on. jarvis verify loads this file only when the env enables hello."""
 
 from __future__ import annotations
 
-from jarvis.lib.env import reason
+from jarvis.env.runtime import reason
 from jarvis.verify.backups import SECRET_KEYS_TEMPLATE
 from jarvis.verify.common import CheckError, Context, items
 from jarvis.verify.registry import register

@@ -6,6 +6,7 @@ import copy
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,6 @@ import yaml
 from jarvis.checks.addons import scan_addons
 from jarvis.schema.env import ValidationError, validate_env_tree
 from support import (
-    REPO_ROOT,
     _write_env,
     bootstrap_example_copy,
     instance_apps_repo_for_checks,
@@ -359,7 +359,7 @@ def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
         "APPS_REPO": str(instance_apps_repo_for_checks(instance)),
     }
     return subprocess.run(
-        ["bash", str(REPO_ROOT / "ci" / "run-env-checks")],
+        [sys.executable, "-m", "jarvis.env.validate"],
         capture_output=True,
         text=True,
         check=False,
@@ -372,18 +372,18 @@ def test_core_only_env_passes_every_env_check(tmp_path: Path) -> None:
     copy_env = bootstrap_example_copy(tmp_path, core_only=True)
     proc = _run_env_checks(copy_env.root)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "ok   addons" in proc.stdout and "ok   secret-scan" in proc.stdout, proc.stdout
+    assert "PASS addons" in proc.stdout and "PASS secret-scan" in proc.stdout, proc.stdout
 
 
 def test_an_instance_without_core_trees_is_checked_by_the_running_core(tmp_path: Path) -> None:
-    """Rule: instance CI checks an instance with no core/ or addons/ of its own (core is checked out
-    at .core/); the running core's trees stand in, as the root artifact's includes would."""
+    """Rule: instance CI checks an instance with no core/ or addons/ of its own (the CLI runs the env's
+    pinned core); the running core's trees stand in, as the root artifact's includes would."""
     copy_env = bootstrap_example_copy(tmp_path, core_only=True)
     shutil.rmtree(copy_env.root / "addons")  # links to core's add-ons plus the fixture
     (copy_env.root / "core").unlink()
     proc = _run_env_checks(copy_env.root)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "ok   flux-identity" in proc.stdout and "ok   flux-substitute" in proc.stdout, proc.stdout
+    assert "PASS flux-identity" in proc.stdout and "PASS flux-substitute" in proc.stdout, proc.stdout
 
 
 def test_env_with_the_sample_addon_and_its_sealed_secret_passes_every_env_check(tmp_path: Path) -> None:
@@ -393,7 +393,7 @@ def test_env_with_the_sample_addon_and_its_sealed_secret_passes_every_env_check(
     assert sealed
     proc = _run_env_checks(copy_env.root)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "ok   addons" in proc.stdout and "ok   secret-scan" in proc.stdout, proc.stdout
+    assert "PASS addons" in proc.stdout and "PASS secret-scan" in proc.stdout, proc.stdout
     for path in sealed:
         path.unlink()
     assert any("holds no sealed file" in item for item in _schema_errors(copy_env.root))

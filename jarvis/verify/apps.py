@@ -1,11 +1,11 @@
 """Hosted-app standing checks (core/feature/app-hosting/CONTRACT.md, Health). Read-only.
 
-make verify runs this component only for an env whose values/switches.yaml lists an app.
+jarvis verify runs this component only for an env whose values/switches.yaml lists an app.
 """
 
 from __future__ import annotations
 
-from jarvis.lib import apps as _apps
+from jarvis.apps import values as _apps
 from jarvis.verify.common import CheckError, CheckWarning, Context, Kubectl, items
 from jarvis.verify.registry import Check, register
 

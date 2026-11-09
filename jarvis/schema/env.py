@@ -13,14 +13,15 @@ from urllib.parse import urlparse
 
 import yaml
 
-from jarvis.lib import app_backups as _app_backups
-from jarvis.lib import apps as _apps
-from jarvis.lib import backup_selection as _backup_selection
-from jarvis.lib import switches as _switches
-from jarvis.lib.env import instance_root  # noqa: F401  (the one INSTANCE resolver)
+from jarvis.apps import values as _apps
+from jarvis.backups import app_credentials as _app_backups
+from jarvis.backups import selection as _backup_selection
+from jarvis.env import switches as _switches
+from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE resolver)
+from jarvis.paths import PRODUCT_ROOT
 from jarvis.schema import values as _values
 
-_PRODUCT_ROOT = Path(__file__).resolve().parents[2]
+_PRODUCT_ROOT = PRODUCT_ROOT
 
 EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
@@ -186,7 +187,7 @@ def validate_env_tree(
 
 
 def validate_one_env(repo_root: Path | str, name: str, *, pre_host: bool = False) -> dict[str, Any]:
-    """Validate one env and its .sops.yaml creation rules. make site runs this first."""
+    """Validate one env and its .sops.yaml creation rules. jarvis site runs this first."""
     if not _ENV_NAME.fullmatch(name) or name in {".", ".."}:
         raise ValidationError([f"invalid env name: {name}"])
     root = Path(repo_root).resolve()
@@ -623,7 +624,7 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
         if manual:
             errors.append(
                 f"{rel}: lists {sorted(manual)!r} under components; with backups in values/apps.yaml, "
-                f"run tools/render instead of hand-copying registrations"
+                f"run jarvis render instead of hand-copying registrations"
             )
         if expected and wrapper not in components:
             errors.append(
@@ -636,13 +637,13 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
         if not component.is_file() or component.read_text(encoding="utf-8") != _app_backups.registration_component(item):
             errors.append(
                 f"{env_name}: {_display_path(component, repo_root)} is missing or differs from "
-                f"the registration make bootstrap-secrets APP={item} writes"
+                f"the registration jarvis secrets --app {item} writes"
             )
         sealed = repo_root / _app_backups.sealed_rel(env_name, item)
         if bootstrapped and not sealed.is_file():
             errors.append(
                 f"{env_name}: {rel} registers {item}, missing required file "
-                f"{_display_path(sealed, repo_root)}; run make bootstrap-secrets APP={item}"
+                f"{_display_path(sealed, repo_root)}; run jarvis secrets --app {item}"
             )
     if registered and not apps_server_listed(env_dir, repo_root):
         errors.append(
@@ -819,7 +820,7 @@ def _validate_switches(env_dir: Path, repo_root: Path, env_name: str, bootstrapp
         if path.is_file() and path.read_text(encoding="utf-8") != expected:
             errors.append(
                 f"{_display_path(path, repo_root)}: does not match {_switches.SWITCHES_FILE}; "
-                f"re-render with tools/render --env {env_name}"
+                f"re-render with jarvis render --env {env_name}"
             )
     return errors
 
@@ -904,7 +905,7 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
             if not any(folder.glob("*.sops.yaml")):
                 errors.append(
                     f"{env_name}: add-on {name} decrypts {_display_path(folder, repo_root)}, "
-                    "which holds no sealed file; seal one with make encrypt NAMESPACE=" + namespace
+                    "which holds no sealed file; seal one with jarvis encrypt --namespace " + namespace
                 )
     errors.extend(_slot_conflicts(rel, listed, core))
     return errors
@@ -957,7 +958,7 @@ def _validate_apps(
     if not generated.is_file() or generated.read_text(encoding="utf-8") != _apps.render(
         data, resolve_cluster_vars(cluster_vars)
     ):
-        errors.append(f"{generated_rel}: missing or does not match {rel}; re-render with tools/render")
+        errors.append(f"{generated_rel}: missing or does not match {rel}; re-render with jarvis render")
     return errors
 
 
@@ -995,7 +996,7 @@ def _validate_backup_selection_render(
         ):
             errors.append(
                 f"{env_name}: {_display_path(component, repo_root)} is missing or differs; "
-                "re-render with tools/render"
+                "re-render with jarvis render"
             )
     expected_components = [
         f"../../platform-configs/{_app_backups.REGISTRATION_DIR}/{namespace}" for namespace in enabled
@@ -1006,12 +1007,12 @@ def _validate_backup_selection_render(
         if rendered_components != expected_components:
             errors.append(
                 f"{generated_rel}: stale wrapper lists {rendered_components!r}, expected {expected_components!r}; "
-                "re-render with tools/render"
+                "re-render with jarvis render"
             )
             return errors
     if not generated.is_file() or generated.read_text(encoding="utf-8") != expected:
         errors.append(
-            f"{generated_rel}: missing or does not match {rel}; re-render with tools/render"
+            f"{generated_rel}: missing or does not match {rel}; re-render with jarvis render"
         )
         return errors
     return errors
@@ -1058,12 +1059,12 @@ def _validate_flux_sources(
 
     del docs  # parsed only to report invalid YAML
     if path.read_text(encoding="utf-8") != _switches.sync(cluster_vars, env_name):
-        return [f"{rel}: does not match values/cluster-vars.yaml; re-render with tools/render --env {env_name}"]
+        return [f"{rel}: does not match values/cluster-vars.yaml; re-render with jarvis render --env {env_name}"]
     return []
 
 
 def _rendered_cluster_vars_configmap(cluster_vars_path: Path) -> str:
-    from jarvis.lib.render_cluster_vars_configmap import render_document
+    from jarvis.render.cluster_vars import render_document
 
     return render_document(cluster_vars_path)
 
@@ -1091,7 +1092,7 @@ def _validate_committed_configmap(
         return []
     return [
         f"{rel}: does not match values/cluster-vars.yaml; "
-        f"re-render with tools/render"
+        f"re-render with jarvis render"
     ]
 
 

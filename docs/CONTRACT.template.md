@@ -18,7 +18,7 @@ Settings, where they live, and allowed values.
 
 ## Proven by
 
-CI rule checks (`ci/checks/`) and/or standing checks (`make verify ENV=<env>`) that enforce this contract.
+CI rule checks (`ci/checks/`) and/or standing checks (`jarvis verify --env <env>`) that enforce this contract.
 
 ## Operations
 

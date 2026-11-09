@@ -214,7 +214,7 @@ def test_etcd_snapshot_cronjob_copies_hourly_from_the_k3s_directory() -> None:
 
 
 def _etcd_kubectl(image: str):
-    from jarvis.lib.etcd_image import etcd_snapshot_image
+    from jarvis.backups.etcd_image import etcd_snapshot_image
 
     body = {
         "spec": {
@@ -258,7 +258,7 @@ def test_nonrelease_etcd_tag_is_rejected(tag: str) -> None:
     """latest, edge, Latest, and a partial tag are not a restic release."""
     image = f"restic/restic:{tag}@sha256:" + ("ab" * 32)
     read, kubectl = _etcd_kubectl(image)
-    from jarvis.lib.etcd_image import ImageError
+    from jarvis.backups.etcd_image import ImageError
 
     with pytest.raises(ImageError, match="must be restic/restic@sha256:"):
         read(kubectl)

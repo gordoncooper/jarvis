@@ -1541,7 +1541,7 @@ def test_fresh_cluster_creates_the_deploy_key_secret_once(tmp_path: Path) -> Non
     """An ssh:// root's sealed deploy key becomes flux-system/flux-deploy-key once, with GitHub's host key."""
     require_cli("ansible-playbook")
     require_cli("sops")
-    from jarvis.lib.sops import encrypt_secret_to_file
+    from jarvis.secrets.sops import encrypt_secret_to_file
 
     identity, public = _age_identity(tmp_path, "env")
     keyfile = _key_file(tmp_path, (identity, public))

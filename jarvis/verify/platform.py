@@ -10,11 +10,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 
-from jarvis.lib.env import json_object, reason, tool_env
+from jarvis.env.runtime import json_object, reason, tool_env
+from jarvis.paths import PRODUCT_ROOT
 from jarvis.verify.common import CheckError, Context, Fetch, Issuer, Kubectl, items
 from jarvis.verify.registry import Check, register
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = PRODUCT_ROOT
 FLUX_RESOURCES = (
     "kustomizations.kustomize.toolkit.fluxcd.io",
     "gitrepositories.source.toolkit.fluxcd.io",
@@ -48,7 +49,7 @@ def _run(
             check=False,
         )
     except FileNotFoundError:
-        print("run make deps", flush=True)
+        print("run jarvis doctor", flush=True)
         raise SystemExit(1) from None
     except subprocess.TimeoutExpired:
         return CompletedProcess(list(argv), 1, "", f"{argv[0]} timed out")

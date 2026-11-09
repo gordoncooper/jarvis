@@ -37,4 +37,4 @@ Manifests that expose the endpoint set probes, log to stdout, set a memory reque
 
 - `ci/tests/test_traefik.py` (HelmChartConfig and `coredns-custom` in `kube-system`, Gateway provider off, memory limit, CPU request without a CPU limit, LoadBalancer Service).
 - `ci/checks/manifest-lint`.
-- `make verify` (reachability from the LAN).
+- `jarvis verify` (reachability from the LAN).

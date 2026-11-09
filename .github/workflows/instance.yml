@@ -27,7 +27,9 @@ name: instance
 #           run: test "${RESULT}" = success
 #
 # Each env is checked by the core its core_git_ref pins, checked out at .core/, not by this
-# workflow's own tag. On a Renovate PR it first renders each env with that core and pushes what
+# workflow's own tag: that core's jarvis CLI runs jarvis validate, as an operator would. A core
+# before v0.5.0 has no CLI, so this workflow needs every env at v0.5.0 or later (Renovate moves
+# the env pins and this workflow's pin in one PR). On a Renovate PR it first renders each env with that core and pushes what
 # changed, so a pin bump (core, app or k3s) arrives with its generated files. The push uses a
 # GitHub App's token, not GITHUB_TOKEN: a push made with GITHUB_TOKEN starts no workflow, so the
 # PR's checks would never run on the rendered commit. Without the App (render-client-id unset)
@@ -101,7 +103,6 @@ jobs:
           ref: ${{ github.head_ref }}
           persist-credentials: false
 
-      # A core from v0.5.0 on installs its tools with mise (make venv); an older core ignores it.
       - name: Install mise
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
@@ -115,15 +116,14 @@ jobs:
           MATRIX: ${{ needs.envs.outputs.matrix }}
         run: |
           set -euo pipefail
-          instance="${PWD}"
           while read -r env repo ref; do
             core="${RUNNER_TEMP}/core/${env}"
             git init -q "${core}"
-            git -C "${core}" fetch -q --depth 1 "https://github.com/${repo}.git" "${ref}"
-            git -C "${core}" checkout -q --detach FETCH_HEAD
+            # The tag itself, so the CLI sees its checkout is the env's pin and runs it as it is.
+            git -C "${core}" fetch -q --depth 1 "https://github.com/${repo}.git" "+${ref}:${ref}"
+            git -C "${core}" checkout -q --detach "${ref}"
             make -C "${core}" venv >/dev/null
-            apps="$(INSTANCE="${instance}" CHECKOUT_APPS_DIR="${RUNNER_TEMP}/apps" bash "${core}/ci/checkout-apps-for-instance.sh")"
-            INSTANCE="${instance}" APPS_REPO="${apps}" "${core}/.venv/bin/python" "${core}/tools/render" --env "${env}"
+            "${core}/.venv/bin/jarvis" --env "${env}" render
           done < <(jq -r '.include[] | "\(.env) \(.core_repo) \(.core_ref)"' <<<"${MATRIX}")
           if [[ -n "$(git status --porcelain -- envs)" ]]; then
             echo "changed=true" >> "${GITHUB_OUTPUT}"
@@ -153,7 +153,7 @@ jobs:
           # A fixed author the instance preset lists in gitIgnoredAuthors, so Renovate still treats
           # the branch as its own: it keeps rebasing it, and each rebase is rendered again.
           git -c user.name=jarvis-render -c user.email=jarvis-render@noreply.invalid \
-            commit -q -m "Render envs for this pin change" -m "tools/render at each env's pinned core."
+            commit -q -m "Render envs for this pin change" -m "jarvis render at each env's pinned core."
           git push -q "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
           echo "pushed=true" >> "${GITHUB_OUTPUT}"
           echo "Pushed the render; the checks run on that commit." >> "${GITHUB_STEP_SUMMARY}"
@@ -192,30 +192,16 @@ jobs:
           version: 2026.11.5
           install: false
 
-      # The pinned core's own tools: mise and uv from its mise.toml and uv.lock (v0.5.0 on), or its
-      # older installer. Every later step runs under that core's mise config, so its CLIs are on PATH.
+      # The pinned core's own tools, from its mise.toml and uv.lock, and its jarvis CLI.
       - name: Install the pinned core's tools
         run: make -C .core deps
 
-      - name: Checkout the apps repository the envs read
+      # The same command an operator runs. It checks out the apps repository the env reads (the
+      # default branch with every tag) and checks each app at its pin.
+      - name: jarvis validate
         env:
-          INSTANCE: ${{ github.workspace }}
-          CHECKOUT_APPS_DIR: ${{ runner.temp }}/apps
-        # The default branch with every tag: the checks read each app at its pin under versions in
-        # values/apps.yaml. A core-only instance gets no directory and needs none.
-        run: |
-          set -euo pipefail
-          apps_dir="$(mise -C .core exec -- bash .core/ci/checkout-apps-for-instance.sh)"
-          if [[ -n "${apps_dir}" ]]; then
-            echo "APPS_REPO=${apps_dir}" >> "${GITHUB_ENV}"
-            echo "Checked apps repository at $(git -C "${apps_dir}" rev-parse HEAD)" | tee -a "${GITHUB_STEP_SUMMARY}"
-          fi
-
-      - name: Run the pinned core's env checks
-        env:
-          INSTANCE: ${{ github.workspace }}
-          ENVS: ${{ matrix.env }}
-        run: mise -C .core exec -- bash .core/ci/run-env-checks
+          ENV_NAME: ${{ matrix.env }}
+        run: .core/.venv/bin/jarvis --env "${ENV_NAME}" validate
 
   # Green only when every env leg is, and red on a commit the render replaced.
   ci:

@@ -1,4 +1,4 @@
-"""An instance's apps checkout: when env checks need it, which repository the helper reads, and that
+"""An instance's apps checkout: when env checks need it, which repository fetch reads, and that
 the checks read each app at its pinned tag."""
 
 from __future__ import annotations
@@ -89,36 +89,25 @@ def _write_env(instance: Path, name: str, url: str, apps: list[str]) -> None:
     (values / "apps.yaml").write_text(yaml.safe_dump({"versions": {app: "v0.1.0" for app in apps}}), encoding="utf-8")
 
 
-def _helper(tmp_path: Path, instance: Path) -> subprocess.CompletedProcess[str]:
-    """Run a copy of the helper against the instance."""
-    product = tmp_path / "product"
-    (product / "ci" / "checks").mkdir(parents=True)
-    shutil.copy(REPO_ROOT / "ci" / "checkout-apps-for-instance.sh", product / "ci")
-    shutil.copytree(REPO_ROOT / "ci" / "checks" / "lib", product / "ci" / "checks" / "lib")
-    # The helper runs jarvis.checks.apps_checkout from the product root.
-    shutil.copytree(REPO_ROOT / "jarvis", product / "jarvis", ignore=shutil.ignore_patterns("__pycache__"))
-    return subprocess.run(
-        ["bash", str(product / "ci" / "checkout-apps-for-instance.sh")],
-        env={**os.environ, "INSTANCE": str(instance)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _fetch(tmp_path: Path, instance: Path) -> Path | None:
+    from jarvis.apps.checkout import fetch
+
+    return fetch(instance, tmp_path / "checkout")
 
 
-def test_helper_checks_out_the_default_branch_with_every_tag(tmp_path: Path) -> None:
+def test_fetch_checks_out_the_default_branch_with_every_tag(tmp_path: Path) -> None:
     """Rule: the URL comes from the env that lists apps; the checkout holds the default branch
     (its SHA logged) and the app tags, and the checks read each app at its pinned tag."""
-    from jarvis.lib import backup_selection as _backup_selection
+    from jarvis.backups import selection as _backup_selection
 
     sha = _apps_remote(tmp_path / "remote")
     instance = tmp_path / "instance"
     _write_env(instance, "env-a", "file:///nonexistent/core-only", [])
     _write_env(instance, "env-b", f"file://{tmp_path / 'remote'}", ["notes"])
-    proc = _helper(tmp_path, instance)
-    assert proc.returncode == 0, proc.stderr
-    checkout = Path(proc.stdout.strip())
-    assert sha in proc.stderr
+    checkout = _fetch(tmp_path, instance)
+    assert checkout is not None
+    head = subprocess.run([*_GIT, "rev-parse", "HEAD"], cwd=checkout, check=True, capture_output=True, text=True)
+    assert head.stdout.strip() == sha
     assert not (checkout / "notes").exists()
     pinned = _backup_selection._pinned_view(checkout, instance / "envs" / "env-b")
     assert (pinned / "notes" / "app.yaml").is_file()
@@ -126,12 +115,13 @@ def test_helper_checks_out_the_default_branch_with_every_tag(tmp_path: Path) -> 
 
 def test_a_pin_the_checkout_lacks_fails(tmp_path: Path) -> None:
     """Rule: the checks never fall back to the tip for an app whose pinned tag is missing."""
-    from jarvis.lib import backup_selection as _backup_selection
+    from jarvis.backups import selection as _backup_selection
 
     _apps_remote(tmp_path / "remote")
     instance = tmp_path / "instance"
     _write_env(instance, "env-b", f"file://{tmp_path / 'remote'}", ["notes"])
-    checkout = Path(_helper(tmp_path, instance).stdout.strip())
+    checkout = _fetch(tmp_path, instance)
+    assert checkout is not None
     (instance / "envs" / "env-b" / "values" / "apps.yaml").write_text("versions:\n  notes: v9.9.9\n", encoding="utf-8")
     with pytest.raises(_backup_selection.AppsRepoError, match="no tag notes/v9.9.9"):
         _backup_selection._pinned_view(checkout, instance / "envs" / "env-b")
@@ -140,7 +130,7 @@ def test_a_pin_the_checkout_lacks_fails(tmp_path: Path) -> None:
 def test_a_pin_newer_than_the_clone_fetches_its_tags_once(tmp_path: Path) -> None:
     """Rule: an operator's clone that predates a pinned tag fetches the remote's tags and reads
     the app at it, instead of asking the operator to fetch; it moves no branch."""
-    from jarvis.lib import backup_selection as _backup_selection
+    from jarvis.backups import selection as _backup_selection
 
     remote = tmp_path / "remote"
     _apps_remote(remote)
@@ -157,38 +147,38 @@ def test_a_pin_newer_than_the_clone_fetches_its_tags_once(tmp_path: Path) -> Non
     assert after == head
 
 
-def test_helper_is_silent_for_a_core_only_instance(tmp_path: Path) -> None:
-    """Rule: with no env listing an app the helper checks out nothing and succeeds."""
+def test_fetch_checks_out_nothing_for_a_core_only_instance(tmp_path: Path) -> None:
+    """Rule: with no env listing an app nothing is checked out."""
     instance = tmp_path / "instance"
     _write_env(instance, "env-a", "file:///nonexistent/core-only", [])
-    proc = _helper(tmp_path, instance)
-    assert proc.returncode == 0, proc.stderr
-    assert proc.stdout == ""
+    assert _fetch(tmp_path, instance) is None
+    assert not (tmp_path / "checkout").exists()
 
 
-def test_helper_fails_clearly_on_an_unreadable_repository(tmp_path: Path) -> None:
-    """Rule: an unreadable repository stops the helper with the reason."""
+def test_fetch_fails_clearly_on_an_unreadable_repository(tmp_path: Path) -> None:
+    """Rule: an unreadable repository stops the checkout with the reason."""
+    from jarvis.apps.checkout import AppsCheckoutError
+
     instance = tmp_path / "instance"
     _write_env(instance, "env-b", "file:///nonexistent/apps", ["notes"])
-    proc = _helper(tmp_path, instance)
-    assert proc.returncode != 0
-    assert "cannot read branch HEAD" in proc.stderr
-    assert proc.stdout == ""
+    with pytest.raises(AppsCheckoutError, match="cannot read branch HEAD"):
+        _fetch(tmp_path, instance)
 
 
-def test_helper_refuses_envs_reading_different_repositories(tmp_path: Path) -> None:
-    """Rule: one checkout cannot prove two repositories, so the helper names the conflict, not the first env's."""
+def test_fetch_refuses_envs_reading_different_repositories(tmp_path: Path) -> None:
+    """Rule: one checkout cannot prove two repositories, so the conflict is named, not the first env's."""
+    from jarvis.apps.checkout import AppsCheckoutError
+
     instance = tmp_path / "instance"
     _write_env(instance, "env-a", "file:///one", ["notes"])
     _write_env(instance, "env-b", "file:///two", ["notes"])
-    proc = _helper(tmp_path, instance)
-    assert proc.returncode != 0
-    assert "different apps repositories" in proc.stderr
+    with pytest.raises(AppsCheckoutError, match="different apps repositories"):
+        _fetch(tmp_path, instance)
 
 
 def test_unreadable_app_failure_names_the_pinned_tag(tmp_path: Path) -> None:
     """Rule: when the checkout cannot answer for a selected app, the failure says it reads the pinned tag."""
-    from jarvis.lib import backup_selection as _backup_selection
+    from jarvis.backups import selection as _backup_selection
 
     stale = instance_apps_repo_for_checks(tmp_path)
     shutil.rmtree(stale / "notes")

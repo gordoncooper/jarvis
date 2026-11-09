@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import textwrap
@@ -9,14 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from support import REPO_ROOT, load_tool
-
-SCRIPT = REPO_ROOT / "tools" / "age-key-check"
 _SENTINEL = "sentinel-plaintext-9f3c2a7b"
 
 
 def _load():
-    return load_tool("age_key_check", SCRIPT)
+    return importlib.import_module("jarvis.secrets.age_key_check")
 
 
 def _require(name: str) -> str:

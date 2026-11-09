@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jarvis.lib import app_backups as _app_backups
-from jarvis.lib import switches as _switches
+from jarvis.backups import app_credentials as _app_backups
+from jarvis.env import switches as _switches
 from jarvis.schema.env import ValidationError, validate_one_env
 from support import (
     ExampleCopy,
@@ -212,7 +212,7 @@ def test_an_exception_line_for_an_unlisted_app_refuses_the_render(tmp_path: Path
 
 def test_the_old_section_name_optional_is_an_unknown_key(tmp_path: Path) -> None:
     """Rule: switches.yaml's sections are features, addons and apps; the old name optional is refused."""
-    from jarvis.lib import switches as _switches
+    from jarvis.env import switches as _switches
 
     data = {"optional": ["app-dns"]}
     assert any("unknown key 'optional'" in error for error in _switches.validate(data, ()))

@@ -40,4 +40,4 @@ runs:
         set -euo pipefail
         args=()
         for name in ${EXCLUDE}; do args+=(--exclude "${name}"); done
-        mise -C "${CORE}" exec -- "${RUNNER_TEMP}/app-check-venv/bin/python" "${CORE}/tools/app-check" --repo "$(realpath "${APPS}")" "${args[@]}"
+        mise -C "${CORE}" exec -- "${RUNNER_TEMP}/app-check-venv/bin/python" -m jarvis.apps.check --repo "$(realpath "${APPS}")" "${args[@]}"

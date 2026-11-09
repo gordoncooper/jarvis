@@ -1,4 +1,4 @@
-"""tools/render: one command renders every generated file of an env, and --check lists stale ones."""
+"""jarvis render: one command renders every generated file of an env, and --check lists stale ones."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis
 
 def _check(copy: ExampleCopy) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "tools" / "render"), "--env", copy.name, "--check"],
+        [sys.executable, "-m", "jarvis.render.env", "--env", copy.name, "--check"],
         env={**os.environ, "INSTANCE": str(copy.root), "APPS_REPO": str(FIXTURE_APPS)},
         capture_output=True,
         text=True,
@@ -47,7 +47,7 @@ def test_check_passes_a_rendered_env_and_names_each_stale_file(example_copy: Exa
 
 def _render(copy: ExampleCopy) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "tools" / "render"), "--env", copy.name],
+        [sys.executable, "-m", "jarvis.render.env", "--env", copy.name],
         env={**os.environ, "INSTANCE": str(copy.root), "APPS_REPO": str(FIXTURE_APPS)},
         capture_output=True,
         text=True,

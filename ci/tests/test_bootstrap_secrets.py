@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import shlex
 import shutil
@@ -12,17 +13,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT, load_tool
-
-BOOTSTRAP = REPO_ROOT / "tools" / "bootstrap-secrets"
-
 
 def _load_module():
-    return load_tool("bootstrap_secrets", BOOTSTRAP)
+    return importlib.import_module("jarvis.secrets.mint")
 
 
 def _load_sops():
-    from jarvis.lib import sops as _sops
+    from jarvis.secrets import sops as _sops
 
     return _sops
 
@@ -596,25 +593,6 @@ def test_k3s_tokens_are_minted_only_for_a_new_env(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="refusing to mint k3s tokens"):
         mod.bootstrap("env-test", sops_bin=sops_bin)
     assert not token.exists()
-
-
-def test_make_rotate_restic_maps_only_one() -> None:
-    """ROTATE_RESTIC=1 is the only value that adds --rotate-restic."""
-    def dry(*args: str) -> str:
-        result = subprocess.run(
-            ["make", "-n", "-C", str(REPO_ROOT), "bootstrap-secrets", *args],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr
-        return result.stdout
-
-    assert "--rotate-restic" in dry("ENV=env-test", "ROTATE_RESTIC=1")
-    assert "--rotate-restic" not in dry("ENV=env-test")
-    assert "--rotate-restic" not in dry("ENV=env-test", "ROTATE_RESTIC=0")
-    assert '--app "app-shop"' in dry("ENV=env-test", "APP=app-shop")
-    assert "--app" not in dry("ENV=env-test")
 
 
 def test_ca_regeneration_refuses_a_mismatched_root(tmp_path, monkeypatch):

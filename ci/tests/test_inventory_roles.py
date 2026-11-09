@@ -91,7 +91,7 @@ def test_env_hosts_file_alone_fails_before_any_change(example_copy: ExampleCopy)
         text = proc.stdout + proc.stderr
         assert proc.returncode != 0, text
         assert "Assert exactly one control_plane host" in text
-        assert "make site ENV=" in text
+        assert "jarvis site --env" in text
         assert "infra/inventory/roles" in text
         assert "roles.yml" not in text
         assert "base-os :" not in text

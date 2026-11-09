@@ -1,0 +1,802 @@
+"""Run and clean up the environment-bound PVC and etcd restore drill."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import secrets
+import signal
+import subprocess
+import sys
+import time
+from collections.abc import Callable, Sequence
+from subprocess import CompletedProcess
+
+import yaml
+
+from jarvis.backups.etcd_image import ImageError, etcd_snapshot_image
+from jarvis.env.runtime import (
+    EnvError,
+    instance_root,
+    json_object,
+    kubeconfig_for,
+    not_found,
+    reason,
+    repository_values,
+    tool_env,
+    validate_cluster,
+)
+from jarvis.env.runtime import (
+    kubectl as run_kubectl,
+)
+from jarvis.paths import PRODUCT_ROOT
+
+REPO_ROOT = PRODUCT_ROOT
+
+NAMESPACE = "platform-drill"
+PVC = "drill"
+WRITER = "drill-writer"
+READER = "drill-reader"
+ETCD_POD = "drill-etcd-restore"
+CLEANUP_POD = "jarvis-drill-repo-cleanup"
+PROBE_POD = "jarvis-drill-repo-probe"
+BACKUP_NAMESPACE = "platform-backups"
+HOLD_NAME = "backup-rebuild-hold"
+POLL_SECONDS = 2.0
+WAIT_SECONDS = 20 * 60
+DELETE_TIMEOUT_SECONDS = 60
+# The etcd pod prints this and the snapshot name when the restic copy does not hold it yet: no
+# repository, no snapshot in it, or a latest snapshot without the newest file.
+NOT_COPIED = "ETCD-NOT-COPIED"
+# The etcd pod prints this when k3s has written no snapshot yet (a new cluster, before its first).
+NO_SNAPSHOT = "ETCD-NO-SNAPSHOT"
+Kubectl = Callable[..., CompletedProcess[str]]
+Restore = Callable[[Sequence[str]], CompletedProcess[str]]
+
+
+class DrillError(Exception):
+    pass
+
+
+class DrillSignal(BaseException):
+    def __init__(self, signum: int) -> None:
+        super().__init__(signal.Signals(signum).name)
+        self.signum = signum
+
+
+def _raise_signal(signum: int, _frame: object) -> None:
+    raise DrillSignal(signum)
+
+
+def _line(text: str) -> None:
+    print(text, flush=True)
+
+
+def _ok(proc: CompletedProcess[str], what: str) -> None:
+    if proc.returncode:
+        raise DrillError(f"{what}: {reason(proc)}")
+
+
+def _body(kubectl: Kubectl, args: list[str], what: str) -> dict:
+    try:
+        return json_object(kubectl(args), what)
+    except EnvError as exc:
+        raise DrillError(str(exc)) from exc
+
+
+def _apply(kubectl: Kubectl, body: dict, what: str) -> None:
+    _ok(
+        kubectl(["apply", "-f", "-"], input=yaml.safe_dump(body, sort_keys=False)),
+        what,
+    )
+
+
+def _create(kubectl: Kubectl, body: dict, what: str) -> None:
+    _ok(
+        kubectl(["create", "-f", "-"], input=yaml.safe_dump(body, sort_keys=False)),
+        what,
+    )
+
+
+def _delete(
+    kubectl: Kubectl,
+    kind: str,
+    name: str,
+    namespace: str,
+    *,
+    wait: bool = True,
+    timeout: int | None = None,
+) -> None:
+    args = ["delete", kind, name]
+    if kind != "namespace":
+        args.extend(["-n", namespace])
+    args.extend([f"--wait={'true' if wait else 'false'}", "--ignore-not-found=true"])
+    if timeout is not None:
+        args.append(f"--timeout={timeout}s")
+    _ok(
+        kubectl(args),
+        f"delete {kind} {namespace}/{name}",
+    )
+
+
+def _wait(
+    predicate: Callable[[], bool],
+    what: str,
+    *,
+    timeout: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    deadline = monotonic() + (WAIT_SECONDS if timeout is None else timeout)
+    while True:
+        if predicate():
+            return
+        if monotonic() >= deadline:
+            raise DrillError(f"{what}: timed out")
+        sleep(min(POLL_SECONDS, max(0.0, deadline - monotonic())))
+
+
+def _pod_succeeded(kubectl: Kubectl, name: str, namespace: str) -> bool:
+    pod = _body(
+        kubectl,
+        ["get", "pod", name, "-n", namespace, "-o", "json"],
+        f"read pod {namespace}/{name}",
+    )
+    phase = (pod.get("status") or {}).get("phase")
+    if phase == "Failed":
+        raise DrillError(f"pod {namespace}/{name} failed")
+    status = pod.get("status") or {}
+    for condition in status.get("conditions") or []:
+        if (
+            condition.get("type") == "PodScheduled"
+            and condition.get("status") == "False"
+            and condition.get("reason") == "Unschedulable"
+        ):
+            raise DrillError(
+                f"pod {namespace}/{name} unschedulable:"
+                f" {condition.get('message') or 'no reason'}"
+            )
+    for container in [
+        *(status.get("initContainerStatuses") or []),
+        *(status.get("containerStatuses") or []),
+    ]:
+        waiting = ((container.get("state") or {}).get("waiting") or {})
+        wait_reason = waiting.get("reason") or ""
+        message = waiting.get("message") or ""
+        missing_config = (
+            ("secret" in message.lower() or "configmap" in message.lower())
+            and "not found" in message.lower()
+        )
+        if wait_reason in {"CreateContainerConfigError", "CreateContainerError"} or missing_config:
+            raise DrillError(
+                f"pod {namespace}/{name} configuration failed:"
+                f" {message or wait_reason}"
+            )
+    return phase == "Succeeded"
+
+
+def _pod_node(kubectl: Kubectl, name: str, namespace: str) -> str:
+    pod = _body(
+        kubectl,
+        ["get", "pod", name, "-n", namespace, "-o", "json"],
+        f"read pod {namespace}/{name}",
+    )
+    node = (pod.get("spec") or {}).get("nodeName")
+    if not isinstance(node, str) or not node:
+        raise DrillError(f"pod {namespace}/{name} has no node")
+    return node
+
+
+def _logs(kubectl: Kubectl, name: str, namespace: str) -> str:
+    proc = kubectl(["logs", name, "-n", namespace])
+    _ok(proc, f"read logs {namespace}/{name}")
+    return proc.stdout
+
+
+def _pvc() -> dict:
+    return {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {
+            "name": PVC,
+            "namespace": NAMESPACE,
+            "annotations": {"backup": "paused"},
+        },
+        "spec": {
+            "accessModes": ["ReadWriteOnce"],
+            "resources": {"requests": {"storage": "64Mi"}},
+        },
+    }
+
+
+def _volume_pod(name: str, image: str, command: str, env: list[dict] | None = None) -> dict:
+    container = {
+        "name": "drill",
+        "image": image,
+        "command": ["/bin/sh", "-c", command],
+        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+    }
+    if env:
+        container["env"] = env
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "namespace": NAMESPACE},
+        "spec": {
+            "restartPolicy": "Never",
+            "containers": [container],
+            "volumes": [
+                {"name": "data", "persistentVolumeClaim": {"claimName": PVC}}
+            ],
+        },
+    }
+
+
+_PLACEMENT_KEYS = ("nodeSelector", "affinity", "tolerations")
+
+
+def _placement(source: dict) -> dict:
+    return {key: source[key] for key in _PLACEMENT_KEYS if key in source}
+
+
+def _templates(kubectl: Kubectl) -> tuple[dict, dict]:
+    cronjob = _body(
+        kubectl,
+        [
+            "get",
+            "cronjob",
+            "etcd-snapshots",
+            "-n",
+            BACKUP_NAMESPACE,
+            "-o",
+            "json",
+        ],
+        "read etcd-snapshots CronJob",
+    )
+    deployment = _body(
+        kubectl,
+        [
+            "get",
+            "deployment",
+            "restic",
+            "-n",
+            BACKUP_NAMESPACE,
+            "-o",
+            "json",
+        ],
+        "read restic Deployment",
+    )
+    try:
+        pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        snapshot_volume = next(
+            volume
+            for volume in pod["volumes"]
+            if (volume.get("hostPath") or {}).get("path")
+        )
+        restic_pod = deployment["spec"]["template"]["spec"]
+        restic_container = restic_pod["containers"][0]
+        data_mount = next(
+            mount
+            for mount in restic_container["volumeMounts"]
+            if mount["mountPath"] == "/data"
+        )
+        data_volume = next(
+            volume for volume in restic_pod["volumes"] if volume["name"] == data_mount["name"]
+        )
+        etcd_place = _placement(pod)
+        restic_place = _placement(restic_pod)
+        if "nodeSelector" not in etcd_place and "affinity" not in etcd_place:
+            raise DrillError("live backup workload has an unsupported pod template")
+        if "nodeSelector" not in restic_place and "affinity" not in restic_place:
+            raise DrillError("live backup workload has an unsupported pod template")
+        etcd = {
+            "image": container["image"],
+            "env": container["env"],
+            "snapshotHostPath": snapshot_volume["hostPath"],
+            **etcd_place,
+        }
+        cleanup = {
+            "image": container["image"],
+            "dataHostPath": data_volume["hostPath"],
+            **restic_place,
+        }
+    except (KeyError, IndexError, StopIteration, TypeError) as exc:
+        raise DrillError("live backup workload has an unsupported pod template") from exc
+    return etcd, cleanup
+
+
+def _etcd_pod(template: dict) -> dict:
+    # The name restored is one the latest restic snapshot lists, not whatever the directory holds now.
+    command = r"""
+set -eu
+set -o pipefail
+latest=
+for file in /snapshots/*; do
+  [ -f "$file" ] || continue
+  if [ -z "$latest" ] || [ "$file" -nt "$latest" ]; then latest="$file"; fi
+done
+if [ -z "$latest" ]; then
+  printf '%s\n' "$2"
+  exit 3
+fi
+name=${latest##*/}
+# Not copied yet: no repository (cat config exits 10) or no snapshot in it. Any other restic
+# failure fails the step, so a broken copy never reads as "not copied yet".
+status=0
+restic cat config >/dev/null || status=$?
+if [ "$status" -eq 10 ] || { [ "$status" -eq 0 ] && [ "$(restic snapshots --json)" = "[]" ]; }; then
+  printf '%s %s\n' "$1" "$name"
+  exit 3
+fi
+[ "$status" -eq 0 ]
+copied=$(restic ls latest /snapshots)
+if ! printf '%s\n' "$copied" | grep -Fx "/snapshots/$name" >/dev/null; then
+  printf '%s %s\n' "$1" "$name"
+  exit 3
+fi
+restic restore latest --target /restore --include "/snapshots/$name" >/dev/null
+[ -f "/restore/snapshots/$name" ]
+original=$(sha256sum "$latest" | cut -d' ' -f1)
+restored=$(sha256sum "/restore/snapshots/$name" | cut -d' ' -f1)
+printf 'ETCD %s %s %s\n' "$original" "$restored" "$name"
+""".strip()
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": ETCD_POD, "namespace": BACKUP_NAMESPACE},
+        "spec": {
+            "restartPolicy": "Never",
+            **_placement(template),
+            "containers": [
+                {
+                    "name": "restore",
+                    "image": template["image"],
+                    "securityContext": {"runAsUser": 0},
+                    "env": template["env"],
+                    "command": ["/bin/sh", "-c", command, "etcd-check", NOT_COPIED, NO_SNAPSHOT],
+                    "volumeMounts": [
+                        {"name": "snapshots", "mountPath": "/snapshots", "readOnly": True},
+                        {"name": "restore", "mountPath": "/restore"},
+                    ],
+                }
+            ],
+            "volumes": [
+                {"name": "snapshots", "hostPath": template["snapshotHostPath"]},
+                {"name": "restore", "emptyDir": {}},
+            ],
+        },
+    }
+
+
+def _cleanup_pod(template: dict) -> dict:
+    command = (
+        "set -eu; repo=/data/ns-platform-drill/pvc-drill; "
+        'rm -rf -- "$repo"; '
+        'rmdir /data/ns-platform-drill 2>/dev/null || true; test ! -e "$repo"'
+    )
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": CLEANUP_POD, "namespace": BACKUP_NAMESPACE},
+        "spec": {
+            "restartPolicy": "Never",
+            **_placement(template),
+            "containers": [
+                {
+                    "name": "cleanup",
+                    "image": template["image"],
+                    "securityContext": {"runAsUser": 0},
+                    "command": ["/bin/sh", "-c", command],
+                    "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                }
+            ],
+            "volumes": [
+                {
+                    "name": "data",
+                    "hostPath": {
+                        "path": template["dataHostPath"]["path"],
+                        "type": "Directory",
+                    },
+                }
+            ],
+        },
+    }
+
+
+def _probe_pod(template: dict) -> dict:
+    command = (
+        "if [ -e /data/ns-platform-drill/pvc-drill ];"
+        " then echo PRESENT; else echo ABSENT; fi"
+    )
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": PROBE_POD, "namespace": BACKUP_NAMESPACE},
+        "spec": {
+            "restartPolicy": "Never",
+            **_placement(template),
+            "containers": [
+                {
+                    "name": "probe",
+                    "image": template["image"],
+                    "securityContext": {"runAsUser": 0},
+                    "command": ["/bin/sh", "-c", command],
+                    "volumeMounts": [
+                        {"name": "data", "mountPath": "/data", "readOnly": True}
+                    ],
+                }
+            ],
+            "volumes": [
+                {
+                    "name": "data",
+                    "hostPath": {
+                        "path": template["dataHostPath"]["path"],
+                        "type": "Directory",
+                    },
+                }
+            ],
+        },
+    }
+
+
+def _cleanup(kubectl: Kubectl, template: dict) -> bool:
+    ok = True
+    namespace_deleted = True
+    try:
+        _delete(
+            kubectl,
+            "namespace",
+            NAMESPACE,
+            NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
+        _line(f"FAIL cleanup namespace: {exc}")
+        namespace_deleted = False
+        ok = False
+    try:
+        _delete(
+            kubectl,
+            "pod",
+            ETCD_POD,
+            BACKUP_NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
+        _line(f"FAIL cleanup etcd pod: {exc}")
+        ok = False
+    if not namespace_deleted:
+        return False
+    try:
+        _delete(
+            kubectl,
+            "pod",
+            PROBE_POD,
+            BACKUP_NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
+        _delete(kubectl, "pod", CLEANUP_POD, BACKUP_NAMESPACE)
+        _apply(kubectl, _cleanup_pod(template), "apply repository cleanup pod")
+        _wait(
+            lambda: _pod_succeeded(kubectl, CLEANUP_POD, BACKUP_NAMESPACE),
+            "repository cleanup",
+        )
+        _delete(kubectl, "pod", CLEANUP_POD, BACKUP_NAMESPACE)
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
+        _line(f"FAIL cleanup repository: {exc}")
+        return False
+    return ok
+
+
+def _leftover(env: str) -> DrillError:
+    return DrillError(f"run jarvis drill --cleanup-only --env {env} first.")
+
+
+def _repo_exists(kubectl: Kubectl, template: dict, env: str) -> bool:
+    failure: BaseException | None = None
+    result = ""
+    try:
+        _create(kubectl, _probe_pod(template), "create repository probe pod")
+        _wait(
+            lambda: _pod_succeeded(kubectl, PROBE_POD, BACKUP_NAMESPACE),
+            "repository probe",
+        )
+        result = _logs(kubectl, PROBE_POD, BACKUP_NAMESPACE).strip()
+        if result not in {"PRESENT", "ABSENT"}:
+            raise DrillError("repository probe returned an invalid result")
+    except BaseException as exc:
+        failure = exc
+    try:
+        _delete(
+            kubectl,
+            "pod",
+            PROBE_POD,
+            BACKUP_NAMESPACE,
+            timeout=DELETE_TIMEOUT_SECONDS,
+        )
+    except (DrillError, KeyboardInterrupt, DrillSignal) as exc:
+        _line(f"RECOVERY jarvis drill --cleanup-only --env {env}")
+        if failure is None:
+            raise
+        raise DrillError(f"{failure}; repository probe cleanup failed: {exc}") from exc
+    if failure is not None:
+        raise failure
+    return result == "PRESENT"
+
+
+def _preflight(kubectl: Kubectl, env: str, cleanup_template: dict) -> None:
+    hold = kubectl(
+        ["get", "configmap", HOLD_NAME, "-n", "kube-system", "-o", "json"]
+    )
+    if hold.returncode == 0:
+        raise DrillError("backup rebuild hold is present")
+    if not not_found(hold):
+        raise DrillError(f"read backup rebuild hold: {reason(hold)}")
+    namespace = kubectl(["get", "namespace", NAMESPACE, "-o", "json"])
+    if namespace.returncode == 0:
+        raise _leftover(env)
+    if not not_found(namespace):
+        raise DrillError(f"read namespace {NAMESPACE}: {reason(namespace)}")
+    for pod in (ETCD_POD, CLEANUP_POD, PROBE_POD):
+        proc = kubectl(
+            ["get", "pod", pod, "-n", BACKUP_NAMESPACE, "-o", "json"]
+        )
+        if proc.returncode == 0:
+            raise _leftover(env)
+        if not not_found(proc):
+            raise DrillError(f"read pod {BACKUP_NAMESPACE}/{pod}: {reason(proc)}")
+    if _repo_exists(kubectl, cleanup_template, env):
+        raise _leftover(env)
+
+
+def _restore_command(args: Sequence[str]) -> CompletedProcess[str]:
+    return subprocess.run(
+        list(args),
+        cwd=REPO_ROOT,
+        env=tool_env(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _raise_for_etcd_pod(kubectl: Kubectl) -> None:
+    """Explain a failed etcd pod before cleanup deletes it: no k3s snapshot yet, a snapshot not
+    yet copied, or else its log, so the reason outlives the pod."""
+    proc = kubectl(["logs", ETCD_POD, "-n", BACKUP_NAMESPACE])
+    if proc.returncode:
+        return
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if parts == [NO_SNAPSHOT]:
+            raise DrillError(
+                "k3s has written no etcd snapshot yet; it writes one on its snapshot schedule"
+                " (k3s_etcd_snapshot_schedule_cron, default 00:00 and 12:00), and jarvis site takes"
+                " one on a new cluster. Run the drill again after the next etcd-snapshots run"
+            )
+        if len(parts) == 2 and parts[0] == NOT_COPIED:
+            raise DrillError(
+                f"newest etcd snapshot {parts[1]} is not yet in the restic copy;"
+                " run the drill again after the next etcd-snapshots run"
+            )
+    for line in proc.stdout.splitlines()[-20:]:
+        _line(f"LOG {ETCD_POD}: {line}")
+
+
+def _checksum_line(text: str, prefix: str) -> str:
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == prefix and len(parts[1]) == 64:
+            try:
+                int(parts[1], 16)
+            except ValueError:
+                continue
+            return parts[1]
+    raise DrillError(f"{prefix.lower()} checksum missing")
+
+
+def _run(
+    kubectl: Kubectl,
+    *,
+    env: str,
+    restore: Restore = _restore_command,
+    cleanup_only: bool = False,
+    payload: bytes | None = None,
+) -> int:
+    started = False
+    cleanup_template: dict | None = None
+    exit_signal: int | None = None
+    failed: str | None = None
+    try:
+        repository_values(instance_root(REPO_ROOT), env)
+        validate_cluster(kubectl, env)
+        try:
+            image = etcd_snapshot_image(kubectl)
+        except ImageError as exc:
+            raise DrillError(str(exc)) from exc
+        etcd_template, cleanup_template = _templates(kubectl)
+        etcd_template["image"] = image
+        cleanup_template["image"] = image
+        if cleanup_only:
+            if not _cleanup(kubectl, cleanup_template):
+                return 1
+            _line("PASS drill cleanup complete")
+            return 0
+        _preflight(kubectl, env, cleanup_template)
+
+        raw = payload if payload is not None else secrets.token_bytes(64)
+        content = raw.hex()
+        expected = hashlib.sha256(content.encode()).hexdigest()
+        _apply(
+            kubectl,
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}},
+            "create drill namespace",
+        )
+        started = True
+        claim = _pvc()
+        claim["metadata"]["annotations"] = {}
+        _apply(kubectl, claim, "create drill PVC")
+        _apply(
+            kubectl,
+            _volume_pod(
+                WRITER,
+                etcd_template["image"],
+                "printf '%s' \"$PAYLOAD\" > /data/payload; "
+                "printf 'VOLUME '; sha256sum /data/payload | cut -d' ' -f1",
+                [{"name": "PAYLOAD", "value": content}],
+            ),
+            "create writer pod",
+        )
+        _wait(lambda: _pod_succeeded(kubectl, WRITER, NAMESPACE), "writer pod")
+        # The restored volume is bound on the node the original lived on.
+        node = _pod_node(kubectl, WRITER, NAMESPACE)
+        original = _checksum_line(_logs(kubectl, WRITER, NAMESPACE), "VOLUME")
+        if original != expected:
+            raise DrillError("writer checksum mismatch")
+        _line(f"ORIGINAL volume checksum {original}")
+
+        _delete(kubectl, "replicationsource", PVC, NAMESPACE)
+
+        def synced() -> bool:
+            proc = kubectl(
+                ["get", "replicationsource", PVC, "-n", NAMESPACE, "-o", "json"]
+            )
+            if proc.returncode:
+                if not_found(proc):
+                    return False
+                raise DrillError(f"read ReplicationSource: {reason(proc)}")
+            try:
+                body = json_object(proc, "read ReplicationSource")
+            except EnvError as exc:
+                raise DrillError(str(exc)) from exc
+            return bool((body.get("status") or {}).get("lastSyncTime"))
+
+        _wait(synced, "fresh volume backup")
+        _ok(
+            kubectl(
+                ["annotate", "pvc", PVC, "-n", NAMESPACE, "backup=paused", "--overwrite"]
+            ),
+            "pause drill PVC",
+        )
+        _delete(kubectl, "pod", WRITER, NAMESPACE)
+        _delete(kubectl, "pvc", PVC, NAMESPACE)
+        _line(f"DELETE PVC {NAMESPACE}/{PVC}")
+        _apply(kubectl, _pvc(), "recreate paused drill PVC")
+
+        _line(f"NODE restoring onto {node}")
+        restored = restore(
+            [sys.executable, "-m", "jarvis.backups.restore", "--env", env, "--app", NAMESPACE, "--node", node]
+        )
+        if restored.stdout:
+            _line(restored.stdout.rstrip())
+        if restored.stderr:
+            _line(restored.stderr.rstrip())
+        if restored.returncode:
+            raise DrillError("jarvis restore failed")
+
+        _apply(
+            kubectl,
+            _volume_pod(
+                READER,
+                etcd_template["image"],
+                "printf 'VOLUME '; sha256sum /data/payload | cut -d' ' -f1",
+            ),
+            "create reader pod",
+        )
+        _wait(lambda: _pod_succeeded(kubectl, READER, NAMESPACE), "reader pod")
+        after = _checksum_line(_logs(kubectl, READER, NAMESPACE), "VOLUME")
+        if after != original:
+            raise DrillError("restored volume checksum mismatch")
+        _line(f"RESTORED volume checksum {after}")
+
+        _create(kubectl, _etcd_pod(etcd_template), "create etcd restore pod")
+        try:
+            _wait(
+                lambda: _pod_succeeded(kubectl, ETCD_POD, BACKUP_NAMESPACE),
+                "etcd restore pod",
+            )
+        except DrillError:
+            _raise_for_etcd_pod(kubectl)
+            raise
+        etcd = _logs(kubectl, ETCD_POD, BACKUP_NAMESPACE)
+        line = next((line for line in etcd.splitlines() if line.startswith("ETCD ")), "")
+        parts = line.split()
+        try:
+            valid_etcd_sum = len(parts) == 4 and len(parts[1]) == 64
+            if valid_etcd_sum:
+                int(parts[1], 16)
+        except (ValueError, IndexError):
+            valid_etcd_sum = False
+        if not valid_etcd_sum or parts[1] != parts[2]:
+            raise DrillError("etcd snapshot checksum mismatch")
+        _line(f"ETCD snapshot {parts[3]} checksum {parts[1]}")
+    except KeyboardInterrupt:
+        exit_signal = signal.SIGINT
+        failed = "interrupted"
+    except DrillSignal as exc:
+        exit_signal = exc.signum
+        failed = f"interrupted by {signal.Signals(exc.signum).name}"
+    except (DrillError, EnvError, json.JSONDecodeError) as exc:
+        failed = str(exc)
+    finally:
+        if started and cleanup_template is not None:
+            if not _cleanup(kubectl, cleanup_template):
+                _line(f"RECOVERY jarvis drill --cleanup-only --env {env}")
+                failed = failed or "cleanup incomplete"
+    if failed:
+        _line(f"FAIL drill: {failed}")
+        return 128 + exit_signal if exit_signal is not None else 1
+    _line("PASS drill cleanup complete")
+    return 0
+
+
+def run(
+    kubectl: Kubectl,
+    *,
+    env: str,
+    restore: Restore = _restore_command,
+    cleanup_only: bool = False,
+    payload: bytes | None = None,
+) -> int:
+    previous = {
+        signum: signal.signal(signum, _raise_signal)
+        for signum in (signal.SIGTERM, signal.SIGHUP)
+    }
+    try:
+        return _run(
+            kubectl,
+            env=env,
+            restore=restore,
+            cleanup_only=cleanup_only,
+            payload=payload,
+        )
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env", required=True, help="Environment under envs/")
+    parser.add_argument("--cleanup-only", action="store_true", help="Only retry the drill namespace and repository cleanup")
+    args = parser.parse_args(argv)
+    kubeconfig = kubeconfig_for(args.env)
+    if not kubeconfig.is_file():
+        _line(f"FAIL kubeconfig does not exist: {kubeconfig}")
+        return 1
+
+    def bound(args_: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
+        return run_kubectl(
+            args_,
+            input=input,
+            repo_root=REPO_ROOT,
+            kubeconfig=kubeconfig,
+        )
+
+    return run(bound, env=args.env, cleanup_only=args.cleanup_only)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

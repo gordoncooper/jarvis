@@ -1,5 +1,5 @@
-# Every CLI core's tools, checks and CI use, one version each. `make deps` installs them with mise
-# (https://mise.jdx.dev); mise.lock records each one's checksum for every platform an operator or
+# Every CLI the jarvis CLI, core's checks and CI use, one version each. The deps task installs
+# them with mise (https://mise.jdx.dev); mise.lock records each one's checksum for every platform an operator or
 # CI runs on, and Renovate updates both files in one PR. CI fails when mise.lock no longer
 # matches this file: run `mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64`.
 [settings]
@@ -31,3 +31,11 @@ actionlint = "1.7.12"
 # and the etcd kubeadm pairs with that minor.
 "aqua:kubernetes/kubernetes/kube-apiserver" = { version = "1.36.6", os = ["linux"] }
 etcd = { version = "3.6.16", os = ["linux"] }
+
+[tasks.deps]
+# The one way a core checkout installs itself: make deps, CI and the jarvis CLI (for the core
+# release an env pins) all run it. Every pinned CLI, then every Python package from uv.lock into
+# .venv, the jarvis CLI included.
+description = "Install the pinned CLIs and Python packages"
+run = ["mise install --locked", "uv sync --frozen"]
+
