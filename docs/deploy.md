@@ -5,7 +5,7 @@ From a fresh copy of this repo to a running cluster, then `make verify`, `make d
 ## Prerequisites
 
 - amd64 Ubuntu Server nodes. Exactly one host has the `control_plane` role. A host with the `gpu` role must have an NVIDIA device. The opening play of `site.yml` checks this before it changes a node.
-- Internet access during the build, on the nodes and on the machine that runs the playbook. The controller needs Python 3.12 or newer (the pinned `ansible-core` requires it).
+- Internet access during the build, on the nodes and on the machine that runs the playbook. The controller (Linux or macOS, amd64 or arm64) needs [mise](https://mise.jdx.dev/getting-started.html); `make deps` installs everything else, Python 3.12 for Ansible included.
 - Encrypting needs the public age recipient in `.sops.yaml`. The private key decrypts. `make bootstrap-secrets` decrypts only when `envs/<env>/ca.crt` is missing and `envs/<env>/secrets/cert-manager-ca.sops.yaml` already exists. Every `TAGS=k3s` or untagged run of `site.yml`, including `CHECK=1` and adding a node, needs the private key on the controller to decrypt `envs/<env>/secrets/k3s-token.sops.yaml`. A label-only run (`TAGS=labels`) does not. `site.yml` reads the private key whenever that file exists, including when `flux-system/sops-age` is already present, and it refuses a file that is not mode 0600 or not owned by the user running the play. It keeps only the identities whose public key is the env's `.sops.yaml` recipient, and refuses a file with none. When the secret is absent, it creates the secret with those identities. The default path is `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides it. `tools/prep-node` can create a missing key or read one that is already there. Keep the private key offline except for those reads.
 - Inventory hostnames must resolve from the controller and from every node.
 - A private instance repository for the env (see [New env](#new-env)). Flux reads it over `ssh://` with one read-only deploy key, or over `https://` when it needs no credential. `flux_git_repo_url` is that remote. Flux reads core from this repository over `https://` with no credential (`core_git_repo_url`).
@@ -25,9 +25,9 @@ curl -fsSL "https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256
 make deps
 ```
 
-Installs the pinned `sops`, `age`, `age-keygen`, `kubectl`, `kustomize`, `kubeconform`, `gitleaks`, `restic`, `rest-server`, and `kyverno` binaries into `~/.local/bin`, and creates `.venv`. Put `~/.local/bin` on `PATH`.
+Installs every pinned CLI with mise (`mise.toml`; `mise.lock` holds each one's checksum for Linux and macOS on amd64 and arm64): `sops`, `age`, `kubectl`, `kustomize`, `kubeconform`, `kyverno`, `gitleaks`, `restic`, `rest-server`, `uv` and the CI tools. Then uv installs every Python package from `uv.lock`, Ansible included, into `.venv`. It changes nothing outside this checkout and mise's own directory.
 
-The Python tools need PyYAML, which `make deps` installs only in `.venv`. `make` targets already use it. When a step runs a tool directly, use `.venv/bin/python` as written, or the tool can fail with `No module named 'yaml'`.
+`make` targets put those CLIs on `PATH` themselves. To run a script or tool directly, use `mise exec -- <command>` from the checkout (or `mise activate` in your shell), and `.venv/bin/python` for the Python tools as written.
 
 ## New env
 

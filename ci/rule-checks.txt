@@ -10,6 +10,5 @@ flux-substitute
 loadbalancer
 manifest-lint
 product-ci
-python-pins
 pvc-backup
 secret-scan

@@ -109,9 +109,11 @@ def test_renovate_tracks_the_kyverno_chart_and_images() -> None:
         for manager in managers
         for pattern in manager["matchStrings"]
     )
-    groups = [rule for rule in renovate["packageRules"] if rule.get("groupName") == "kyverno"]
-    assert len(groups) == 1
-    assert "ghcr.io/kyverno/background-controller" in groups[0]["matchDepNames"]
+    # The chart and images (custom.regex) and the CLI (mise) share one group, so one PR.
+    groups = {tuple(rule["matchManagers"]): rule for rule in renovate["packageRules"] if rule.get("groupName") == "kyverno"}
+    assert set(groups) == {("custom.regex",), ("mise",)}
+    assert "ghcr.io/kyverno/background-controller" in groups[("custom.regex",)]["matchDepNames"]
+    assert groups[("mise",)]["matchDepNames"] == ["kyverno"]
 
 
 _ENV = {key: str(value) for key, value in yaml.safe_load(

@@ -49,7 +49,7 @@ def with_memory_reserve(eviction_hard: object, memtotal_mb: object, percent: obj
     try:
         total = int(memtotal_mb)
     except (TypeError, ValueError):
-        raise AnsibleFilterError(f"the node's memory fact (ansible_memtotal_mb) is {memtotal_mb!r}") from None
+        raise AnsibleFilterError(f"the node's memory (k3s_node_memtotal_mb, from ansible_facts['memtotal_mb']) is {memtotal_mb!r}") from None
     wanted = f"{_SIGNAL}<{reserve}%"
     for index, entry in enumerate(entries):
         signal, sep, threshold = entry.partition("<")

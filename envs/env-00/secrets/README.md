@@ -4,7 +4,7 @@ Shared rules for every env. A copy of this env keeps this file. Secret files are
 
 ## Bootstrap
 
-`make deps` installs what the tools need. Ensure `~/.local/bin` is on `PATH`.
+`make deps` installs what the tools need; `make` targets find them on their own.
 
 ```bash
 make bootstrap-secrets ENV=<env>

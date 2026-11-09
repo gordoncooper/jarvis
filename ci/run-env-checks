@@ -8,7 +8,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-export PATH="${HOME}/.local/bin:${repo_root}/.venv/bin:${PATH}"
+# The pinned CLIs come from mise on PATH (make deps, or CI's mise-action); Python from the venv.
+export PATH="${repo_root}/.venv/bin:${PATH}"
 
 # ENVS="<env> ..." limits the checks to those envs (each must exist), so an instance CI can check
 # each env against the core tag it pins. Unset, every env.

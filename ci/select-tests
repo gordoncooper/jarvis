@@ -24,15 +24,15 @@ DOC_FILES = {"LICENSE"}
 
 # Files a Renovate PR changes whose tests are not found by name (below).
 _MAPPED = {
-    "tools/versions.env": [
-        "test_install_deps.py", "test_renovate.py", "test_app_admission.py",
-        "test_app_admission_apiserver.py", "test_rest_server_isolation.py", "test_restic_rest_server.py",
-    ],
     "renovate.json": ["test_renovate.py"],
     "infra/ansible/roles/flux-operator/defaults/main.yml": ["test_flux_operator.py", "test_renovate.py"],
 }
 # A change here can reach any test.
-_EVERYTHING = ("requirements-dev.txt", "pytest.ini", "ci/tests/support.py", "ci/tests/conftest.py")
+# The tool and Python pins (mise.toml, mise.lock, pyproject.toml, uv.lock) reach every test that runs a CLI or imports a package.
+_EVERYTHING = (
+    "mise.toml", "mise.lock", "pyproject.toml", "uv.lock", ".python-version",
+    "pytest.ini", "ci/tests/support.py", "ci/tests/conftest.py",
+)
 
 
 def _is_doc(path: str) -> bool:

@@ -12,18 +12,24 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install PyYAML and kustomize at the core pins
+    - name: Install mise
+      uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      with:
+        # renovate: datasource=github-releases depName=jdx/mise
+        version: 2026.11.5
+        install: false
+    # kustomize and the jarvis package's Python dependencies at this core's pins (mise.lock, uv.lock).
+    - name: Install kustomize and the jarvis package at the core pins
       shell: bash
       env:
         CORE: ${{ github.action_path }}/../../..
+        # Its own venv, so the Action never changes the caller's .venv (core's CI runs it too).
+        UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/app-check-venv
       run: |
         set -euo pipefail
-        pyyaml="$(grep -m1 '^PyYAML==' "${CORE}/requirements-dev.txt")"
-        python3 -m venv "${RUNNER_TEMP}/app-check"
-        setuptools="$(grep -m1 '^setuptools==' "${CORE}/requirements-dev.txt")"
-        "${RUNNER_TEMP}/app-check/bin/pip" install -q "${pyyaml}" "${setuptools}"
-        "${RUNNER_TEMP}/app-check/bin/pip" install -q --no-deps --no-build-isolation -e "${CORE}"
-        python3 "${CORE}/tools/install-deps" kustomize
+        mise trust --quiet "${CORE}/mise.toml"
+        mise -C "${CORE}" install --locked kustomize uv
+        mise -C "${CORE}" exec -- uv sync --frozen --no-dev --project "${CORE}"
     - name: app-check
       shell: bash
       env:
@@ -34,4 +40,4 @@ runs:
         set -euo pipefail
         args=()
         for name in ${EXCLUDE}; do args+=(--exclude "${name}"); done
-        PATH="${HOME}/.local/bin:${PATH}" "${RUNNER_TEMP}/app-check/bin/python" "${CORE}/tools/app-check" --repo "${APPS}" "${args[@]}"
+        mise -C "${CORE}" exec -- "${RUNNER_TEMP}/app-check-venv/bin/python" "${CORE}/tools/app-check" --repo "$(realpath "${APPS}")" "${args[@]}"

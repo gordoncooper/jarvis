@@ -5,6 +5,11 @@ VENV ?= $(CURDIR)/.venv
 ANSIBLE_PLAYBOOK ?= $(VENV)/bin/ansible-playbook
 PIN_CHECK = "$(VENV)/bin/python" tools/pin-check --env "$(ENV)" $(if $(filter 1,$(ALLOW_UNPINNED)),--allow-unpinned)
 NEED_VENV = test -x "$(VENV)/bin/python" || { echo "no venv at $(VENV): run 'make deps', or set VENV=<path>" >&2; exit 1; }
+NEED_MISE = command -v mise >/dev/null || { echo "make deps needs mise: https://mise.jdx.dev/getting-started.html" >&2; exit 1; }
+# Every target finds the CLIs mise installed (mise.toml) first on PATH, and uv syncs into VENV.
+MISE_BIN_PATHS := $(shell command -v mise >/dev/null && mise bin-paths 2>/dev/null | paste -sd: -)
+export PATH := $(if $(MISE_BIN_PATHS),$(MISE_BIN_PATHS):)$(PATH)
+export UV_PROJECT_ENVIRONMENT := $(VENV)
 # INSTANCE=<path> points every env command at <path>/envs/<env> and <path>/.sops.yaml.
 # Unset, the env lives in this checkout. The Python tools resolve it in jarvis/lib/env.py.
 export INSTANCE
@@ -15,8 +20,8 @@ help:
 	@echo "JARVIS Makefile"
 	@echo
 	@echo "Operator commands"
-	@echo "  make deps               Install pinned CLIs and Python dev deps (Ansible, pytest, …)"
-	@echo "  make venv               Only the Python venv with the jarvis package (enough for make render)"
+	@echo "  make deps               Install the pinned CLIs (mise) and every Python package (uv) into .venv"
+	@echo "  make venv               Only the jarvis package's Python dependencies (enough for make render)"
 	@echo "  make site               Apply an env (ENV=<env> required; optional TAGS=… LIMIT=… CHECK=1)"
 	@echo "  make verify             Read-only standing-state checks (ENV=<env> required)"
 	@echo "  make drill              Scratch volume and etcd restore drill (ENV=<env> required)"
@@ -34,15 +39,20 @@ help:
 	@echo "  make ci-verify          Run checks and full pytest (pre-push)"
 	@echo "  VENV=<path>             Python venv used by every target (default: .venv in the repo)"
 
-deps: venv
-	python3 tools/install-deps
+# Every pinned CLI (mise.toml, checksums in mise.lock) and the venv with every Python package
+# (uv.lock): the operator tools, Ansible, and the test and lint tooling.
+deps:
+	@$(NEED_MISE)
+	mise trust --quiet "$(CURDIR)/mise.toml"
+	mise install --locked
+	mise exec -- uv sync --frozen
 
-# The venv alone (the jarvis package and its pinned Python packages): enough for tools/render.
+# The venv with only the jarvis package's own dependencies: enough for tools/render.
 venv:
-	@test -d "$(VENV)" || python3 -m venv "$(VENV)"
-	"$(VENV)/bin/pip" install --no-deps -r requirements-dev.txt
-	"$(VENV)/bin/pip" install --no-deps --no-build-isolation -e .
-	"$(VENV)/bin/pip" check
+	@$(NEED_MISE)
+	mise trust --quiet "$(CURDIR)/mise.toml"
+	mise install --locked uv
+	mise exec -- uv sync --frozen --no-dev
 
 ci-verify: deps
 	@bash ci/ci-local-verify

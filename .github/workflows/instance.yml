@@ -101,6 +101,14 @@ jobs:
           ref: ${{ github.head_ref }}
           persist-credentials: false
 
+      # A core from v0.5.0 on installs its tools with mise (make venv); an older core ignores it.
+      - name: Install mise
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.11.5
+          install: false
+
       - name: Render each env with its pinned core
         id: render
         env:
@@ -177,13 +185,16 @@ jobs:
           path: .core
           persist-credentials: false
 
-      - name: Restore pinned CLIs
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install mise
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          path: ~/.local/bin
-          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.core/tools/versions.env', '.core/tools/install-deps') }}
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: 2026.11.5
+          install: false
 
-      - name: Install pinned CLIs
+      # The pinned core's own tools: mise and uv from its mise.toml and uv.lock (v0.5.0 on), or its
+      # older installer. Every later step runs under that core's mise config, so its CLIs are on PATH.
+      - name: Install the pinned core's tools
         run: make -C .core deps
 
       - name: Checkout the apps repository the envs read
@@ -194,7 +205,7 @@ jobs:
         # values/apps.yaml. A core-only instance gets no directory and needs none.
         run: |
           set -euo pipefail
-          apps_dir="$(bash .core/ci/checkout-apps-for-instance.sh)"
+          apps_dir="$(mise -C .core exec -- bash .core/ci/checkout-apps-for-instance.sh)"
           if [[ -n "${apps_dir}" ]]; then
             echo "APPS_REPO=${apps_dir}" >> "${GITHUB_ENV}"
             echo "Checked apps repository at $(git -C "${apps_dir}" rev-parse HEAD)" | tee -a "${GITHUB_STEP_SUMMARY}"
@@ -204,7 +215,7 @@ jobs:
         env:
           INSTANCE: ${{ github.workspace }}
           ENVS: ${{ matrix.env }}
-        run: bash .core/ci/run-env-checks
+        run: mise -C .core exec -- bash .core/ci/run-env-checks
 
   # Green only when every env leg is, and red on a commit the render replaced.
   ci:

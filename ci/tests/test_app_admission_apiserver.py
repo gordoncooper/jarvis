@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import secrets
 import shutil
 import socket
@@ -63,16 +62,16 @@ PATHS = {
 }
 
 
-def _binaries() -> Path:
-    text = (REPO_ROOT / "tools" / "versions.env").read_text(encoding="utf-8")
-    pins = [re.search(rf"^{key}=(\S+)$", text, re.M).group(1) for key in ("kubectl_version", "etcd_version")]
-    folder = WORK / "-".join(pins)
-    if not ((folder / "kube-apiserver").is_file() and (folder / "etcd").is_file()):
-        message = f"no pinned API server in {folder} (run ci/fetch-test-apiserver)"
+def _binaries() -> dict[str, str]:
+    """kube-apiserver and etcd at their mise.toml pins, which make deps installs on Linux."""
+    found = {name: shutil.which(name) for name in ("kube-apiserver", "etcd")}
+    missing = sorted(name for name, path in found.items() if path is None)
+    if missing:
+        message = f"no {' or '.join(missing)} on PATH (make deps installs them on Linux)"
         if ci_mode():
             pytest.fail(f"{message} — required in CI")
         pytest.skip(message)
-    return folder
+    return {name: str(path) for name, path in found.items()}
 
 
 def _free_port() -> int:
@@ -237,7 +236,7 @@ def _ensure_pvc_rbac(api: Api) -> None:
 
 @pytest.fixture(scope="module")
 def api():
-    folder = _binaries()
+    binaries = _binaries()
     WORK.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="run-", dir=WORK))
     token = secrets.token_urlsafe(24)
@@ -250,11 +249,11 @@ def api():
     log = (work / "server.log").open("wb")
     env = {key: os.environ[key] for key in ("PATH",) if key in os.environ}
     servers = [
-        subprocess.Popen([str(folder / "etcd"), "--data-dir", str(work / "etcd"), "--unsafe-no-fsync",
+        subprocess.Popen([binaries["etcd"], "--data-dir", str(work / "etcd"), "--unsafe-no-fsync",
                           "--listen-client-urls", f"http://127.0.0.1:{client}", "--advertise-client-urls", f"http://127.0.0.1:{client}",
                           "--listen-peer-urls", f"http://127.0.0.1:{peer}", "--initial-advertise-peer-urls", f"http://127.0.0.1:{peer}",
                           "--initial-cluster", f"default=http://127.0.0.1:{peer}"], stdout=log, stderr=subprocess.STDOUT, env=env),
-        subprocess.Popen([str(folder / "kube-apiserver"), "--etcd-servers", f"http://127.0.0.1:{client}",
+        subprocess.Popen([binaries["kube-apiserver"], "--etcd-servers", f"http://127.0.0.1:{client}",
                           "--bind-address", "127.0.0.1", "--advertise-address", "127.0.0.1", "--secure-port", str(secure),
                           "--cert-dir", str(work / "certs"), "--token-auth-file", str(work / "tokens.csv"),
                           "--authorization-mode", "RBAC", "--anonymous-auth=false", "--allow-privileged=true",

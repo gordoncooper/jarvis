@@ -9,6 +9,14 @@ the upgrade.
 
 ### Added
 
+- One pinned toolchain for operators, CI and the app-check Action. `mise.toml` pins every CLI
+  (sops, age, kubectl, kustomize, kubeconform, kyverno, gitleaks, restic, rest-server, uv, and
+  CI's k3d, actionlint, kube-apiserver and etcd), and `mise.lock` holds each one's checksum for
+  Linux and macOS on amd64 and arm64. `pyproject.toml` and `uv.lock` pin every Python package with
+  hashes. Renovate updates each lock in the same PR as the pin, so no checksum is bumped by hand.
+  CI fails when a lock does not match its pins. `make deps` needs only mise; it installs Python
+  3.12 for Ansible too, so a macOS or arm64 controller works.
+
 - `make site` takes the first etcd snapshot on a new cluster (`k3s etcd-snapshot save`, when
   the snapshot directory is empty), so the backup chain and a drill have something to use
   before k3s's first scheduled snapshot (00:00 or 12:00 by default).
@@ -22,8 +30,16 @@ the upgrade.
 - A pinned app tag newer than the local apps checkout's last fetch no longer stops prep-node,
   render or the checks: they fetch that checkout's tags once and read the app at the tag.
 
+### Removed
+
+- `tools/install-deps`, `tools/versions.env`, `requirements-dev.txt`, `ci/fetch-test-apiserver`
+  and the `python-pins` check: mise, uv and their lockfiles replace them.
+
 ### Changed
 
+- The k3s role reads the node's memory from `ansible_facts['memtotal_mb']`, not the injected
+  `ansible_memtotal_mb` variable that ansible-core 2.24 drops (the `INJECT_FACTS_AS_VARS`
+  deprecation warning in `make site`).
 - The etcd snapshot copy (CronJob `platform-backups/etcd-snapshots`) runs hourly on its own
   schedule instead of five minutes after k3s's default snapshot time, so it no longer depends
   on k3s's snapshot schedule. `restic backup --skip-if-unchanged` makes a restic snapshot only
@@ -37,6 +53,10 @@ the upgrade.
 
 ### Upgrading
 
+- Install mise on the controller (https://mise.jdx.dev/getting-started.html), then run
+  `make deps` in the core checkout. `~/.local/bin` no longer holds core's CLIs: `make` targets
+  find them themselves, and a direct command runs as `mise exec -- <command>`. The old binaries
+  in `~/.local/bin` can be deleted.
 - In the instance CI caller, add `workflow_dispatch:` under `on:`. Renovate moves the preset
   ref and the workflow pin in the core release's PR.
 
