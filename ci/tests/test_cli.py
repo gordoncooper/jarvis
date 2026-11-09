@@ -180,3 +180,11 @@ def test_up_stops_at_the_first_failing_step(tmp_path: Path, monkeypatch: pytest.
     assert up.run(tmp_path, "home") == 3
     assert ran == ["doctor", "validate", "render", "secrets", "pushed"]
     assert "stopped at pushed" in capsys.readouterr().out
+
+
+def test_the_entry_point_loads_nothing_that_reads_core_trees() -> None:
+    """Rule: an installed jarvis holds no core trees until it hands off to the pinned checkout, so
+    its entry point imports only what choosing that checkout needs (no schema, no manifests)."""
+    probe = "import sys, jarvis.cli.main; print(sorted(m for m in sys.modules if m.startswith('jarvis.')))"
+    loaded = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True).stdout
+    assert eval(loaded) == ["jarvis.cli", "jarvis.cli.core", "jarvis.cli.main", "jarvis.env", "jarvis.env.pin", "jarvis.paths"]

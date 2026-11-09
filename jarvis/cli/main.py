@@ -42,10 +42,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+# Only what deciding which core runs needs: an installed CLI that is not the env's pin holds no
+# core trees (schema, manifests), so nothing that reads them may load before it hands off.
 from jarvis.cli import core as _core
 from jarvis.env.pin import PinError, pin_problem
 from jarvis.paths import PRODUCT_ROOT
-from jarvis.schema.env import ENVS_VAR
 
 USAGE = 2
 REFUSED = 3
@@ -154,6 +155,7 @@ def _doctor(instance: Path, env: str) -> int:
 
 def _validate(instance: Path, env: str) -> int:
     from jarvis.env import validate
+    from jarvis.schema.env import ENVS_VAR
 
     # The env's own checks only: each env is checked by the core release it pins.
     os.environ[ENVS_VAR] = env

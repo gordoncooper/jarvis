@@ -43,7 +43,7 @@ def _hosts(env_dir: Path) -> list[str]:
 def check_tools() -> list[tuple[str, str]]:
     missing = [tool for tool in TOOLS if shutil.which(tool) is None]
     if missing:
-        return [("FAIL", f"not on PATH: {', '.join(missing)} (run make deps in the core checkout, or check mise)")]
+        return [("FAIL", f"not on PATH: {', '.join(missing)} (git and ssh come from the system; the rest from mise)")]
     return [("PASS", "every CLI is on PATH")]
 
 
