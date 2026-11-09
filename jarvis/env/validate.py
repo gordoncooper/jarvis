@@ -1,7 +1,7 @@
 """Every env-level check on an instance repo: its schema, wiring and committed files.
 
-jarvis validate runs these for the instance it is run from; core's CI runs each one by name
-(ci/checks/<name>) on core's own envs. Each check reads every env under envs/.
+jarvis validate runs these for the instance it is run from; core's own CI runs each one by name
+on core's own envs. Each check reads every env under envs/.
 
   python -m jarvis.env.validate [--only <name>]...
 
@@ -68,7 +68,7 @@ def _scan(module) -> Callable[[Path], list[str]]:
     return lambda instance: module.format_violations(scan(instance))
 
 
-# Name, then the check. The names are ci/checks/<name>, so a failure reads the same everywhere.
+# Name, then the check. Core's CI runs each under the same name, so a failure reads the same everywhere.
 CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "env-schema": _env_schema,
     "addons": lambda instance: addons.format_violations(addons.scan_addons(PRODUCT_ROOT, instance)),
