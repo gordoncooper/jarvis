@@ -91,7 +91,7 @@ Core is one trusted zone with one restic credential: core namespaces, add-ons an
 - It mounts `backup_path/etcd-snapshots` read-only (`hostPath` type `Directory`) and runs `restic backup` of that mount into `host-etcd-snapshots`.
 - That repository is the `RESTIC_REPOSITORY` prefix from Secret `backups-restic` plus the path segment `host-etcd-snapshots`.
 - `restic init` runs only when `restic cat config` exits 10 (repository missing). Any other error stops the run.
-- `spec.timeZone` is `time_zone`. The schedule is `5 */12 * * *`, five minutes after the k3s role default `0 */12 * * *`.
+- `spec.timeZone` is `time_zone`. The schedule is hourly (`15 * * * *`), independent of the k3s snapshot schedule: a run with no new k3s snapshot makes no restic snapshot (`--skip-if-unchanged`), and `forget --prune` prunes only when `forget` removed a snapshot, so prunes follow the k3s snapshots.
 - `concurrencyPolicy` is `Forbid`.
 - Each run forgets with `backup_retention_daily`, `backup_retention_weekly`, and `backup_retention_monthly`, then prunes.
 - The snapshot host is the fixed name `etcd-snapshots`, so retention is one group across runs.

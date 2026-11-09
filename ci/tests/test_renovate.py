@@ -517,3 +517,23 @@ def test_instance_preset_reads_each_app_pin() -> None:
     text = (ROOT / "envs/env-00/values/apps.yaml").read_text(encoding="utf-8")
     pins = {m.group("depName"): m.group("currentValue") for m in _preset_matches("envs/env-x/values/apps.yaml", text)}
     assert pins == yaml.safe_load(text)["versions"]
+
+
+def test_instance_preset_makes_one_core_pr_and_one_app_pr_per_env() -> None:
+    """Rule: a core release is one PR (each env's core pin, the instance workflow and the preset
+    share the "jarvis core" group, with no per-env branch prefix); an app release opens one PR per
+    env, its branch prefixed with the env's folder name."""
+    preset = json.loads(_INSTANCE_PRESET.read_text(encoding="utf-8"))
+    rules = preset["packageRules"]
+    core = [rule for rule in rules if rule.get("groupName") == "jarvis core"]
+    assert any(rule.get("matchDepTypes") == ["jarvis-core"] for rule in core)
+    tooling = next(rule for rule in core if "matchManagers" in rule)
+    assert set(tooling["matchManagers"]) == {"github-actions", "renovate-config"}
+    assert re.fullmatch(tooling["matchDepNames"][0].strip("/"), "gordoncooper/jarvis")
+    assert not any("additionalBranchPrefix" in rule for rule in core)
+    app = next(rule for rule in rules if rule.get("matchDepTypes") == ["jarvis-app"])
+    template = re.fullmatch(r"\{\{\{replace '(.+)' '(.+)' packageFileDir\}\}\}", app["additionalBranchPrefix"])
+    assert template
+    find, replace = template.groups()
+    assert re.sub(find, replace.replace("$1", r"\1"), "envs/env-01/values") == "env-01-"
+    assert "jarvis-render@noreply.invalid" in preset["gitIgnoredAuthors"]

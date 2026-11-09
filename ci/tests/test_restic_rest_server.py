@@ -136,12 +136,14 @@ def _cron_fields(expr: str) -> list[str]:
     return fields
 
 
-def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
-    """The copy follows the k3s cron, reads that directory, and keeps one restic group."""
+def test_etcd_snapshot_cronjob_copies_hourly_from_the_k3s_directory() -> None:
+    """The copy runs hourly on its own clock, reads the k3s snapshot directory, makes a restic
+    snapshot only when that directory changed, prunes only when forget removed one, and keeps one
+    restic group."""
     defaults = yaml.safe_load(
         (ROOT / "infra/ansible/roles/k3s/defaults/main.yml").read_text(encoding="utf-8")
     )
-    k3s_cron = _cron_fields(defaults["k3s_etcd_snapshot_schedule_cron"])
+    assert _cron_fields(defaults["k3s_etcd_snapshot_schedule_cron"])
     k3s_config = (ROOT / "infra/ansible/roles/k3s/templates/config.yaml.j2").read_text(
         encoding="utf-8"
     )
@@ -166,9 +168,7 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     assert spec["jobTemplate"]["spec"]["activeDeadlineSeconds"] == 21600
     assert spec["timeZone"] == "${time_zone}"
     schedule = _cron_fields(spec["schedule"])
-    assert schedule[1:] == k3s_cron[1:]
-    assert schedule[0].isdigit() and k3s_cron[0].isdigit()
-    assert 1 <= int(schedule[0]) - int(k3s_cron[0]) <= 15
+    assert schedule[0].isdigit() and schedule[1:] == ["*", "*", "*", "*"]
 
     pod = spec["jobTemplate"]["spec"]["template"]["spec"]
     _assert_dedicated_placement(pod, "control_plane")
@@ -178,7 +178,10 @@ def test_etcd_snapshot_cronjob_copies_after_k3s() -> None:
     mount = next(item for item in container["volumeMounts"] if item["name"] == volume["name"])
     assert mount["readOnly"] is True
 
-    forget = "\n".join(str(part) for part in container["command"]).split("restic forget", 1)[1]
+    script = "\n".join(str(part) for part in container["command"])
+    assert "restic backup --skip-if-unchanged /snapshots" in script
+    assert "restic forget --prune" in script and "restic prune" not in script
+    forget = script.split("restic forget", 1)[1]
     for key in (
         "backup_retention_daily",
         "backup_retention_weekly",
@@ -411,11 +414,13 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
     example_copy: ExampleCopy,
 ) -> None:
     """In every env, its backup_check_schedule starts at least 3 hours from every nightly
-    backup and etcd copy start."""
+    backup start and every etcd copy prune, which runs within the hour after a k3s snapshot."""
     from jarvis.schema.env import resolve_cluster_vars
     from jarvis.verify.common import scheduled_instants
 
-    etcd_schedule = _docs(ROOT / "core/platform/backups/etcd-snapshots.yaml")[0]["spec"]["schedule"]
+    k3s_schedule = yaml.safe_load(
+        (ROOT / "infra/ansible/roles/k3s/defaults/main.yml").read_text(encoding="utf-8")
+    )["k3s_etcd_snapshot_schedule_cron"]
     for root, env in real_and_copy_envs(example_copy):
         assert _restic_check(root, env)["spec"]["schedule"] == "${backup_check_schedule}"
         values = resolve_cluster_vars(
@@ -425,9 +430,11 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
         )
         check = values["backup_check_schedule"]
         run = scheduled_instants(check, "Etc/UTC", datetime(2026, 11, 2, tzinfo=UTC), 1)[0]
-        for other in (values["backup_schedule"], etcd_schedule):
-            for instant in scheduled_instants(other, "Etc/UTC", run + timedelta(days=2), 8):
-                assert abs(instant - run) >= timedelta(hours=3), (env, other)
+        for instant in scheduled_instants(values["backup_schedule"], "Etc/UTC", run + timedelta(days=2), 8):
+            assert abs(instant - run) >= timedelta(hours=3), (env, "backup_schedule")
+        for snapshot in scheduled_instants(k3s_schedule, "Etc/UTC", run + timedelta(days=2), 8):
+            for prune in (snapshot, snapshot + timedelta(hours=1)):
+                assert abs(prune - run) >= timedelta(hours=3), (env, "etcd copy prune")
 
 
 def test_offsite_copy_renders_only_where_the_env_lists_it(example_copy: ExampleCopy) -> None:

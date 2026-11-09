@@ -10,7 +10,8 @@ metadata:
     app.kubernetes.io/name: restic-offsite
 spec:
   # 04:00: three hours after a nightly backup_schedule at 00:00 or 01:00, away from the
-  # etcd copy (00:05 and 12:05) and from restic-check (default Wednesday 06:30).
+  # etcd copy's prunes (just after each k3s snapshot, 00:00 and 12:00 by default) and from
+  # restic-check (default Wednesday 06:30).
   # --no-lock on the local side takes no lock there, so an overlap blocks nothing; it can only fail and retry.
   schedule: "0 4 * * *"
   timeZone: ${time_zone}
