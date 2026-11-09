@@ -16,6 +16,8 @@ from subprocess import CompletedProcess
 import pytest
 import yaml
 
+from jarvis.verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE
+from jarvis.verify.platform import ENABLELB, FLUX_RESOURCES
 from support import REPO_ROOT, load_tool
 
 SECRET_VALUE = "SHOULD_NOT_PRINT"
@@ -94,7 +96,7 @@ class Cluster:
         if argv[:5] == ["get", "service", "-n", "kube-system", "traefik"]:
             # An env with no App DNS: verify reaches Traefik's ServiceLB address.
             return _completed(argv, {"status": {"loadBalancer": {"ingress": [{"ip": "192.0.2.10"}]}}})
-        if argv[0] == "get" and argv[1] in verify_tool.FLUX_RESOURCES:
+        if argv[0] == "get" and argv[1] in FLUX_RESOURCES:
             return _completed(argv, {"items": [] if self.flux_empty else [{}]})
         if argv[0] == "wait":
             return _completed(
@@ -118,7 +120,7 @@ class Cluster:
                 f"node-role.jarvis.io/{role}": "true" for role in self.node_roles
             }
             if self.enablelb:
-                labels[verify_tool.ENABLELB] = "true"
+                labels[ENABLELB] = "true"
             body = {
                 "items": [
                     {
@@ -222,7 +224,7 @@ class Cluster:
             return _completed(argv, {"items": [{"metadata": {"name": "hello"}, "status": {"readyReplicas": 1}}]})
         if self.hello and argv[:3] == ["get", "secret", "hello-greeting"] and "go-template" in " ".join(argv):
             return _completed(argv, "greeting\n")
-        if argv[:3] == ["get", "configmap", verify_tool.HOLD_NAME]:
+        if argv[:3] == ["get", "configmap", HOLD_NAME]:
             if self.hold:
                 return _completed(argv, {"data": {"repos": "ns-app/pvc-data\n"}})
             return _completed(
@@ -1041,7 +1043,7 @@ def test_secret_check_asks_for_key_names_only(
     assert secret_calls
     output = " ".join(secret_calls[0])
     assert "go-template=" in output
-    assert verify_tool.SECRET_KEYS_TEMPLATE in output
+    assert SECRET_KEYS_TEMPLATE in output
     assert SECRET_VALUE not in output
     assert SECRET_VALUE not in capsys.readouterr().out
     assert "-o" in secret_calls[0]

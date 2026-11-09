@@ -23,14 +23,11 @@ from jarvis.lib.env import (
     kubectl as run_kubectl,
 )
 from jarvis.schema.env import core_dir, enabled_addons
-from jarvis.verify import apps as _apps_checks  # noqa: F401
-from jarvis.verify import backups as _backups  # noqa: F401
-from jarvis.verify import platform as _platform  # noqa: F401
-from jarvis.verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE  # noqa: F401  (tests read them here)
+from jarvis.verify import apps as _apps_checks  # noqa: F401  (importing it registers its checks)
+from jarvis.verify import backups as _backups  # noqa: F401  (importing it registers its checks)
+from jarvis.verify import platform as _platform
 from jarvis.verify.common import CheckError, CheckWarning, Context
-from jarvis.verify.platform import (  # noqa: F401
-    ENABLELB,
-    FLUX_RESOURCES,
+from jarvis.verify.platform import (
     _fetch,
     _inventory,
     _issuer,

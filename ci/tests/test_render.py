@@ -43,3 +43,44 @@ def test_check_passes_a_rendered_env_and_names_each_stale_file(example_copy: Exa
         sync.write_text(before[0], encoding="utf-8")
         configmap.write_text(before[1], encoding="utf-8")
         extra.unlink(missing_ok=True)
+
+
+def _render(copy: ExampleCopy) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tools" / "render"), "--env", copy.name],
+        env={**os.environ, "INSTANCE": str(copy.root), "APPS_REPO": str(FIXTURE_APPS)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_render_replaces_flux_whole(tmp_path) -> None:
+    """Rule: flux/ is render output: a render removes a file it does not write anywhere under flux/
+    (a file core moved or retired leaves with no upgrade step) and restores an edited one."""
+    from support import bootstrap_example_copy
+
+    copy = bootstrap_example_copy(tmp_path)
+    flux = copy.env_dir / "flux"
+    retired = flux / "kustomizations" / "platform-controllers.yaml"
+    retired.write_text("kind: Kustomization\n", encoding="utf-8")
+    sync = flux / "sync.yaml"
+    sync.write_text(sync.read_text(encoding="utf-8") + "# edited\n", encoding="utf-8")
+    proc = _render(copy)
+    assert proc.returncode == 0, proc.stderr
+    assert not retired.exists()
+    assert not sync.read_text(encoding="utf-8").endswith("# edited\n")
+    assert _check(copy).returncode == 0
+
+
+def test_a_refused_render_leaves_flux_as_it_was(tmp_path) -> None:
+    """Rule: the render works on a copy; values it refuses change nothing under flux/."""
+    from support import bootstrap_example_copy
+
+    copy = bootstrap_example_copy(tmp_path)
+    flux = copy.env_dir / "flux"
+    before = {path: path.read_bytes() for path in flux.rglob("*") if path.is_file()}
+    (copy.env_dir / "values" / "switches.yaml").write_text("features: [no-such-feature]\n", encoding="utf-8")
+    proc = _render(copy)
+    assert proc.returncode != 0
+    assert {path: path.read_bytes() for path in flux.rglob("*") if path.is_file()} == before

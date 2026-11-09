@@ -58,7 +58,7 @@ In the env's repository:
 1. Once per env, turn app hosting on (it is off by default): add to `envs/<env>/values/switches.yaml`
 
    ```yaml
-   optional:
+   features:
      - app-hosting
    ```
 

@@ -42,29 +42,6 @@
         "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
       },
       "uniqueItems": true
-    },
-    "optional": {
-      "type": [
-        "array",
-        "null"
-      ],
-      "uniqueItems": true,
-      "items": {
-        "enum": [
-          "app-dns",
-          "app-hosting",
-          "apps-backup-server",
-          "offsite-backup-copy"
-        ]
-      },
-      "description": "The old name of features, read for one release. Set one, not both.",
-      "deprecated": true
     }
-  },
-  "not": {
-    "required": [
-      "features",
-      "optional"
-    ]
   }
 }

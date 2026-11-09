@@ -5,7 +5,7 @@ Hosted apps are untrusted: built by the code factory or third-party, kept in the
 App hosting is a feature, **off by default**. An env turns it on with one name in `envs/<env>/values/switches.yaml`, the file where it turns on the apps backup server:
 
 ```yaml
-optional:
+features:
   - app-hosting
 ```
 

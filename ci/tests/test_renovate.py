@@ -483,8 +483,8 @@ def _preset_matches(rel: str, text: str) -> list[re.Match[str]]:
 
 
 def test_instance_preset_reads_every_pin_an_env_holds() -> None:
-    """Rule: the instance preset opens PRs for an env's core tag (cluster-vars and the core
-    GitRepository alike), k3s and Flux; a core that follows a branch is not a pin it moves."""
+    """Rule: the instance preset opens PRs for an env's core tag (cluster-vars only: sync.yaml is
+    rendered from it) and k3s; a core that follows a branch is not a pin it moves."""
     cluster_vars = (ROOT / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8")
     cluster_vars = re.sub(r"(?m)^core_git_ref:.*$", "core_git_ref: refs/tags/v1.2.3", cluster_vars)
     core = {m.group("depName"): m.group("currentValue")
@@ -496,11 +496,9 @@ def test_instance_preset_reads_every_pin_an_env_holds() -> None:
     k3s = [m.group("currentValue") for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", overridden)
            if "depName" not in m.groupdict()]
     assert k3s == ["v1.36.5+k3s1"]
+    # The render writes the core GitRepository's ref from core_git_ref; the preset reads no render output.
     sync = (ROOT / "envs/env-00/flux/sync.yaml").read_text(encoding="utf-8")
-    core_source = sync.split("example-core", 1)
-    sync = core_source[0] + "example-core" + re.sub(r"name: refs/\S+", "name: refs/tags/v1.2.3", core_source[1], count=1)
-    assert [(m.group("depName"), m.group("currentValue")) for m in _preset_matches("envs/env-x/flux/sync.yaml", sync)] == [
-        ("example-owner/example-core", "v1.2.3")]
+    assert not _preset_matches("envs/env-x/flux/sync.yaml", sync)
     # Flux comes with the core tag: an env holds no FluxInstance, and the preset reads none.
     instance = (ROOT / "core/flux/flux-instance.yaml").read_text(encoding="utf-8")
     assert not _preset_matches("envs/env-x/flux/flux-instance.yaml", instance)

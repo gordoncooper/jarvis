@@ -16,9 +16,8 @@ from jarvis.lib import app_backups as _app_backups
 
 # envs/<env>/values/switches.yaml.
 SWITCHES_FILE = "values/switches.yaml"
-# The features an env turns on. "optional" is the old name, read for one release.
+# The features an env turns on.
 FEATURES = "features"
-LEGACY_FEATURES = "optional"
 ADDONS = "addons"
 APPS = "apps"
 SECTIONS = (FEATURES, ADDONS, APPS)
@@ -69,10 +68,6 @@ def load(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
         return {}, []
     if not isinstance(data, dict):
         return {}, [f"expected a mapping with {', '.join(SECTIONS)}"]
-    if LEGACY_FEATURES in data:
-        if FEATURES in data:
-            return {}, [f"{FEATURES} and {LEGACY_FEATURES} both set; {LEGACY_FEATURES} is the old name of {FEATURES}, so keep only {FEATURES}"]
-        data = {FEATURES if key == LEGACY_FEATURES else key: value for key, value in data.items()}
     return data, []
 
 
@@ -82,7 +77,7 @@ def names(data: dict[str, Any], section: str) -> list[str]:
 
 
 def validate(data: dict[str, Any], addons: Sequence[str]) -> list[str]:
-    """Each section is a list of names, each once, optional and addons only what core ships. Core
+    """Each section is a list of names, each once, features and addons only what core ships. Core
     itself is on in every env, so it has no section. _apps validates the shape of an app name."""
     errors = [f"unknown key {key!r} (allowed: {', '.join(SECTIONS)})" for key in sorted(set(data) - set(SECTIONS), key=str)]
     known = {FEATURES: tuple(FEATURE_COMPONENTS), ADDONS: addons}

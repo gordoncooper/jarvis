@@ -676,16 +676,13 @@ def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> l
 
 
 def core_dir(repo_root: Path | str) -> Path:
-    """The core repository the env's Flux paths read: <root>/core when an instance checkout holds a
-    checkout of it there (its CI does), otherwise the product checkout running this code. Its core/
-    and addons/ are the root artifact's core/ and addons/ (sync.yaml includes them by fromPath)."""
+    """The core repository the env's Flux paths read. A tree laid out like the root artifact
+    (core/ or addons/ beside envs/: the product checkout, or a test copy of it) holds its own; an instance
+    checkout is read by the core running this code, which instance CI checks out at the env's pin.
+    Its core/ and addons/ are the root artifact's core/ and addons/ (sync.yaml includes them by
+    fromPath)."""
     root = Path(repo_root)
-    held = root / CORE_SOURCE_DIR
-    if (held / CORE_SOURCE_DIR).is_dir() or (held / ADDONS_DIR).is_dir():
-        return held  # an instance's checkout of the core repository at core/
-    if held.is_dir():
-        return root  # laid out like the artifact already: the product checkout, or a copy of one
-    return _PRODUCT_ROOT
+    return root if any((root / tree).is_dir() for tree in (CORE_SOURCE_DIR, ADDONS_DIR)) else _PRODUCT_ROOT
 
 
 def addon_names(core: Path) -> tuple[str, ...]:

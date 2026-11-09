@@ -147,6 +147,8 @@ def test_example_env_platform_configs_is_not_built_when_secrets_are_absent(tmp_p
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+    # The tree's own core, without the core list: the example's path then builds nothing.
+    (tmp_path / "core").mkdir()
     violations = scan_flux_substitute(tmp_path)
     assert violations
     assert {item.path for item in violations} == {"envs/env-test/flux"}

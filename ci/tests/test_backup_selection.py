@@ -43,7 +43,7 @@ def _write_apps(copy: ExampleCopy, section: dict) -> None:
 def _render_selection(copy: ExampleCopy) -> None:
     from jarvis.lib.render_backup_selection import render_env
 
-    set_switches(copy.env_dir, optional=["app-hosting", "offsite-backup-copy", "apps-backup-server"])
+    set_switches(copy.env_dir, features=["app-hosting", "offsite-backup-copy", "apps-backup-server"])
     render_env(copy.env_dir, copy.root)
 
 
@@ -546,7 +546,7 @@ def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> Non
     wiring = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     before = wiring.read_text(encoding="utf-8")
     assert "offsite-backup-copy" in before
-    set_switches(copy.env_dir, optional=["app-hosting", "offsite-copy", "apps-backup-server"])
+    set_switches(copy.env_dir, features=["app-hosting", "offsite-copy", "apps-backup-server"])
     with pytest.raises(SystemExit, match="unknown name 'offsite-copy'"):
         render_env(copy.env_dir, copy.root)
     assert wiring.read_text(encoding="utf-8") == before

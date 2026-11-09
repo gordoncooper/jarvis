@@ -73,19 +73,18 @@ def source_rel(root: Path, rel: str) -> str:
 
     The root artifact holds the env repository's files, and core's core/ and addons/ (sync.yaml
     includes them from the core repository by fromPath). Those two resolve in the core repository
-    the env reads (core_dir): the product checkout itself, or an instance's checkout of it at core/.
+    the env reads (core_dir): the tree's own, or the core running the checks.
     """
     rel = rel.strip().removeprefix("./")
-    # A tree that holds no core reads none: its core paths fail to build, as they would in Flux.
-    if rel.split("/", 1)[0] in _CORE_TREES and any((root / tree).exists() for tree in _CORE_TREES):
+    if rel.split("/", 1)[0] in _CORE_TREES:
         return str(core_dir(root) / rel)
     return rel
 
 
 def _artifact_shaped(root: Path) -> bool:
-    """root holds core/ and addons/ where the root artifact does: an env's relative paths to them
-    (../../../core/flux) then resolve in place."""
-    return core_dir(root) == root and all((root / tree).is_dir() for tree in _CORE_TREES)
+    """root holds its own core trees where the root artifact does: an env's relative paths to them
+    (../../../core/flux) then resolve in place, and a tree it lacks fails to build, as in Flux."""
+    return core_dir(root) == root
 
 
 def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
@@ -101,7 +100,8 @@ def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
             stage = Path(work)
             core = core_dir(root)
             for tree in _CORE_TREES:
-                (stage / tree).symlink_to((core / tree).resolve(), target_is_directory=True)
+                if (core / tree).is_dir():
+                    (stage / tree).symlink_to((core / tree).resolve(), target_is_directory=True)
             env_rel = "/".join(rel.split("/")[:2])
             shutil.copytree(root / env_rel, stage / env_rel)
             docs, error = kustomize_build(stage, rel)
