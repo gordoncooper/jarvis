@@ -7,6 +7,21 @@ the upgrade.
 
 ## Unreleased
 
+### Added
+
+- `make site` takes the first etcd snapshot on a new cluster (`k3s etcd-snapshot save`, when
+  the snapshot directory is empty), so the backup chain and a drill have something to use
+  before k3s's first scheduled snapshot (00:00 or 12:00 by default).
+
+### Fixed
+
+- A drill on a cluster k3s has not snapshotted yet, or whose snapshot the restic copy does not
+  hold yet (no repository, or no snapshot in it), says so instead of failing with
+  `pod platform-backups/drill-etcd-restore failed`. Any other failure of that pod prints its
+  log before cleanup deletes it.
+- A pinned app tag newer than the local apps checkout's last fetch no longer stops prep-node,
+  render or the checks: they fetch that checkout's tags once and read the app at the tag.
+
 ### Changed
 
 - The etcd snapshot copy (CronJob `platform-backups/etcd-snapshots`) runs hourly on its own

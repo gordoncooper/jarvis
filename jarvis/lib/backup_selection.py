@@ -102,6 +102,11 @@ def _resolve_apps_checkout(repo_root: Path, env_dir: Path) -> Path | None:
 _PINNED_VIEWS: dict[tuple[Path, tuple[tuple[str, str], ...]], Path] = {}
 
 
+def _archive(checkout: Path, tag: str, app: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(["git", "-C", str(checkout), "archive", "--format=tar", tag, app],
+                          capture_output=True, check=False)
+
+
 def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
     """The app folders the env runs, each at its pinned tag, when the checkout is a git
     repository and the env pins its apps (values/apps.yaml versions); otherwise the checkout as
@@ -118,13 +123,18 @@ def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
     if key in _PINNED_VIEWS:
         return _PINNED_VIEWS[key]
     view = Path(tempfile.mkdtemp(prefix="jarvis-apps-pinned-"))
+    fetched = False
     for app, version in pins:
         tag = f"refs/tags/{app}/{version}"
-        archive = subprocess.run(["git", "-C", str(checkout), "archive", "--format=tar", tag, app],
-                                 capture_output=True, check=False)
+        archive = _archive(checkout, tag, app)
+        if archive.returncode and not fetched:
+            # A pin newer than the checkout's last fetch: fetch its tags once (it moves no branch).
+            fetched = True
+            subprocess.run(["git", "-C", str(checkout), "fetch", "--quiet", "--tags"], capture_output=True, check=False)
+            archive = _archive(checkout, tag, app)
         if archive.returncode:
-            raise AppsRepoError(f"{checkout}: no tag {app}/{version} with an {app}/ folder; "
-                                "fetch the apps repository's tags")
+            raise AppsRepoError(f"{checkout}: no tag {app}/{version} with an {app}/ folder, "
+                                "even after fetching the apps repository's tags")
         with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
             tar.extractall(view, filter="data")
     _PINNED_VIEWS[key] = view

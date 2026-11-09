@@ -87,3 +87,25 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# A new cluster has no etcd snapshot until k3s's first scheduled one (k3s_etcd_snapshot_schedule_cron,
+# 00:00 and 12:00 by default), so a drill or restore right after setup would have nothing to use.
+# Take one now; the etcd-snapshots CronJob copies it on its next run. A cluster that already has
+# a snapshot is left alone.
+- name: Find etcd snapshots
+  when: k3s_mode == 'server'
+  ansible.builtin.find:
+    paths: "{{ backup_path }}/etcd-snapshots"
+    file_type: file
+  register: k3s_etcd_snapshot_files
+
+- name: Take the first etcd snapshot on a new cluster
+  when: k3s_mode == 'server' and k3s_etcd_snapshot_files.matched == 0
+  ansible.builtin.command:
+    argv:
+      - "{{ k3s_binary_path }}"
+      - etcd-snapshot
+      - save
+      - --etcd-snapshot-dir
+      - "{{ backup_path }}/etcd-snapshots"
+  changed_when: true

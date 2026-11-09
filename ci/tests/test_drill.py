@@ -78,9 +78,12 @@ class Cluster:
         etcd_image: str = "restic/restic@sha256:" + "a" * 64,
         etcd_present: bool = True,
         etcd_copied: bool = True,
+        etcd_log: str | None = None,
         synced: bool = True,
     ) -> None:
         self.etcd_copied = etcd_copied
+        # A failed etcd pod that prints this log (it overrides etcd_copied).
+        self.etcd_log = etcd_log
         self.synced = synced
         self.hold = hold
         self.namespace = namespace
@@ -276,7 +279,7 @@ class Cluster:
                     },
                 )
             failed = (self.cleanup_fails and name == drill_tool.CLEANUP_POD) or (
-                not self.etcd_copied and name == drill_tool.ETCD_POD
+                (not self.etcd_copied or self.etcd_log is not None) and name == drill_tool.ETCD_POD
             )
             return _completed(
                 argv,
@@ -291,6 +294,8 @@ class Cluster:
                 return _completed(argv, f"VOLUME {SUM}\n")
             if name == drill_tool.READER:
                 return _completed(argv, f"VOLUME {self.reader_sum}\n")
+            if name == drill_tool.ETCD_POD and self.etcd_log is not None:
+                return _completed(argv, self.etcd_log)
             if name == drill_tool.ETCD_POD and not self.etcd_copied:
                 return _completed(argv, f"{drill_tool.NOT_COPIED} etcd-snapshot-fixture\n")
             if name == drill_tool.ETCD_POD:
@@ -788,9 +793,41 @@ def test_etcd_snapshot_not_yet_copied_says_so_and_fails(
     _assert_cleanup(cluster)
 
 
-# Lists $LISTED (exit 1 when empty) and restores a file at target + original path, as restic does.
+def test_a_new_cluster_with_no_etcd_snapshot_says_so_and_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A drill on a cluster k3s has not snapshotted yet names that reason, not a bare pod failure."""
+    cluster = Cluster(etcd_log=f"{drill_tool.NO_SNAPSHOT}\n")
+    code, _ = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    output = capsys.readouterr().out
+    assert "FAIL drill: k3s has written no etcd snapshot yet" in output
+    _assert_cleanup(cluster)
+
+
+def test_any_other_etcd_pod_failure_prints_its_log_before_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Cleanup deletes the pod, so its log is printed first: the reason outlives it."""
+    cluster = Cluster(etcd_log="Fatal: wrong password or no key found\n")
+    code, _ = _run(tmp_path, monkeypatch, cluster)
+    assert code != 0
+    output = capsys.readouterr().out
+    assert f"LOG {drill_tool.ETCD_POD}: Fatal: wrong password or no key found" in output
+    assert "FAIL drill: pod platform-backups/drill-etcd-restore failed" in output
+    _assert_cleanup(cluster)
+
+
+# cat config exits $CONFIG (10: no repository); snapshots lists one unless $NOSNAP; ls lists
+# $LISTED (exit 1 when empty); restore writes a file at target + original path, as restic does.
 _FAKE_RESTIC = """#!/bin/sh
 case "$1" in
+  cat) exit "${CONFIG:-0}" ;;
+  snapshots) if [ -n "$NOSNAP" ]; then echo '[]'; else echo '[{"id":"1"}]'; fi ;;
   ls) [ -n "$LISTED" ] || exit 1; echo 'snapshot 1 of [/snapshots]:'; echo "$LISTED" ;;
   restore)
     [ -z "$EMPTY" ] || exit 0
@@ -801,21 +838,27 @@ esac
 
 
 @pytest.mark.parametrize(
-    ("listed", "empty", "unreadable", "code", "line"),
+    ("listed", "empty", "unreadable", "config", "nosnap", "nofile", "code", "line"),
     [
-        ("etcd-snapshot-1", "", "", 0, f"ETCD {hashlib.sha256(b'one').hexdigest()}"),
-        ("etcd-snapshot-0", "", "", 3, f"{drill_tool.NOT_COPIED} etcd-snapshot-1"),
-        ("", "", "", 1, ""),
-        ("etcd-snapshot-1", "yes", "", 1, ""),
-        ("etcd-snapshot-1", "", "yes", 1, ""),
+        ("etcd-snapshot-1", "", "", "0", "", "", 0, f"ETCD {hashlib.sha256(b'one').hexdigest()}"),
+        ("etcd-snapshot-0", "", "", "0", "", "", 3, f"{drill_tool.NOT_COPIED} etcd-snapshot-1"),
+        ("", "", "", "10", "", "", 3, f"{drill_tool.NOT_COPIED} etcd-snapshot-1"),
+        ("", "", "", "0", "yes", "", 3, f"{drill_tool.NOT_COPIED} etcd-snapshot-1"),
+        ("", "", "", "0", "", "yes", 3, drill_tool.NO_SNAPSHOT),
+        ("", "", "", "0", "", "", 1, ""),
+        ("", "", "", "1", "", "", 1, ""),
+        ("etcd-snapshot-1", "yes", "", "0", "", "", 1, ""),
+        ("etcd-snapshot-1", "", "yes", "0", "", "", 1, ""),
     ],
 )
 def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
-    tmp_path: Path, listed: str, empty: str, unreadable: str, code: int, line: str
+    tmp_path: Path, listed: str, empty: str, unreadable: str, config: str, nosnap: str, nofile: str,
+    code: int, line: str,
 ) -> None:
-    """The newest local file must be in the latest restic snapshot; a failing restic is not
-    'not copied'; a restore that wrote no file fails; and a sha256sum that fails on the left
-    of `| cut` fails the step (pipefail) instead of printing an empty checksum."""
+    """The newest local file must be in the latest restic snapshot. No snapshot file says
+    NO_SNAPSHOT; no repository or an empty one is 'not copied'; any other restic failure is not;
+    a restore that wrote no file fails; and a sha256sum that fails on the left of `| cut` fails
+    the step (pipefail) instead of printing an empty checksum."""
     if unreadable and os.geteuid() == 0:
         pytest.skip("root reads a mode-000 file")
     busybox = shutil.which("busybox")
@@ -823,7 +866,8 @@ def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
     snaps, target, bindir = (tmp_path / name for name in ("snaps", "target", "bin"))
     for path in (snaps, target, bindir):
         path.mkdir()
-    (snaps / "etcd-snapshot-1").write_bytes(b"one")
+    if not nofile:
+        (snaps / "etcd-snapshot-1").write_bytes(b"one")
     (bindir / "restic").write_text(_FAKE_RESTIC, encoding="utf-8")
     (bindir / "restic").chmod(0o755)
     template = {"image": "x", "env": [], "nodeSelector": {}, "snapshotHostPath": {}}
@@ -837,6 +881,8 @@ def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
             "LISTED": f"{snaps}/{listed}" if listed else "",
             "EMPTY": empty,
             "UNREADABLE": unreadable,
+            "CONFIG": config,
+            "NOSNAP": nosnap,
         },
         capture_output=True,
         text=True,
@@ -845,7 +891,7 @@ def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
     assert proc.returncode == code
     assert line in proc.stdout
     if code != 3:
-        assert drill_tool.NOT_COPIED not in proc.stdout
+        assert drill_tool.NOT_COPIED not in proc.stdout and drill_tool.NO_SNAPSHOT not in proc.stdout
     if code:
         assert "ETCD " not in proc.stdout
 

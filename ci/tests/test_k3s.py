@@ -1210,3 +1210,20 @@ def test_node_memory_reserve_refuses_what_it_cannot_apply(tmp_path: Path, bad: s
     assert proc.returncode != 0, proc.stdout
     assert "node_memory_reserve_percent is a whole number" in proc.stdout or "not a quantity" in proc.stdout, proc.stdout
     assert not (tmp_path / f"{K3S_CONFIG_TEMPLATE}.out").exists()
+
+
+def test_a_new_server_takes_its_first_etcd_snapshot() -> None:
+    """Rule: the server role takes one etcd snapshot when the snapshot directory is empty (a new
+    cluster), into the directory k3s's schedule and the etcd-snapshots CronJob use, and only then."""
+    tasks = yaml.safe_load((REPO_ROOT / "infra/ansible/roles/k3s/tasks/main.yml").read_text(encoding="utf-8"))
+    find = next(task for task in tasks if task.get("name") == "Find etcd snapshots")
+    save = next(task for task in tasks if task.get("name") == "Take the first etcd snapshot on a new cluster")
+    assert tasks.index(find) < tasks.index(save)
+    assert tasks.index(save) > next(i for i, task in enumerate(tasks) if task.get("name") == "Enable and start k3s")
+    assert find["ansible.builtin.find"]["paths"] == "{{ backup_path }}/etcd-snapshots"
+    assert save["when"] == "k3s_mode == 'server' and k3s_etcd_snapshot_files.matched == 0"
+    argv = save["ansible.builtin.command"]["argv"]
+    assert argv[1:3] == ["etcd-snapshot", "save"]
+    assert argv[argv.index("--etcd-snapshot-dir") + 1] == "{{ backup_path }}/etcd-snapshots"
+    config = (REPO_ROOT / "infra/ansible/roles/k3s/templates/config.yaml.j2").read_text(encoding="utf-8")
+    assert "etcd-snapshot-dir: {{ backup_path }}/etcd-snapshots" in config
