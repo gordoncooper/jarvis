@@ -10,12 +10,13 @@ the upgrade.
 ### Added
 
 - One pinned toolchain for operators, CI and the app-check Action. `mise.toml` pins every CLI
-  (sops, age, kubectl, kustomize, kubeconform, kyverno, gitleaks, restic, rest-server, uv, and
-  CI's k3d, actionlint, kube-apiserver and etcd), and `mise.lock` holds each one's checksum for
+  (sops, age, kubectl, flux, kustomize, kubeconform, kyverno, gitleaks, restic, rest-server, uv,
+  and CI's k3d, actionlint, kube-apiserver and etcd), and `mise.lock` holds each one's checksum for
   Linux and macOS on amd64 and arm64. `pyproject.toml` and `uv.lock` pin every Python package with
   hashes. Renovate updates each lock in the same PR as the pin, so no checksum is bumped by hand.
   CI fails when a lock does not match its pins. `make deps` needs only mise; it installs Python
-  3.12 for Ansible too, so a macOS or arm64 controller works.
+  3.12 for Ansible too, so a macOS or arm64 controller works. The flux CLI is the cluster's
+  Flux release (a test checks they match), so `flux` commands no longer warn about a version skew.
 
 - `make site` takes the first etcd snapshot on a new cluster (`k3s etcd-snapshot save`, when
   the snapshot directory is empty), so the backup chain and a drill have something to use
