@@ -24,7 +24,7 @@ from jarvis.lib import apps as _apps
 from jarvis.lib.app_file import check_folder
 from jarvis.lib.render_apps import render_env
 from jarvis.schema import env as env_schema
-from support import REPO_ROOT, set_switches
+from support import REPO_ROOT, link_core_trees, set_switches
 
 EXAMPLES = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 APPS = ["hello-web", "notes", "lan-demo"]
@@ -35,7 +35,7 @@ def _env(tmp_path: Path, *, lan_line: bool = True) -> tuple[Path, Path, dict]:
     instance = tmp_path / "instance"
     env_dir = instance / "envs" / "env-00"
     shutil.copytree(REPO_ROOT / "envs" / "env-00", env_dir)
-    (instance / "core").symlink_to(REPO_ROOT)
+    link_core_trees(instance, REPO_ROOT)
     values = {"apps": APPS, "exceptions": [{"lan-demo": "lan-port 8080/TCP"}] if lan_line else []}
     (env_dir / _apps.APPS_VALUES).write_text(
         yaml.safe_dump({"exceptions": values["exceptions"], "versions": {app: "v0.1.0" for app in APPS}}), encoding="utf-8")

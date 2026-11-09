@@ -833,11 +833,11 @@ def _copy_flux_entry(env: Path) -> None:
     _render_core_only(env)
 
 
-def _render_core_only(env: Path, *optional: str) -> None:
+def _render_core_only(env: Path, *features: str) -> None:
     from jarvis.lib import apps as _apps
     from jarvis.lib import switches as _switches
 
-    data = {"features": list(optional), "addons": [], "apps": []}
+    data = {"features": list(features), "addons": [], "apps": []}
     (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     flux = env / "flux"
     (flux / _switches.ROOT_REL).write_text(
@@ -1078,7 +1078,7 @@ def test_app_dns_cluster_ip_is_required_only_while_app_dns_is_listed(tmp_path: P
     (env / "secrets").mkdir(exist_ok=True)
     _copy_flux_entry(env)
     validate_env_tree(tmp_path)
-    set_switches(env, optional=["app-dns"])
+    set_switches(env, features=["app-dns"])
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "app_dns_cluster_ip is required while values/switches.yaml lists app-dns" in str(excinfo.value)

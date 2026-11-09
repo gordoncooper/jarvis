@@ -2,12 +2,15 @@
 
     tools/render --env <env> [--check]
 
-From values/cluster-vars.yaml, values/switches.yaml and values/apps.yaml it writes flux/sync.yaml,
-flux/kustomization.yaml, flux/kustomizations/services.yaml, flux/platform-configs/kustomization.yaml
-and its backups/ registrations, and flux/generated/ (the cluster-vars ConfigMap, the app wiring and
-the backup selection). --check writes nothing: it renders into a scratch copy of the env and lists
-each generated file that differs from the committed one (exit 1). INSTANCE=<path> points it at an
-instance checkout.
+From values/cluster-vars.yaml, values/switches.yaml and values/apps.yaml it writes the env's
+whole flux/: sync.yaml, kustomization.yaml, kustomizations/services.yaml,
+platform-configs/kustomization.yaml and its backups/ registrations, and generated/ (the
+cluster-vars ConfigMap, the app wiring and the backup selection). flux/ is render output only: a
+render replaces it whole, so a file core moved or retired leaves on the next render, and a file
+nobody renders is reported stale. The render runs on a copy and swaps flux/ in only when it
+succeeds, so a refused render leaves the env as it was. --check writes nothing: it lists each file
+under flux/ that is missing, extra or different from a fresh render (exit 1). INSTANCE=<path>
+points it at an instance checkout.
 
 Why a render and not a Flux ResourceSet: the app wiring's values are computed, not copied. Each
 exception line becomes a grant annotation, a LAN grant is checked against lan_cidrs, a pin becomes a
@@ -33,49 +36,51 @@ from jarvis.lib.render_cluster_vars_configmap import render_document
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGMAP_REL = Path("flux") / "generated" / "cluster-vars-configmap.yaml"
-# What the render owns under the env: these files, and every file under these folders.
-_GENERATED_FILES = (
-    Path("flux") / "sync.yaml",
-    Path("flux") / "kustomization.yaml",
-    Path("flux") / "kustomizations" / "services.yaml",
-    Path("flux") / "platform-configs" / "kustomization.yaml",
-)
-_GENERATED_DIRS = (Path("flux") / "generated", Path("flux") / "platform-configs" / "backups")
+FLUX_DIR = "flux"
 
 
-def render_env(env_dir: Path, repo_root: Path) -> None:
-    """Write every generated file of env_dir. SystemExit names what the values get wrong."""
+def _render_into(env_dir: Path, repo_root: Path) -> None:
+    """Write every generated file into env_dir, which holds no flux/ yet."""
     render_switches.render_env(env_dir, repo_root)
     configmap = env_dir / CONFIGMAP_REL
     configmap.parent.mkdir(parents=True, exist_ok=True)
     configmap.write_text(render_document(env_dir / "values" / "cluster-vars.yaml"), encoding="utf-8")
 
 
+def _fresh(env_dir: Path, work: Path, repo_root: Path) -> Path:
+    """A copy of env_dir under work, its flux/ rendered from scratch from the values."""
+    copy = work / env_dir.name
+    shutil.copytree(env_dir, copy, ignore=lambda folder, _names: [FLUX_DIR] if Path(folder) == env_dir else [])
+    _render_into(copy, repo_root)
+    return copy
+
+
+def render_env(env_dir: Path, repo_root: Path) -> None:
+    """Replace env_dir's flux/ with a fresh render. SystemExit names what the values get wrong,
+    and leaves flux/ as it was."""
+    with tempfile.TemporaryDirectory() as work:
+        fresh = _fresh(env_dir, Path(work), repo_root)
+        shutil.rmtree(env_dir / FLUX_DIR, ignore_errors=True)
+        shutil.copytree(fresh / FLUX_DIR, env_dir / FLUX_DIR)
+
+
 def generated_files(env_dir: Path) -> set[Path]:
-    """The render's files that exist under env_dir, relative to it."""
-    found = {rel for rel in _GENERATED_FILES if (env_dir / rel).is_file()}
-    for rel in _GENERATED_DIRS:
-        if (env_dir / rel).is_dir():
-            found |= {path.relative_to(env_dir) for path in (env_dir / rel).rglob("*") if path.is_file()}
-    return found
+    """Every file under env_dir's flux/, relative to env_dir."""
+    flux = env_dir / FLUX_DIR
+    return {path.relative_to(env_dir) for path in flux.rglob("*") if path.is_file()} if flux.is_dir() else set()
 
 
 def stale(env_dir: Path, repo_root: Path) -> list[str]:
-    """Each generated file that is missing, extra or different, as committed against a fresh render."""
+    """Each file under flux/ that is missing, extra or different, as committed against a fresh render."""
     with tempfile.TemporaryDirectory() as work:
-        copy = Path(work) / env_dir.name
-        shutil.copytree(env_dir, copy)
-        # Only a fresh render's files: what the committed tree holds beyond them is reported.
-        for rel in generated_files(copy):
-            (copy / rel).unlink()
-        render_env(copy, repo_root)
-        want, have = generated_files(copy), generated_files(env_dir)
+        fresh = _fresh(env_dir, Path(work), repo_root)
+        want, have = generated_files(fresh), generated_files(env_dir)
         problems = [f"{rel}: missing" for rel in sorted(want - have)]
-        problems += [f"{rel}: not rendered from the values; delete it or render again" for rel in sorted(have - want)]
+        problems += [f"{rel}: not rendered from the values; the next render removes it" for rel in sorted(have - want)]
         problems += [
             f"{rel}: differs from the render"
             for rel in sorted(want & have)
-            if not filecmp.cmp(copy / rel, env_dir / rel, shallow=False)
+            if not filecmp.cmp(fresh / rel, env_dir / rel, shallow=False)
         ]
         return problems
 

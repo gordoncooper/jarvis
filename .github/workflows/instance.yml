@@ -1,0 +1,225 @@
+name: instance
+
+# CI for an instance repository, called from it so no instance carries its own copy:
+#
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main]
+#   permissions:
+#     contents: read
+#   jobs:
+#     checks:
+#       uses: <owner>/jarvis/.github/workflows/instance.yml@<core tag>
+#       with:
+#         render-client-id: ${{ vars.RENDER_CLIENT_ID }}
+#       secrets:
+#         render-private-key: ${{ secrets.RENDER_PRIVATE_KEY }}
+#     # The required check, under a plain name (a called workflow's jobs show as "checks / ...").
+#     ci:
+#       needs: checks
+#       if: always()
+#       runs-on: ubuntu-latest
+#       steps:
+#         - env:
+#             RESULT: ${{ needs.checks.result }}
+#           run: test "${RESULT}" = success
+#
+# Each env is checked by the core its core_git_ref pins, checked out at .core/, not by this
+# workflow's own tag. On a Renovate PR it first renders each env with that core and pushes what
+# changed, so a pin bump (core, app or k3s) arrives with its generated files. The push uses a
+# GitHub App's token, not GITHUB_TOKEN: a push made with GITHUB_TOKEN starts no workflow, so the
+# PR's checks would never run on the rendered commit. Without the App (render-client-id unset)
+# nothing is pushed and the env check names the stale files and the render command.
+
+on:
+  workflow_call:
+    inputs:
+      render-client-id:
+        description: Client ID of the GitHub App that pushes renders to Renovate PRs (contents write on this repository). Empty turns the render push off.
+        type: string
+        required: false
+        default: ""
+    secrets:
+      render-private-key:
+        description: Private key of that GitHub App.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  envs:
+    name: envs
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: List envs, their core repository and core pin
+        id: list
+        run: |
+          set -euo pipefail
+          value() { sed -n "s/^$1:[[:space:]]*//p" "$2" | tr -d "\"'"; }
+          legs=()
+          for dir in envs/*/; do
+            env="$(basename "${dir}")"
+            vars="${dir}values/cluster-vars.yaml"
+            url="$(value core_git_repo_url "${vars}")"
+            ref="$(value core_git_ref "${vars}")"
+            [[ -n "${ref}" ]] || { echo "${env}: no core_git_ref" >&2; exit 1; }
+            [[ "${url%.git}" =~ ^https://github\.com/([^/]+/[^/]+)$ ]] || {
+              echo "${env}: core_git_repo_url ${url} is not a https://github.com/<owner>/<repo> URL" >&2
+              exit 1
+            }
+            legs+=("{\"env\":\"${env}\",\"core_repo\":\"${BASH_REMATCH[1]}\",\"core_ref\":\"${ref}\"}")
+          done
+          (( ${#legs[@]} > 0 )) || { echo "no envs under envs/" >&2; exit 1; }
+          echo "matrix={\"include\":[$(IFS=,; echo "${legs[*]}")]}" >> "${GITHUB_OUTPUT}"
+
+  # Renovate moved a pin: render every env with its pinned core and push the result.
+  render:
+    name: render
+    needs: envs
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.user.login == 'renovate[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && inputs.render-client-id != ''
+    runs-on: ubuntu-latest
+    outputs:
+      pushed: ${{ steps.push.outputs.pushed }}
+    steps:
+      - name: Checkout the PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+
+      - name: Render each env with its pinned core
+        id: render
+        env:
+          MATRIX: ${{ needs.envs.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          instance="${PWD}"
+          while read -r env repo ref; do
+            core="${RUNNER_TEMP}/core/${env}"
+            git init -q "${core}"
+            git -C "${core}" fetch -q --depth 1 "https://github.com/${repo}.git" "${ref}"
+            git -C "${core}" checkout -q --detach FETCH_HEAD
+            make -C "${core}" venv >/dev/null
+            apps="$(INSTANCE="${instance}" CHECKOUT_APPS_DIR="${RUNNER_TEMP}/apps" bash "${core}/ci/checkout-apps-for-instance.sh")"
+            INSTANCE="${instance}" APPS_REPO="${apps}" "${core}/.venv/bin/python" "${core}/tools/render" --env "${env}"
+          done < <(jq -r '.include[] | "\(.env) \(.core_repo) \(.core_ref)"' <<<"${MATRIX}")
+          if [[ -n "$(git status --porcelain -- envs)" ]]; then
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "Every env's flux/ already matches its render." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Mint the render App's token
+        id: token
+        if: steps.render.outputs.changed == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ inputs.render-client-id }}
+          private-key: ${{ secrets.render-private-key }}
+          permission-contents: write
+
+      - name: Push the render
+        id: push
+        if: steps.render.outputs.changed == 'true'
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git add -A -- envs
+          # A fixed author the instance preset lists in gitIgnoredAuthors, so Renovate still treats
+          # the branch as its own: it keeps rebasing it, and each rebase is rendered again.
+          git -c user.name=jarvis-render -c user.email=jarvis-render@noreply.invalid \
+            commit -q -m "Render envs for this pin change" -m "tools/render at each env's pinned core."
+          git push -q "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
+          echo "pushed=true" >> "${GITHUB_OUTPUT}"
+          echo "Pushed the render; the checks run on that commit." >> "${GITHUB_STEP_SUMMARY}"
+
+  env:
+    name: env ${{ matrix.env }} (core ${{ matrix.core_ref }})
+    needs: [envs, render]
+    # After a pushed render the checks run on the new commit instead.
+    if: >-
+      !cancelled() && needs.envs.result == 'success'
+      && needs.render.result != 'failure' && needs.render.outputs.pushed != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.envs.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # secret-scan reads the whole history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout the env's pinned core at .core/
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.core_repo }}
+          ref: ${{ matrix.core_ref }}
+          path: .core
+          persist-credentials: false
+
+      - name: Restore pinned CLIs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/bin
+          key: jarvis-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.core/tools/versions.env', '.core/tools/install-deps') }}
+
+      - name: Install pinned CLIs
+        run: make -C .core deps
+
+      - name: Checkout the apps repository the envs read
+        env:
+          INSTANCE: ${{ github.workspace }}
+          CHECKOUT_APPS_DIR: ${{ runner.temp }}/apps
+        # The default branch with every tag: the checks read each app at its pin under versions in
+        # values/apps.yaml. A core-only instance gets no directory and needs none.
+        run: |
+          set -euo pipefail
+          apps_dir="$(bash .core/ci/checkout-apps-for-instance.sh)"
+          if [[ -n "${apps_dir}" ]]; then
+            echo "APPS_REPO=${apps_dir}" >> "${GITHUB_ENV}"
+            echo "Checked apps repository at $(git -C "${apps_dir}" rev-parse HEAD)" | tee -a "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Run the pinned core's env checks
+        env:
+          INSTANCE: ${{ github.workspace }}
+          ENVS: ${{ matrix.env }}
+        run: bash .core/ci/run-env-checks
+
+  # Green only when every env leg is, and red on a commit the render replaced.
+  ci:
+    name: ci
+    needs: [render, env]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every env passed
+        env:
+          RENDER: ${{ needs.render.result }}
+          PUSHED: ${{ needs.render.outputs.pushed }}
+          ENV_RESULT: ${{ needs.env.result }}
+        run: |
+          if [[ "${PUSHED}" == "true" ]]; then
+            echo "Rendered and pushed: the checks run on the pushed commit." >&2
+            exit 1
+          fi
+          [[ "${RENDER}" != "failure" && "${ENV_RESULT}" == "success" ]]

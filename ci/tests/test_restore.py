@@ -281,7 +281,7 @@ def test_kubectl_is_bound_to_the_environment_file(monkeypatch) -> None:
         seen.append(list(args))
         return _completed(list(args), "{}")
 
-    monkeypatch.setattr(restore_tool.subprocess, "run", invoke)
+    monkeypatch.setattr(subprocess, "run", invoke)
     kubeconfig = Path("/tmp/jarvis-env-test.yaml")
     restore_tool._kubectl(["get", "pvc"], kubeconfig=kubeconfig)
     assert seen == [

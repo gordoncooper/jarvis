@@ -3,16 +3,17 @@
   "description": "Shared preset for a Jarvis instance repository: extend it from the instance's renovate.json as github>OWNER/jarvis//renovate/instance.json#<core tag>. It opens one PR per pin an env holds: the core release tag, k3s and app pins; Flux comes with the core tag. Nothing merges on its own.",
   "extends": ["config:recommended"],
   "automerge": false,
+  "gitIgnoredAuthors": ["jarvis-render@noreply.invalid"],
   "packageRules": [
     {
-      "description": "A core release moves cluster-vars core_git_ref and the core GitRepository in flux/sync.yaml together, per env. Read that release's Upgrading notes in CHANGELOG.md before merging.",
+      "description": "A core release moves cluster-vars core_git_ref, per env. Core's instance workflow renders the env's flux/ (sync.yaml included) at the new tag and pushes it to the PR. Read that release's Upgrading notes in CHANGELOG.md before merging.",
       "groupName": "jarvis core",
       "matchDepTypes": ["jarvis-core"],
       "additionalBranchPrefix": "{{parentDir}}-",
       "prBodyNotes": ["Follow this release's **Upgrading** notes in core's `CHANGELOG.md`, then run operator commands from a checkout of the new tag."]
     },
     {
-      "description": "One PR per hosted-app release an env pins (values/apps.yaml versions). Tags read from the apps repository, which the instance names: add a packageRule matching depType jarvis-app with overridePackageName set to its apps_git_repo_url.",
+      "description": "One PR per hosted-app release an env pins (values/apps.yaml versions); core's instance workflow renders the app wiring for it. Tags read from the apps repository, which the instance names: add a packageRule matching depType jarvis-app with overridePackageName set to its apps_git_repo_url.",
       "matchDepTypes": ["jarvis-app"],
       "additionalBranchPrefix": "{{parentDir}}-",
       "prBodyNotes": ["Read the app's changes between the two tags in the apps repository before merging; the app's file may ask for new grants."]
@@ -31,16 +32,6 @@
       "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
       "matchStrings": [
         "core_git_repo_url:\\s*https://github\\.com/(?<depName>[^/\\s]+/[^/\\s]+?)(?:\\.git)?\\s*\\n(?:[^\\n]*\\n)*?core_git_ref:\\s*refs/tags/(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
-      ],
-      "datasourceTemplate": "github-tags",
-      "depTypeTemplate": "jarvis-core"
-    },
-    {
-      "customType": "regex",
-      "description": "The same pin on the core GitRepository in flux/sync.yaml.",
-      "managerFilePatterns": ["/^envs\\/[^/]+\\/flux\\/sync\\.yaml$/"],
-      "matchStrings": [
-        "url:\\s*https://github\\.com/(?<depName>[^/\\s]+/[^/\\s]+?)(?:\\.git)?\\s*\\n\\s*ref:\\s*\\n\\s*name:\\s*refs/tags/(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
       ],
       "datasourceTemplate": "github-tags",
       "depTypeTemplate": "jarvis-core"

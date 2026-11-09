@@ -129,14 +129,14 @@ def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:
     copy = bootstrap_example_copy(tmp_path)
     assert ("CronJob", "restic-offsite") in _objects(copy, "platform-configs")
     (copy.env_dir / "values" / "apps.yaml").unlink()
-    set_switches(copy.env_dir, optional=[], apps=[])
+    set_switches(copy.env_dir, features=[], apps=[])
     render_switches(copy.env_dir, copy.root)
     off = _objects(copy, "platform-configs")
     assert ("CronJob", "restic-offsite") not in off
     assert ("Deployment", "restic-apps") not in off
     assert not any(name.startswith("app-") for _kind, name in off)
     assert not (copy.env_dir / "flux" / "generated" / "apps.yaml").exists()
-    set_switches(copy.env_dir, optional=["apps-backup-server"])
+    set_switches(copy.env_dir, features=["apps-backup-server"])
     render_switches(copy.env_dir, copy.root)
     assert ("Deployment", "restic-apps") in _objects(copy, "platform-configs")
 
@@ -154,7 +154,7 @@ def test_selected_backups_need_the_apps_server_switch(tmp_path: Path) -> None:
     """Rule: the render refuses a backup selection with the apps server off, before it writes."""
     copy = bootstrap_example_copy(tmp_path)
     register_copy_app(copy, "app-notes")
-    set_switches(copy.env_dir, optional=["app-hosting", "offsite-backup-copy"])
+    set_switches(copy.env_dir, features=["app-hosting", "offsite-backup-copy"])
     before = _tree(copy)
     with pytest.raises(SystemExit, match="apps-backup-server"):
         render_switches(copy.env_dir, copy.root)
@@ -210,16 +210,9 @@ def test_an_exception_line_for_an_unlisted_app_refuses_the_render(tmp_path: Path
     assert _tree(copy) == before
 
 
-def test_optional_is_read_as_features_for_one_release_and_not_beside_it(tmp_path: Path) -> None:
-    """Rule: switches.yaml's old section name optional reads as features; both together fail."""
+def test_the_old_section_name_optional_is_an_unknown_key(tmp_path: Path) -> None:
+    """Rule: switches.yaml's sections are features, addons and apps; the old name optional is refused."""
     from jarvis.lib import switches as _switches
 
-    env = tmp_path / "env"
-    env.mkdir()
-    (env / "values").mkdir()
-    path = env / _switches.SWITCHES_FILE
-    path.write_text("optional:\n  - app-dns\n", encoding="utf-8")
-    data, errors = _switches.load(env)
-    assert errors == [] and _switches.names(data, _switches.FEATURES) == ["app-dns"]
-    path.write_text("optional: [app-dns]\nfeatures: [app-hosting]\n", encoding="utf-8")
-    assert _switches.load(env)[1]
+    data = {"optional": ["app-dns"]}
+    assert any("unknown key 'optional'" in error for error in _switches.validate(data, ()))

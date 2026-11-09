@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from support import REPO_ROOT, instance_apps_repo_for_checks, render_switches, set_switches
+from support import REPO_ROOT, instance_apps_repo_for_checks, link_core_trees, render_switches, set_switches
 
 _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
 
@@ -21,7 +21,7 @@ def _instance(tmp_path: Path, *, core_only: bool) -> Path:
     instance = tmp_path / "instance"
     env_dir = instance / "envs" / "env-00"
     shutil.copytree(REPO_ROOT / "envs" / "env-00", env_dir)
-    (instance / "core").symlink_to(REPO_ROOT)
+    link_core_trees(instance, REPO_ROOT)
     if core_only:
         (env_dir / "values" / "apps.yaml").write_text("backups:\n  mode: selected\n", encoding="utf-8")
         set_switches(env_dir, apps=[])

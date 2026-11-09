@@ -15,12 +15,12 @@ import yaml
 
 from support import REPO_ROOT, load_tool
 
-SEAL = REPO_ROOT / "tools" / "encrypt"
+ENCRYPT = REPO_ROOT / "tools" / "encrypt"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
 
 
-def _load_seal():
-    return load_tool("seal_tool", SEAL)
+def _load_encrypt():
+    return load_tool("encrypt_tool", ENCRYPT)
 
 
 def _require_tool(name: str) -> str:
@@ -98,7 +98,7 @@ def _bind_repo(monkeypatch: pytest.MonkeyPatch, mod, root: Path) -> None:
 def test_seal_refuses_bad_segments_before_sops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: str, name: str
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     _bind_repo(monkeypatch, mod, tmp_path)
     for folder in ("Not-valid", "env-test"):
         (tmp_path / "envs" / folder).mkdir(parents=True)
@@ -111,7 +111,7 @@ def test_seal_refuses_bad_segments_before_sops(
 def test_seal_refuses_a_missing_env_folder_before_sops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     _bind_repo(monkeypatch, mod, tmp_path)
     wrapper, marker = _marker_sops(tmp_path)
     with pytest.raises(SystemExit):
@@ -123,7 +123,7 @@ def test_seal_refuses_a_missing_env_folder_before_sops(
 def test_seal_refuses_a_symlinked_secrets_dir_before_sops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     _bind_repo(monkeypatch, mod, tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -138,7 +138,7 @@ def test_seal_refuses_a_symlinked_secrets_dir_before_sops(
 
 
 def test_seal_writes_a_valid_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     public, _keyfile = _age_keypair(tmp_path)
     _sops_rules(tmp_path, public)
     _bind_repo(monkeypatch, mod, tmp_path)
@@ -158,7 +158,7 @@ def test_seal_writes_an_addon_secret_in_its_namespace_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An add-on's Secret is sealed under envs/<env>/secrets/<namespace>/, in that namespace."""
-    mod = _load_seal()
+    mod = _load_encrypt()
     public, _keyfile = _age_keypair(tmp_path)
     _sops_rules(tmp_path, public)
     _bind_repo(monkeypatch, mod, tmp_path)
@@ -175,7 +175,7 @@ def test_seal_writes_an_addon_secret_in_its_namespace_folder(
 def test_seal_refuses_a_bad_or_mismatched_namespace_before_sops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, namespace: str
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     _bind_repo(monkeypatch, mod, tmp_path)
     (tmp_path / "envs" / "env-test").mkdir(parents=True)
     wrapper, marker = _marker_sops(tmp_path)
@@ -192,7 +192,7 @@ def test_seal_writes_an_app_credential_where_the_schema_expects_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An app's credential sits in its app's folder, and its Secret stays in platform-backups."""
-    mod = _load_seal()
+    mod = _load_encrypt()
     public, _keyfile = _age_keypair(tmp_path)
     _sops_rules(tmp_path, public)
     _bind_repo(monkeypatch, mod, tmp_path)
@@ -232,7 +232,7 @@ def test_seal_writes_an_app_credential_where_the_schema_expects_it(
 def test_seal_refuses_an_app_credential_that_would_land_wrong_before_sops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, call
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     _bind_repo(monkeypatch, mod, tmp_path)
     (tmp_path / "envs" / "env-test").mkdir(parents=True)
     wrapper, marker = _marker_sops(tmp_path)
@@ -247,13 +247,13 @@ def test_seal_refuses_an_app_credential_that_would_land_wrong_before_sops(
 )
 def test_seal_takes_either_name_or_app(extra: list[str]) -> None:
     with pytest.raises(SystemExit):
-        _load_seal().main(["--env", "env-test", *extra])
+        _load_encrypt().main(["--env", "env-test", *extra])
 
 
 def test_seal_refuses_to_overwrite_a_sealed_secret_without_force(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     public, _keyfile = _age_keypair(tmp_path)
     _sops_rules(tmp_path, public)
     _bind_repo(monkeypatch, mod, tmp_path)
@@ -284,7 +284,7 @@ def test_seal_refuses_to_overwrite_a_sealed_secret_without_force(
 def test_seal_refuses_input_that_is_not_a_secret_before_sops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plaintext: str
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     _bind_repo(monkeypatch, mod, tmp_path)
     (tmp_path / "envs" / "env-test").mkdir(parents=True)
     wrapper, marker = _marker_sops(tmp_path)
@@ -297,7 +297,7 @@ def test_seal_refuses_input_that_is_not_a_secret_before_sops(
 def test_seal_refuses_a_manifest_name_that_differs_from_name_before_sops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mod = _load_seal()
+    mod = _load_encrypt()
     _bind_repo(monkeypatch, mod, tmp_path)
     (tmp_path / "envs" / "env-test").mkdir(parents=True)
     wrapper, marker = _marker_sops(tmp_path)
@@ -361,14 +361,3 @@ def test_sops_set_adds_prune_annotation_without_changing_data(tmp_path: Path) ->
     assert before["sops"]["lastmodified"] != after["sops"]["lastmodified"]
     assert before["sops"]["version"] == after["sops"]["version"]
     assert before["sops"]["age"] == after["sops"]["age"]
-
-
-def test_the_old_seal_name_still_runs_encrypt_for_one_release() -> None:
-    """Rule: tools/seal and make seal run encrypt, and say the name is going."""
-    import subprocess
-    import sys
-
-    proc = subprocess.run([sys.executable, str(REPO_ROOT / "tools" / "seal"), "--help"], capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, proc.stderr
-    assert "tools/seal is now tools/encrypt" in proc.stderr
-    assert "--name" in proc.stdout

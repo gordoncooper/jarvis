@@ -14,7 +14,7 @@ from jarvis.checks.flux_identity import scan_flux_identity
 from jarvis.lib import apps as _apps
 from jarvis.lib import switches as _switches
 from jarvis.schema import env as env_schema
-from support import REPO_ROOT, set_switches
+from support import REPO_ROOT, link_core_trees, set_switches
 
 EXAMPLE = REPO_ROOT / "envs" / "env-00"
 
@@ -26,7 +26,7 @@ def _tree(tmp_path: Path) -> tuple[Path, Path]:
         shutil.copytree(REPO_ROOT / name, product / name)
     (instance / "envs").mkdir(parents=True)
     shutil.copytree(EXAMPLE, instance / "envs" / "env-00")
-    (instance / "core").symlink_to(product)
+    link_core_trees(instance, product)
     return product, instance
 
 
