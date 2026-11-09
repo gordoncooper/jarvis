@@ -26,6 +26,6 @@ The sample add-on. It fills no slot and exists to prove [the add-on contract](..
 
 ## Proven by
 
-- `ci/checks/addons`, `ci/checks/flux-identity`, `ci/checks/manifest-lint` and `ci/checks/digest-pin` on the example env.
+- `ci/checks/addons`, the `flux-identity` check (`jarvis validate`), `ci/checks/manifest-lint` and `ci/checks/digest-pin` on the example env.
 - `ci/tests/test_addons.py` builds a bootstrapped copy of the example env with a placeholder Secret sealed to a throwaway key in `secrets/hello/`, and runs every env-level check on it. That proves the sealed file renders on the decrypting Kustomization, which sets `targetNamespace: hello`. The tenant's Role is what limits the plain Secret to `hello` on the cluster; nothing in CI decrypts it. `ci/tests/test_flux_entry.py` renders and schema-checks each of its paths.
 - `ci/tests/test_verify.py` runs its standing check with kubectl stubbed.

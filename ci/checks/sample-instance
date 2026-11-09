@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# CI rule check: every env-level check (jarvis validate) on a sample instance built the way
+# jarvis init builds one (ci/tests/sample.py). Core ships no env of its own, so this is where
+# the env checks meet a whole env; instance repos run the same checks with jarvis validate.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+python3 ci/tests/sample.py "${work}/instance" >/dev/null
+# The sample's apps are the fixture apps repository, at the tags its env pins.
+INSTANCE="${work}/instance" APPS_REPO="${repo_root}/ci/tests/fixtures/app-hosting/jarvis-apps" \
+  python3 -m jarvis.env.validate

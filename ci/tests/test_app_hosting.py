@@ -1,4 +1,4 @@
-"""ci/checks/app-hosting, the env's app list in env-schema, and the app wiring in flux-identity."""
+"""the app-hosting check (jarvis validate), the env's app list in env-schema, and the app wiring in flux-identity."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from jarvis.checks.app_hosting import scan_app_hosting
 from jarvis.checks.flux_identity import scan_flux_identity
 from jarvis.env import switches as _switches
 from jarvis.schema import env as env_schema
-from support import REPO_ROOT, link_core_trees, set_switches
+from support import REPO_ROOT, link_core_trees, sample_root, set_switches
 
-EXAMPLE = REPO_ROOT / "envs" / "env-00"
+EXAMPLE = sample_root() / "envs" / "env-00"
 
 
 def _tree(tmp_path: Path) -> tuple[Path, Path]:

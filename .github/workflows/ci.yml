@@ -10,8 +10,8 @@ on:
       - main
 
 jobs:
-  # The product holds only the env-00 sample, so one leg covers it. Real envs
-  # live in instance repos, whose CI runs this repo's env-level checks.
+  # Core holds no env: its env checks run on a sample instance (ci/checks/sample-instance), so one
+  # leg covers it. Real envs live in instance repos, whose CI runs jarvis validate.
   ci:
     name: ci
     runs-on: ubuntu-latest

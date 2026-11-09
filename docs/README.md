@@ -40,7 +40,6 @@
 
 | Path | Topic |
 | --- | --- |
-| [../envs/env-00/README.md](../envs/env-00/README.md) | Example env to copy; never copy a real env |
-| [../envs/env-00/secrets/README.md](../envs/env-00/secrets/README.md) | Shared secrets and bootstrap rules a copy keeps |
+| [secrets.md](secrets.md) | How an env's secrets are made, kept and recovered; the two age keys |
 
-Real envs live in private instance repositories made from env-00 ([deploy.md](deploy.md#new-env)).
+Real envs live in private instance repositories that `jarvis init` writes ([deploy.md](deploy.md#new-env)).

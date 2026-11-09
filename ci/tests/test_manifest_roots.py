@@ -1,4 +1,5 @@
-"""The manifest checks fail when a manifest root is missing, instead of scanning nothing."""
+"""The manifest checks fail when core/ or addons/ is missing, instead of scanning nothing. envs/
+is scanned when present: core holds no env, an instance repo does."""
 
 from __future__ import annotations
 
@@ -54,13 +55,13 @@ def test_required_roots_fail_when_a_manifest_root_is_missing(tmp_path: Path, nam
         (item.rel_path if hasattr(item, "rel_path") else item.path): item
         for item in _SCANS[name](tmp_path, require_roots=True)
     }
-    assert {"addons", "envs"} <= set(reasons)
-    assert "platform" not in reasons
+    assert "addons" in reasons
+    assert "envs" not in reasons and "platform" not in reasons
 
 
 @pytest.mark.parametrize("name", sorted(_SCANS))
 def test_the_check_script_requires_every_manifest_root(tmp_path: Path, name: str) -> None:
-    """The shipped check passes require_roots, so a tree missing addons/ or envs/ fails."""
+    """The shipped check passes require_roots, so a tree missing addons/ fails."""
     _tree_with_platform_only(tmp_path)
     shutil.copytree(REPO_ROOT / "ci" / "checks", tmp_path / "ci" / "checks")
     # The check scripts import the jarvis package from the repo root (PYTHONPATH).

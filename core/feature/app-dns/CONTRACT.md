@@ -39,5 +39,5 @@ From a pod, an Ingress host in the zone resolves through this Service and throug
 
 - `ci/tests/test_app_dns.py` (LoadBalancer port 53, zone `${dns_suffix}`, forward target, CPU request without a CPU limit, probes).
 - `ci/tests/test_base_os.py` (edge hosts: `DNSStubListener=no`, resolv.conf is resolved's upstream list).
-- `ci/checks/flux-prune` (namespace, chart source, HelmRelease, and `coredns-custom`).
+- the `flux-prune` check (`jarvis validate`) (namespace, chart source, HelmRelease, and `coredns-custom`).
 - The post-merge drill: a throwaway Ingress resolves from a pod through App DNS and through cluster DNS.

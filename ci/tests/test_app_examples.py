@@ -24,7 +24,7 @@ from jarvis.apps import values as _apps
 from jarvis.apps.app_file import check_folder
 from jarvis.render.apps import render_env
 from jarvis.schema import env as env_schema
-from support import REPO_ROOT, link_core_trees, set_switches
+from support import REPO_ROOT, copy_sample, sample_root, set_switches
 
 EXAMPLES = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 APPS = ["hello-web", "notes", "lan-demo"]
@@ -33,9 +33,7 @@ APPS = ["hello-web", "notes", "lan-demo"]
 def _env(tmp_path: Path, *, lan_line: bool = True) -> tuple[Path, Path, dict]:
     """An instance holding env-00, with or without lan-demo's line, its wiring re-rendered."""
     instance = tmp_path / "instance"
-    env_dir = instance / "envs" / "env-00"
-    shutil.copytree(REPO_ROOT / "envs" / "env-00", env_dir)
-    link_core_trees(instance, REPO_ROOT)
+    env_dir = copy_sample(instance) / "envs" / "env-00"
     values = {"apps": APPS, "exceptions": [{"lan-demo": "lan-port 8080/TCP"}] if lan_line else []}
     (env_dir / _apps.APPS_VALUES).write_text(
         yaml.safe_dump({"exceptions": values["exceptions"], "versions": {app: "v0.1.0" for app in APPS}}), encoding="utf-8")
@@ -59,7 +57,7 @@ def test_app_check_passes_each_example(app: str) -> None:
 
 def test_committed_env_00_render_wires_the_examples_and_passes_env_schema() -> None:
     """Rule: env-00's committed render is the examples' wiring, and env-schema passes it."""
-    env_dir = REPO_ROOT / "envs" / "env-00"
+    env_dir = sample_root() / "envs" / "env-00"
     docs = yaml.safe_load_all((env_dir / "flux" / _apps.GENERATED_REL).read_text(encoding="utf-8"))
     subs = {d["spec"]["postBuild"]["substitute"]["app_name"]: d["spec"]["postBuild"]["substitute"] for d in docs if d}
     assert list(subs) == APPS

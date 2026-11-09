@@ -34,8 +34,8 @@ from jarvis.render.cluster_vars import (
     cluster_vars_configmap,
     render_document,
 )
-from jarvis.schema.env import EXAMPLE_ENV, kubernetes_version_from_k3s
-from support import ExampleCopy, _kustomize_build, real_and_copy_envs
+from jarvis.schema.env import kubernetes_version_from_k3s
+from support import ExampleCopy, _kustomize_build, real_and_copy_envs, sample_root
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _STRICT_SUBSTITUTION = "--feature-gates=StrictPostBuildSubstitutions=true"
@@ -141,11 +141,11 @@ def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
     """The layer Kustomizations the env entry applies, from its kustomize build.
 
     The root Kustomization in sync.yaml is not a layer; the env schema checks it. Nor is a hosted
-    app's wiring, which the env renders from its app list; ci/checks/app-hosting checks those.
+    app's wiring, which the env renders from its app list; the app-hosting check (jarvis validate) checks those.
     """
     from jarvis.checks.manifests import env_flux_docs
 
-    docs, error = env_flux_docs(REPO_ROOT if root is None else root, f"envs/{env}/flux")
+    docs, error = env_flux_docs(sample_root() if root is None else root, f"envs/{env}/flux")
     assert error is None, error
     return [
         doc
@@ -281,8 +281,8 @@ def _platform_configs_errors(doc: dict, env: str) -> list[str]:
 
 
 def test_cluster_vars_configmap_matches_render_script(example_copy: ExampleCopy) -> None:
-    """The committed ConfigMap is the render script's output, including env-00."""
-    targets = [(REPO_ROOT, EXAMPLE_ENV), *real_and_copy_envs(example_copy)]
+    """The rendered ConfigMap is the render script's output."""
+    targets = [(sample_root(), "env-00"), *real_and_copy_envs(example_copy)]
     for root, env in targets:
         cluster_path = root / "envs" / env / "values" / "cluster-vars.yaml"
         generated_path = root / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
@@ -436,16 +436,16 @@ def test_health_check_helmreleases_exist_under_platform() -> None:
 
 
 def test_env_00_deployment_health_check_fails() -> None:
-    """A Deployment check in place of a HelmRelease check fails on the example flux tree."""
-    docs = _flux_kustomizations(EXAMPLE_ENV)
-    assert _flux_kustomization_errors(docs, EXAMPLE_ENV) == []
+    """A Deployment check in place of a HelmRelease check fails on the sample flux tree."""
+    docs = _flux_kustomizations("env-00")
+    assert _flux_kustomization_errors(docs, "env-00") == []
     _controllers_spec(docs)["healthChecks"][0] = {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
         "name": "cert-manager-webhook",
         "namespace": "platform-cert-manager",
     }
-    assert _flux_kustomization_errors(docs, EXAMPLE_ENV)
+    assert _flux_kustomization_errors(docs, "env-00")
 
 
 def test_env_platform_configs_adds_only_its_secrets(example_copy: ExampleCopy) -> None:
@@ -510,10 +510,9 @@ def _assert_sops_leaf(path: Path, section: str, node: object) -> None:
 
 
 def test_sops_secret_leaves_stay_encrypted(example_copy: ExampleCopy) -> None:
-    """SOPS secret leaves stay encrypted in every real env and in a bootstrapped copy."""
-    paths = sorted(REPO_ROOT.glob("envs/*/secrets/**/*.sops.yaml"))
+    """SOPS secret leaves stay encrypted in a bootstrapped copy, an add-on's folder included."""
     # An add-on's Secrets sit in its namespace's folder.
-    paths.extend(sorted((example_copy.env_dir / "secrets").rglob("*.sops.yaml")))
+    paths = sorted((example_copy.env_dir / "secrets").rglob("*.sops.yaml"))
     assert any(path.parent != example_copy.env_dir / "secrets" for path in paths)
     assert paths
     for path in paths:

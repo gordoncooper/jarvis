@@ -139,7 +139,7 @@ def _no_apps_server(docs: list[dict]) -> None:
     ],
 )
 def test_isolation_check_fails_each_seeded_leak(app_copy: ExampleCopy, seed, reason: str) -> None:
-    """Each way an app credential could reach core, or core's an app, fails ci/checks/backup-isolation."""
+    """Each way an app credential could reach core, or core's an app, fails the backup-isolation check (jarvis validate)."""
     docs = copy_module.deepcopy(_platform_configs(app_copy))
     assert _render_violations("fixture", docs) == []
     seed(docs)

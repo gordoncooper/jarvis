@@ -89,13 +89,20 @@ def test_every_command_names_a_module_that_has_its_entry(tmp_path: Path) -> None
         assert hasattr(module, "main" if command.takes_options else "run"), name
 
 
-def test_core_runs_its_own_envs_itself(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    """Rule: in core's own checkout the command runs that checkout, whatever env-00 pins."""
-    monkeypatch.chdir(REPO_ROOT)
-    monkeypatch.setenv("PATH", os.environ["PATH"])  # the CLI puts the toolchain first; undo it after
+def test_core_runs_this_checkout_unpinned_and_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Rule: --core <this checkout> runs it for an env pinned elsewhere, with a warning."""
+    from jarvis.cli import core as cli_core
+    from support import copy_sample
+
+    instance = copy_sample(tmp_path / "instance")
+    monkeypatch.chdir(instance / "envs")
+    # The CLI sets these in place; register them so they are restored after the test.
+    for name in ("PATH", "INSTANCE", cli_core.UNPINNED_VAR):
+        monkeypatch.setenv(name, os.environ.get(name, ""))
     monkeypatch.setenv("APPS_REPO", str(REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"))
-    assert cli.main(["--env", "env-00", "render", "--check"]) == 0
-    assert "INSTANCE" not in os.environ
+    assert cli.main(["--core", str(REPO_ROOT), "render", "--check"]) == 0
+    assert "WARN jarvis: unpinned run with --core: env-00 pins core v0.2.0" in capsys.readouterr().err
+    assert os.environ["INSTANCE"] == str(instance)
 
 
 def test_validate_checks_only_the_named_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,3 +195,13 @@ def test_the_entry_point_loads_nothing_that_reads_core_trees() -> None:
     probe = "import sys, jarvis.cli.main; print(sorted(m for m in sys.modules if m.startswith('jarvis.')))"
     loaded = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True).stdout
     assert eval(loaded) == ["jarvis.cli", "jarvis.cli.core", "jarvis.cli.main", "jarvis.env", "jarvis.env.pin", "jarvis.paths"]
+
+
+def test_doctor_installs_the_hook_a_fresh_clone_lacks_and_keeps_anyone_elses(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    assert doctor.check_hook(tmp_path)[0] == ("PASS", "installed the pre-commit hook (a fresh clone has none)")
+    assert doctor.check_hook(tmp_path)[0][0] == "PASS"
+    hook = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nmy own\n", encoding="utf-8")
+    assert doctor.check_hook(tmp_path)[0][0] == "WARN"
+    assert hook.read_text(encoding="utf-8") == "#!/bin/sh\nmy own\n"

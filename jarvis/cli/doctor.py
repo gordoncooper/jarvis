@@ -1,7 +1,8 @@
-"""jarvis doctor: is this controller ready to run the env? Changes nothing.
+"""jarvis doctor: is this controller ready to run the env? Changes nothing but a missing hook.
 
 Checks the pinned CLIs, the age key's mode and owner, the instance repo's remote, and that
-every inventory host resolves. Exit 0 when nothing fails, 4 when something does.
+every inventory host resolves, and installs the pre-commit hook in a clone that lacks it. Exit 0
+when nothing fails, 4 when something does.
 """
 
 from __future__ import annotations
@@ -89,8 +90,21 @@ def check_hosts(env_dir: Path) -> list[tuple[str, str]]:
     return results or [("WARN", "the inventory lists no host")]
 
 
+def check_hook(instance: Path) -> list[tuple[str, str]]:
+    """The pre-commit hook jarvis init installs: a fresh clone does not have it."""
+    hook = instance / ".git" / "hooks" / "pre-commit"
+    if hook.is_file() and "jarvis" in hook.read_text(encoding="utf-8", errors="ignore"):
+        return [("PASS", "the pre-commit hook runs jarvis render --check and validate")]
+    from jarvis.env.scaffold import install_hook
+
+    if (instance / ".git").is_dir() and not hook.exists():
+        install_hook(instance)
+        return [("PASS", "installed the pre-commit hook (a fresh clone has none)")]
+    return [("WARN", f"{hook} is not jarvis's; commits are not checked before they are made")]
+
+
 def run(instance: Path, env_dir: Path) -> int:
-    results = check_tools() + check_age_key(env_dir) + check_remote(instance) + check_hosts(env_dir)
+    results = check_tools() + check_age_key(env_dir) + check_remote(instance) + check_hosts(env_dir) + check_hook(instance)
     for status, message in results:
         print(f"{status} doctor: {message}", flush=True)
     return 4 if any(status == "FAIL" for status, _ in results) else 0

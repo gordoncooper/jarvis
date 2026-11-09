@@ -23,13 +23,12 @@ from ansible_role_proof import (
     inventory_path,
     load_cluster_vars,
     load_role_defaults,
-    non_example_env_names,
     playbook_recap_field,
     roles_inventory_path,
 )
 from conftest import require_cli
 
-from support import ExampleCopy
+from support import ExampleCopy, sample_root
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
 
@@ -135,7 +134,7 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
     )
     dest = tmp_path / "out"
     dest.mkdir()
-    cluster_vars = REPO_ROOT / "envs" / env_name() / "values" / "cluster-vars.yaml"
+    cluster_vars = sample_root() / "envs" / env_name() / "values" / "cluster-vars.yaml"
     play = tmp_path / "play.yml"
     play.write_text(
         "---\n- hosts: all\n  gather_facts: false\n  become: false\n  vars:\n"
@@ -299,7 +298,7 @@ def test_agent_play_restarts_one_host_at_a_time() -> None:
 
 def test_agent_play_host_pattern(example_copy: ExampleCopy) -> None:
     """The agent play is every host except the control plane."""
-    targets = [(REPO_ROOT, env) for env in (env_name(), *non_example_env_names())]
+    targets = [(sample_root(), env_name())]
     targets.append((example_copy.root, example_copy.name))
     for root, env in targets:
         assert _listed_play_hosts(_agent_play_section(env, root)) == _hosts_outside_control_plane(

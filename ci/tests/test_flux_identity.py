@@ -9,8 +9,7 @@ import pytest
 import yaml
 
 from jarvis.checks.flux_identity import scan_flux_identity
-from jarvis.schema.env import EXAMPLE_ENV
-from support import REPO_ROOT
+from support import REPO_ROOT, sample_root
 
 _ACCOUNTS = """
 apiVersion: v1
@@ -308,14 +307,14 @@ def test_narrow_binding_for_a_tenant_elsewhere_passes(tmp_path: Path) -> None:
 
 
 def _example_tree(tmp_path: Path) -> Path:
-    """The example env's flux tree and a writable platform copy; services is linked."""
+    """The sample env (secrets included) and a writable platform copy; services is linked."""
     root = tmp_path / "repo"
     root.mkdir()
     shutil.copytree(REPO_ROOT / "core" / "platform", root / "core" / "platform", symlinks=True)
     for tree in ("flux", "feature"):
         (root / "core" / tree).symlink_to(REPO_ROOT / "core" / tree)
     (root / "addons").symlink_to(REPO_ROOT / "addons")
-    shutil.copytree(REPO_ROOT / "envs" / EXAMPLE_ENV / "flux", root / "envs" / EXAMPLE_ENV / "flux")
+    shutil.copytree(sample_root() / "envs" / "env-00", root / "envs" / "env-00")
     return root
 
 
@@ -338,11 +337,7 @@ def _seed(root: Path, directory: str, doc: dict) -> None:
 def test_example_tree_seeded_under_a_platform_path_fails(
     tmp_path: Path, directory: str, seeded: dict, expected: str
 ) -> None:
-    """The example flux tree passes, and fails once a platform Kustomization's path gains the seed.
-
-    core/platform/configs is the core of the example env's platform-configs path,
-    which is built without the bootstrap secrets the example does not have.
-    """
+    """The sample flux tree passes, and fails once a platform Kustomization's path gains the seed."""
     root = _example_tree(tmp_path)
     assert _messages(root) == []
     _seed(root, directory, seeded)

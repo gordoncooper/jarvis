@@ -6,7 +6,6 @@ import shutil
 from pathlib import Path
 
 from jarvis.checks.flux_substitute import scan_flux_substitute
-from jarvis.schema.env import EXAMPLE_ENV
 from support import REPO_ROOT, ExampleCopy, bootstrap_example_copy
 
 _ENV_FLUX = {
@@ -115,11 +114,9 @@ def test_r4_missing_substitute_from_source_fails(tmp_path: Path) -> None:
     assert any("uses ${dns_suffix}" in item.message for item in violations)
 
 
-def test_example_env_platform_configs_is_not_built_when_secrets_are_absent(tmp_path: Path) -> None:
-    """The example flux tree lists bootstrap secrets that do not exist yet.
-
-    A non-example env with the same missing file still fails the build.
-    """
+def test_a_platform_configs_path_missing_a_secret_fails_the_build(tmp_path: Path) -> None:
+    """Rule: every env's platform-configs path builds; a sealed file it lists that is missing fails
+    it. No env is exempt (jarvis init mints a new env's secrets before its first render)."""
     def tree(env: str) -> dict[str, str]:
         return {
             f"envs/{env}/flux/kustomization.yaml": "resources: [vars.yaml, configs.yaml]\n",
@@ -140,14 +137,11 @@ def test_example_env_platform_configs_is_not_built_when_secrets_are_absent(tmp_p
             ),
         }
 
-    files: dict[str, str] = {}
-    files.update(tree(EXAMPLE_ENV))
-    files.update(tree("env-test"))
+    files = tree("env-test")
     for rel, text in files.items():
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    # The tree's own core, without the core list: the example's path then builds nothing.
     (tmp_path / "core").mkdir()
     violations = scan_flux_substitute(tmp_path)
     assert violations

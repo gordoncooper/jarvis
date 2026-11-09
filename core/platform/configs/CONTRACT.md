@@ -22,4 +22,4 @@ Flux `platform-configs` reports Ready.
 ## Proven by
 
 - `ci/tests/test_flux_entry.py` (kustomize build and schema check of every Flux path, no object on two paths, the four standard Kustomizations, each env's platform-configs list is `core/platform/configs` plus its own SOPS secrets).
-- `ci/checks/flux-prune` (protected kinds on this path keep `prune: disabled`).
+- the `flux-prune` check (`jarvis validate`) (protected kinds on this path keep `prune: disabled`).

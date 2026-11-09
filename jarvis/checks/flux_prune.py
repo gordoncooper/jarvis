@@ -60,6 +60,9 @@ KEPT = frozenset(
         ("HelmChartConfig", "kube-system", "traefik"),
     }
 )
+# KEPT objects a feature brings (app-dns's CoreDNS forward): guarded when an env turns the feature
+# on, and absent, not missing, when it does not.
+FEATURE_KEPT = frozenset({("ConfigMap", "kube-system", "coredns-custom")})
 
 
 @dataclass(frozen=True)
@@ -112,7 +115,7 @@ def unguarded_objects(
         and (key[0] in PROTECTED_KINDS or key in KEPT)
         and not prune_disabled(doc)
     ]
-    absent = sorted(key for key in KEPT if key not in applied)
+    absent = sorted(key for key in KEPT - FEATURE_KEPT if key not in applied)
     return sorted(unguarded), absent
 
 

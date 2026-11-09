@@ -68,13 +68,16 @@ def test_validate_runs_every_env_check_and_names_each_failure(tmp_path: Path, mo
     assert "PASS env-schema" in out
 
 
-def test_each_env_check_is_a_rule_check_core_runs_by_name() -> None:
-    """Rule: every check jarvis validate runs is also ci/checks/<name>, so core's CI runs the same code."""
+def test_core_runs_every_env_check_on_a_sample_instance() -> None:
+    """Rule: core's CI runs jarvis validate's checks (all of them) on a sample instance, and the
+    ones that also read core's own trees on core itself, under the same names."""
     from jarvis.env import validate
 
     listed = (REPO_ROOT / "ci" / "rule-checks.txt").read_text(encoding="utf-8").split()
-    for name in validate.CHECKS:
-        assert name in listed, name
+    assert "sample-instance" in listed
+    assert "python3 -m jarvis.env.validate\n" in (REPO_ROOT / "ci" / "checks" / "sample-instance").read_text(encoding="utf-8")
+    for name in ("addons", "manifest-lint", "secret-scan"):
+        assert name in validate.CHECKS and name in listed
         script = (REPO_ROOT / "ci" / "checks" / name).read_text(encoding="utf-8")
         assert f"python3 -m jarvis.env.validate --only {name}" in script, name
 

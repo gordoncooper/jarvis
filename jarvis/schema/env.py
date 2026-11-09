@@ -20,12 +20,11 @@ from jarvis.env import switches as _switches
 from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE resolver)
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.schema import values as _values
+from jarvis.secrets import age as _age
 
 _PRODUCT_ROOT = PRODUCT_ROOT
 
-EXAMPLE_ENV = "env-00"
 DEFAULT_SSH_USER = "ubuntu"
-DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 # Weekly repository check, hours away from midnight-to-01:00 backups and the etcd copy's prunes after each k3s snapshot.
 DEFAULT_BACKUP_CHECK_SCHEDULE = "30 6 * * 3"
 # The share of each node's memory no pod is scheduled into (the k3s role's eviction-hard).
@@ -81,10 +80,6 @@ def env_flux_dirs(root: Path) -> list[Path]:
     return [path / "flux" for path in env_dirs(root) if (path / "flux").is_dir()]
 
 
-def is_example_env(name: str) -> bool:
-    """True for the never-deployed example env, which is not an identity source."""
-    return name == EXAMPLE_ENV
-
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 _HOSTNAME = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -92,10 +87,7 @@ _SOPS_ENV_SECRETS = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/secrets/")
 
 # The keys, their types and simple patterns are schema/cluster-vars.schema.json's.
 _CLUSTER_VARS_REQUIRED = _values.required_keys(_values.CLUSTER_VARS)
-_CLUSTER_VARS_OPTIONAL = _values.known_keys(_values.CLUSTER_VARS) - _CLUSTER_VARS_REQUIRED
-_CLUSTER_VARS_KNOWN = _CLUSTER_VARS_REQUIRED | _CLUSTER_VARS_OPTIONAL
 # Optional keys core sets a default for (infra/ansible/group_vars/all.yml).
-_CORE_DEFAULTED = frozenset({"k3s_version", "k3s_sha256"})
 
 _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 _ENV_GIT_PATH = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/")
@@ -134,7 +126,7 @@ def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
     if "ssh_user" not in resolved:
         resolved["ssh_user"] = DEFAULT_SSH_USER
     if "age_key_file" not in resolved:
-        resolved["age_key_file"] = DEFAULT_AGE_KEY_FILE
+        resolved["age_key_file"] = _age.DEFAULT_KEY_FILE
     if "backup_check_schedule" not in resolved:
         resolved["backup_check_schedule"] = DEFAULT_BACKUP_CHECK_SCHEDULE
     if "node_memory_reserve_percent" not in resolved:
@@ -232,7 +224,7 @@ def _load_sops_creation_rules(
 def _validate_sops_creation_rules(
     rules: list[dict[str, Any]], env_names: list[str], *, require_recipient: bool
 ) -> list[str]:
-    """One age creation rule per non-example env, and none for the example env."""
+    """One age creation rule per env."""
 
     def keyed(env_name: str) -> list[dict[str, Any]]:
         needle = f"envs/{env_name}/secrets/"
@@ -243,17 +235,8 @@ def _validate_sops_creation_rules(
         ]
 
     errors: list[str] = []
-    names = list(env_names)
-    if EXAMPLE_ENV not in names:
-        names.append(EXAMPLE_ENV)
-    for env_name in names:
+    for env_name in env_names:
         count = len(keyed(env_name))
-        if is_example_env(env_name):
-            if count:
-                errors.append(
-                    f".sops.yaml: {env_name} must not have a creation rule, found {count}"
-                )
-            continue
         if count > 1 or (require_recipient and count != 1):
             errors.append(
                 f".sops.yaml: expected exactly one creation rule for "
@@ -384,11 +367,6 @@ def _validate_cluster_vars(
     # Shape (keys, types, simple patterns) is the schema's; what follows needs more than one field.
     errors: list[str] = _values.problems(_values.CLUSTER_VARS, data, rel_path)
 
-    if is_example_env(env_name):
-        # The example runs core's k3s release, so it shows that default by leaving the pair out.
-        for key in sorted(_CLUSTER_VARS_KNOWN - _CORE_DEFAULTED - set(data)):
-            errors.append(f"{rel_path}: {EXAMPLE_ENV} must set every known key: {key}")
-
     for key in ("pod_cidr", "service_cidr"):
         errors.extend(_validate_cidr(rel_path, key, data.get(key)))
     errors.extend(_validate_app_dns_cluster_ip(rel_path, data))
@@ -506,8 +484,6 @@ def _validate_cidr(rel_path: str, key: str, value: Any) -> list[str]:
 
 
 def _validate_flux_env_paths(env_dir: Path, repo_root: Path, env_name: str) -> list[str]:
-    if is_example_env(env_name):
-        return []
     flux = env_dir / "flux"
     if not flux.is_dir():
         return []
@@ -898,7 +874,7 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
             continue
         seen.add(name)
         docs = addon_documents(core, name)
-        if not bootstrapped or is_example_env(env_name):
+        if not bootstrapped:
             continue
         for namespace in addon_secret_namespaces(docs):
             folder = env_dir / "secrets" / namespace
@@ -1274,10 +1250,6 @@ def _validate_hosts(data: dict[str, Any], rel_path: str, env_name: str) -> list[
 
     if "edge" not in declared_roles:
         errors.append(f"{rel_path}: expected at least one edge host")
-
-    if is_example_env(env_name):
-        for role in sorted(_NODE_ROLES - declared_roles):
-            errors.append(f"{rel_path}: {EXAMPLE_ENV} must declare every known role: {role}")
 
     return errors
 

@@ -14,14 +14,12 @@ import yaml
 
 import jarvis.schema.env as env_schema
 from jarvis.schema.env import (
-    DEFAULT_AGE_KEY_FILE,
     DEFAULT_BACKUP_CHECK_SCHEDULE,
     DEFAULT_SSH_USER,
-    EXAMPLE_ENV,
     ValidationError,
     validate_env_tree,
 )
-from support import REPO_ROOT, _valid_cluster_vars, _write_env
+from support import REPO_ROOT, _valid_cluster_vars, _write_env, copy_sample, sample_root
 
 
 def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
@@ -75,26 +73,6 @@ def test_sops_creation_rule_for_missing_env_fails(tmp_path: Path):
     assert "does not exist" in msg
 
 
-def test_sops_creation_rule_rejects_example_env(tmp_path: Path):
-    _write_env(tmp_path)
-    path = tmp_path / ".sops.yaml"
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict)
-    rules = loaded["creation_rules"]
-    rules.append(
-        {
-            "path_regex": f"envs/{EXAMPLE_ENV}/secrets/.*\\.sops\\.yaml$",
-            "age": "age1fixture",
-        }
-    )
-    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path, pre_host=True)
-    assert f"{EXAMPLE_ENV} must not have a creation rule" in "\n".join(
-        excinfo.value.messages
-    )
-
-
 def test_build_agent_is_an_unknown_key(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["build_agent"] = "cursor"
@@ -115,7 +93,7 @@ def test_age_key_file_defaults_when_omitted(tmp_path: Path):
     cv.pop("age_key_file", None)
     _write_env(tmp_path, cluster_vars=cv)
     resolved = validate_env_tree(tmp_path)
-    assert resolved["env-test"]["age_key_file"] == DEFAULT_AGE_KEY_FILE
+    assert resolved["env-test"]["age_key_file"] == "~/.config/sops/age/keys.txt"
 
 
 def test_ssh_user_explicit_value_kept(tmp_path: Path):
@@ -148,10 +126,11 @@ def test_bad_flux_git_repo_url_fails(tmp_path: Path):
     ("value", "message"),
     [
         ("not-an-ip", "must be an IP address"),
-        ("10.80.0.53", "must be inside service_cidr"),
-        ("10.81.0.0", "must be a host address inside service_cidr"),
-        ("10.81.0.1", "must not be the first address of service_cidr"),
-        ("10.81.0.10", "must not be the tenth address of service_cidr"),
+        # The sample's pod_cidr is 10.42.0.0/16 and its service_cidr 10.43.0.0/16 (k3s's own).
+        ("10.42.0.53", "must be inside service_cidr"),
+        ("10.43.0.0", "must be a host address inside service_cidr"),
+        ("10.43.0.1", "must not be the first address of service_cidr"),
+        ("10.43.0.10", "must not be the tenth address of service_cidr"),
     ],
 )
 def test_app_dns_cluster_ip_must_be_a_service_host_address(tmp_path: Path, value: str, message: str):
@@ -181,7 +160,7 @@ def test_cluster_cidrs_must_be_cidrs(tmp_path: Path):
         ("10.200.0.0/24", "lan_cidrs must be a non-empty list"),
         (["10.200.0.1/24"], "is not an IPv4 CIDR"),
         (["198.51.100.0/24"], "outside the private ranges"),
-        (["10.80.0.0/24"], "overlaps pod_cidr or service_cidr"),
+        (["10.42.0.0/24"], "overlaps pod_cidr or service_cidr"),
     ],
     ids=["not-a-list", "host-bits", "public", "cluster-range"],
 )
@@ -356,12 +335,12 @@ def test_dns_suffix_must_be_a_lowercase_dns_name(tmp_path: Path) -> None:
 
 def test_env_00_source_pair_matches_cluster_vars_and_drift_fails(tmp_path: Path) -> None:
     """sync.yaml renders from cluster-vars (the root and core sources' url and ref), so an edit fails."""
-    shutil.copytree(REPO_ROOT / "envs" / EXAMPLE_ENV, tmp_path / "envs" / EXAMPLE_ENV)
-    env_schema.validate_one_env(tmp_path, EXAMPLE_ENV)
-    sync = tmp_path / "envs" / EXAMPLE_ENV / "flux" / "sync.yaml"
+    copy_sample(tmp_path)
+    env_schema.validate_one_env(tmp_path, "env-00")
+    sync = tmp_path / "envs" / "env-00" / "flux" / "sync.yaml"
     sync.write_text(sync.read_text(encoding="utf-8").replace("example-core", "other-core"), encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
-        env_schema.validate_one_env(tmp_path, EXAMPLE_ENV)
+        env_schema.validate_one_env(tmp_path, "env-00")
     assert "sync.yaml: does not match values/cluster-vars.yaml" in str(excinfo.value)
 
 
@@ -382,8 +361,7 @@ def test_ssh_root_requires_the_sealed_deploy_key(tmp_path: Path) -> None:
 
 def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -> None:
     """A copied env-00 with edited values and a stale ConfigMap passes pre-host only."""
-    dest = tmp_path / "envs" / "env-00"
-    shutil.copytree(REPO_ROOT / "envs" / "env-00", dest)
+    dest = copy_sample(tmp_path) / "envs" / "env-00"
     cluster = dest / "values" / "cluster-vars.yaml"
     original = cluster.read_text(encoding="utf-8")
     edited = original.replace("dns_suffix: env-00.example", "dns_suffix: lab.example", 1)
@@ -401,7 +379,6 @@ def test_stale_configmap_fails_full_schema_and_passes_pre_host(tmp_path: Path) -
 _OPTIONAL_CLUSTER_KEYS = (
     "apps_git_repo_url",
     "lan_cidrs",
-    "flux_known_hosts",
 )
 
 
@@ -712,32 +689,6 @@ def test_per_host_keys_invalid_fail(tmp_path: Path) -> None:
     ]
 
 
-def test_example_env_must_declare_a_new_known_role(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        env_schema,
-        "_NODE_ROLES",
-        env_schema._NODE_ROLES | {"drift_role"},
-    )
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(REPO_ROOT)
-    msg = "\n".join(excinfo.value.messages)
-    assert msg.count("drift_role") == 1
-    assert f"{EXAMPLE_ENV} must declare every known role: drift_role" in msg
-
-
-def test_example_env_must_set_a_new_known_key(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        env_schema,
-        "_CLUSTER_VARS_KNOWN",
-        env_schema._CLUSTER_VARS_KNOWN | {"drift_key"},
-    )
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(REPO_ROOT)
-    msg = "\n".join(excinfo.value.messages)
-    assert msg.count("drift_key") == 1
-    assert f"{EXAMPLE_ENV} must set every known key: drift_key" in msg
-
-
 _ABSENT = object()
 
 
@@ -820,14 +771,14 @@ def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None
 def _copy_flux_entry(env: Path) -> None:
     """env-00's flux/ tree under a test env, enough to satisfy the must-exist files."""
     shutil.copytree(
-        REPO_ROOT / "envs" / EXAMPLE_ENV / "flux",
+        sample_root() / "envs" / "env-00" / "flux",
         env / "flux",
         ignore=shutil.ignore_patterns("generated"),
     )
     for path in (env / "flux").rglob("*.yaml"):
         text = path.read_text(encoding="utf-8")
-        text = text.replace(f"envs/{EXAMPLE_ENV}/", f"envs/{env.name}/")
-        path.write_text(text.replace(f"jarvis_env: {EXAMPLE_ENV}", f"jarvis_env: {env.name}"), encoding="utf-8")
+        text = text.replace(f"envs/{"env-00"}/", f"envs/{env.name}/")
+        path.write_text(text.replace(f"jarvis_env: {"env-00"}", f"jarvis_env: {env.name}"), encoding="utf-8")
     # A new env starts core-only, as docs/deploy.md has a copy empty the example's lists. No
     # off-host copy unless a test lists it, and with no hosted app no rendered app wiring either.
     _render_core_only(env)
@@ -889,13 +840,12 @@ def test_cli_requires_env() -> None:
 
 def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
     """An existing env with a .sops.yaml creation-rule error fails validate_one_env."""
-    shutil.copytree(REPO_ROOT / "envs" / "env-00", tmp_path / "envs" / "env-00")
-    (tmp_path / ".sops.yaml").write_text(
-        "creation_rules:\n  - path_regex: envs/env-00/secrets/.*\\.sops\\.yaml$\n    age: age1fixture\n"
-    )
+    copy_sample(tmp_path)
+    rule = "  - path_regex: envs/env-00/secrets/.*\\.sops\\.yaml$\n    age: age1fixture\n"
+    (tmp_path / ".sops.yaml").write_text("creation_rules:\n" + rule + rule)
     with pytest.raises(ValidationError) as excinfo:
         env_schema.validate_one_env(tmp_path, "env-00")
-    assert "creation rule" in str(excinfo.value)
+    assert "expected exactly one creation rule" in str(excinfo.value)
 
 
 def _run_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> tuple[int, list[str]]:
@@ -910,7 +860,7 @@ def _run_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> tu
     stub.chmod(0o755)
     monkeypatch.setenv("CALL_LOG", str(log))
     monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.delenv("INSTANCE", raising=False)
+    monkeypatch.setenv("INSTANCE", str(sample_root()))
     code = site.main(["--env", "env-00", *args])
     return code, log.read_text().splitlines() if log.exists() else []
 
@@ -921,10 +871,10 @@ def test_site_passes_inventories_tags_limit_and_check(tmp_path: Path, monkeypatc
     assert code == 0
     assert args[1] == "site.yml"
     dash_i = [i for i, a in enumerate(args) if a == "-i"]
-    assert args[dash_i[0] + 1] == f"{REPO_ROOT}/envs/env-00/inventory/hosts.yml"
+    assert args[dash_i[0] + 1] == f"{sample_root()}/envs/env-00/inventory/hosts.yml"
     assert args[dash_i[1] + 1] == "../inventory/roles"
-    assert f"jarvis_cluster_vars={REPO_ROOT}/envs/env-00/values/cluster-vars.yaml" in args
-    assert f"jarvis_instance_root={REPO_ROOT}" in args
+    assert f"jarvis_cluster_vars={sample_root()}/envs/env-00/values/cluster-vars.yaml" in args
+    assert f"jarvis_instance_root={sample_root()}" in args
     assert "--tags" not in args and "--limit" not in args and "--check" not in args
     assert "--diff" not in args
     code, args = _run_site(tmp_path, monkeypatch, "--tags", "base-os,k3s", "--limit", "cp-1", "--check")

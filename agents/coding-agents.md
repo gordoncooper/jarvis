@@ -8,8 +8,8 @@ Rules here are prose only for what `ci/checks/` and the deny lists cannot enforc
 - **Probes, memory and CPU, stdout:** `ci/checks/manifest-lint`. Gatus stays a later check.
 - **LoadBalancer Services:** `ci/checks/loadbalancer`.
 - **Images the repo adds are digest-pinned:** `ci/checks/digest-pin`.
-- **Env schema (values under `envs/<env>/`):** `ci/checks/env-schema`.
-- **Every Flux Kustomization and HelmRelease names a service account the root sync applies, only the platform layer runs as the platform account, and refs stay in-namespace:** `ci/checks/flux-identity`.
+- **Env schema (values under `envs/<env>/`):** the `env-schema` check (`jarvis validate`).
+- **Every Flux Kustomization and HelmRelease names a service account the root sync applies, only the platform layer runs as the platform account, and refs stay in-namespace:** the `flux-identity` check (`jarvis validate`).
 - **Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
 - **No plaintext secrets in Git:** `ci/checks/secret-scan`.
 - **Product trees do not use `ci/`:** `ci/checks/product-ci`.
@@ -46,7 +46,7 @@ The reviewer checks these on deep reviews; no check can. In the PR, say how the 
 - A value that differs per deployment, including disks, sizes and node roles, is an env setting under `envs/<env>/`, not an Ansible role default and not a literal in core. A schema default the contract documents, such as `ssh_user`, stays in the schema. The repo must run from any controller node under any user.
 - LAN IPs and numeric user IDs never appear in plaintext, envs/ included. Keep them out, or encrypt them under `envs/<env>/secrets/`. One exception: `lan_cidrs` and the CIDR in a `lan-target` line may be plaintext in the env repo, including the render that carries them (`flux/generated/apps.yaml`). The exception covers those fields only: it does not allow new LAN IPs, user names or host names in public PRs or docs.
 - If the brief or this file looks wrong for the task, say so with your reasoning before working around it. Don't silently follow it or silently depart from it.
-- CI runs the checks and the full suite once; the product holds only the `env-00` sample. Before pushing run `bash ci/run-checks` and only the tests near your change; CI at the head SHA is the test record. Push once when that is green — no probe pushes to see what CI says. Squash unpushed WIP into one commit per push; don't rewrite commits already on the remote. After two failures on the same problem, stop and report.
+- CI runs the checks and the full suite once; core holds no env; its tests run on a sample instance (`ci/tests/sample.py`). Before pushing run `bash ci/run-checks` and only the tests near your change; CI at the head SHA is the test record. Push once when that is green — no probe pushes to see what CI says. Squash unpushed WIP into one commit per push; don't rewrite commits already on the remote. After two failures on the same problem, stop and report.
 - If the brief sets a timebox and it passes before the done checks pass, stop and report the task as failed, with what's done and what's left. "Done" means evidence attached: CI or test output and the commit.
 - Before reporting done, review the **whole** diff for leftovers from earlier attempts (debug prints, commented experiments, wrong env literals), and retitle the PR to what actually landed.
 

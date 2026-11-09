@@ -1,4 +1,4 @@
-"""ci/checks/flux-prune: Flux's own objects and protected kinds keep prune: disabled."""
+"""the flux-prune check (jarvis validate): Flux's own objects and protected kinds keep prune: disabled."""
 
 from __future__ import annotations
 

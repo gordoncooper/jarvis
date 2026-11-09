@@ -9,6 +9,18 @@ the upgrade.
 
 ### Added
 
+- `jarvis init [<dir>] --env <name> --domain <suffix> --repo-url <url> --node <host>[:<roles>]`
+  writes a whole instance repository: the env's values and inventory, `.sops.yaml`, a README,
+  the Renovate config and CI caller (`--no-ci` skips them), its minted secrets and `ca.crt`, a
+  sealed read-only deploy key for an `ssh://` root (its public half printed for the forge), the
+  rendered `flux/`, and a pre-commit hook. The env passes `jarvis validate` as soon as init
+  returns, and pins the core release init ran from. `jarvis env add <name>` adds another env to
+  the same repository. Omitted values are asked for at a terminal.
+- An offline **recovery key**. init encrypts every secret to two age recipients, the working key
+  on the controller and a recovery key whose private half it prints once and keeps nowhere
+  (docs/secrets.md). Losing the working key is no longer fatal.
+- `jarvis doctor` installs the pre-commit hook in a clone that lacks it.
+
 - The `jarvis` CLI, one command for an instance repository, replacing the Makefile's operator
   targets and `tools/`. Run it from inside the instance repository: `jarvis doctor`, `validate`,
   `render`, `secrets`, `encrypt`, `age-key-check`, `node prep <host>`, `site`, `up`, `verify`,
@@ -40,6 +52,8 @@ the upgrade.
 
 ### Fixed
 
+- A core-only env without `app-dns` passes the flux-prune check: app-dns's CoreDNS forward is
+  required to be guarded when present, not to be present. Found by the first env init wrote.
 - A drill on a cluster k3s has not snapshotted yet, or whose snapshot the restic copy does not
   hold yet (no repository, or no snapshot in it), says so instead of failing with
   `pod platform-backups/drill-etcd-restore failed`. Any other failure of that pod prints its
@@ -49,6 +63,13 @@ the upgrade.
 
 ### Removed
 
+- `envs/env-00`. Core ships no env: its tests and env-level rule checks run on a sample
+  instance written by init's own code (`ci/tests/sample.py`), and e2e makes its env the same
+  way. The example env's special cases in the schema and the checks are gone with it (it had to
+  set every key and role, and needed no creation rule and no secrets). Its secrets README is
+  `docs/secrets.md`.
+- `ci/checks/env-schema`, `app-hosting`, `backup-isolation`, `flux-identity`, `flux-prune` and
+  `flux-substitute`: `ci/checks/sample-instance` runs all of `jarvis validate` on the sample.
 - `tools/`, the Makefile's operator targets (`site`, `verify`, `drill`, `drill-cleanup`, `restore`,
   `restore-all`, `bootstrap-secrets`, `encrypt`, `age-key-check`, `render`), `ALLOW_UNPINNED`,
   `ci/run-env-checks` and `ci/checkout-apps-for-instance.sh`: the jarvis CLI replaces them. The
@@ -58,6 +79,12 @@ the upgrade.
 
 ### Changed
 
+- `jarvis node prep` no longer creates the age key or writes `.sops.yaml` (init does both). It
+  checks, before it touches the host, that the key at `age_key_file` is one of the env's
+  recipients, and refuses otherwise. The example env's placeholder `ssh_user` is gone with
+  env-00: the user init records is the Ansible user.
+- The manifest checks require `core/` and `addons/` and scan `envs/`
+  when it is there.
 - The jarvis package is grouped by domain: `jarvis.env`, `apps`, `backups`, `render`, `secrets`,
   `node`, `schema`, `verify`, `checks` and `cli`. `jarvis/lib/` is gone.
 - The instance workflow runs `jarvis validate` for each env with the core it pins, and the render

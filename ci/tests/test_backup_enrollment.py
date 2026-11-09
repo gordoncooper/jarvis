@@ -11,7 +11,14 @@ import yaml
 
 from jarvis.checks.manifests import substitute
 from support import REPO_ROOT as ROOT
-from support import ExampleCopy, _kustomize_build, kyverno_generated, real_and_copy_envs, renovate_python_pattern
+from support import (
+    ExampleCopy,
+    _kustomize_build,
+    kyverno_generated,
+    real_and_copy_envs,
+    renovate_python_pattern,
+    sample_root,
+)
 
 
 def _docs(path: Path) -> list[dict]:
@@ -117,7 +124,7 @@ def test_renovate_tracks_the_kyverno_chart_and_images() -> None:
 
 
 _ENV = {key: str(value) for key, value in yaml.safe_load(
-    (ROOT / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8")).items()
+    (sample_root() / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8")).items()
     if key.startswith("backup_")}
 
 

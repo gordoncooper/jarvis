@@ -35,15 +35,15 @@ The add-on's Flux Kustomizations are Ready; `jarvis verify` already waits on eve
 
 ## Config
 
-- Turn on: add `- <name>` under `addons` in `envs/<env>/values/switches.yaml` and run `jarvis render --env <env>`. Turn off: remove the line and re-render. An empty list means core-only. `ci/checks/env-schema` rejects an unknown add-on, the same add-on twice, and two add-ons for one slot. Once the env is bootstrapped, it requires each sealed-Secret folder the add-on decrypts.
+- Turn on: add `- <name>` under `addons` in `envs/<env>/values/switches.yaml` and run `jarvis render --env <env>`. Turn off: remove the line and re-render. An empty list means core-only. the `env-schema` check (`jarvis validate`) rejects an unknown add-on, the same add-on twice, and two add-ons for one slot. Once the env is bootstrapped, it requires each sealed-Secret folder the add-on decrypts.
 - Turning an add-on off prunes its Kustomizations, and each of them prunes the workloads it applied. Its Namespaces, Secrets, tenant account, Roles and RoleBindings keep `prune: disabled` and stay until the operator deletes them ([docs/add-an-addon.md](../docs/add-an-addon.md#turn-it-off)); the leftover account holds rights only in the leftover namespaces.
 - The add-on's own settings come from `cluster-vars` keys that already exist, or from its sealed Secrets. A new env key is added to `schema/` with its first consumer.
 
 ## Proven by
 
 - `ci/checks/addons` (the Component lists files only, its slot exists, no add-on is named `apps`, core never names an add-on, and per enabled add-on: a services stage that lists add-ons runs as the platform account, the wiring kinds, namespace names, `prune: disabled` on the wiring, the tenant's Roles and RoleBindings, each Kustomization's source, path, extra fields and `dependsOn`, and the objects its Kustomizations apply). `ci/tests/test_addons.py` seeds each failure.
-- `ci/checks/flux-identity` (the services stage may run as the platform account, the add-on's Kustomizations run as their declared tenant and never as the platform account, no path declares its own account, and only `flux-system` decrypts).
-- `ci/checks/env-schema` (unknown add-on, duplicate, slot conflict, missing sealed folder), `ci/checks/contract-md` (each add-on and slot has a `CONTRACT.md`), `ci/checks/flux-prune` and `ci/checks/flux-substitute` on each add-on Kustomization's path.
+- the `flux-identity` check (`jarvis validate`) (the services stage may run as the platform account, the add-on's Kustomizations run as their declared tenant and never as the platform account, no path declares its own account, and only `flux-system` decrypts).
+- the `env-schema` check (`jarvis validate`) (unknown add-on, duplicate, slot conflict, missing sealed folder), `ci/checks/contract-md` (each add-on and slot has a `CONTRACT.md`), the `flux-prune` check (`jarvis validate`) and the `flux-substitute` check (`jarvis validate`) on each add-on Kustomization's path.
 - `ci/tests/test_addons.py` runs every env-level check on a bootstrapped copy of the example env with no add-on, and on one with the tests' sample add-on and its sealed Secret.
 
 ## Limits

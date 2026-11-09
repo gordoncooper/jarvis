@@ -1,17 +1,17 @@
 """Prepare a fresh Ubuntu Server node for site.yml, then record it in the env.
 
-Usage: jarvis/node/prep.py --env <env> --host <hostname> --login-user <user>
+Usage: jarvis node prep <hostname> [--login-user <user>]
 
 Stops at the first failure. Does not commit, does not run site.yml, does not
 write or rename netplan, does not write the node address into the repo, and
-does not touch disks or print an age private key.
+does not touch disks or print an age private key. The env's age key must already be here and be
+one of its recipients (jarvis init makes both).
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
-import os
 import re
 import shlex
 import shutil
@@ -28,14 +28,13 @@ from jarvis.paths import PRODUCT_ROOT
 from jarvis.render.cluster_vars import render_document
 from jarvis.schema.env import (
     DEFAULT_SSH_USER,
-    EXAMPLE_ENV,
     ValidationError,
     validate_env_tree,
 )
+from jarvis.secrets import age as _age
 
 REPO_ROOT = PRODUCT_ROOT
 
-DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 _TOOLS = ("ssh", "ssh-keygen", "git", "age-keygen")
 _PUB_NAMES = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
 _SUDOERS = "/etc/sudoers.d/jarvis-ansible"
@@ -483,21 +482,6 @@ def _ssh_user_from_mapping(data: dict) -> str | None:
     return value
 
 
-def example_placeholder_ssh_user() -> str:
-    """The example env's ssh_user is the first-node placeholder, not a real user."""
-    path = (
-        PRODUCT_ROOT
-        / "envs"
-        / EXAMPLE_ENV
-        / "values"
-        / "cluster-vars.yaml"
-    )
-    value = _ssh_user_from_mapping(_cluster_vars(path))
-    if value is None:
-        raise PrepError(f"{EXAMPLE_ENV} has no ssh_user")
-    return value
-
-
 def _ssh_user_locked(recorded: str, *, change: bool) -> PrepError:
     verb = "change" if change else "set"
     return PrepError(
@@ -530,28 +514,16 @@ def effective_ssh_user(repo: Path, env: str) -> str:
     return DEFAULT_SSH_USER if raw is None else raw
 
 
-def ssh_user_is_placeholder(repo: Path, env: str) -> bool:
-    raw = recorded_ssh_user(repo, env)
-    return raw is not None and raw == example_placeholder_ssh_user()
-
-
 def settle_ansible_user(repo: Path, env: str, login: str, host: str) -> str:
     """Choose the Ansible user before any host step.
 
-    A placeholder ssh_user defaults to the login user. A recorded value
-    (including a missing key, which is the schema default) is kept. A
-    different user is refused.
+    A recorded value (including a missing key, which is the schema default) is
+    kept. A different user is refused.
     """
     require_token(login, "login user")
     host_user = host_ssh_user(repo, env, host)
     if host_user is not None:
         recorded = host_user
-    elif ssh_user_is_placeholder(repo, env):
-        if confirm(f"Use login user {login} as the Ansible user?", default_yes=True):
-            return login
-        user = prompt("New user name")
-        require_token(user, "user")
-        return user
     else:
         recorded = effective_ssh_user(repo, env)
     if confirm(f"Use {recorded} as the Ansible user?", default_yes=True):
@@ -836,7 +808,7 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
     if host_user is not None:
         if ssh_user != host_user:
             raise _ssh_user_locked(host_user, change=True)
-    elif not ssh_user_is_placeholder(repo, env):
+    else:
         current = effective_ssh_user(repo, env)
         if ssh_user != current:
             raise _ssh_user_locked(current, change=False)
@@ -854,124 +826,9 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
     _render_cluster_vars_configmap(repo, env)
 
 
-def age_key_path(configured: str | None) -> Path:
-    raw = os.environ.get("SOPS_AGE_KEY_FILE") or configured or DEFAULT_AGE_KEY_FILE
-    if raw == "~" or raw.startswith("~/"):
-        return Path.home() / raw.removeprefix("~/")
-    return Path(raw)
-
-
-def age_key_config_value(path: Path) -> str:
-    try:
-        relative = path.relative_to(Path.home())
-    except ValueError:
-        return str(path)
-    return "~/" + relative.as_posix()
-
-
-def age_public_key(path: Path) -> str:
-    result = subprocess.run(
-        ["age-keygen", "-y", str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    public = result.stdout.strip()
-    if result.returncode != 0 or not public.startswith("age1"):
-        raise PrepError("could not read the age public key")
-    return public
-
-
-def create_age_key(path: Path) -> str:
-    """Create path with age-keygen. Never overwrites. Returns the public key."""
-    if path.exists():
-        raise PrepError("age key already exists; not overwriting")
-    parent = path.parent
-    parent_existed = parent.is_dir()
-    parent_mode = parent.stat().st_mode & 0o777 if parent_existed else None
-    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    parent.chmod(0o700)
-    if parent_existed and parent_mode != 0o700:
-        print(f"Set {parent} to 0700.")
-    result = subprocess.run(
-        ["age-keygen", "-o", str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0 or not path.is_file():
-        path.unlink(missing_ok=True)
-        raise PrepError("age-keygen failed")
-    path.chmod(0o600)
-    return age_public_key(path)
-
-
 def _yaml_scalar(text: str, key: str) -> str | None:
     match = re.search(rf"^{re.escape(key)}:\s*(\S+)", text, re.M)
     return match.group(1) if match else None
-
-
-def sops_recipient(text: str, env: str) -> str | None:
-    needle = f"envs/{env}/secrets/"
-    arm = False
-    for line in text.splitlines():
-        if "path_regex:" in line:
-            arm = needle in line
-            continue
-        if not arm:
-            continue
-        match = re.match(r"\s*age:\s*(\S+)", line)
-        if match:
-            return match.group(1)
-    return None
-
-
-def _creation_rule_block(env: str, public: str) -> str:
-    if not re.fullmatch(r"[a-z0-9-]+", env) or not re.fullmatch(r"age1[0-9a-z]+", public):
-        raise PrepError("could not write an age recipient")
-    return (
-        f"  - path_regex: envs/{env}/secrets/.*\\.sops\\.yaml$\n"
-        f"    encrypted_regex: ^(data|stringData)$\n"
-        f"    age: {public}\n"
-    )
-
-
-def _age_recipient_mismatch(repo: Path, env: str, public: str) -> bool:
-    sops_path = repo / ".sops.yaml"
-    if not sops_path.is_file():
-        return False
-    current = sops_recipient(sops_path.read_text(encoding="utf-8"), env)
-    return current is not None and current != public
-
-
-def _ensure_sops_recipient(repo: Path, env: str, public: str) -> None:
-    """Add the env's creation rule when it is missing. A second call writes nothing."""
-    path = repo / ".sops.yaml"
-    block = _creation_rule_block(env, public)
-    if not path.is_file():
-        path.write_text("creation_rules:\n" + block, encoding="utf-8")
-        print(f"Added an age recipient for envs/{env}/secrets/.")
-        return
-    text = path.read_text(encoding="utf-8")
-    current = sops_recipient(text, env)
-    if current == public:
-        print("Age recipient already matches.")
-        return
-    if current is not None:
-        raise PrepError(
-            f"Age recipient for envs/{env}/secrets/ does not match this key. "
-            ".sops.yaml was not changed and no secrets were deleted. "
-            "Follow age-key recovery in envs/env-00/secrets/README.md."
-        )
-    if "creation_rules:" not in text:
-        if text.strip():
-            raise PrepError(".sops.yaml has no creation_rules list; recipient was not added.")
-        path.write_text("creation_rules:\n" + block, encoding="utf-8")
-    else:
-        if not text.endswith("\n"):
-            text += "\n"
-        path.write_text(text + block, encoding="utf-8")
-    print(f"Added an age recipient for envs/{env}/secrets/.")
 
 
 def _render_cluster_vars_configmap(repo: Path, env: str) -> None:
@@ -988,34 +845,23 @@ def _render_cluster_vars_configmap(repo: Path, env: str) -> None:
         generated.write_text(rendered, encoding="utf-8")
 
 
-def sync_age_key(repo: Path, env: str) -> None:
-    cluster = repo / "envs" / env / "values" / "cluster-vars.yaml"
-    text = cluster.read_text(encoding="utf-8")
-    path = age_key_path(_yaml_scalar(text, "age_key_file"))
-    public: str | None
-    if path.exists():
-        public = age_public_key(path)
-        print(f"Age public key: {public}")
-    elif confirm("Age key file is missing. Create it?"):
-        public = create_age_key(path)
-        print(f"Age public key: {public}")
-        print("Back up the private age key. This script does not print it.")
-    else:
-        public = None
-        print("Age key was not created.")
-    if public is not None and _age_recipient_mismatch(repo, env, public):
+def check_age_key(repo: Path, env: str) -> None:
+    """The env's working age key is on this controller and is one of its recipients in
+    .sops.yaml (jarvis init made both). Changes nothing."""
+    text = (repo / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
+    path = _age.key_path(_yaml_scalar(text, "age_key_file"))
+    if not path.is_file():
+        raise PrepError(f"age key {path} is missing; copy it here from where you keep it (mode 0600)")
+    try:
+        public = _age.public_key(path)
+    except _age.AgeError as exc:
+        raise PrepError(str(exc)) from exc
+    if public not in _age.recipients(repo / ".sops.yaml", env):
         raise PrepError(
-            f"Age recipient for envs/{env}/secrets/ does not match this key. "
-            ".sops.yaml was not changed and no secrets were deleted. "
-            "Follow age-key recovery in envs/env-00/secrets/README.md."
+            f"age key {path} is not one of envs/{env}/secrets/'s recipients in .sops.yaml; "
+            "nothing was changed. Use the env's key, or follow the age key recovery in docs/secrets.md."
         )
-    updated = set_yaml_scalar(text, "age_key_file", age_key_config_value(path))
-    if updated != text:
-        cluster.write_text(updated, encoding="utf-8")
-    _render_cluster_vars_configmap(repo, env)
-    if public is None:
-        return
-    _ensure_sops_recipient(repo, env, public)
+    print(f"Age public key: {public}")
 
 
 def run_env_schema(repo: Path, *, pre_host: bool = False) -> None:
@@ -1071,6 +917,8 @@ def run(argv: list[str] | None = None) -> None:
     require_env_dir(repo, env)
     run_env_schema(repo, pre_host=True)
     ansible_user = settle_ansible_user(repo, env, login, host)
+    # The key site needs, checked before any host is touched.
+    check_age_key(repo, env)
     assert_host_resolves(host, unchanged=True)
     require_inventory_host(repo, env, host)
 
@@ -1092,7 +940,6 @@ def run(argv: list[str] | None = None) -> None:
     offer_ssh_passwords_off(ansible_user, inventory_host, public)
     check_clock(ansible_user, inventory_host, public)
     apply_env_edits(repo, env, host, inventory_host, ansible_user)
-    sync_age_key(repo, env)
     schema_error: PrepError | None = None
     try:
         run_env_schema(repo)
