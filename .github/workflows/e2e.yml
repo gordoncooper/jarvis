@@ -82,9 +82,13 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.5
           install_args: --locked
+          # The tools' own directories on PATH, not shims, which resolve per directory.
+          add_shims_to_path: false
 
-      - name: Python packages (uv.lock)
-        run: uv sync --frozen
+      - name: Python packages (uv.lock), and the pinned CLIs on PATH
+        run: |
+          mise bin-paths >> "${GITHUB_PATH}"
+          mise exec -- uv sync --frozen
 
       # What ci/checkout-apps-for-instance.sh gives an instance: the default branch with every tag.
       - name: Check out the apps repository with its tags

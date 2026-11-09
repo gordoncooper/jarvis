@@ -28,6 +28,9 @@ jobs:
           # renovate: datasource=github-releases depName=jdx/mise
           version: 2026.11.5
           install: false
+          # The tools' own directories go on PATH (below), not shims: a shim picks its version
+          # from the current directory's mise.toml, and tests run CLIs in temporary directories.
+          add_shims_to_path: false
 
       # mise.lock must hold every tool's checksum for every platform mise.toml serves. On a
       # mismatch the step prints the lock to commit (Renovate's PRs update it themselves).
@@ -42,7 +45,9 @@ jobs:
           fi
 
       - name: Install the pinned CLIs and Python packages
-        run: make deps
+        run: |
+          make deps
+          mise bin-paths >> "${GITHUB_PATH}"
 
       - name: uv.lock matches pyproject.toml
         run: uv lock --check
