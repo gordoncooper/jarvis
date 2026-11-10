@@ -159,7 +159,15 @@ def test_admission_admits_the_copy_and_refuses_the_risky_one(tmp_path: Path) -> 
     plain, bad = cluster.dry_runs
     assert "nodeName" not in plain["spec"] and "ownerReferences" not in plain["metadata"]
     assert plain["metadata"]["namespace"] == "app-hello-web" and "pod-template-hash" not in plain["metadata"]["labels"]
-    assert bad["spec"]["containers"][0]["securityContext"] == {"privileged": True}
+    assert bad["spec"]["containers"][0]["securityContext"] == {"privileged": True, "allowPrivilegeEscalation": True}
+
+
+def test_the_privileged_copy_stays_a_valid_pod(tmp_path: Path) -> None:
+    """Rule: the risky copy differs only where admission decides; an app pod that forbids privilege
+    escalation would otherwise be invalid before any policy runs."""
+    spec = {"containers": [{"name": "web", "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True}}]}
+    smoke._privileged(spec)
+    assert spec["containers"][0]["securityContext"] == {"allowPrivilegeEscalation": True, "readOnlyRootFilesystem": True, "privileged": True}
 
 
 @pytest.mark.parametrize(

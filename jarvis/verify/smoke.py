@@ -165,7 +165,9 @@ def probe_app_dns(ctx: Context) -> None:
 
 # One risky item each, and the env exception that grants it (core/feature/app-hosting, Config).
 def _privileged(spec: dict) -> None:
-    spec["containers"][0].setdefault("securityContext", {})["privileged"] = True
+    # The API server rejects privileged with allowPrivilegeEscalation false before any policy
+    # sees it; with both true the pod is valid, so only admission can refuse it.
+    spec["containers"][0].setdefault("securityContext", {}).update(privileged=True, allowPrivilegeEscalation=True)
 
 
 def _host_network(spec: dict) -> None:
