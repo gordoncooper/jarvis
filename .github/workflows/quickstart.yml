@@ -75,7 +75,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.run == 'true'
     name: node (ubuntu, controller and node)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
       - name: Checkout
