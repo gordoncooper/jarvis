@@ -1,6 +1,7 @@
 """jarvis: run an instance repo's envs, at the core release each env pins.
 
   jarvis [--env <env>] [--core <path>] <command> [<args>]
+  jarvis --version
 
 Run it from inside an instance repo (the folder that holds envs/). --env is needed only when
 the repo holds more than one env; it may come before or after the command. A command runs at
@@ -27,7 +28,8 @@ Commands:
   restore (--app <ns> | --all) [--as-of <time>]
                          Restore backed-up volumes
 
-Each command's own options: jarvis <command> --help.
+Each command's own options: jarvis <command> --help, from inside the instance repo (they are
+those of the release the env pins). jarvis passes --env itself when the repo holds one env.
 
 Exit codes: 0 ok, 1 a check failed, 2 usage error, 3 refused for safety (nothing changed),
 4 the environment is wrong (a missing tool, key or access).
@@ -201,9 +203,18 @@ def _apps_checkout(instance: Path) -> None:
         print(f"jarvis: apps repository at {head.stdout.strip()}", file=sys.stderr)
 
 
-def _help(command: Command) -> int:
+def _help(name: str, command: Command) -> int:
     """A command's own help: its options, or its docstring when it takes none."""
-    module = importlib.import_module(command.module)
+    try:
+        module = importlib.import_module(command.module)
+    except (ImportError, OSError):
+        # An installed CLI holds no core trees (schema/, core/): only the release an env pins can
+        # load this command. Inside an instance repo, help is handed off to it first.
+        print(
+            f"jarvis {name}: run jarvis {name} --help from inside an instance repo; a command's options are "
+            "those of the core release its env pins"
+        )
+        return 0
     if not command.takes_options:
         print(module.__doc__)
         return 0
@@ -211,6 +222,23 @@ def _help(command: Command) -> int:
         module.main(["--help"])
     except SystemExit as exc:
         return int(exc.code or 0)
+    return 0
+
+
+def _version() -> int:
+    """The release this CLI came from, and inside an instance repo the release each env pins:
+    every command runs the env's, so a difference is fine, but it is worth seeing."""
+    own = _core.own_release()
+    print(f"jarvis {own[1]} ({own[0]})" if own else "jarvis: release unknown (neither a core checkout at a tag nor installed from git+<url>@<tag>)")
+    try:
+        instance = find_instance(Path.cwd())
+    except UsageError:
+        return 0
+    for env_dir in sorted(path for path in (instance / "envs").iterdir() if path.is_dir()):
+        try:
+            print(f"{env_dir.name} pins {_core.pinned_tag(env_dir)}")
+        except PinError as exc:
+            print(f"{env_dir.name}: {exc}")
     return 0
 
 
@@ -284,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str]) -> int:
     env_name, core, rest = split_globals(argv)
+    if rest[:1] == ["--version"]:
+        return _version()
     if not rest or rest[0] in ("-h", "--help", "help"):
         print(__doc__)
         return 0 if rest else USAGE
@@ -292,8 +322,17 @@ def _main(argv: list[str]) -> int:
         return _start(command, args, core, env_name)
     if command not in COMMANDS:
         raise UsageError(f"unknown command {command!r}; see jarvis --help")
-    if "-h" in args or "--help" in args:
-        return _help(COMMANDS[command])
+    wants_help = "-h" in args or "--help" in args
+    if wants_help:
+        try:
+            instance = find_instance(Path.cwd())
+        except UsageError:
+            # Outside an instance repo: this CLI's own help, where it can load the command.
+            return _help(command, COMMANDS[command])
+        if env_name is None:
+            # Any env's release shows the options; with several, the first stands in for --env.
+            envs = sorted(path.name for path in (instance / "envs").iterdir() if path.is_dir())
+            env_name = envs[0] if envs else None
     if core is not None:
         checkout = Path(core).expanduser().resolve()
         os.environ[_core.UNPINNED_VAR] = "1"
@@ -306,11 +345,13 @@ def _main(argv: list[str]) -> int:
     if not _core.runs_here(instance, env_dir):
         if os.environ.get(_core.DELEGATED_VAR):
             raise _core.CoreError(f"{PRODUCT_ROOT} is not {env}'s pinned core: {pin_problem(PRODUCT_ROOT, env_dir)}")
-        _core.hand_off(_core.checkout(env_dir), argv)
+        _core.hand_off(_core.checkout(env_dir), ["--env", env, *rest] if wants_help else argv)
     if os.environ.get(_core.UNPINNED_VAR) and instance != PRODUCT_ROOT:
         problem = pin_problem(PRODUCT_ROOT, env_dir)
         if problem:
             print(f"WARN jarvis: unpinned run with --core: {problem}", file=sys.stderr)
+    if wants_help:
+        return _help(command, COMMANDS[command])
     activate_toolchain(PRODUCT_ROOT)
     if instance != PRODUCT_ROOT:
         os.environ[INSTANCE_VAR] = str(instance)

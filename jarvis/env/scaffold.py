@@ -351,8 +351,19 @@ def write_repo_files(instance: Path, spec: EnvSpec, *, ci: bool, agents: bool = 
     return []
 
 
+def hook_path(instance: Path) -> Path | None:
+    """Where git runs this repository's pre-commit hook, or None outside a git repository. git
+    says: in a worktree .git is a file, and the hooks are the main repository's."""
+    proc = subprocess.run(
+        ["git", "-C", str(instance), "rev-parse", "--git-path", "hooks/pre-commit"], capture_output=True, text=True, check=False
+    )
+    if proc.returncode or not proc.stdout.strip():
+        return None
+    return (instance / proc.stdout.strip()).resolve()
+
+
 def install_hook(instance: Path) -> Path:
-    hook = instance / ".git" / "hooks" / "pre-commit"
+    hook = hook_path(instance) or instance / ".git" / "hooks" / "pre-commit"
     hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_text(PRE_COMMIT, encoding="utf-8")
     hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

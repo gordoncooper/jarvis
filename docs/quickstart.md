@@ -14,7 +14,7 @@ Set these once in your shell. Every command after uses them.
 
 ```bash
 # Your choices: every command below reads them.
-JARVIS_VERSION=v0.5.1                            # the core release to start from
+JARVIS_VERSION=v0.5.2                            # the core release to start from
 REPO_URL=ssh://git@github.com/<you>/my-clusters  # your new, empty, private repository
 BRANCH=main                                      # the branch Flux follows
 NODE=node1.home.lan                              # your node's name; your DNS resolves it

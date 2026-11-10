@@ -256,9 +256,73 @@ def test_the_entry_point_loads_nothing_that_reads_core_trees() -> None:
 
 def test_doctor_installs_the_hook_a_fresh_clone_lacks_and_keeps_anyone_elses(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    assert doctor.check_hook(tmp_path)[0] == ("PASS", "installed the pre-commit hook (a fresh clone has none)")
+    assert doctor.check_hook(tmp_path)[0][1].startswith("installed the pre-commit hook")
     assert doctor.check_hook(tmp_path)[0][0] == "PASS"
     hook = tmp_path / ".git" / "hooks" / "pre-commit"
     hook.write_text("#!/bin/sh\nmy own\n", encoding="utf-8")
     assert doctor.check_hook(tmp_path)[0][0] == "WARN"
     assert hook.read_text(encoding="utf-8") == "#!/bin/sh\nmy own\n"
+
+
+def test_doctor_finds_a_worktrees_hooks_where_git_runs_them(tmp_path: Path) -> None:
+    """Rule: in a git worktree .git is a file and the hooks are the main repository's; doctor asks
+    git where they are rather than calling the worktree's hook someone else's."""
+    main = tmp_path / "main"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(main)], check=True)
+    subprocess.run(["git", "-C", str(main), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "one"], check=True)
+    subprocess.run(["git", "-C", str(main), "worktree", "add", "-q", "--detach", str(tmp_path / "wt")], check=True)
+    assert (tmp_path / "wt" / ".git").is_file()
+    level, message = doctor.check_hook(tmp_path / "wt")[0]
+    assert level == "PASS" and str(main / ".git" / "hooks" / "pre-commit") in message
+    assert doctor.check_hook(tmp_path / "wt")[0] == ("PASS", "the pre-commit hook runs jarvis render --check and validate")
+
+
+def test_version_names_this_release_and_each_envs_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(cli._core, "own_release", lambda: ("https://github.com/example/jarvis", "v9.9.9"))
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--version"]) == 0
+    assert capsys.readouterr().out == "jarvis v9.9.9 (https://github.com/example/jarvis)\n"
+    for env, ref in (("home", "refs/tags/v9.9.8"), ("lab", "refs/heads/main")):
+        (tmp_path / "envs" / env / "values").mkdir(parents=True)
+        (tmp_path / "envs" / env / "values" / "cluster-vars.yaml").write_text(f"core_git_ref: {ref}\n", encoding="utf-8")
+    assert cli.main(["--version"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[1] == "home pins v9.9.8" and out[2].startswith("lab: ") and "not a tag" in out[2]
+
+
+def test_help_in_an_instance_is_the_pinned_releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: a command's options are its env's release's; an installed CLI, which holds no core
+    trees, hands --help off to that release like the command itself, with the env it chose."""
+    for env in ("home", "lab"):
+        values = tmp_path / "envs" / env / "values"
+        values.mkdir(parents=True)
+        (values / "cluster-vars.yaml").write_text(
+            "core_git_repo_url: https://github.com/example/jarvis\ncore_git_ref: refs/tags/v9.9.9\n", encoding="utf-8"
+        )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(cli._core.DELEGATED_VAR, raising=False)
+    monkeypatch.delenv(cli._core.UNPINNED_VAR, raising=False)
+    monkeypatch.setattr(cli._core, "checkout", lambda env_dir: tmp_path / "cached")
+    handed: list[list[str]] = []
+
+    def hand_off(checkout: Path, argv: list[str]) -> None:
+        handed.append(argv)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli._core, "hand_off", hand_off)
+    with pytest.raises(SystemExit):
+        cli.main(["validate", "--help"])
+    assert handed == [["--env", "home", "validate", "--help"]]
+
+
+def test_help_outside_an_instance_says_where_to_ask_when_this_cli_cannot_load_it(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Rule: an installed CLI without core trees answers --help outside an instance repo with where
+    to run it, not a traceback."""
+    monkeypatch.chdir(tmp_path)
+
+    def missing(name: str):
+        raise FileNotFoundError(f"{name}: schema/cluster-vars.schema.json")
+
+    monkeypatch.setattr(cli.importlib, "import_module", missing)
+    assert cli.main(["validate", "--help"]) == 0
+    assert "jarvis validate: run jarvis validate --help from inside an instance repo" in capsys.readouterr().out
