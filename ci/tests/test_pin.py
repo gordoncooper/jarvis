@@ -98,6 +98,20 @@ def test_an_env_pinned_elsewhere_runs_from_a_cached_checkout_of_its_tag(
     assert handed == [(cached, ["render", "--check"])] * 2
 
 
+def test_a_tag_with_slashes_has_its_own_cached_checkout(tmp_path: Path, core: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: a tag may hold slashes (release/1.0); its cached checkout nests under the cache, and a
+    second tag beside it gets its own."""
+    _git(core, "tag", "release/1.0")
+    _git(core, "tag", "release/1.1")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(cli_core, "setup", lambda checkout: (checkout / ".jarvis-ready").touch())
+    first = cli_core.checkout_tag(f"file://{core}", "release/1.0")
+    second = cli_core.checkout_tag(f"file://{core}", "release/1.1")
+    assert first == tmp_path / "cache" / "jarvis" / "core" / "release" / "1.0" and second.name == "1.1"
+    assert (first / "file").read_text(encoding="utf-8") == "one\n" and (second / "file").is_file()
+    assert sorted(path.name for path in first.parent.iterdir()) == ["1.0", "1.1"]
+
+
 def test_a_branch_pin_is_refused_before_anything_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     """Rule: an env that follows a branch is refused (exit 3): there is no release to run."""
     env = _env(tmp_path, "refs/heads/main")
