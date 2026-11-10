@@ -1,63 +1,59 @@
 # Coding agents
 
-Rules here are prose only for what `ci/checks/` and the deny lists cannot enforce. When a check or deny entry already covers a rule, this file names it in one line and does not restate it. A task brief overrides this file on how to open or stack a PR.
+How an agent works on core. The brief, and the charter when the session has one, says what to build; this file says how. Rules a check or the deny lists enforce are named once, not restated. If the brief or this file looks wrong for the task, say so before working around it.
 
-## Automated guards (do not duplicate)
+## Hard stops
 
-- **Git is the source of truth; no host or cluster commands, and no secret tooling:** `.claude/settings.json` and `.cursor/cli.json` (one short list, kept in step by hand; [ci/README.md](../ci/README.md#coding-agent-deny-lists)).
-- **Probes, memory and CPU, stdout:** `ci/checks/manifest-lint`. Gatus stays a later check.
-- **LoadBalancer Services:** `ci/checks/loadbalancer`.
-- **Images the repo adds are digest-pinned:** `ci/checks/digest-pin`.
-- **Env schema (values under `envs/<env>/`):** the `env-schema` check (`jarvis validate`).
-- **Every Flux Kustomization and HelmRelease names a service account the root sync applies, only the platform layer runs as the platform account, and refs stay in-namespace:** the `flux-identity` check (`jarvis validate`).
-- **Each component folder has `CONTRACT.md`:** `ci/checks/contract-md`.
-- **No plaintext secrets in Git:** `ci/checks/secret-scan`.
-- **Product trees do not use `ci/`:** `ci/checks/product-ci`.
-- **The backup GeneratingPolicy enrolls every PVC, or the PVC is `backup: none`:** `ci/checks/pvc-backup`.
+- **No real hosts, clusters or secrets.** No SSH, no `kubectl`, `helm` or `flux` against a cluster, and no `jarvis` command that reaches a host, a cluster or a secret (`site`, `up`, `node`, `verify`, `drill`, `restore`, `secrets`, `age-key-check`). Never decrypt a file or read the age key, a kubeconfig, an SSH key or k3s's own files. The [deny lists](../ci/README.md#coding-agent-deny-lists) block many forms; treat the rest as blocked too. The real guard is that the agent's user holds none of those credentials.
+- **No merges, tags, force-pushes or pushes to `main`.** The owner merges every PR and pushes every tag.
+- **Core holds no identity.** No env name, hostname, `dns_suffix`, `ssh_user`, owner handle or personal name ([schema/CONTRACT.md](../schema/CONTRACT.md#identity-values)), and no real LAN address or numeric user ID; examples and tests use made-up or documentation ranges. A value that differs per deployment is an env setting, not a role default or a literal. A finding from one env or operator becomes a general rule or fix, never a special case.
 
-## Stay lean
+## Guards already in place
 
-- Build only what the task's done check needs, nothing speculative. This caps scope, not quality: what you do build is clean, consistent with the code around it, and uses the tool's own idioms (an Ansible module over shell where one exists, no dead code, no placeholder scripts, no errors swallowed, one source of truth per value).
-- Tests check behavior or encode a rule. Each test names the rule it checks. No tests on names, ordering or file shape. Don't copy templates or hard-code task lists. Don't add a test that only runs a `ci/checks/` entry against the tree CI already scans; behavior tests use fixtures.
-- Add container tests only when no cheaper proof exists. A live run is the proof where there is one. If the done check is a live run, attach that run and a server-side dry-run from the head SHA before asking for review. If you can't run them, say so.
-- No local tooling that duplicates a hosted service.
-- Prefer deleting code to adding it. Before calling a PR ready, list what you'd delete: tests over ~30 lines, and custom scripts where native Ansible, k3s or Flux would do.
-- Hardening ideas and edge cases go in the report as notes, not code.
+The deny lists, `jarvis validate` (env schema, Flux identities, committed renders, secrets), and the scripts in `ci/rule-checks.txt`, each described in [ci/README.md](../ci/README.md). Don't restate their rules in prose or tests.
 
-## Before you call it ready
+## Subtract first
 
-The reviewer checks these on deep reviews; no check can. In the PR, say how the change meets each one it touches.
+- **Net lines lead the PR.** Paste the four lines this prints as the body's first lines (lockfiles are left out). Growth in tests, docs or tooling needs one sentence on what a user gets from it; the reviewer sends back growth without one.
 
-- **Validate first.** Every input check runs before the first host, cluster or file change. Documented steps are tested in the documented order.
-- **Re-runs converge or refuse.** A second run changes nothing. A step that would regenerate, overwrite or delete something other state depends on (a key, a password, a CA, a setting already on a host) refuses without an explicit flag and has a written way back.
-- **Smallest blast radius.** Each credential, service account and RBAC rule covers only what its user needs; say what one compromised pod can reach. A shared credential changes for all its users at once or not at all. Nothing creates the identity it runs as.
-- **Every guard has a failing case.** A check, validator, refusal or assert you add or touch has a seeded test that makes it fail on the thing it guards.
-- **Any layout, any time.** Placement, ordering and schedules work on one node and on mixed multi-node with taints. A new schedule reports "not run yet" instead of failing. One bad host stops only itself unless it must stop all.
-- **Docs move with the code.** A new expectation, port, permission or operator step goes in the component's CONTRACT in the same PR. Docs say what is true now.
+  ```bash
+  git fetch -q origin main
+  net() { printf '%-8s %s\n' "$1" "$(shift; git diff --shortstat origin/main...HEAD -- "$@")"; }
+  net product core addons infra jarvis schema ':!*.md'
+  net tests ci/tests
+  net docs '*.md'
+  net tooling .github ci renovate renovate.json mise.toml pyproject.toml Makefile .devcontainer ':!ci/tests' ':!*.md'
+  ```
+
+- **A new mechanism names what it replaces.** A script, wrapper, generator, cache, check or workflow says what it removes, or why the upstream tool can't do the job.
+- **Use the upstream tool as it is.** Flux, kustomize, Helm, Kyverno, Renovate, JSON Schema and Ansible modules do their own jobs, even where a custom check would be stricter. Don't model their behaviour in Python.
+- **One home per fact.** Derive a value in code. Never keep two copies equal with a check, a test or a regex, and never keep an old message alive so old tests pass.
+- **Tests check behaviour.** No tests on wording, file names, config shape, CI layout or docs. A guard that protects data, a host or a secret gets a seeded test that makes it fail; other guards don't need one. A test goes with the code it covers.
+- **Build for what exists.** Nothing for a consumer, adopter or feature that isn't here yet. Hardening ideas and edge cases go in the PR body as notes.
+- **Prefer deleting.** The PR body says what you deleted and what else you looked at deleting.
+- **Contracts are tables.** A component's `CONTRACT.md` says what it offers, what it expects and how its health is checked, and changes with the component in the same PR. Rationale goes in a code comment or the PR, not the contract.
+
+## Safety values
+
+Say in the PR how a change meets each one it touches.
+
+- **Validate first.** Every input check runs before the first host, cluster or file change.
+- **Re-runs converge or refuse.** A second run changes nothing. A step that would overwrite something other state depends on (a key, a password, a CA) refuses without an explicit flag and has a written way back.
+- **Smallest blast radius.** Each credential, service account and RBAC rule covers only what its user needs. Nothing creates the identity it runs as.
+- **Any layout.** Placement, ordering and schedules work on one node and on mixed nodes with taints. A new schedule reports "not run yet" instead of failing.
+
+## Gates
+
+Never change a gate in the PR that has to pass it: a required check, the CI job layout, a time limit, a phase gate, or what a check covers. A gate change is its own PR, titled `Gate: …`, and only the owner merges it.
 
 ## Workflow
 
-- Start from a fresh checkout of current `main`; never build on another agent's branch. Use the branch prefix the task or forge requires, otherwise `agent/<topic>`. One PR per task, or per batch of related changes that touch the same area; keep unrelated or risky changes in separate PRs. No stacked PRs, except throwaway PRs a brief asks for. Open the PR ready for review unless the brief says draft.
-- Subagents may search, read and review; only the main agent edits, commits and pushes.
-- Once review is requested, scope is frozen. New ideas go to a follow-up PR.
-- The repo owner merges every PR. An agent merges only when its brief explicitly says to, and then only after required checks pass and the reviewer has ticked every Ready to merge box that applies at the current head (a box marked "(n/a)" counts as met). Once branch protection requires the admin-gate check, a PR that touches a protected path, removes a Namespace, PVC or StorageClass, or comes from the code-factory GitHub App also needs an `admin-approved` label the repo owner added after the latest push, and the owner merges it whatever the brief says. Never add that label yourself, even when you run under the owner's account.
-- Never touch real hosts: no SSH, no secret decryption, no reading the age private key (the deny lists block many of these; still treat this as a hard stop).
-- Core holds no env name, hostname, `dns_suffix`, `ssh_user`, owner handle or personal name ([schema/CONTRACT.md](../schema/CONTRACT.md#identity-values)); no check enforces it.
-- A value that differs per deployment, including disks, sizes and node roles, is an env setting under `envs/<env>/`, not an Ansible role default and not a literal in core. A schema default the contract documents, such as `ssh_user`, stays in the schema. The repo must run from any controller node under any user.
-- LAN IPs and numeric user IDs never appear in plaintext, envs/ included. Keep them out, or encrypt them under `envs/<env>/secrets/`. One exception: `lan_cidrs` and the CIDR in a `lan-target` line may be plaintext in the env repo, including the render that carries them (`flux/generated/apps.yaml`). The exception covers those fields only: it does not allow new LAN IPs, user names or host names in public PRs or docs.
-- If the brief or this file looks wrong for the task, say so with your reasoning before working around it. Don't silently follow it or silently depart from it.
-- CI runs the checks and the full suite once; core holds no env; its tests run on a sample instance (`ci/tests/sample.py`). Before pushing run `bash ci/run-checks` and only the tests near your change; CI at the head SHA is the test record. Push once when that is green — no probe pushes to see what CI says. Squash unpushed WIP into one commit per push; don't rewrite commits already on the remote. After two failures on the same problem, stop and report.
-- If the brief sets a timebox and it passes before the done checks pass, stop and report the task as failed, with what's done and what's left. "Done" means evidence attached: CI or test output and the commit.
-- Before reporting done, review the **whole** diff for leftovers from earlier attempts (debug prints, commented experiments, wrong env literals), and retitle the PR to what actually landed.
+- **One session, one batch.** A batch is one step of the current work, one to three PRs. Start from a fresh checkout of `main`, on a branch `agent/<topic>`, with no stacked PRs. When the batch's PRs are open, report and stop.
+- **Only the main agent writes.** Subagents may search, read and review; only the session's main agent edits, commits and pushes.
+- **Before pushing:** `bash ci/run-checks`, `bash ci/lint` and the tests near the change. CI at the head commit is the record. After two failures on the same problem, stop and report.
+- **Before calling it ready:** read the whole diff for leftovers (debug output, commented-out experiments, env literals) and retitle the PR to what landed. From then on scope is frozen; new ideas go to a follow-up PR.
+- **Review by another session.** A session that did not build the PR reviews it with [review.md](review.md) and posts its verdict as a review comment. The owner merges on green CI and an APPROVE.
 
 ## Report
 
-When handing off or finishing a task, include:
-
-- PR link, head commit SHA, CI status
-- What you ran to verify and the result
-- Any departure from the brief, and why
-- If the PR is over about 300 changed lines (excluding deletions), say why
-- Open questions (surface them; do not decide silently)
-
-Leave the **Ready to merge** checkboxes from `.github/pull_request_template.md` unticked. The reviewer ticks them on approval.
+The PR body follows `.github/pull_request_template.md` and stays under about 400 words; the diff carries the detail. When handing off, give each PR's link and merge order, and anything the owner must do: what, where, when and why.

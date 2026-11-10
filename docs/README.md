@@ -23,6 +23,7 @@
 | [../AGENTS.md](../AGENTS.md) | Where coding agents start |
 | [../agents/README.md](../agents/README.md) | The agent kit for instance repositories (`jarvis init --with-agents`) |
 | [../agents/coding-agents.md](../agents/coding-agents.md) | Agent workflow on core |
+| [../agents/review.md](../agents/review.md) | How a second session reviews a pull request |
 
 ## Reference
 

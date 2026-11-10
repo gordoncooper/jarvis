@@ -1,21 +1,20 @@
-## Brief
+<!-- First four lines: the net-lines output from agents/coding-agents.md (product, tests, docs, tooling).
+Growth in tests, docs or tooling: one sentence on what a user gets from it. Keep the body under about 400 words. -->
 
-- **Goal:**
-- **Why:**
-- **Depends on:**
-- **Touches:**
-- **Hard limits:**
-- **Done checks:**
+## What and why
 
-## Evidence
+## Deviations
 
-Attach command output, links, or logs that prove the done checks.
+<!-- Each departure from the brief, and what it gives up. Or "None". -->
 
-## Ready to merge
+## Deleted
 
-- [ ] Open questions from this PR are answered.
-- [ ] Pins match upstream (or the pin change is intentional and noted).
-- [ ] Each new or changed `ci/checks/` script fails on a seeded bad value.
-- [ ] Infra idempotence: a second run shows `changed=0` where it applies.
-- [ ] Full diff scanned for leftovers and env/user/host-agnostic literals.
-- [ ] This PR is one related batch (no unrelated drive-by changes).
+<!-- What this deletes, and what else was looked at for deletion. -->
+
+## Checks run
+
+## Merge order
+
+## For you
+
+<!-- What the owner must do, where (which page or command), when, and why. Or "Nothing beyond merging". -->
