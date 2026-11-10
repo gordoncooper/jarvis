@@ -189,6 +189,63 @@ def test_up_stops_at_the_first_failing_step(tmp_path: Path, monkeypatch: pytest.
     assert "stopped at pushed" in capsys.readouterr().out
 
 
+def _flux_env(tmp_path: Path) -> Path:
+    flux = tmp_path / "envs" / "home" / "flux"
+    flux.mkdir(parents=True)
+    (flux / "sync.yaml").write_text(
+        "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: flux-system\n", encoding="utf-8"
+    )
+    (flux / "services.yaml").write_text(
+        "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: services\n", encoding="utf-8"
+    )
+    (flux / "kustomization.yaml").write_text("apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n", encoding="utf-8")
+    return flux.parent
+
+
+def _listing(*ready: tuple[str, bool]) -> subprocess.CompletedProcess[str]:
+    import json
+
+    items = [
+        {"metadata": {"name": name}, "status": {"conditions": [{"type": "Ready", "status": str(ok), "message": "working"}]}}
+        for name, ok in ready
+    ]
+    return subprocess.CompletedProcess([], 0, json.dumps({"items": items}), "")
+
+
+def test_up_waits_for_the_layers_the_root_has_not_made_yet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Rule: a Ready root is not a Ready cluster. up waits until core's layers and the env's
+    declared Kustomizations exist, and every listed one is Ready on two polls in a row."""
+    env_dir = _flux_env(tmp_path)
+    assert up.expected_kustomizations(env_dir) == {"flux-system", "services", "platform-controllers", "platform-configs"}
+    every = ("flux-system", "platform-controllers", "platform-configs", "services")
+    polls = iter(
+        [
+            _listing(("flux-system", True)),
+            _listing(*((name, name != "platform-configs") for name in every)),
+            _listing(*((name, True) for name in every)),
+            _listing(*((name, True) for name in every), ("addon-x", False)),
+            _listing(*((name, True) for name in (*every, "addon-x"))),
+            _listing(*((name, True) for name in (*every, "addon-x"))),
+        ]
+    )
+    calls: list[int] = []
+    monkeypatch.setattr(up, "kubectl", lambda *a, **k: calls.append(1) or next(polls))
+    monkeypatch.setattr(up, "_sleep", lambda seconds: None)
+    assert up.wait_for_flux("home", env_dir) == 0
+    assert len(calls) == 6 and "Ready (5)" in capsys.readouterr().out
+
+
+def test_up_names_what_is_not_ready_when_the_wait_runs_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    env_dir = _flux_env(tmp_path)
+    now = [0.0]
+    monkeypatch.setattr(up, "kubectl", lambda *a, **k: _listing(("flux-system", True)))
+    monkeypatch.setattr(up, "_clock", lambda: now[0])
+    monkeypatch.setattr(up, "_sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    assert up.wait_for_flux("home", env_dir) == 1
+    out = capsys.readouterr().out
+    assert "platform-configs: not created yet" in out and "services: not created yet" in out
+
+
 def test_the_entry_point_loads_nothing_that_reads_core_trees() -> None:
     """Rule: an installed jarvis holds no core trees until it hands off to the pinned checkout, so
     its entry point imports only what choosing that checkout needs (no schema, no manifests)."""
