@@ -7,6 +7,21 @@ the upgrade.
 
 ## Unreleased
 
+## v0.5.1
+
+### Fixed
+
+- `jarvis secrets --add-recovery-key`, `--update-recipients` and `--rotate age` check that the
+  working key exists and opens every sealed file of the env before they change anything. A wrong
+  or missing key used to get as far as printing a recovery key and adding it to `.sops.yaml`, then
+  stop at the first file with sops's last line ("but none were."). Now it is refused first, naming
+  the key file and saying nothing was changed. If re-encrypting still fails partway, the rule is
+  put back and the files already re-encrypted are named, with the `git checkout` that undoes them.
+
+### Upgrading
+
+- Nothing to do: merge the core release's Renovate PR.
+
 ## v0.5.0
 
 ### Added

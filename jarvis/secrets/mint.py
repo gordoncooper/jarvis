@@ -566,19 +566,37 @@ def _lifecycle(args: argparse.Namespace) -> int:
     from jarvis.secrets import recipients as _recipients
 
     repo, env = _repo_root(), args.env
-    os.environ["SOPS_AGE_KEY_FILE"] = str(_key_file(env))
+    key_file = _key_file(env)
+    os.environ["SOPS_AGE_KEY_FILE"] = str(key_file)
+    if args.rotate == "deploy-key":
+        # Sealing needs only the public recipients.
+        return _rotate_deploy_key(env)
+    sops_config = repo / ".sops.yaml"
+    rule = sops_config.read_text(encoding="utf-8")
     try:
+        # Every check before the first change: a key that cannot open the files must not get as far
+        # as printing a recovery key or editing the rule.
+        _recipients.require_working_key(repo, env, key_file)
         if args.add_recovery_key:
             if _recipients.add_recovery(repo, env) is None:
                 print(f"PASS envs/{env}/secrets/ already has a second recipient; nothing changed")
         elif args.rotate == "age":
-            old, new = _recipients.rotate(repo, env, _key_file(env))
-            print(f"PASS new working key {new} in {_key_file(env)}, in place of {old} in .sops.yaml")
-        elif args.rotate == "deploy-key":
-            return _rotate_deploy_key(env)
+            old, new = _recipients.rotate(repo, env, key_file)
+            print(f"PASS new working key {new} in {key_file}, in place of {old} in .sops.yaml")
         changed = _recipients.update(repo, env)
     except (_recipients.RecipientsError, _age.AgeError) as exc:
         print(f"FAIL secrets: {exc}")
+        if sops_config.read_text(encoding="utf-8") != rule:
+            # Put the rule back, so the repository is as it was but for any file named below.
+            sops_config.write_text(rule, encoding="utf-8")
+            print("     .sops.yaml is back as it was.")
+            if args.add_recovery_key:
+                print("     The recovery key printed above was never used: discard it.")
+            else:
+                print(f"     The new identity at the top of {key_file} was never used: delete its three lines.")
+            done = getattr(exc, "changed", [])
+            if done:
+                print(f"     Undo the files already re-encrypted: git checkout -- {' '.join(done)}")
         return 1
     for rel in changed:
         print(f"PASS re-encrypted {rel}")

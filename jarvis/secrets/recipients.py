@@ -26,7 +26,10 @@ from jarvis.secrets import age as _age
 
 
 class RecipientsError(Exception):
-    pass
+    def __init__(self, message: str, changed: list[str] | None = None) -> None:
+        super().__init__(message)
+        # Files already re-encrypted when it failed, so the caller can name them.
+        self.changed = changed or []
 
 
 def sealed_files(env_dir: Path) -> list[Path]:
@@ -108,10 +111,51 @@ def update(instance: Path, env: str) -> list[str]:
             reason = (proc.stderr or proc.stdout).strip().splitlines()
             raise RecipientsError(
                 f"sops updatekeys {path.relative_to(instance)} failed ({reason[-1] if reason else 'no output'}); "
-                "the working key must open it (SOPS_AGE_KEY_FILE or age_key_file)"
+                "the working key must open it (SOPS_AGE_KEY_FILE or age_key_file)",
+                changed,
             )
         changed.append(path.relative_to(instance).as_posix())
     return changed
+
+
+def unopened(instance: Path, env: str, key_file: Path) -> list[str]:
+    """The env's sealed files key_file cannot open, and only it: sops gets that file and an empty
+    home, as age-key-check does. Each file is decrypted in memory; nothing is printed or kept."""
+    import shutil
+    import tempfile
+
+    from jarvis.secrets.age_key_check import _decrypt_env
+
+    sops = shutil.which("sops") or "sops"
+    failed = []
+    with tempfile.TemporaryDirectory(prefix="jarvis-key-check-") as empty:
+        for path in sealed_files(instance / "envs" / env):
+            proc = subprocess.run(
+                [sops, "decrypt", str(path)],
+                cwd=instance,
+                env=_decrypt_env(key_file, empty),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if proc.returncode:
+                failed.append(path.relative_to(instance).as_posix())
+    return failed
+
+
+def require_working_key(instance: Path, env: str, key_file: Path) -> None:
+    """Refuse before any change unless key_file exists and opens every sealed file of the env."""
+    if not key_file.is_file():
+        raise RecipientsError(
+            f"no age key at {key_file} (age_key_file, or SOPS_AGE_KEY_FILE): run this as the user that holds "
+            "the env's working key; nothing was changed"
+        )
+    failed = unopened(instance, env, key_file)
+    if failed:
+        raise RecipientsError(
+            f"{key_file} does not open {len(failed)} of envs/{env}'s sealed files ({failed[0]}"
+            f"{' and more' if len(failed) > 1 else ''}): it is not this env's working key; nothing was changed"
+        )
 
 
 def add_recovery(instance: Path, env: str) -> str | None:
