@@ -447,15 +447,19 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
     run(check=True)
 
 
-def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> None:
-    """group_vars resolves core's core/flux/flux-instance.yaml beside the playbook, and that assert passes."""
+def test_site_reads_the_flux_instance_from_core_and_sync_from_the_instance(tmp_path: Path) -> None:
+    """group_vars resolves core's core/flux/flux-instance.yaml beside the playbook and the env's
+    sync.yaml in the instance site passes, and that assert passes. The playbook runs from a core
+    checkout, as jarvis site runs it; the instance holds only envs/."""
     require_cli("ansible-playbook")
     hosts = (
         REPO_ROOT / "ci/tests/fixtures/env-shapes/single-node/hosts.yml"
     ).read_text(encoding="utf-8")
     copy = bootstrap_example_copy(tmp_path, hosts_text=hosts)
-    playbook_dir = copy.root / "infra" / "ansible"
+    checkout = tmp_path / "core-checkout"
+    playbook_dir = checkout / "infra" / "ansible"
     (playbook_dir / "group_vars").mkdir(parents=True)
+    (checkout / "core").symlink_to(REPO_ROOT / "core", target_is_directory=True)
     shutil.copy(ANSIBLE_DIR / "group_vars" / "all.yml", playbook_dir / "group_vars" / "all.yml")
     playbook = playbook_dir / "open.yml"
     bin_dir = tmp_path / "bin"
@@ -481,6 +485,8 @@ def test_copied_env_flux_instance_resolves_without_override(tmp_path: Path) -> N
             "ansible_become=false",
             "-e",
             f"jarvis_cluster_vars={copy.env_dir / 'values' / 'cluster-vars.yaml'}",
+            "-e",
+            f"jarvis_instance_root={copy.root}",
             *_k3s_paths(tmp_path),
         ],
         cwd=ANSIBLE_DIR,
