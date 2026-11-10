@@ -236,7 +236,10 @@ def test_the_package_version_is_the_release_tag(tmp_path: Path) -> None:
         if source.is_file() and not source.is_symlink():
             (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / rel).write_bytes(source.read_bytes())
-    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "one"], ["tag", "-a", "v1.2.3", "-m", "v1.2.3"]):
+    who = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    # A throwaway tag on the same commit, as the quickstart gate pushes, is not a version.
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], [*who, "commit", "-q", "-m", "one"],
+                 [*who, "tag", "-a", "v1.2.3", "-m", "v1.2.3"], ["tag", "quickstart/1-1"]):  # fmt: skip
         subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
     subprocess.run(["uv", "build", "--wheel", "-q", "-o", str(tmp_path / "dist")], cwd=tmp_path, check=True, capture_output=True)
     wheel = next((tmp_path / "dist").glob("*.whl"))

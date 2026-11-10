@@ -40,8 +40,9 @@ dev = [
 
 [tool.hatch.version]
 source = "vcs"
-# A source tree with no git history (an unpacked archive) still builds.
-raw-options = { fallback_version = "0" }
+# Only release tags (v<x.y.z>) are versions: CI's throwaway tags (quickstart/<run>) on the commit
+# under test are not, and must not break the build. A source tree with no git history still builds.
+raw-options = { fallback_version = "0", scm = { git = { describe_command = "git describe --dirty --tags --long --match v[0-9]*" } } }
 
 [tool.hatch.build.targets.wheel]
 packages = ["jarvis"]
