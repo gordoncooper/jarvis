@@ -2,6 +2,9 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "automerge": false,
+  "devcontainer": {
+    "managerFilePatterns": ["/^jarvis\\/kit\\/devcontainer\\/devcontainer\\.json$/"]
+  },
   "packageRules": [
     {
       "description": "The flux CLI (mise.toml) moves with the Flux version core's FluxInstance runs (custom.regex), so an operator's CLI matches the cluster.",
@@ -104,6 +107,11 @@
       "matchFileNames": ["pyproject.toml"],
       "matchPackageNames": ["ansible-core"],
       "allowedVersions": "<2.22"
+    },
+    {
+      "description": "The devcontainer's base image is pinned by tag; Renovate adds and moves its digest.",
+      "matchManagers": ["devcontainer"],
+      "pinDigests": true
     }
   ],
   "customManagers": [
@@ -112,13 +120,6 @@
       "description": "The mise release jdx/mise-action installs (its version input), in the workflows and the app-check Action.",
       "managerFilePatterns": ["/^\\.github\\/(workflows\\/[^/]+|actions\\/[^/]+\\/action)\\.ya?ml$/"],
       "matchStrings": ["# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*version: (?<currentValue>\\S+)"]
-    },
-    {
-      "customType": "regex",
-      "description": "Pinned CLI versions in tools/versions.env. Renovate bumps the version only. The sha256 lines are bumped by hand in the same PR.",
-      "managerFilePatterns": ["/^tools\\/versions\\.env$/"],
-      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)\\s*\\n\\w+_version=(?<currentValue>\\S+)"],
-      "extractVersionTemplate": "^v?(?<version>.*)$"
     },
     {
       "customType": "regex",
@@ -250,6 +251,12 @@
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>nginxinc/nginx-unprivileged)\\n\\s*image: nginxinc/nginx-unprivileged:(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.]+)*)@(?<currentDigest>sha256:[a-f0-9]+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "The mise release the devcontainers install: core's own (.devcontainer/devcontainer.json) and the instance one jarvis init writes (jarvis/kit/devcontainer/setup.sh).",
+      "managerFilePatterns": ["/^\\.devcontainer\\/devcontainer\\.json$/", "/^jarvis\\/kit\\/devcontainer\\/setup\\.sh$/"],
+      "matchStrings": ["(?:#|//) renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*\"?MISE_VERSION\"?(?:=|: \")(?<currentValue>v[^\\s\"]+)"]
     }
   ],
   "lockFileMaintenance": {

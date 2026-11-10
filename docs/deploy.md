@@ -43,14 +43,14 @@ jarvis init my-clusters --env home --domain home.lan \
 cd my-clusters
 ```
 
-`--node` names each host, as `<host>` for a single node (every role but `gpu`) or `<host>:<role>,<role>` for more; repeat it per node. `--feature app-dns` (and `app-hosting`, `offsite-backup-copy`, `apps-backup-server`) turns a feature on, `--apps-repo-url` names the hosted apps repository, `--ssh-user` the user Ansible logs in as (default: you), `--time-zone` the nodes' zone. Anything left out is asked for at a terminal. `jarvis init --help` lists every flag.
+`--node` names each host, as `<host>` for a single node (every role but `gpu`) or `<host>:<role>,<role>` for more; repeat it per node. `--feature app-dns` (and `app-hosting`, `offsite-backup-copy`, `apps-backup-server`) turns a feature on, `--apps-repo-url` names the hosted apps repository, `--with-examples` turns on app hosting with the example apps (`jarvis/kit/examples-apps.yaml`, from `jarvis-apps` beside core unless `--apps-repo-url` says otherwise) for a first-run tour, `--with-agents` adds the coding-agent kit ([agents/README.md](../agents/README.md)), `--ssh-user` the user Ansible logs in as (default: you), `--time-zone` the nodes' zone. Anything left out is asked for at a terminal. `jarvis init --help` lists every flag.
 
 `jarvis init`:
 
 1. makes the folder a git repository on `--branch` (default `main`);
 2. creates the working age key at `age_key_file` if there is none (mode `0600`) and prints its public key;
 3. makes the **recovery key** and prints its private half once: store it offline before you go on ([secrets.md](secrets.md#age-key-custody));
-4. writes `envs/<env>/values/` and `inventory/hosts.yml`, the env's creation rule in `.sops.yaml` (both keys), a README, and unless `--no-ci` the Renovate config and the CI caller (below);
+4. writes `envs/<env>/values/` and `inventory/hosts.yml`, the env's creation rule in `.sops.yaml` (both keys), a README, a devcontainer (`.devcontainer/`: open the repository in it on a machine with only a container runtime, and it installs mise, uv and the jarvis CLI at the env's core release, with your age key, kubeconfigs and SSH keys mounted from the machine), and unless `--no-ci` the Renovate config and the CI caller (below);
 5. mints the env's secrets (`jarvis secrets`) and `ca.crt`, and for an `ssh://` `--repo-url` seals a read-only deploy key and prints its public half;
 6. renders `flux/` and installs a pre-commit hook that runs `jarvis render --check` and `jarvis validate` for each env a commit touches.
 
@@ -136,10 +136,10 @@ Produces a k3s cluster, node role labels, kubeconfig `~/.kube/jarvis-<env>.yaml`
 ## Verify
 
 ```bash
-jarvis verify --env <env>
+jarvis verify --env <env> [--smoke]
 ```
 
-Uses `~/.kube/jarvis-<env>.yaml`. Core's checks always run; an add-on's checks run only when the env lists it. Each standing check prints `PASS`, `WARN`, or `FAIL`. `WARN` is a scheduled job with no success yet whose first run is still pending or running inside its first interval (exit 0). Once that run finishes without success, or the first interval passes, it is `FAIL`. Any `FAIL` exits 1.
+Uses `~/.kube/jarvis-<env>.yaml`. Core's checks always run; an add-on's checks run only when the env lists it. Each standing check prints `PASS`, `WARN`, or `FAIL`. `--smoke` also runs one short-lived probe per enabled capability, each of which makes something, checks it and removes it: a Certificate from the internal CA becomes Ready; with App DNS, a new Ingress name answers at App DNS's address with Traefik's; with hosted apps, a copy of a running app pod is admitted and the same copy with one risk the env does not grant that app is refused for that grant (both server-side dry runs, which leave nothing); and any probe an enabled add-on brings. The probes that make objects work in namespace `platform-smoke`, which the run creates and deletes; one left by an interrupted run is deleted at the next, and a `platform-smoke` that is not verify's (no `jarvis.io/owner: jarvis-verify-smoke` label) is left alone and fails the run. The App DNS probe asks App DNS's address directly, so the controller must reach it on port 53, as LAN clients do. `WARN` is a scheduled job with no success yet whose first run is still pending or running inside its first interval (exit 0). Once that run finishes without success, or the first interval passes, it is `FAIL`. Any `FAIL` exits 1.
 
 ## Drill
 

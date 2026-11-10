@@ -1,0 +1,16 @@
+// A controller in a container: open this repository in it and every jarvis command works, with
+// nothing installed on the machine but a container runtime. setup.sh installs mise, uv and the
+// jarvis CLI; each command then installs the tools its env's core release pins. The age key,
+// kubeconfigs and SSH keys stay on the machine and are mounted in, never copied.
+{
+  "name": "jarvis",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "initializeCommand": "mkdir -p \"${localEnv:HOME}/.config/sops/age\" \"${localEnv:HOME}/.kube\" \"${localEnv:HOME}/.ssh\"",
+  "mounts": [
+    "source=${localEnv:HOME}/.config/sops/age,target=/home/vscode/.config/sops/age,type=bind",
+    "source=${localEnv:HOME}/.kube,target=/home/vscode/.kube,type=bind",
+    "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind"
+  ],
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "remoteUser": "vscode"
+}

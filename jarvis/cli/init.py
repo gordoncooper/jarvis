@@ -44,6 +44,11 @@ def parser(command: str) -> argparse.ArgumentParser:
         p.add_argument("--branch", default="main", help="The branch Flux follows (default: main)")
         p.add_argument("--no-ci", action="store_true", help="Write no CI workflow or Renovate config")
         p.add_argument(
+            "--with-agents",
+            action="store_true",
+            help="Add the coding-agent kit: AGENTS.md, CLAUDE.md and the deny lists in .claude/ and .cursor/",
+        )
+        p.add_argument(
             "--recovery-recipient",
             help="Use this age public key as the recovery key instead of making one (it must be offline)",
         )
@@ -55,6 +60,11 @@ def parser(command: str) -> argparse.ArgumentParser:
     p.add_argument("--time-zone", default="Etc/UTC", help="The nodes' time zone (default: Etc/UTC)")
     p.add_argument("--feature", action="append", default=[], choices=_KNOWN_FEATURES, help="Turn a feature on (repeat)")
     p.add_argument("--apps-repo-url", default="", help="The hosted apps repository, if the env will host apps")
+    p.add_argument(
+        "--with-examples",
+        action="store_true",
+        help="Turn on app-hosting with the example apps, for a first-run tour (apps repository: jarvis-apps beside core, unless --apps-repo-url)",
+    )
     p.add_argument("--age-key-file", default="", help=f"The working age key (default: {_age.DEFAULT_KEY_FILE})")
     return p
 
@@ -74,6 +84,8 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
     domain = _ask(args.domain, "the env's DNS suffix (--domain)")
     raw_nodes = args.node or [_ask(None, "the first node's host name (--node)")]
     nodes = [scaffold.Node.parse(text, only=len(raw_nodes) == 1) for text in raw_nodes]
+    features = list(dict.fromkeys(args.feature + (["app-hosting"] if args.with_examples else [])))
+    apps_repo_url = args.apps_repo_url or (scaffold.apps_repo_beside(core[0]) if args.with_examples else "")
     return scaffold.EnvSpec(
         name=name,
         domain=domain,
@@ -84,9 +96,10 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
         branch=branch,
         ssh_user=args.ssh_user or getpass.getuser(),
         time_zone=args.time_zone,
-        features=list(dict.fromkeys(args.feature)),
-        apps_repo_url=args.apps_repo_url,
+        features=features,
+        apps_repo_url=apps_repo_url,
         age_key_file=args.age_key_file,
+        examples=args.with_examples,
     )
 
 
@@ -98,7 +111,6 @@ def _working_key(spec: scaffold.EnvSpec) -> str:
         return public
     public = _age.create_key(path)
     print(f"PASS created the age key {path} (mode 0600, public key {public})")
-    print("     Keep a copy of it in your password manager: it opens every secret of this env.")
     return public
 
 
@@ -139,9 +151,17 @@ def _deploy_key(instance: Path, spec: scaffold.EnvSpec) -> str | None:
 
 
 def _finish(instance: Path, spec: scaffold.EnvSpec, deploy_public: str | None, skipped: list[str], *, up: str) -> None:
+    from jarvis.apps.checkout import AppsCheckoutError, fetch
     from jarvis.render import env as _render
 
     os.environ["INSTANCE"] = str(instance)
+    # An env that lists apps renders from their files at their pinned tags.
+    try:
+        if not os.environ.get("APPS_REPO") and (checkout := fetch(instance)) is not None:
+            os.environ["APPS_REPO"] = str(checkout)
+    except AppsCheckoutError as exc:
+        # Everything else is written; only the render waits for the apps repository.
+        raise scaffold.ScaffoldError(f"{exc}; envs/{spec.name} is written, run jarvis render once it is reachable") from exc
     _render.render_env(instance / "envs" / spec.name, instance)
     print(f"PASS rendered envs/{spec.name}/flux/")
     for line in skipped:
@@ -189,7 +209,7 @@ def run_init(argv: list[str], core: tuple[str, str]) -> int:
     recovery = _recovery_key(args.recovery_recipient)
     scaffold.write_env(instance, spec)
     scaffold.write_sops_rule(instance, spec.name, [working, recovery])
-    skipped = scaffold.write_repo_files(instance, spec, ci=not args.no_ci)
+    skipped = scaffold.write_repo_files(instance, spec, ci=not args.no_ci, agents=args.with_agents)
     _secrets(instance, spec)
     deploy_public = _deploy_key(instance, spec)
     print(f"PASS installed the pre-commit hook {scaffold.install_hook(instance).relative_to(instance)}")

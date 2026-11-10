@@ -12,7 +12,7 @@ An add-on is an optional piece Jarvis ships on top of core. Each env turns it on
    - when it has Secrets, a second Kustomization `addon-<name>-secrets` with `path: ./envs/${jarvis_env}/secrets/<namespace>` and `decryption` with `sops-age`.
 3. Put its objects under `addons/<name>/<dir>/`: namespaced, in its own namespaces, with no RBAC or Flux objects. An Ingress follows [core/platform/testapp](../core/platform/testapp/CONTRACT.md): host `<name>.${dns_suffix}`, entrypoint `websecure`, no TLS secret.
 4. If it fills a slot, label its Kustomizations `addons.jarvis.io/slot: <slot>` and meet `addons/slots/<slot>/CONTRACT.md`. Depend on slots and platform contracts, never on another add-on by name. Core never names your add-on.
-5. Optional standing checks: `addons/<name>/verify.py` registers a component named `<name>` with `verify.registry.register`. `jarvis verify` runs it only on envs that enable the add-on.
+5. Optional standing checks: `addons/<name>/verify.py` registers a component named `<name>` with `verify.registry.register`. `jarvis verify` runs it only on envs that enable the add-on. The same file may register a smoke probe under `<name>` with `verify.registry.register_smoke`, which `jarvis verify --smoke` runs: it makes its objects in namespace `platform-smoke` (which the run creates and deletes) or does a server-side dry run, so it leaves nothing behind.
 6. Run `bash ci/run-checks` and the tests. `ci/checks/addons` reports every rule the add-on breaks.
 
 ## Turn it on in an env

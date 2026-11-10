@@ -11,6 +11,7 @@ in the instance's own .age/ folder.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import shutil
@@ -45,24 +46,6 @@ all:
       node_roles: [backup]
       data_disk: true
 """
-# The sample apps' pins, grant and backup selection, as an owner writes values/apps.yaml.
-APPS_TEXT = """versions:
-  hello-web: v0.1.0
-  notes: v0.1.0
-  lan-demo: v0.1.0
-exceptions:
-  - lan-demo: lan-port 8080/TCP
-backups:
-  mode: selected
-  selected: []
-"""
-APPS = {
-    "versions": {"hello-web": "v0.1.0", "notes": "v0.1.0", "lan-demo": "v0.1.0"},
-    "exceptions": [{"lan-demo": "lan-port 8080/TCP"}],
-    "backups": {"mode": "selected", "selected": []},
-}
-
-
 def spec(name: str = NAME, *, features: list[str] | None = None) -> scaffold.EnvSpec:
     """The sample env's starting decisions, as jarvis init takes them."""
     return scaffold.EnvSpec(
@@ -159,6 +142,8 @@ def add_env_from_spec(
     add-on and the owner's hand-sealed files, minted, sealed and rendered."""
     from jarvis.render.env import render_env
 
+    # The example apps on, as jarvis init --with-examples turns them on.
+    sample = dataclasses.replace(sample, examples=with_apps and "app-hosting" in sample.features)
     name = sample.name
     env_dir = scaffold.write_env(root, sample)
     scaffold.write_sops_rule(root, name, public_keys)
@@ -168,9 +153,6 @@ def add_env_from_spec(
     values.write_text(values.read_text(encoding="utf-8") + "lan_cidrs:\n  - 10.200.0.0/24\n", encoding="utf-8")
     switches = env_dir / "values" / "switches.yaml"
     text = switches.read_text(encoding="utf-8")
-    if with_apps and "app-hosting" in sample.features:
-        text = text.replace("apps: []\n", "apps:\n" + "".join(f"  - {app}\n" for app in APPS["versions"]))
-        (env_dir / "values" / "apps.yaml").write_text(APPS_TEXT, encoding="utf-8")
     if with_addons:
         names = sorted(entry.name for entry in FIXTURE_ADDONS.iterdir() if entry.is_dir())
         text = text.replace("addons: []\n", "addons:\n" + "".join(f"  - {name}\n" for name in names))

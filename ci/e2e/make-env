@@ -3,7 +3,7 @@
 
 The env is written by jarvis init's own code (jarvis/env/scaffold.py) with its secrets sealed to
 --key-file, a throwaway age key that lives only on the runner, then edited as an owner would:
-the sample hosted apps at their pins from --apps-url, and App DNS when asked. Its root source is
+the example apps (jarvis/kit/examples-apps.yaml) from --apps-url, and App DNS when asked. Its root source is
 this repository at --ref, the branch the job pushes with the env on it, and its core source the
 same repository at --core-ref (default --ref; a release tag on a tag run). Nothing here talks to
 a cluster. The render reads the app files from APPS_REPO, a checkout of --apps-url with its tags.

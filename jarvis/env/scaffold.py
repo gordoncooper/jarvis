@@ -20,7 +20,14 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 from jarvis.secrets import age as _age
+
+# What init copies into a new instance as is: the agent kit, the devcontainer, the example apps.
+# It lives in the package because init runs from the installed CLI, before any core checkout.
+KIT = Path(__file__).resolve().parents[1] / "kit"
+EXAMPLE_APPS = KIT / "examples-apps.yaml"
 
 ROLES = ("control_plane", "workers", "backup", "edge", "gpu")
 # One node with every role but gpu: the smallest whole cluster.
@@ -73,6 +80,8 @@ class EnvSpec:
     features: list[str] = field(default_factory=list)
     apps_repo_url: str = ""
     age_key_file: str = ""
+    # The example hosted apps (jarvis/kit/examples-apps.yaml) on, for a first-run tour.
+    examples: bool = False
     # The full core_git_ref when it is not refs/tags/<core_tag> (e2e pins the commit under test by
     # branch); a branch pin is refused by every jarvis command except under --core.
     core_ref: str = ""
@@ -94,6 +103,18 @@ class EnvSpec:
         # The schema's rule: one control plane, one backup host, at least one edge host.
         if "edge" not in held:
             raise ScaffoldError("no node holds the edge role")
+        if self.examples and ("app-hosting" not in self.features or not self.apps_repo_url):
+            raise ScaffoldError("the example apps need the app-hosting feature and an apps repository")
+
+
+def example_apps() -> dict:
+    """The example apps' values/apps.yaml: their pins, grants and backup selection."""
+    return yaml.safe_load(EXAMPLE_APPS.read_text(encoding="utf-8"))
+
+
+def apps_repo_beside(core_url: str) -> str:
+    """The examples' apps repository: jarvis-apps beside core, as core's own e2e reads it."""
+    return core_url.rstrip("/").removesuffix(".git").rsplit("/", 1)[0] + "/jarvis-apps"
 
 
 def cluster_vars(spec: EnvSpec) -> str:
@@ -156,13 +177,15 @@ def _schema_line(spec: EnvSpec, name: str) -> list[str]:
 
 def switches(spec: EnvSpec) -> str:
     features = "".join(f"  - {name}\n" for name in spec.features)
+    names = list(example_apps()["versions"]) if spec.examples else []
+    apps = "apps:\n" + "".join(f"  - {name}\n" for name in names) if names else "apps: []\n"
     return (
         "".join(line + "\n" for line in _schema_line(spec, "switches"))
         + "# What this env turns on, by name. Core is always on. jarvis render writes the Flux wiring\n"
         "# from this file; an unknown name fails.\n"
         + ("features:\n" + features if features else "features: []\n")
         + "addons: []\n"
-        + "apps: []\n"
+        + apps
     )
 
 
@@ -254,6 +277,9 @@ is written by `jarvis render`; change `values/` instead.
 
 Run `jarvis --help` from this folder. The age key that opens `envs/*/secrets/` is not in this
 repository.
+
+No tools on this machine? Open the folder in its devcontainer (`.devcontainer/`): it installs
+mise, uv and the jarvis CLI, and mounts your age key, kubeconfigs and SSH keys from the machine.
 """
 
 
@@ -281,12 +307,39 @@ def write_env(instance: Path, spec: EnvSpec) -> Path:
     (env_dir / "values" / "cluster-vars.yaml").write_text(cluster_vars(spec), encoding="utf-8")
     (env_dir / "values" / "switches.yaml").write_text(switches(spec), encoding="utf-8")
     (env_dir / "inventory" / "hosts.yml").write_text(hosts(spec), encoding="utf-8")
+    if spec.examples:
+        text = EXAMPLE_APPS.read_text(encoding="utf-8")
+        body = text[text.index("versions:") :]
+        header = "".join(line + "\n" for line in _schema_line(spec, "apps"))
+        header += "# The example apps jarvis init --with-examples turned on. Remove them from switches.yaml's apps\n"
+        header += "# and from here once the tour is done; their volumes stay until you delete them.\n"
+        (env_dir / "values" / "apps.yaml").write_text(header + body, encoding="utf-8")
     return env_dir
 
 
-def write_repo_files(instance: Path, spec: EnvSpec, *, ci: bool) -> list[str]:
-    """README, and with ci the Renovate config and the CI caller. Returns what it skipped and why."""
+def _copy_kit(instance: Path, pairs: tuple[tuple[str, str], ...]) -> None:
+    for source, dest in pairs:
+        target = instance / dest
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(KIT / source, target)
+        if source.endswith(".sh"):
+            target.chmod(0o755)
+
+
+DEVCONTAINER = (("devcontainer/devcontainer.json", ".devcontainer/devcontainer.json"), ("devcontainer/setup.sh", ".devcontainer/setup.sh"))
+AGENTS = (
+    ("agents/AGENTS.md", "AGENTS.md"),
+    ("agents/CLAUDE.md", "CLAUDE.md"),
+    ("agents/claude-settings.json", ".claude/settings.json"),
+    ("agents/cursor-cli.json", ".cursor/cli.json"),
+)
+
+
+def write_repo_files(instance: Path, spec: EnvSpec, *, ci: bool, agents: bool = False) -> list[str]:
+    """README and the devcontainer; with agents the agent kit; with ci the Renovate config and the
+    CI caller. Returns what it skipped and why."""
     (instance / "README.md").write_text(readme(instance, spec.core_url), encoding="utf-8")
+    _copy_kit(instance, DEVCONTAINER + (AGENTS if agents else ()))
     if not ci:
         return []
     if _github(spec.core_url) is None:

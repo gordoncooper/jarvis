@@ -280,13 +280,13 @@ def test_node_memory_reserve_is_a_percent_from_0_to_50(tmp_path: Path, value: ob
     assert "node_memory_reserve_percent must be an integer from 0 to 50" in "\n".join(excinfo.value.messages)
 
 
-def test_repo_urls_must_share_owner_handle(tmp_path: Path):
+def test_the_apps_repository_may_be_another_owners(tmp_path: Path):
+    """Rule: an env may read hosted apps from anyone's repository (the example apps beside core,
+    another team's); the apps are untrusted and held by admission wherever they come from."""
     cv = _valid_cluster_vars()
     cv["apps_git_repo_url"] = "https://github.com/other-owner/example-apps"
     _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "owner handle" in "\n".join(excinfo.value.messages)
+    validate_env_tree(tmp_path)
 
 
 def test_apps_git_repo_url_must_be_https_when_set(tmp_path: Path):
@@ -935,7 +935,7 @@ def test_flux_known_hosts_trusts_the_root_host(tmp_path: Path, root: str, known_
     if known_hosts is None:
         del cv["flux_known_hosts"]
     cv["flux_git_repo_url"] = root
-    errors = env_schema._validate_cluster_vars(cv, "cluster-vars.yaml", "env-test")[0]
+    errors = env_schema._validate_cluster_vars(cv, "cluster-vars.yaml", "env-test")
     found = [item for item in errors if "flux_known_hosts" in item]
     if problem is None:
         assert found == []

@@ -22,7 +22,7 @@ Commands:
   site [--tags] [--limit] [--check]
                          Apply the env's hosts with core's Ansible playbook
   up                     doctor, validate, render --check, secrets, site, wait for Flux, verify
-  verify                 Read-only standing checks of the running cluster
+  verify                 Standing checks of the running cluster; --smoke adds short-lived probes
   drill                  Scratch-volume and etcd restore drill
   restore (--app <ns> | --all) [--as-of <time>]
                          Restore backed-up volumes

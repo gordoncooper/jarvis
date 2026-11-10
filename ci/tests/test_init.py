@@ -174,3 +174,52 @@ def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(cli_core, "distribution", lambda name: Dist())
     assert cli_core.own_release() == ("https://github.com/o/jarvis", "v9.1.0")
     assert cli_core.https_url("git@github.com:o/jarvis.git") == "https://github.com/o/jarvis"
+
+
+def test_with_examples_turns_on_the_example_apps_and_passes_every_check(tmp_path: Path, controller: Path, monkeypatch) -> None:
+    """Rule: --with-examples turns on app-hosting and the example apps, reads them from jarvis-apps
+    beside core, and the env still passes validate as written."""
+    monkeypatch.setenv("APPS_REPO", str(FIXTURE_APPS))
+    code, dest = _init(tmp_path, "--with-examples")
+    assert code == 0
+    switches = yaml.safe_load((dest / "envs/home/values/switches.yaml").read_text())
+    assert "app-hosting" in switches["features"]
+    assert switches["apps"] == list(scaffold.example_apps()["versions"])
+    apps = yaml.safe_load((dest / "envs/home/values/apps.yaml").read_text())
+    assert apps == scaffold.example_apps()
+    cluster_vars = yaml.safe_load((dest / "envs/home/values/cluster-vars.yaml").read_text())
+    assert cluster_vars["apps_git_repo_url"] == "https://github.com/example-owner/jarvis-apps"
+    assert (dest / "envs/home/flux/generated/apps.yaml").is_file()
+    done = _validate(dest, "home")
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_example_apps_need_app_hosting_and_an_apps_repository() -> None:
+    spec = scaffold.EnvSpec("home", "home.lan", "https://github.com/me/lab", *CORE, [scaffold.Node.parse("n1", only=True)], examples=True)
+    with pytest.raises(scaffold.ScaffoldError, match="app-hosting feature and an apps repository"):
+        spec.check()
+
+
+def test_the_agent_kit_is_opt_in(tmp_path: Path, controller: Path) -> None:
+    """Rule: init writes the devcontainer always and the agent kit only with --with-agents; the
+    kit's deny lists are core's own (core's .claude and .cursor files link to the kit)."""
+    code, dest = _init(tmp_path)
+    assert code == 0
+    assert (dest / ".devcontainer/devcontainer.json").is_file() and os.access(dest / ".devcontainer/setup.sh", os.X_OK)
+    assert not (dest / "AGENTS.md").exists() and not (dest / ".claude").exists()
+    code, dest = _init(tmp_path / "with", "--with-agents")
+    assert code == 0
+    assert (dest / "CLAUDE.md").read_text() == "@AGENTS.md\n" and (dest / "AGENTS.md").is_file()
+    assert (dest / ".claude/settings.json").read_bytes() == (REPO_ROOT / ".claude/settings.json").read_bytes()
+    assert (dest / ".cursor/cli.json").read_bytes() == (REPO_ROOT / ".cursor/cli.json").read_bytes()
+    assert json.loads((dest / ".claude/settings.json").read_text())["permissions"]["deny"]
+
+
+def test_the_installed_package_carries_the_kit(tmp_path: Path) -> None:
+    """Rule: init runs from the installed CLI, so everything it copies is in the wheel."""
+    import zipfile
+
+    subprocess.run(["uv", "build", "--wheel", "-q", "-o", str(tmp_path)], cwd=REPO_ROOT, check=True, capture_output=True)
+    names = set(zipfile.ZipFile(next(tmp_path.glob("*.whl"))).namelist())
+    kit = {path.relative_to(REPO_ROOT).as_posix() for path in scaffold.KIT.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
+    assert kit and kit <= names, sorted(kit - names)
