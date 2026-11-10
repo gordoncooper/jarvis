@@ -30,7 +30,15 @@ Every sealed file needs a reader. A file nothing reads (a left-over secret, or a
 
 ## Age-key custody
 
-Every env's secrets are encrypted to two age recipients (its creation rule in `.sops.yaml`): the **working key**, on the controller at `age_key_file`, and the **recovery key**, offline only. `jarvis init` makes the recovery key, prints its private half once and keeps no copy; store it on paper or in a password manager entry you do not use day to day. Either key opens every secret, so losing the working key is not fatal. Keep a second copy of the working key in your password manager as well.
+Every env's secrets are encrypted to two age recipients (its creation rule in `.sops.yaml`): the **working key** first, on the controller at `age_key_file`, and the **recovery key** second, offline only. `jarvis init` makes the recovery key, prints its private half once and keeps no copy; store it on paper or in a password manager entry you do not use day to day. Either key opens every secret, so losing the working key is not fatal. `jarvis validate` fails when a sealed file does not open for exactly the rule's recipients, and `jarvis doctor` warns while an env has only one.
+
+An env made before v0.5.0 has the working key only. Give it the recovery key once:
+
+```bash
+jarvis secrets --add-recovery-key
+```
+
+It prints the recovery key's private half once, adds its public key to the rule, and re-encrypts every sealed file to both. Commit and push the result. Run again, it changes nothing.
 
 Prove each copy. The owner runs this under their own user, never a coding-agent user. The key file must be unreadable by other users (mode `0600`).
 
@@ -42,20 +50,41 @@ The command test-decrypts one secret of that env and prints `PASS` or `FAIL`. De
 
 ### Keep-safe list
 
-In the owner's password manager, keep what must survive a lost controller:
+Everything else in git opens with one of these. Keep them where a lost controller cannot take them:
 
-- The recovery key's private half (or where you keep it offline), and a copy of the working key.
-- When the env has the off-host copy: the off-host restic password in `backups-offsite`, and the target's login. Recovering from the off-host copy needs them, and the sealed file needs the age key.
+1. The recovery key's private half.
+2. When the env has the off-host copy: the off-host target's login and its restic password (`backups-offsite`). Recovering from the off-host copy, when this repository is gone as well, needs them.
 
-Not a custody item: the read-only deploy key in `flux-deploy-key`, when the env's root is `ssh://`. The forge holds the public half. If the private half is lost, regenerate it ([docs/deploy.md](deploy.md#deploy-key)) and replace the deploy key on the forge.
+The working key is not on the list: lost, it is replaced from the recovery key (Recovery, below). Nor is the read-only deploy key in `flux-deploy-key`, when the env's root is `ssh://`: the forge holds the public half, and `jarvis secrets --rotate deploy-key` replaces it.
 
-Add a line here when a later change creates something else that must survive that loss.
+Add a line here only when a later change creates something else that no key in git can bring back.
+
+## Changing recipients and rotating keys
+
+Each command needs a key that opens the env's files (`SOPS_AGE_KEY_FILE`, else `age_key_file`), changes only the instance repository, and prints what to do next. None prints a secret value except the recovery key, once.
+
+| Command | What it does |
+| --- | --- |
+| `jarvis secrets --update-recipients` | Re-encrypts every sealed file whose recipients are not the rule's. Run it after you change the rule by hand. |
+| `jarvis secrets --add-recovery-key` | Adds the recovery key to an env that has one recipient (above). |
+| `jarvis secrets --rotate age` | Makes a new working key, puts it first in the key file beside what it held, puts it in place of the rule's first recipient (the recovery key stays), and re-encrypts every file. |
+| `jarvis secrets --rotate deploy-key` | Seals a new read-only deploy key in place of the old one and prints its public half. |
+
+After `--rotate age`:
+
+1. Commit and push.
+2. Replace the cluster's copy: `kubectl -n flux-system delete secret sops-age && jarvis site --tags flux-operator`. The role recreates `sops-age` from the key file's identities that are in the rule, so the old key is left out. Between steps 1 and 2 Flux cannot decrypt and applies nothing; it carries on once both are done.
+3. Once Flux is Ready, delete every other key's lines from the key file, so it holds the new working key only.
+
+After `--rotate deploy-key`: add the printed public key to the instance repository on the forge (read-only), commit and push, then `kubectl -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator`. Once Flux reads the repository again, remove the old deploy key from the forge.
+
+The restic passwords, the cluster CA and the k3s tokens are not rotated by a command. Each lives in a running system as well as in git, so a new value must be put into that system first: a restic repository keeps its own key list, cert-manager issues from the CA, and every k3s node joined with the token. Their procedures are in `core/platform/backups/CONTRACT.md` (restic) and `core/platform/cert-manager/CONTRACT.md` (CA); the k3s server token is the datastore passphrase and does not change, and the agent token changes at a rebuild (`core/platform/backups/CONTRACT.md`, k3s token). `--rotate-restic` mints a new password for a missing file only (Bootstrap, above).
 
 ## Recovery
 
-1. The working key is lost and the recovery key is not: put the recovery key at `age_key_file` (mode `0600`) and carry on; then make a new working key and reseal to it at your next opportunity (the reseal below, with both keys still able to open the old files).
+1. The working key is lost and the recovery key is not: put the recovery key at `age_key_file` (mode `0600`) and run `jarvis secrets --rotate age`. The new key takes the lost one's place in the rule and every file is re-encrypted; then follow the steps after `--rotate age` above. The last one removes the recovery key from the controller again.
 2. The cluster is up and a copy of the key still exists, including Secret `flux-system/sops-age` key `age.agekey`. Put that key back at `age_key_file`, mode `0600`. Do not delete sealed files and do not run `jarvis secrets`. Prove the restored copy with `jarvis age-key-check`.
-3. The cluster is up and every copy of both keys is gone. Reseal the live Secrets to a new key: write a new age key, put its public key on the env's creation rule, and replace each sealed file from a mode `0600` manifest the owner holds. Run each command from the instance repository, so encryption uses its `.sops.yaml`.
+3. The cluster is up and every copy of both keys is gone (the cluster's `sops-age` included). Reseal the live Secrets to a new key: write a new age key, put its public key on the env's creation rule, and replace each sealed file from a mode `0600` manifest the owner holds. Run each command from the instance repository, so encryption uses its `.sops.yaml`.
    - Top-level secret, `secrets/<name>.sops.yaml` (such as `k3s-token`, `backups-restic`, `cert-manager-ca` or `backups-offsite`): `jarvis encrypt --env <env> --name <name> --force <file>`.
    - Add-on secret, `secrets/<namespace>/<name>.sops.yaml`: `jarvis encrypt --env <env> --name <name> --namespace <namespace> --force <file>`. Only `--namespace` chooses the folder, not `metadata.namespace`. Without it, the tool writes a new top-level file and leaves the nested one encrypted to the lost key. The manifest's `metadata.namespace` must match `--namespace`.
    - App credential, `secrets/app-<name>/backups-restic-app-<name>.sops.yaml`: `jarvis encrypt --env <env> --app app-<name> --force <file>`. The tool names the file and keeps the Secret in `platform-backups`, where the backup policy reads it. Any other form for this file is refused.

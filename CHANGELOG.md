@@ -19,7 +19,16 @@ the upgrade.
 - An offline **recovery key**. init encrypts every secret to two age recipients, the working key
   on the controller and a recovery key whose private half it prints once and keeps nowhere
   (docs/secrets.md). Losing the working key is no longer fatal.
-- `jarvis doctor` installs the pre-commit hook in a clone that lacks it.
+- `jarvis doctor` installs the pre-commit hook in a clone that lacks it, and warns while an env's
+  secrets open for one age key only.
+- The age recipients over an env's life (docs/secrets.md, Changing recipients and rotating keys):
+  `jarvis secrets --add-recovery-key` gives an env made before v0.5.0 its recovery key;
+  `--update-recipients` re-encrypts every sealed file to the rule's recipients after a change;
+  `--rotate age` makes a new working key in place of the old or lost one (from the recovery key,
+  when the working key is gone); `--rotate deploy-key` seals a new Flux deploy key. Each changes
+  only the instance repository and prints the cluster steps that follow.
+- `jarvis validate` fails when a sealed file is not SOPS-encrypted with age, or does not open for
+  exactly the recipients its env's rule names.
 
 - The `jarvis` CLI, one command for an instance repository, replacing the Makefile's operator
   targets and `tools/`. Run it from inside the instance repository: `jarvis doctor`, `validate`,
@@ -121,6 +130,11 @@ the upgrade.
   checkout: `make site ENV=env-01 INSTANCE=<path>` is `jarvis site`, `make restore APP=<ns>` is
   `jarvis restore --app <ns>`, `make bootstrap-secrets` is `jarvis secrets`, and so on
   (`jarvis --help`). The core checkout on the controller is no longer needed for operating an env.
+- Give each env its recovery key, from inside the instance repository with the working key at
+  `age_key_file`: `jarvis secrets --add-recovery-key`. Store the key it prints once offline,
+  then commit and push the re-encrypted files. Until then `jarvis doctor` warns. The keep-safe
+  list in docs/secrets.md is now two items; the working key copy in the password manager is no
+  longer one of them.
 - In the instance CI caller, add `workflow_dispatch:` under `on:`. Renovate moves the preset
   ref and the workflow pin in the core release's PR.
 

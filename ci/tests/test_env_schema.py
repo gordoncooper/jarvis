@@ -19,7 +19,7 @@ from jarvis.schema.env import (
     ValidationError,
     validate_env_tree,
 )
-from support import REPO_ROOT, _valid_cluster_vars, _write_env, copy_sample, sample_root
+from support import REPO_ROOT, SEALED_PLACEHOLDER, _valid_cluster_vars, _write_env, copy_sample, sample_root
 
 
 def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
@@ -353,7 +353,7 @@ def test_ssh_root_requires_the_sealed_deploy_key(tmp_path: Path) -> None:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/flux-deploy-key.sops.yaml" in str(excinfo.value)
     (env / "secrets").mkdir()
-    (env / "secrets" / "flux-deploy-key.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    (env / "secrets" / "flux-deploy-key.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "flux-deploy-key" not in str(excinfo.value)
@@ -755,16 +755,16 @@ def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None
     secrets.mkdir(exist_ok=True)
     validate_env_tree(tmp_path)
     _copy_flux_entry(env)
-    (secrets / "cert-manager-ca.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    (secrets / "cert-manager-ca.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/k3s-token.sops.yaml" in excinfo.value.messages[0]
     for name in ("k3s-token",):
-        (secrets / f"{name}.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+        (secrets / f"{name}.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/backups-restic.sops.yaml" in excinfo.value.messages[0]
-    (secrets / "backups-restic.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    (secrets / "backups-restic.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     validate_env_tree(tmp_path)
 
 
@@ -816,13 +816,13 @@ def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Pa
     validate_env_tree(tmp_path)
     (env / "secrets").mkdir(exist_ok=True)
     for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
-        (env / "secrets" / f"{name}.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+        (env / "secrets" / f"{name}.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/backups-offsite.sops.yaml" in "\n".join(
         excinfo.value.messages
     )
-    (env / "secrets" / "backups-offsite.sops.yaml").write_text("fixture: 1\n", encoding="utf-8")
+    (env / "secrets" / "backups-offsite.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     validate_env_tree(tmp_path)
 
 
@@ -1001,3 +1001,20 @@ def test_app_dns_cluster_ip_is_required_only_while_app_dns_is_listed(tmp_path: P
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "app_dns_cluster_ip is required while values/switches.yaml lists app-dns" in str(excinfo.value)
+
+
+def test_every_sealed_file_opens_for_exactly_the_env_recipients(tmp_path: Path) -> None:
+    """Rule: a sealed file that is not SOPS-encrypted, or is encrypted to other recipients than the
+    env's creation rule names, fails; jarvis secrets --update-recipients is the fix it names."""
+    env = copy_sample(tmp_path) / "envs" / "env-00"
+    env_schema.validate_one_env(tmp_path, "env-00")
+    token = env / "secrets" / "k3s-token.sops.yaml"
+    sealed = token.read_text(encoding="utf-8")
+    token.write_text("stringData:\n  server_token: plain\n", encoding="utf-8")
+    with pytest.raises(ValidationError, match="k3s-token.sops.yaml: not SOPS-encrypted"):
+        env_schema.validate_one_env(tmp_path, "env-00")
+    doc = yaml.safe_load(sealed)
+    doc["sops"]["age"] = doc["sops"]["age"][:1] + [{"recipient": "age1" + "q" * 58, "enc": "x"}]
+    token.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    with pytest.raises(ValidationError, match="run jarvis secrets --update-recipients"):
+        env_schema.validate_one_env(tmp_path, "env-00")

@@ -27,12 +27,19 @@ def key_path(raw: str | None) -> Path:
     return Path(os.environ.get("SOPS_AGE_KEY_FILE") or raw or DEFAULT_KEY_FILE).expanduser()
 
 
-def public_key(path: Path) -> str:
+def public_keys(path: Path) -> list[str]:
+    """The public key of each identity in a key file, newest first (jarvis secrets --rotate age
+    puts the new identity first and leaves the old one until the owner retires it)."""
     proc = subprocess.run(["age-keygen", "-y", str(path)], capture_output=True, text=True, check=False)
-    public = proc.stdout.strip()
-    if proc.returncode or not PUBLIC_KEY.fullmatch(public):
+    found = proc.stdout.split()
+    if proc.returncode or not found or not all(PUBLIC_KEY.fullmatch(key) for key in found):
         raise AgeError(f"could not read the age public key from {path}")
-    return public
+    return found
+
+
+def public_key(path: Path) -> str:
+    """The key file's newest identity's public key."""
+    return public_keys(path)[0]
 
 
 def create_key(path: Path) -> str:
