@@ -21,6 +21,7 @@ from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE re
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.schema import values as _values
 from jarvis.secrets import age as _age
+from jarvis.secrets import recipients as _recipients
 
 _PRODUCT_ROOT = PRODUCT_ROOT
 
@@ -320,6 +321,9 @@ def _validate_env(
     errors.extend(_validate_app_backups(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_addons(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_orphan_sealed(env_dir, repo_root, env_name, cluster_vars_path))
+    if not pre_host:
+        # Every sealed file opens for exactly the env's recipients: the working and recovery keys.
+        errors.extend(_recipients.problems(repo_root, env_dir))
     errors.extend(_validate_apps(env_dir, repo_root, cluster_vars, pre_host=pre_host))
     errors.extend(_validate_flux_entry_files(env_dir, repo_root, env_name, bootstrapped))
     errors.extend(_validate_flux_sources(env_dir, repo_root, env_name, cluster_vars))

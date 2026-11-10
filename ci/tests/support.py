@@ -79,6 +79,10 @@ def _default_hosts() -> str:
     )
 
 
+# A sealed file's shape for the schema: SOPS metadata naming the recipient _write_env's rule names.
+SEALED_PLACEHOLDER = "sops:\n  age:\n    - recipient: age1fixture\n"
+
+
 def _ensure_sops_creation_rule(root: Path, env_name: str) -> None:
     import yaml
 

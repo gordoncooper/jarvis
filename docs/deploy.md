@@ -82,12 +82,7 @@ The k3s release and the Flux version come with the core tag. Key rules are in [s
 
 ### Deploy key
 
-An `ssh://` root reads the instance repository with one read-only deploy key. The schema then requires `envs/<env>/secrets/flux-deploy-key.sops.yaml`. `jarvis init` and `jarvis env add` make and seal it, and print the public half to add on the forge. To replace a lost or leaked one by hand:
-
-1. In a new mode-0700 directory, make an ed25519 key with no passphrase: `ssh-keygen -t ed25519 -N '' -C flux-<env> -f <dir>/flux-deploy-key`.
-2. Write a Secret manifest in that directory: `kind: Secret`, `metadata.namespace: flux-system`, and `stringData.identity` holding the private key. Seal it with the public recipient only, no age private key: `jarvis encrypt --env <env> --name flux-deploy-key <dir>/secret.yaml`.
-3. On the forge, add `<dir>/flux-deploy-key.pub` to the instance repository as a deploy key with write access off (read-only). Adding a deploy key needs repository admin.
-4. Shred the directory. GitHub keeps the public half; the sealed file keeps the private half. A lost key is replaced, not recovered: make a new one and repeat.
+An `ssh://` root reads the instance repository with one read-only deploy key. The schema then requires `envs/<env>/secrets/flux-deploy-key.sops.yaml`. `jarvis init` and `jarvis env add` make and seal it, and print the public half to add on the forge. To replace a lost or leaked one: `jarvis secrets --rotate deploy-key` ([docs/secrets.md](secrets.md#changing-recipients-and-rotating-keys)).
 
 `site.yml` creates `flux-system/flux-deploy-key` once from the sealed file, with GitHub's SSH host key as `known_hosts`, and never reconciles it from Git. It decrypts, so that run needs the age private key.
 

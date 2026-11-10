@@ -853,10 +853,11 @@ def check_age_key(repo: Path, env: str) -> None:
     if not path.is_file():
         raise PrepError(f"age key {path} is missing; copy it here from where you keep it (mode 0600)")
     try:
-        public = _age.public_key(path)
+        held = _age.public_keys(path)
     except _age.AgeError as exc:
         raise PrepError(str(exc)) from exc
-    if public not in _age.recipients(repo / ".sops.yaml", env):
+    public = next((key for key in held if key in _age.recipients(repo / ".sops.yaml", env)), None)
+    if public is None:
         raise PrepError(
             f"age key {path} is not one of envs/{env}/secrets/'s recipients in .sops.yaml; "
             "nothing was changed. Use the env's key, or follow the age key recovery in docs/secrets.md."

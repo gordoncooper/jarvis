@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import bcrypt
+import yaml
 
 from jarvis.backups import app_credentials as _app_backups
 from jarvis.env.runtime import instance_root
@@ -556,6 +557,66 @@ def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> l
     return created
 
 
+def _key_file(env: str) -> Path:
+    return _age.key_path(_yaml_scalar(_cluster_text(env), "age_key_file"))
+
+
+def _lifecycle(args: argparse.Namespace) -> int:
+    """The recipient and rotation operations: each changes the rule or a key, then re-encrypts."""
+    from jarvis.secrets import recipients as _recipients
+
+    repo, env = _repo_root(), args.env
+    os.environ["SOPS_AGE_KEY_FILE"] = str(_key_file(env))
+    try:
+        if args.add_recovery_key:
+            if _recipients.add_recovery(repo, env) is None:
+                print(f"PASS envs/{env}/secrets/ already has a second recipient; nothing changed")
+        elif args.rotate == "age":
+            old, new = _recipients.rotate(repo, env, _key_file(env))
+            print(f"PASS new working key {new} in {_key_file(env)}, in place of {old} in .sops.yaml")
+        elif args.rotate == "deploy-key":
+            return _rotate_deploy_key(env)
+        changed = _recipients.update(repo, env)
+    except (_recipients.RecipientsError, _age.AgeError) as exc:
+        print(f"FAIL secrets: {exc}")
+        return 1
+    for rel in changed:
+        print(f"PASS re-encrypted {rel}")
+    if not changed:
+        print(f"PASS every sealed file of {env} opens for exactly its recipients; nothing changed")
+    if args.rotate == "age":
+        print(
+            "Next: commit and push, then put the new key in the cluster: "
+            "kubectl -n flux-system delete secret sops-age && jarvis site --tags flux-operator "
+            f"(it recreates sops-age from {_key_file(env)}). Once Flux is Ready, delete every other "
+            "key's lines from that file, so it holds the new working key only."
+        )
+    elif changed:
+        print("Next: commit and push the re-encrypted files.")
+    return 0
+
+
+def _rotate_deploy_key(env: str) -> int:
+    """A new read-only deploy key: sealed in place of the old one, its public half printed."""
+    from jarvis.env import scaffold
+
+    _private, public = scaffold.deploy_key(env)
+    _sops.encrypt_secret_to_file(
+        repo_root=_repo_root(),
+        env=env,
+        name="flux-deploy-key",
+        document=yaml.safe_load(scaffold.deploy_key_secret(_private)),
+        sops_bin=_sops.require_sops(),
+    )
+    print(f"PASS sealed a new envs/{env}/secrets/flux-deploy-key.sops.yaml")
+    print(
+        "Next: add this read-only deploy key to the repository on the forge, commit and push, then "
+        "kubectl -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator; "
+        f"once Flux reads the repo again, remove the old deploy key from the forge.\n  {public}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Env under envs/")
@@ -572,9 +633,29 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAMESPACE",
         help="Mint only this hosted app's own backup credential (app-<name>).",
     )
+    which = parser.add_mutually_exclusive_group()
+    which.add_argument(
+        "--update-recipients",
+        action="store_true",
+        help="Re-encrypt every sealed file whose age recipients differ from .sops.yaml's rule",
+    )
+    which.add_argument(
+        "--add-recovery-key",
+        action="store_true",
+        help="Give an env with one age recipient its offline recovery key (shown once), then re-encrypt",
+    )
+    which.add_argument(
+        "--rotate",
+        choices=("age", "deploy-key"),
+        help="age: a new working key, every file re-encrypted to it; deploy-key: a new Flux deploy key",
+    )
     args = parser.parse_args(argv)
     if args.app is not None and args.rotate_restic:
         parser.error("--app and --rotate-restic are separate runs")
+    if args.update_recipients or args.add_recovery_key or args.rotate:
+        if args.app is not None or args.rotate_restic:
+            parser.error("--update-recipients, --add-recovery-key and --rotate are runs of their own")
+        return _lifecycle(args)
     if args.app is not None:
         created = bootstrap_app(args.env, args.app)
     else:

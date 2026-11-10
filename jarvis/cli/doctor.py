@@ -90,6 +90,17 @@ def check_hosts(env_dir: Path) -> list[tuple[str, str]]:
     return results or [("WARN", "the inventory lists no host")]
 
 
+def check_recovery(instance: Path, env_dir: Path) -> list[tuple[str, str]]:
+    """An env's secrets open for the working key and an offline recovery key."""
+    from jarvis.secrets.age import recipients
+
+    keys = recipients(instance / ".sops.yaml", env_dir.name)
+    if len(keys) >= 2:
+        return [("PASS", f"envs/{env_dir.name}/secrets/ open for {len(keys)} age keys (working and recovery)")]
+    message = f"envs/{env_dir.name}/secrets/ open for one age key only; add the recovery key: jarvis secrets --add-recovery-key"
+    return [("WARN", message)]
+
+
 def check_hook(instance: Path) -> list[tuple[str, str]]:
     """The pre-commit hook jarvis init installs: a fresh clone does not have it."""
     hook = instance / ".git" / "hooks" / "pre-commit"
@@ -104,7 +115,14 @@ def check_hook(instance: Path) -> list[tuple[str, str]]:
 
 
 def run(instance: Path, env_dir: Path) -> int:
-    results = check_tools() + check_age_key(env_dir) + check_remote(instance) + check_hosts(env_dir) + check_hook(instance)
+    results = (
+        check_tools()
+        + check_age_key(env_dir)
+        + check_remote(instance)
+        + check_hosts(env_dir)
+        + check_recovery(instance, env_dir)
+        + check_hook(instance)
+    )
     for status, message in results:
         print(f"{status} doctor: {message}", flush=True)
     return 4 if any(status == "FAIL" for status, _ in results) else 0

@@ -30,6 +30,7 @@ import yaml
 
 from jarvis.env import scaffold
 from jarvis.secrets import age as _age
+from jarvis.secrets import recipients as _recipients
 
 _KNOWN_FEATURES = ("app-dns", "app-hosting", "offsite-backup-copy", "apps-backup-server")
 
@@ -107,17 +108,7 @@ def _recovery_key(given: str | None) -> str:
             raise scaffold.ScaffoldError(f"--recovery-recipient {given!r} is not an age public key")
         return given
     secret, public = _age.new_key_in_memory()
-    print()
-    print("=" * 78)
-    print("The RECOVERY KEY. It is shown this once and kept nowhere else. Store it offline now")
-    print("(paper, or a password manager entry you do not use day to day). With it, the secrets")
-    print("open even if the working key is lost.")
-    print()
-    print(f"  {secret}")
-    print()
-    print(f"  public key: {public}")
-    print("=" * 78)
-    print()
+    _recipients.print_recovery_key(secret, public)
     return public
 
 
