@@ -158,3 +158,35 @@ def test_a_lost_working_key_is_replaced_from_the_recovery_key(instance: Path, tm
     for path in recipients.sealed_files(instance / "envs" / ENV):
         assert not _opens(path, lost), path
     assert _schema_ok(instance)
+
+
+def test_a_key_that_opens_nothing_changes_nothing_and_shows_no_recovery_key(instance: Path, tmp_path: Path, capsys, monkeypatch) -> None:
+    """Rule: every check comes before the first change. A working key that cannot open the env's
+    files (the wrong user's, another env's, none at all) is refused before a recovery key is made,
+    printed or added to the rule."""
+    rule = (instance / ".sops.yaml").read_text()
+    stranger = tmp_path / "stranger.txt"
+    age.create_key(stranger)
+    for key_file, message in ((stranger, "does not open"), (tmp_path / "absent.txt", "no age key at")):
+        monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key_file))
+        for flags in (["--add-recovery-key"], ["--update-recipients"], ["--rotate", "age"]):
+            assert mint.main(["--env", ENV, *flags]) == 1
+            out = capsys.readouterr().out
+            assert message in out and "nothing was changed" in out and "AGE-SECRET-KEY-" not in out
+            assert (instance / ".sops.yaml").read_text() == rule
+    assert stranger.read_text().count("AGE-SECRET-KEY-") == 1
+
+
+def test_a_failure_after_the_rule_changed_puts_it_back(instance: Path, capsys, monkeypatch) -> None:
+    """Rule: if re-encrypting fails partway, .sops.yaml is restored and the files already done are
+    named, so the repository goes back to what was committed."""
+    rule = (instance / ".sops.yaml").read_text()
+
+    def fail(_instance, _env):
+        raise recipients.RecipientsError("sops updatekeys failed", ["envs/env-00/secrets/k3s-token.sops.yaml"])
+
+    monkeypatch.setattr(recipients, "update", fail)
+    assert mint.main(["--env", ENV, "--add-recovery-key"]) == 1
+    out = capsys.readouterr().out
+    assert (instance / ".sops.yaml").read_text() == rule
+    assert "never used: discard it" in out and "git checkout -- envs/env-00/secrets/k3s-token.sops.yaml" in out
