@@ -35,7 +35,7 @@ from jarvis.render.cluster_vars import (
     render_document,
 )
 from jarvis.schema.env import kubernetes_version_from_k3s
-from support import ExampleCopy, _kustomize_build, real_and_copy_envs, sample_root
+from support import ExampleCopy, real_and_copy_envs, sample_root
 
 _FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _STRICT_SUBSTITUTION = "--feature-gates=StrictPostBuildSubstitutions=true"
@@ -673,13 +673,13 @@ def test_volsync_spec_is_checked_against_the_upstream_crd(kind: str) -> None:
 
 
 def validate_env_flux(root: Path, env: str) -> None:
-    """Kustomize-build the env flux entry and each Flux path, then kubeconform.
+    """Flux's build of the env's root and of each Flux path it applies, then kubeconform.
 
     Each stage is built with its components, and each add-on Kustomization on the
     services stage's path is built too, as on the cluster, with its postBuild values. A hosted
     app's own Kustomizations read the apps repository, which is not in this checkout.
     """
-    from jarvis.checks.manifests import ROOT_SOURCE, env_flux_docs, flux_paths, postbuild_values, substitute
+    from jarvis.checks.manifests import ROOT_SOURCE, env_flux_docs, flux_paths
 
     env_rel = f"envs/{env}/flux"
     env_docs, error = env_flux_docs(root, env_rel)
@@ -697,16 +697,14 @@ def validate_env_flux(root: Path, env: str) -> None:
         if source.get("name", ROOT_SOURCE) != ROOT_SOURCE:
             continue
         assert path.error is None and not path.partial, f"{name}: {path.error or 'partial build'}"
-        output = yaml.safe_dump_all(
-            substitute(path.docs, postbuild_values(path.kustomization, env_docs)), sort_keys=False
-        )
+        output = yaml.safe_dump_all(path.docs, sort_keys=False)
         _record_object_identities(output, name, seen)
         if isinstance((path.kustomization.get("spec") or {}).get("decryption"), dict):
             _validate_platform_configs_without_sops_secrets(output, version)
         else:
             _kubeconform_validate(output, version)
-    # The env flux directory holds these Kustomizations. It is not one of their paths.
-    _kubeconform_validate(_kustomize_build(f"envs/{env}/flux", root=root), version)
+    # The root's own build holds these Kustomizations. It is not one of their paths.
+    _kubeconform_validate(yaml.safe_dump_all(env_docs, sort_keys=False), version)
 
 
 def test_flux_layer_kustomize_build_and_schema_validate(example_copy: ExampleCopy) -> None:

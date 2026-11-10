@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import posixpath
-import re
 import shutil
 import subprocess
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
+from jarvis.checks.flux_build import FluxPath, env_tree
+from jarvis.checks.flux_build import is_flux_kustomization as is_flux_kustomization  # re-export
 from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, ROOT_SOURCE, core_dir
 
 # The trees the root artifact takes from the core repository.
@@ -21,10 +19,6 @@ SCAN_ROOTS = ("core/", "addons/", "envs/")
 # Core holds core/ and addons/ and no env; an instance repo holds envs/. require_roots requires these.
 REQUIRED_ROOTS = ("core/", "addons/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
-FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
-_KUSTOMIZATION_FILES = ("kustomization.yaml", "kustomization.yml", "Kustomization")
-# A postBuild variable; `$${...}` is a literal.
-_VARIABLE = re.compile(r"(?<!\$)\$\{([_A-Za-z][_A-Za-z0-9]*)\}")
 
 
 def load_documents(
@@ -70,95 +64,51 @@ def load_documents(
     return found
 
 
-def source_rel(root: Path, rel: str) -> str:
-    """A Flux path in the root artifact, as a path under root (or absolute, into core).
-
-    The root artifact holds the env repository's files, and core's core/ and addons/ (sync.yaml
-    includes them from the core repository by fromPath). Those two resolve in the core repository
-    the env reads (core_dir): the tree's own, or the core running the checks.
-    """
-    rel = rel.strip().removeprefix("./")
-    if rel.split("/", 1)[0] in _CORE_TREES:
-        return str(core_dir(root) / rel)
-    return rel
-
-
-def _artifact_shaped(root: Path) -> bool:
-    """root holds its own core trees where the root artifact does: an env's relative paths to them
-    (../../../core/flux) then resolve in place, and a tree it lacks fails to build, as in Flux."""
-    return core_dir(root) == root
-
-
 def kustomize_build(root: Path, rel: str) -> tuple[list[dict], str | None]:
-    """The documents `kustomize build` renders for rel, or an error.
-
-    A directory with no kustomization file gets what Flux generates for it: every
-    YAML manifest under it.
-    """
-    rel = source_rel(root, rel)
-    if not Path(rel).is_absolute() and rel.startswith("envs/") and not _artifact_shaped(root):
-        # An env's files name core by its artifact path; build them on a copy laid out that way.
-        with tempfile.TemporaryDirectory() as work:
-            stage = Path(work)
-            core = core_dir(root)
-            for tree in _CORE_TREES:
-                if (core / tree).is_dir():
-                    (stage / tree).symlink_to((core / tree).resolve(), target_is_directory=True)
-            env_rel = "/".join(rel.split("/")[:2])
-            shutil.copytree(root / env_rel, stage / env_rel)
-            docs, error = kustomize_build(stage, rel)
-            return docs, error.replace(str(stage), str(root)) if error else None
-    target = root / rel
-    if target.is_dir() and not any((target / name).is_file() for name in _KUSTOMIZATION_FILES):
-        return _generated(target), None
+    """The documents `kustomize build` renders for one of core's folders (core/... or addons/...)
+    on its own, before any Flux Kustomization applies it: an add-on's wiring, the admission
+    policies. What an env applies is Flux's build (flux_build.env_tree), never this."""
+    rel = rel.strip().removeprefix("./")
+    if rel.split("/", 1)[0] not in _CORE_TREES:
+        return [], f"{rel} is not one of core's trees ({', '.join(_CORE_TREES)})"
     kustomize = shutil.which("kustomize")
     if kustomize is None:
         return [], "kustomize not found on PATH (run jarvis doctor)"
-    proc = subprocess.run(
-        [kustomize, "build", "--load-restrictor", "LoadRestrictionsNone", str(root / rel)],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=root,
-    )
+    target = core_dir(root) / rel
+    proc = subprocess.run([kustomize, "build", str(target)], capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         return [], f"kustomize build {rel} failed: {(proc.stderr or proc.stdout).strip()}"
     return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)], None
 
 
-def env_flux_docs(root: Path, env_rel: str) -> tuple[list[dict], str | None]:
-    """What an env's root Kustomization applies: its flux/ built with core's Flux base, then the
-    root's postBuild.substitute (jarvis_env), as on the cluster.
-
-    flux/kustomization.yaml lists core's base as ../../../core/flux, the root artifact's path
-    (kustomize_build stages it where the checkout holds core elsewhere).
-    """
-    docs, error = kustomize_build(root, env_rel)
-    if error:
-        return [], error
-    values = next(
-        ((doc.get("spec") or {}).get("postBuild") or {}
-         for doc in docs if is_root_kustomization(doc)),
-        {},
-    ).get("substitute") or {}
-    return substitute(docs, {str(key): str(value) for key, value in values.items()}), None
-
-
-def _generated(target: Path) -> list[dict]:
+def core_files(root: Path, rel: str) -> tuple[list[dict], str | None]:
+    """The documents in the YAML files of one of core's folders, as written: for files a
+    Component lists (the app-hosting policies), which kustomize cannot build on their own."""
+    rel = rel.strip().removeprefix("./")
+    if rel.split("/", 1)[0] not in _CORE_TREES:
+        return [], f"{rel} is not one of core's trees ({', '.join(_CORE_TREES)})"
+    target = core_dir(root) / rel
+    if not target.is_dir():
+        return [], f"{rel} is not a folder"
     docs: list[dict] = []
-    for path in sorted(item for item in target.rglob("*") if item.suffix in {".yaml", ".yml"}):
-        docs.extend(
-            doc
-            for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
-            if isinstance(doc, dict) and "kind" in doc and "apiVersion" in doc
-        )
-    return docs
+    for path in sorted(target.glob("*.yaml")):
+        try:
+            docs.extend(doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict))
+        except (OSError, yaml.YAMLError) as exc:
+            return [], f"{rel}/{path.name}: {exc}"
+    return docs, None
 
 
-def is_flux_kustomization(doc: dict) -> bool:
-    return doc.get("kind") == "Kustomization" and str(doc.get("apiVersion", "")).startswith(
-        FLUX_KUSTOMIZATION_API
-    )
+def env_flux_docs(root: Path, env_rel: str) -> tuple[list[dict], str | None]:
+    """What the env's root Kustomization applies, as Flux builds it (flux_build)."""
+    tree = env_tree(root, env_rel)
+    return tree.env_docs, tree.error
+
+
+def flux_paths(root: Path, env_rel: str, env_docs: list[dict] | None = None) -> list[FluxPath]:
+    """Every Flux Kustomization under the env's root, each with the objects Flux builds for it
+    (substituted). env_docs is accepted for the callers that already hold it."""
+    return env_tree(root, env_rel).paths
 
 
 def is_root_kustomization(doc: dict) -> bool:
@@ -167,86 +117,6 @@ def is_root_kustomization(doc: dict) -> bool:
         ROOT_SOURCE,
         ROOT_SOURCE,
     )
-
-
-def postbuild_values(doc: dict, env_docs: list[dict]) -> dict[str, str]:
-    """The values a Flux Kustomization's postBuild substitutes, from the env's flux tree."""
-    post_build = (doc.get("spec") or {}).get("postBuild") or {}
-    values: dict[str, str] = {}
-    for source in post_build.get("substituteFrom") or []:
-        if not isinstance(source, dict):
-            continue
-        for item in env_docs:
-            if (
-                item.get("kind") == source.get("kind")
-                and (item.get("metadata") or {}).get("name") == source.get("name")
-                and namespace_of(item) == namespace_of(doc)
-            ):
-                values.update({str(k): str(v) for k, v in (item.get("data") or {}).items()})
-    values.update({str(k): str(v) for k, v in (post_build.get("substitute") or {}).items()})
-    return values
-
-
-def substitute[T](node: T, values: dict[str, str]) -> T:
-    """node with each ${name} that values holds replaced, as postBuild does: in the YAML text,
-    which is then parsed again, so an unquoted false becomes a boolean and an empty value null.
-    The result has node's shape (a dict stays a dict, a list a list)."""
-    text = yaml.safe_dump(node, width=2**31 - 1)
-    return yaml.safe_load(_VARIABLE.sub(lambda match: values.get(match.group(1), match.group(0)), text))
-
-
-@dataclass(frozen=True)
-class FluxPath:
-    """What one Flux Kustomization applies. parent is the stage whose path applies it, or None
-    for a stage in the env's flux tree. partial: the example env keeps part of it out of Git."""
-
-    kustomization: dict
-    parent: dict | None
-    docs: list[dict]
-    error: str | None
-    partial: bool
-
-
-def flux_paths(root: Path, env_rel: str, env_docs: list[dict]) -> list[FluxPath]:
-    """Each stage the env's flux tree applies, then each Flux Kustomization on a stage's path.
-
-    A stage's spec.components are built with its path, as Flux adds them to it. A
-    Kustomization on a stage's path gets the stage's postBuild values first, as on the cluster.
-    One that reads another source (a hosted app's, from the apps repository) is not in this
-    checkout: it is listed with no objects, as partial.
-    """
-    found: list[FluxPath] = []
-    for doc in env_docs:
-        if not is_flux_kustomization(doc) or is_root_kustomization(doc):
-            continue
-        stage = build_flux_path(root, env_rel, doc)
-        found.append(stage)
-        values = postbuild_values(doc, env_docs)
-        for item in stage.docs:
-            if is_flux_kustomization(item):
-                item = substitute(item, values)
-                source = (item.get("spec") or {}).get("sourceRef")
-                if isinstance(source, dict) and source.get("name") != ROOT_SOURCE:
-                    found.append(FluxPath(item, doc, [], None, True))
-                    continue
-                found.append(build_flux_path(root, env_rel, item, parent=doc))
-    return found
-
-
-def build_flux_path(root: Path, env_rel: str, doc: dict, *, parent: dict | None = None) -> FluxPath:
-    spec = doc.get("spec") or {}
-    path = spec.get("path")
-    if not isinstance(path, str) or not path.strip():
-        return FluxPath(doc, parent, [], "spec.path is unset", False)
-    rel = path.strip().removeprefix("./")
-    partial = False
-    docs, error = kustomize_build(root, rel)
-    for component in spec.get("components") or []:
-        if error:
-            break
-        more, error = kustomize_build(root, posixpath.join(rel, str(component)))
-        docs = docs + more
-    return FluxPath(doc, parent, docs, error, partial)
 
 
 def namespace_of(doc: dict) -> str:

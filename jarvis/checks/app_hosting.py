@@ -30,13 +30,11 @@ from pathlib import Path
 from jarvis.apps import values as _apps
 from jarvis.apps.app_file import SHIPPED_KINDS
 from jarvis.checks.manifests import (
+    core_files,
     env_flux_docs,
     flux_paths,
-    kustomize_build,
     namespace_of,
-    postbuild_values,
     ref_of,
-    substitute,
 )
 from jarvis.schema.env import env_flux_dirs
 
@@ -110,7 +108,7 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
     wired: set[str] = set()
     if listed:
         # From core's folder: the example env's platform-configs stage builds only the core list.
-        policies, error = kustomize_build(root, POLICIES)
+        policies, error = core_files(root, POLICIES)
         yield from [error] if error else binding_problems(policies)
     for path in flux_paths(root, env_rel, env_docs):
         name = _name(path.kustomization)
@@ -123,7 +121,7 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         if path.error:
             yield f"{ref_of(path.kustomization)}: {path.error}"
             continue
-        docs = substitute(path.docs, postbuild_values(path.kustomization, env_docs))
+        docs = path.docs
         grants = _apps.grant_annotations(data, app, cluster_vars.get("dns_suffix", ""))
         yield from (f"app {app}: {problem}" for problem in wiring_problems(app, docs, grants))
     for app in listed:

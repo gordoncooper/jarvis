@@ -45,14 +45,12 @@ from pathlib import Path
 import yaml
 
 from jarvis.checks.manifests import (
-    build_flux_path,
     env_flux_docs,
+    flux_paths,
     is_flux_kustomization,
     kustomize_build,
     namespace_of,
-    postbuild_values,
     ref_of,
-    substitute,
 )
 from jarvis.schema.env import (
     ADDON_SECRETS_PATH,
@@ -198,7 +196,8 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
             "it creates their namespaces and tenant identities"
         )
     known = addon_names(core_dir(root))
-    values = postbuild_values(stage, env_docs)
+    # Each Kustomization the services stage applies, as Flux built it.
+    applied = {_name(path.kustomization): path for path in flux_paths(root, env_rel) if _name(path.parent or {}) == _name(stage)}
     for component in components:
         name = str(component).strip().removeprefix("./")
         if name not in known:
@@ -211,7 +210,10 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         yield from (f"add-on {name}: {problem}" for problem in _wiring_problems(name, wiring, namespaces))
         for doc in wiring:
             if is_flux_kustomization(doc):
-                path = build_flux_path(root, env_rel, substitute(doc, values), parent=stage)
+                path = applied.get(_name(doc))
+                if path is None:
+                    yield f"add-on {name}: {ref_of(doc)} is not among what the services stage applies"
+                    continue
                 yield from (f"add-on {name}: {problem}" for problem in _tenant_path_problems(path, namespaces))
 
 

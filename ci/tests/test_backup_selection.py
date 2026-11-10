@@ -14,13 +14,12 @@ import pytest
 import yaml
 
 from jarvis.backups import selection as _backup_selection
-from jarvis.checks.manifests import substitute
+from jarvis.checks.flux_build import env_tree
 from jarvis.schema.env import ValidationError, validate_env_tree, validate_one_env
 from jarvis.verify.backups import backups_checks, check_backups
 from jarvis.verify.common import CheckError
 from support import (
     ExampleCopy,
-    _kustomize_build,
     bootstrap_example_copy,
     copy_sample,
     kyverno_generated,
@@ -237,11 +236,14 @@ def test_overrides_land_on_the_replication_source(tmp_path: Path) -> None:
 
     copy = _override_copy(tmp_path, {"notes": {"backup_schedule": "15 4 * * *", "backup_retention_daily": 0, "backup_retention_weekly": 9}})
     validate_one_env(copy.root, copy.name)
-    rendered = _kustomize_build(f"envs/{copy.name}/flux/platform-configs", root=copy.root)
-    docs = [doc for doc in yaml.safe_load_all(rendered) if isinstance(doc, dict)]
+    # The env's platform-configs layer as Flux builds it, the env's values substituted.
+    tree = env_tree(copy.root, f"envs/{copy.name}/flux")
+    configs = next(path for path in tree.paths if path.kustomization["metadata"]["name"] == "platform-configs")
+    assert tree.error is None and configs.error is None, tree.error or configs.error
+    docs = configs.docs
     env = yaml.safe_load((copy.env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    policies = [substitute(doc, {key: str(value) for key, value in env.items() if key.startswith("backup_")})
-                for doc in docs if doc["kind"] == "GeneratingPolicy" and doc["metadata"]["name"].startswith("pvc-backup")]
+    policies = [doc for doc in docs
+                if doc["kind"] == "GeneratingPolicy" and doc["metadata"]["name"].startswith("pvc-backup")]
 
     def source(claim: dict, schedule: str, daily: int, weekly: int, monthly: int) -> dict:
         name, namespace = claim["metadata"]["name"], claim["metadata"]["namespace"]

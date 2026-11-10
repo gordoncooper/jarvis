@@ -9,11 +9,11 @@ from pathlib import Path
 
 import yaml
 
-from jarvis.checks.manifests import substitute
 from support import REPO_ROOT as ROOT
 from support import (
     ExampleCopy,
     _kustomize_build,
+    flux_envsubst,
     kyverno_generated,
     real_and_copy_envs,
     renovate_python_pattern,
@@ -158,7 +158,7 @@ def _cluster(*extra: dict) -> list[dict]:
 
 
 def _generated(tmp_path: Path, claims: list[dict], cluster: list[dict]) -> dict[tuple[str, str, str], dict]:
-    policies = [substitute(doc, _ENV) for doc in _docs(ROOT / "core/platform/backups/enrollment.yaml")]
+    policies = flux_envsubst(_docs(ROOT / "core/platform/backups/enrollment.yaml"), _ENV)
     made = kyverno_generated(tmp_path, policies, claims, cluster)
     return {(doc["kind"], doc["metadata"]["namespace"], doc["metadata"]["name"]): doc for doc in made}
 

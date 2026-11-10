@@ -23,8 +23,7 @@ import yaml
 
 from jarvis.apps import values as _apps
 from jarvis.apps.app_file import check_folder
-from jarvis.checks.manifests import substitute
-from support import REPO_ROOT, kyverno_generated
+from support import REPO_ROOT, flux_envsubst, kyverno_generated
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
 POLICIES = REPO_ROOT / "core" / "feature" / "app-hosting" / "policies"
@@ -66,7 +65,7 @@ def _wiring(app: str, grants: list[str]) -> list[dict]:
     """What the app's wiring applies, rendered with the env's exception lines for it."""
     data = {"apps": [app], "exceptions": [{app: grant} for grant in grants], "versions": {app: "v0.1.0"}}
     values = {**_apps.substitutes(data, app, CLUSTER_VARS), "dns_suffix": SUFFIX, "jarvis_env": "env-00"}
-    return substitute(_docs(WIRING / "namespace.yaml"), values)
+    return flux_envsubst(_docs(WIRING / "namespace.yaml"), values)
 
 
 def _app_file_stand_in(app: str) -> dict:
@@ -81,7 +80,7 @@ def _app_file_stand_in(app: str) -> dict:
 def _deploy(app: str) -> list[dict]:
     """A fixture app's deploy/ objects, as its Kustomization applies them."""
     docs = [doc for path in sorted((APPS / app / "deploy").glob("*.yaml")) for doc in _docs(path)]
-    docs = substitute(docs, {"app_host": f"{app}.apps.{SUFFIX}"})
+    docs = flux_envsubst(docs, {"app_host": f"{app}.apps.{SUFFIX}"})
     for doc in docs:
         doc["metadata"]["namespace"] = f"app-{app}"
     return docs

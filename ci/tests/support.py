@@ -218,6 +218,54 @@ def link_core_trees(instance: Path, product: Path) -> None:
             (instance / tree).symlink_to(product / tree, target_is_directory=True)
 
 
+def flux_envsubst(docs: list[dict], values: dict[str, str]) -> list[dict]:
+    """docs after Flux's own postBuild substitution of values (flux envsubst --strict): every
+    variable they use must be among values, as on the cluster."""
+    import os
+
+    import yaml
+
+    flux = shutil.which("flux")
+    assert flux, "flux not found on PATH (run jarvis doctor)"
+    proc = subprocess.run(
+        [flux, "envsubst", "--strict"], input=yaml.safe_dump_all(docs, sort_keys=False), capture_output=True,
+        text=True, check=False, env={**os.environ, **{key: str(value) for key, value in values.items()}},
+    )  # fmt: skip
+    assert proc.returncode == 0, proc.stderr
+    return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)]
+
+
+def write_flux_root(env_dir: Path) -> Path:
+    """The env's flux/sync.yaml with only what the env checks read: the root source and the root
+    Kustomization applying the env's flux/, as a real sync.yaml declares them."""
+    import yaml
+
+    env = env_dir.name
+    docs = [
+        {
+            "apiVersion": "source.toolkit.fluxcd.io/v1",
+            "kind": "GitRepository",
+            "metadata": {"name": "flux-system", "namespace": "flux-system"},
+            "spec": {"interval": "1m", "url": "https://example.invalid/env.git", "ref": {"branch": "main"}},
+        },
+        {
+            "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+            "kind": "Kustomization",
+            "metadata": {"name": "flux-system", "namespace": "flux-system"},
+            "spec": {
+                "interval": "10m",
+                "path": f"./envs/{env}/flux",
+                "prune": True,
+                "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
+            },
+        },
+    ]
+    path = env_dir / "flux" / "sync.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def set_switches(env_dir: Path, **sections: list[str]) -> None:
     """Replace these sections of the env's values/switches.yaml, as an owner edits the file."""
     import yaml

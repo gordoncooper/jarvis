@@ -24,7 +24,6 @@ from jarvis.checks import (
     backup_isolation,
     flux_identity,
     flux_prune,
-    flux_substitute,
     manifest_lint,
 )
 from jarvis.env.runtime import instance_root
@@ -76,7 +75,6 @@ CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "backup-isolation": _scan(backup_isolation),
     "flux-identity": _scan(flux_identity),
     "flux-prune": _scan(flux_prune),
-    "flux-substitute": _scan(flux_substitute),
     "manifest-lint": _manifest_lint,
     "secret-scan": _secret_scan,
 }

@@ -44,9 +44,7 @@ from jarvis.checks.manifests import (
     env_flux_docs,
     flux_paths,
     namespace_of,
-    postbuild_values,
     ref_of,
-    substitute,
 )
 from jarvis.schema.env import env_flux_dirs
 
@@ -117,12 +115,8 @@ def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[st
             if cluster.get("multitenant") is not True:
                 yield f"{ref_of(doc)}: spec.cluster.multitenant is not true"
     paths = flux_paths(root, env_rel, env_docs)
-    # A stage's objects as the cluster gets them, with the stage's postBuild values.
-    stage_docs = {
-        id(path): substitute(path.docs, postbuild_values(path.kustomization, env_docs))
-        for path in paths
-        if path.parent is None
-    }
+    # A stage's objects as the cluster gets them: Flux's build, substituted.
+    stage_docs = {id(path): path.docs for path in paths if path.parent is None}
     # The services stage and each app's wiring, as the platform account, declare each add-on's
     # and each app's tenant account and its bindings.
     wiring = [

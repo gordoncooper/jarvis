@@ -7,6 +7,19 @@ the upgrade.
 
 ## Unreleased
 
+### Changed
+
+- The env checks read Flux's own build: each Kustomization an env applies is built with
+  `flux build kustomization --dry-run --strict-substitute --in-memory-build`, from the root in
+  `flux/sync.yaml` down, its `substituteFrom` ConfigMaps and Secrets read from what is already
+  built. Python no longer resolves paths or substitutes variables itself, so the checks see what
+  the reconcile applies. A variable with no value and no default now fails `jarvis validate` as it
+  fails the reconcile.
+
+### Removed
+
+- The `flux-substitute` check: Flux's strict substitution in the build above does its job.
+
 ### Fixed
 
 - The package version is the release tag (hatch-vcs): `uv tool list` and pip show `0.5.2` for an

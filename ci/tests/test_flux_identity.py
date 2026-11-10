@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from jarvis.checks.flux_identity import scan_flux_identity
-from support import REPO_ROOT, sample_root
+from support import REPO_ROOT, sample_root, write_flux_root
 
 _ACCOUNTS = """
 apiVersion: v1
@@ -87,6 +87,7 @@ def _repo(
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+    write_flux_root(root / "envs" / "env-test")
     return root
 
 

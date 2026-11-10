@@ -43,7 +43,7 @@ The add-on's Flux Kustomizations are Ready; `jarvis verify` already waits on eve
 
 - `ci/checks/addons` (the Component lists files only, its slot exists, no add-on is named `apps`, core never names an add-on, and per enabled add-on: a services stage that lists add-ons runs as the platform account, the wiring kinds, namespace names, `prune: disabled` on the wiring, the tenant's Roles and RoleBindings, each Kustomization's source, path, extra fields and `dependsOn`, and the objects its Kustomizations apply). `ci/tests/test_addons.py` seeds each failure.
 - the `flux-identity` check (`jarvis validate`) (the services stage may run as the platform account, the add-on's Kustomizations run as their declared tenant and never as the platform account, no path declares its own account, and only `flux-system` decrypts).
-- the `env-schema` check (`jarvis validate`) (unknown add-on, duplicate, slot conflict, missing sealed folder), `ci/checks/contract-md` (each add-on and slot has a `CONTRACT.md`), the `flux-prune` check (`jarvis validate`) and the `flux-substitute` check (`jarvis validate`) on each add-on Kustomization's path.
+- the `env-schema` check (`jarvis validate`) (unknown add-on, duplicate, slot conflict, missing sealed folder), `ci/checks/contract-md` (each add-on and slot has a `CONTRACT.md`), and the `flux-prune` check (`jarvis validate`) on each add-on Kustomization's path, which Flux builds with strict substitution, so a variable with no value fails it.
 - `ci/tests/test_addons.py` runs every env-level check on a bootstrapped copy of the example env with no add-on, and on one with the tests' sample add-on and its sealed Secret.
 
 ## Limits
