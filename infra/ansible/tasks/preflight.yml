@@ -63,6 +63,15 @@
   vars:
     _quantity: '^memory\.available<([0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?|[0-9]+(\.[0-9]+)?%)$'
 
+- name: Require the instance repository
+  ansible.builtin.assert:
+    that:
+      - jarvis_instance_root is defined
+      - jarvis_instance_root | length > 0
+    fail_msg: >-
+      jarvis_instance_root is not set: run jarvis site --env <env> from the instance repository,
+      which passes it.
+
 - name: Require the env FluxInstance and Flux sources in Git
   ansible.builtin.assert:
     that:

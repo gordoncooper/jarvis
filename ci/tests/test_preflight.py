@@ -86,6 +86,9 @@ def _assert_unchanged(output: str) -> None:
     assert all(re.search(r"changed=0\b", line) for line in lines), output
 
 
+_NO_INSTANCE = Path("/nonexistent-default")
+
+
 def _run_site(
     tmp_path: Path,
     *,
@@ -100,10 +103,14 @@ def _run_site(
     control_plane: tuple[str, ...] = ("cp-1",),
     override: dict[str, object] | None = None,
     sync_file: Path | None = None,
+    instance: Path | None = _NO_INSTANCE,
 ) -> subprocess.CompletedProcess[str]:
     """flux_instance passes the example env's FluxInstance; False keeps the jarvis_env path.
-    sync_file replaces the example env's sync.yaml."""
+    sync_file replaces the example env's sync.yaml. instance is the jarvis_instance_root passed
+    (default: tmp_path, an instance with no env yet; None passes none)."""
     require_cli("ansible-playbook")
+    if instance is _NO_INSTANCE:
+        instance = tmp_path
     inventory = tmp_path / "hosts.yml"
     _inventory(inventory, data_disk_hosts=data_disk_hosts, control_plane=control_plane)
     vars_path = tmp_path / "cluster-vars.yaml"
@@ -119,6 +126,8 @@ def _run_site(
         "ansible_become=false",
         "-e",
         f"jarvis_cluster_vars={vars_path}",
+        # jarvis site passes the instance repository; here, one holding no env yet.
+        *([] if instance is None else ["-e", f"jarvis_instance_root={instance}"]),
         *(extra or []),
     ]
     if flux_instance:
@@ -414,6 +423,8 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
         "-e",
         "ansible_connection=local",
         "-e",
+        f"jarvis_instance_root={tmp_path}",
+        "-e",
         f"flux_instance_file={flux_instance}",
         "-e",
         f"flux_sync_file={_EXAMPLE_SYNC}",
@@ -501,3 +512,12 @@ def test_site_reads_the_flux_instance_from_core_and_sync_from_the_instance(tmp_p
     assert "flux/sync.yaml is missing" not in output
     assert "PLAY [Base OS]" not in output
     assert playbook_recap_field(output, "changed") == 0
+
+
+def test_site_refuses_to_guess_the_instance_repository(tmp_path: Path) -> None:
+    """Rule: core holds no env, so site reads the env only from the instance repository jarvis site
+    passes; without one it stops with what to run, never falls back to the core checkout."""
+    result = _run_site(tmp_path, instance=None)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "jarvis_instance_root is not set: run jarvis site --env <env> from the instance repository" in output

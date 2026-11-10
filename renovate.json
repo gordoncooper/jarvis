@@ -263,6 +263,22 @@
       "description": "The mise release the devcontainers install: core's own (.devcontainer/devcontainer.json) and the instance one jarvis init writes (jarvis/kit/devcontainer/setup.sh).",
       "managerFilePatterns": ["/^\\.devcontainer\\/devcontainer\\.json$/", "/^jarvis\\/kit\\/devcontainer\\/setup\\.sh$/"],
       "matchStrings": ["(?:#|//) renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*\"?MISE_VERSION\"?(?:=|: \")(?<currentValue>v[^\\s\"]+)"]
+    },
+    {
+      "customType": "regex",
+      "description": "The core release docs/quickstart.md starts from (JARVIS_VERSION), read against the repository its install line names. A release tag opens the PR that moves it; nothing is bumped by hand at a release.",
+      "managerFilePatterns": ["/^docs\\/quickstart\\.md$/"],
+      "matchStrings": ["JARVIS_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)[\\s\\S]*?git\\+https://github\\.com/(?<depName>[^/\\s\"]+/[^/@\\s\"]+)@\\$JARVIS_VERSION"],
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "description": "The example apps jarvis init --with-examples pins (jarvis/kit/examples-apps.yaml): <app>: v<version>, the tag <app>/v<version> in jarvis-apps, the apps repository beside core.",
+      "managerFilePatterns": ["/^jarvis\\/kit\\/examples-apps\\.yaml$/"],
+      "matchStrings": ["(?m)^  (?<depName>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?): (?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s*$"],
+      "datasourceTemplate": "git-tags",
+      "packageNameTemplate": "https://github.com/gordoncooper/jarvis-apps",
+      "extractVersionTemplate": "^{{{depName}}}/(?<version>v\\d+\\.\\d+\\.\\d+)$"
     }
   ],
   "lockFileMaintenance": {

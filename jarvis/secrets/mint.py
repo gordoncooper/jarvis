@@ -571,8 +571,9 @@ def _lifecycle(args: argparse.Namespace) -> int:
     if args.rotate == "deploy-key":
         # Sealing needs only the public recipients.
         return _rotate_deploy_key(env)
-    sops_config = repo / ".sops.yaml"
-    rule = sops_config.read_text(encoding="utf-8")
+    # What these operations may change: the rule, the env's sealed files and the key file. A failure
+    # puts each back as it was, so the repository and the key file end where they started.
+    before = _snapshot([repo / ".sops.yaml", key_file, *_recipients.sealed_files(repo / "envs" / env)])
     try:
         # Every check before the first change: a key that cannot open the files must not get as far
         # as printing a recovery key or editing the rule.
@@ -586,17 +587,11 @@ def _lifecycle(args: argparse.Namespace) -> int:
         changed = _recipients.update(repo, env)
     except (_recipients.RecipientsError, _age.AgeError) as exc:
         print(f"FAIL secrets: {exc}")
-        if sops_config.read_text(encoding="utf-8") != rule:
-            # Put the rule back, so the repository is as it was but for any file named below.
-            sops_config.write_text(rule, encoding="utf-8")
-            print("     .sops.yaml is back as it was.")
+        restored = _restore(before)
+        if restored:
+            print(f"     Put back as they were: {', '.join(_display(repo, path) for path in restored)}.")
             if args.add_recovery_key:
                 print("     The recovery key printed above was never used: discard it.")
-            else:
-                print(f"     The new identity at the top of {key_file} was never used: delete its three lines.")
-            done = getattr(exc, "changed", [])
-            if done:
-                print(f"     Undo the files already re-encrypted: git checkout -- {' '.join(done)}")
         return 1
     for rel in changed:
         print(f"PASS re-encrypted {rel}")
@@ -612,6 +607,30 @@ def _lifecycle(args: argparse.Namespace) -> int:
     elif changed:
         print("Next: commit and push the re-encrypted files.")
     return 0
+
+
+def _snapshot(paths: list[Path]) -> dict[Path, bytes | None]:
+    """Each path's bytes, or None for one that does not exist yet."""
+    return {path: path.read_bytes() if path.is_file() else None for path in paths}
+
+
+def _restore(before: dict[Path, bytes | None]) -> list[Path]:
+    """Put each path back as the snapshot holds it; returns the ones that had changed."""
+    restored = []
+    for path, data in before.items():
+        now = path.read_bytes() if path.is_file() else None
+        if now == data:
+            continue
+        if data is None:
+            path.unlink()
+        else:
+            path.write_bytes(data)
+        restored.append(path)
+    return restored
+
+
+def _display(repo: Path, path: Path) -> str:
+    return path.relative_to(repo).as_posix() if path.is_relative_to(repo) else str(path)
 
 
 def _rotate_deploy_key(env: str) -> int:

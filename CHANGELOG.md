@@ -21,6 +21,14 @@ the upgrade.
 - Whether an env runs the off-host copy or the apps backup server comes from
   `values/switches.yaml`, the decision, not from its rendered platform-configs list. The two
   env-schema messages name the switch.
+- `jarvis up` waits for every Kustomization Flux's build of the env says the cluster gets (add-ons
+  and hosted apps included), each Ready for its current spec and, if it reads the env repository,
+  at the pushed commit. It no longer reads core's layer files itself or waits for two Ready polls
+  in a row, and a Ready left from before the push no longer counts.
+- `jarvis site` (Ansible) has no default instance repository: it stops, saying to run
+  `jarvis site --env <env>` from the instance, instead of reading envs from the core checkout.
+- Core's Renovate moves the release `docs/quickstart.md` starts from (on each core tag) and the
+  example apps `jarvis init --with-examples` pins (on each jarvis-apps release).
 
 ### Removed
 
@@ -28,6 +36,10 @@ the upgrade.
 
 ### Fixed
 
+- `jarvis secrets --add-recovery-key`, `--update-recipients` and `--rotate age` undo themselves
+  when re-encrypting fails partway: `.sops.yaml`, the sealed files already re-encrypted and the key
+  file (a rotation's new identity) are put back as they were. There is nothing left to delete or
+  `git checkout` by hand.
 - The package version is the release tag (hatch-vcs): `uv tool list` and pip show `0.5.2` for an
   install from `v0.5.2`, where they showed `0`. Nothing is bumped by hand at a release.
 
