@@ -255,7 +255,8 @@ def test_python_stays_below_the_first_minor_ansible_core_cannot_run_on() -> None
     rule = next(item for item in renovate["packageRules"] if item.get("matchManagers") == ["pyenv"])
     assert rule["matchPackageNames"] == ["python"] and rule["allowedVersions"] == "<3.15"
     assert "ansible-core" in rule["description"]
-    assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() < "3.15"
+    pinned = tuple(int(part) for part in (ROOT / ".python-version").read_text(encoding="utf-8").strip().split("."))
+    assert pinned < (3, 15)
 
 
 def _next_minor_cap(version: str) -> str:
