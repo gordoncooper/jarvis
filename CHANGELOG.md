@@ -7,6 +7,27 @@ the upgrade.
 
 ## Unreleased
 
+## v0.5.2
+
+### Added
+
+- `jarvis --version`: the release this CLI came from, and inside an instance repo the release
+  each env pins.
+
+### Fixed
+
+- `jarvis <command> --help` from an installed CLI crashed for commands that read core's trees
+  (`validate`, `render`, `site`, `verify`: `FileNotFoundError …/schema/cluster-vars.schema.json`).
+  Inside an instance repo it is now handed to the release the env pins, as the command itself is,
+  so it shows that release's options; outside one it says where to run it.
+- `jarvis doctor` called a git worktree's pre-commit hook someone else's (in a worktree `.git` is a
+  file). doctor and init now ask git where the hook is, and doctor installs it there.
+
+### Upgrading
+
+- Nothing to do: merge the core release's Renovate PR. Reinstall the CLI to get `--version` and
+  the help fix: `mise exec -- uv tool install --force "git+https://github.com/<owner>/jarvis@v0.5.2"`.
+
 ## v0.5.1
 
 ### Fixed

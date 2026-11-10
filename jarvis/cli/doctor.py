@@ -103,14 +103,16 @@ def check_recovery(instance: Path, env_dir: Path) -> list[tuple[str, str]]:
 
 def check_hook(instance: Path) -> list[tuple[str, str]]:
     """The pre-commit hook jarvis init installs: a fresh clone does not have it."""
-    hook = instance / ".git" / "hooks" / "pre-commit"
+    from jarvis.env.scaffold import hook_path, install_hook
+
+    hook = hook_path(instance)
+    if hook is None:
+        return [("WARN", f"{instance} is not a git repository; commits are not checked before they are made")]
     if hook.is_file() and "jarvis" in hook.read_text(encoding="utf-8", errors="ignore"):
         return [("PASS", "the pre-commit hook runs jarvis render --check and validate")]
-    from jarvis.env.scaffold import install_hook
-
-    if (instance / ".git").is_dir() and not hook.exists():
+    if not hook.exists():
         install_hook(instance)
-        return [("PASS", "installed the pre-commit hook (a fresh clone has none)")]
+        return [("PASS", f"installed the pre-commit hook at {hook} (a fresh clone or worktree has none)")]
     return [("WARN", f"{hook} is not jarvis's; commits are not checked before they are made")]
 
 
