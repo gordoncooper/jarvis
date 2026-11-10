@@ -2,11 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/gordoncooper/jarvis/schema/apps.schema.json",
   "title": "values/apps.yaml",
-  "description": "What an env decides for its hosted apps (schema/CONTRACT.md, core/feature/app-hosting/CONTRACT.md). env-schema also checks each grant, selection and pin against the app list and the apps repository.",
+  "description": "What an env decides for its hosted apps. jarvis validate also checks each grant, selection and pin against the app list and the apps repository.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "exceptions": {
+      "description": "Grants, one per line as <app>: <grant>, for a listed app whose app file asks for the same item: privileged, root, host-network, host-path, hostname <name>, lan-port <port>/<TCP|UDP>, lan-all, lan-target <name> <cidr> <port>/<TCP|UDP>, no-uptime-check.",
       "type": [
         "array",
         "null"
@@ -25,6 +26,7 @@
       }
     },
     "versions": {
+      "description": "Each listed app's release: <app>: v<x.y.z>, the apps repository's tag <app>/v<x.y.z>. Every listed app needs one.",
       "type": [
         "object",
         "null"
@@ -38,6 +40,7 @@
       }
     },
     "backups": {
+      "description": "Which listed apps register a backup credential. Without this section, none does.",
       "type": [
         "object",
         "null"
@@ -48,12 +51,15 @@
       ],
       "properties": {
         "mode": {
+          "description": "selected: only the apps on selected. all_except: every backup-eligible listed app except those on exclude.",
           "enum": [
             "selected",
             "all_except"
           ]
         },
         "selected": {
+          "description": "With mode selected: the apps that back up. Each must declare a backup: true volume in its app file.",
+          "default": [],
           "type": [
             "array",
             "null"
@@ -65,6 +71,8 @@
           "uniqueItems": true
         },
         "exclude": {
+          "description": "With mode all_except: the apps that do not.",
+          "default": [],
           "type": [
             "array",
             "null"
@@ -76,6 +84,7 @@
           "uniqueItems": true
         },
         "overrides": {
+          "description": "Per app: backup_schedule and backup_retention_daily, _weekly and _monthly for its volumes, in place of cluster-vars.yaml's.",
           "type": [
             "object",
             "null"

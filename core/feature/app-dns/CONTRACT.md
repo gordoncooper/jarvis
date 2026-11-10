@@ -23,7 +23,7 @@ Optional: an env turns it on with `app-dns` under `features` in `values/switches
 
 The k8s-gateway Deployment is Ready. The chart's liveness probe is `/health` on port 8080 and the readiness probe is `/ready` on port 8181, which requires the `health` and `ready` plugins. The container sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit. The chart default sets a CPU limit; `resources.limits.cpu: null` drops it.
 
-From a pod, an Ingress host in the zone resolves through this Service and through cluster DNS to an edge node address. That check is the post-merge drill.
+A new Ingress host in the zone answers at this Service's address with Traefik's: `jarvis verify --smoke` makes one and asks.
 
 ## Config
 
@@ -34,10 +34,3 @@ From a pod, an Ingress host in the zone resolves through this Service and throug
 - `coredns-custom` key `app-dns.server` forwards the zone to that address. CoreDNS `forward` takes an address, and k3s CoreDNS resolves names with the node resolver, so the target is not a Service hostname.
 - Prune is disabled on the namespace, the HelmRepository, the HelmRelease, and `coredns-custom`.
 - `kube-system` holds this ConfigMap and the Traefik HelmChartConfig.
-
-## Proven by
-
-- `ci/tests/test_app_dns.py` (LoadBalancer port 53, zone `${dns_suffix}`, forward target, CPU request without a CPU limit, probes).
-- `ci/tests/test_base_os.py` (edge hosts: `DNSStubListener=no`, resolv.conf is resolved's upstream list).
-- the `flux-prune` check (`jarvis validate`) (namespace, chart source, HelmRelease, and `coredns-custom`).
-- The post-merge drill: a throwaway Ingress resolves from a pod through App DNS and through cluster DNS.

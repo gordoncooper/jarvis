@@ -6,7 +6,7 @@ A real env lives in a private instance repository. The jarvis CLI, run from insi
 
 ## Offers
 
-- JSON Schemas for an env's four values files: `schema/cluster-vars.schema.json`, `switches.schema.json`, `apps.schema.json` and `hosts.schema.json`. Each file names its schema on its first line (`# yaml-language-server: $schema=<path or URL>`), so an editor checks it as you type; in an instance, use the schema at the env's core tag, `https://raw.githubusercontent.com/<owner>/jarvis/<tag>/schema/<name>.schema.json`. `cluster-vars.schema.json` is env-schema's authority for that file's keys, types and simple patterns (`jarvis.schema.values`, with the messages below); the other three describe each file's shape, and env-schema's Python checks their names, grants and selections. Rules that span fields stay in Python: the CIDRs, the App DNS address, LAN ranges, repository owners, known hosts, the time zone and paths.
+- JSON Schemas for an env's four values files: `schema/cluster-vars.schema.json`, `switches.schema.json`, `apps.schema.json` and `hosts.schema.json`. Each file names its schema on its first line (`# yaml-language-server: $schema=<path or URL>`), so an editor checks it as you type; in an instance, use the schema at the env's core tag, `https://raw.githubusercontent.com/<owner>/jarvis/<tag>/schema/<name>.schema.json`. `cluster-vars.schema.json` is env-schema's authority for that file's keys, types and simple patterns (`jarvis.schema.values`, with each key's message in its `x-messages`); the other three describe each file's shape, and env-schema's Python checks their names, grants and selections. Rules that span fields stay in Python: the CIDRs, the App DNS address, LAN ranges, known hosts, the time zone and paths. Each key's `description`, `default` and `x-required` (when it is required only with another choice) are the one home for what it means: editors show them, and [docs/reference.md](../docs/reference.md) is their render (`python -m jarvis.schema.reference`, which a test keeps current).
 - A single validation contract for three files per env:
   - `values/switches.yaml` — what the env enables, by name only (below).
   - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that `jarvis secrets` and Flux decrypt.
@@ -42,69 +42,21 @@ Not a runtime component. Health is “validation passes”: the `env-schema` che
 
 ## Config
 
-All keys in env value files use **lowercase snake_case** (including `cluster-vars.yaml`). Validation applies to the fields below. Types are descriptive; the validator in `jarvis/schema/env.py` is authoritative.
+All keys in env value files use **lowercase snake_case** (including `cluster-vars.yaml`). Every key, its type, default and meaning: [docs/reference.md](../docs/reference.md), generated from the schemas. The rest of this section is what spans keys.
 
 ### `values/switches.yaml`
 
-One short file, names only, one per line. Core is on in every env, so it has no section: `core/platform/kustomization.yaml` and `core/platform/configs/kustomization.yaml` list it. `jarvis render --env <env>` turns it into the Flux wiring, and it and `jarvis render` refuse an unknown name before they write; `INSTANCE=<path>` points it at an instance. Settings stay where they were: an app's in its app file, an exception line or backup selection in `values/apps.yaml`, a sealed secret under `secrets/`.
-
-| Section | Names | Notes |
-| --- | --- | --- |
-| `features` | `app-dns` (needs `app_dns_cluster_ip`), `app-hosting`, `offsite-backup-copy` (needs `backups-offsite`), `apps-backup-server`. | Off until listed. A feature adds one row to `OPTIONAL_COMPONENTS` in `jarvis/env/switches.py` and no bundle to any env. Observability is a feature too, not an add-on: off until an env lists `observability` here, a name refused until it is built ([core/feature/CONTRACT.md](../core/feature/CONTRACT.md)). |
-| `addons` | A folder under core's `addons/`. | Limited-tenant swappable services ([addons/CONTRACT.md](../addons/CONTRACT.md)). At most one per slot. |
-| `apps` | A folder in the apps repository. | Hosted apps: untrusted, held to their app file by the cluster ([core/feature/app-hosting/CONTRACT.md](../core/feature/app-hosting/CONTRACT.md)). Listing a name switches an app on and grants it nothing; a new app in that repository never deploys until an env lists it. |
+One short file, names only, one per line. Core is on in every env, so it has no section: `core/platform/kustomization.yaml` and `core/platform/configs/kustomization.yaml` list it. `jarvis render --env <env>` turns it into the Flux wiring, and it and `jarvis render` refuse an unknown name before they write; `INSTANCE=<path>` points it at an instance. Settings stay where they were: an app's in its app file, an exception line or backup selection in `values/apps.yaml`, a sealed secret under `secrets/`. A feature is one row of `OPTIONAL_COMPONENTS` in `jarvis/env/switches.py` and adds no bundle to any env; `app-dns` needs `app_dns_cluster_ip` and `offsite-backup-copy` needs `backups-offsite`. A new app in the apps repository never deploys until an env lists it.
 
 ### `values/cluster-vars.yaml`
 
 A required key that is present but null counts as unset and fails.
 
-| Field | Required | Notes |
-| --- | --- | --- |
-| `dns_suffix` | yes | Internal zone suffix for the env (e.g. `<dns_suffix>`). A lowercase DNS name. Never hardcoded in core. |
-| `time_zone` | yes | IANA time zone name for the node, and VolSync schedules (e.g. `<time_zone>`). Unknown names fail validation. |
-| `ssh_user` | no | SSH login user for node bootstrap; Ansible sets `ansible_user` from it and runs tasks as root (default `ubuntu`). |
-| `age_key_file` | no | Age private key path on the controller for the flux-operator sops-age bootstrap and the k3s token read. Default `~/.config/sops/age/keys.txt`. `SOPS_AGE_KEY_FILE` overrides it. |
-| `backup_path` | yes | Absolute path. Parent of `backup_path/etcd-snapshots` and of one restic repository per PVC (`backup_path/restic/ns-<namespace>/pvc-<pvc>`). The `ns-` and `pvc-` prefixes keep a path segment off rest-server's reserved names. |
-| `backup_retention_daily` | yes | Restic keep count for daily snapshots. |
-| `backup_retention_weekly` | yes | Restic keep count for weekly snapshots. |
-| `backup_retention_monthly` | yes | Restic keep count for monthly snapshots. |
-| `backup_schedule` | yes | Five-field cron for each PVC's VolSync ReplicationSource (`trigger.schedule`). The controller evaluates it in `time_zone`. |
-| `backup_check_schedule` | no | Five-field cron for CronJob `platform-backups/restic-check`, evaluated in `time_zone`. Default `30 6 * * 3`. Keep every start at least 3 hours from each `backup_schedule` start and from the etcd copy (`5 */12 * * *`). |
-| `jarvis_env` | yes | Env name for `/etc/jarvis/env` marker and guards; must match `envs/<env>/`. |
-| `k3s_version` | no (set with `k3s_sha256`) | k3s version string `v<major>.<minor>.<patch>+k3s<n>`, in place of core's release (`infra/ansible/group_vars/all.yml`). Set both or neither. The host binary changes only by a pull request. |
-| `k3s_sha256` | no (set with `k3s_version`) | SHA-256 of that `k3s` amd64 release binary (verified on install). |
-| `pod_cidr` | yes | Pod network CIDR; an IP network, set once per env. |
-| `service_cidr` | yes | Service network CIDR; an IP network, set once per env. |
-| `app_dns_cluster_ip` | no (yes when `values/switches.yaml` lists `app-dns`) | ClusterIP of the App DNS Service. CoreDNS `forward` takes an address. A host address inside `service_cidr`, not the network or broadcast address, and not the first address (the Kubernetes API) or the tenth address (k3s cluster DNS). |
-| `local_path_data` | yes | k3s local-path provisioner data directory. A subdirectory of `/var/lib/jarvis`, not that mount itself. |
-| `flux_git_repo_url` | yes | The env repository, the root `GitRepository` in `flux/sync.yaml`. `https://` (no userinfo, query, or fragment) or `ssh://<user>@<host>/<owner>/<repo>` read with the sealed deploy key; owner/repo path. |
-| `apps_git_repo_url` | no (yes when `values/switches.yaml` lists an app) | An https Git remote for the apps repository, read with no credential; anyone's, such as the example apps beside core. Each listed app's sources read it ([core/feature/app-hosting/CONTRACT.md](../core/feature/app-hosting/CONTRACT.md)). |
-| `lan_cidrs` | no (yes when `values/apps.yaml` grants `lan-all` or `lan-target`) | The LAN's ranges: a list of IPv4 CIDRs inside RFC 1918, clear of `pod_cidr` and `service_cidr`. Hosted apps' internet egress excludes them; `lan-all` opens them and a `lan-target` range sits inside them ([core/feature/app-hosting/CONTRACT.md](../core/feature/app-hosting/CONTRACT.md)). Not published in `cluster-vars`; the app wiring render carries it. |
-| `flux_git_ref` | yes | Git ref of the root source (e.g. `refs/heads/main`). |
-| `core_git_repo_url` | yes | The public core repository, the `core` `GitRepository` in `flux/sync.yaml`. https only, read with no credential. |
-| `core_git_ref` | yes | Git ref of the core source: a release tag, `refs/tags/<tag>`. A branch ref passes the schema, but every jarvis command refuses it (exit 3): each command runs the release the env pins, from a cached checkout of the tag when the running one is not it (`jarvis/cli/core.py`, [docs/releasing.md](../docs/releasing.md)). |
-| `ntp_pools` | yes | Chrony pool hostnames (base-os role); each entry is one `pool … iburst maxsources 4` line, plus `nts` while `chrony_nts` is on. |
-| `chrony_nts` | no | `true` or `false`; default `true`. `false` renders the pools without `nts`, for a LAN or router time source that does not speak NTS. Host-only (Ansible). Any other value fails validation. |
-| `flux_known_hosts` | no | SSH `known_hosts` lines Flux trusts for an `ssh://` root; the root's host must be among them. Unset: GitHub's published key. Host-only (Ansible). |
-| `k3s_kubelet_kube_reserved` | yes | kubelet `kube-reserved` value (without the `kube-reserved=` prefix). |
-| `k3s_kubelet_system_reserved` | yes | kubelet `system-reserved` value (without the `system-reserved=` prefix). |
-| `k3s_kubelet_eviction_hard` | yes | kubelet `eviction-hard` threshold expression. Its `memory.available` is raised to the node memory reserve below when that is larger. |
-| `node_memory_reserve_percent` | no | Whole number from 0 to 50; default `10`. The share of every node's memory no pod is scheduled into: headroom for pods that grow past their requests. The k3s role renders it as the kubelet's `memory.available<N%` hard eviction threshold. The kubelet subtracts it from allocatable; below it, the kubelet evicts pods whose usage exceeds their requests first, by priority among them, and only then pods within their requests, lowest priority first, before the kernel's OOM killer has to act. The env's or the host's `k3s_kubelet_eviction_hard` keeps its own `memory.available` when that is larger, compared on the node's memory. `kube-reserved` and `system-reserved` are unchanged and come on top. `0` leaves `eviction-hard` as written. Host-only (Ansible). |
-
 ### `inventory/hosts.yml`
 
-Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. `jarvis validate` rejects an IP used as a host name and any host key other than the rows below.
+Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. `jarvis validate` rejects an IP used as a host name.
 
-Each host is a mapping with `node_roles` and the optional keys in the table. No other host keys.
-
-| Field | Required | Notes |
-| --- | --- | --- |
-| `node_roles` | yes | Non-empty list of unique roles from `control_plane`, `workers`, `backup`, `gpu`, `edge`. Exactly one host includes `control_plane`. Exactly one host includes `backup`. At least one host includes `edge`. The same host may include more than one role. No role implies another. |
-| `data_disk` | no | Plain flag `true`, or omit the key. `true` means the admin has mounted a filesystem at `/var/lib/jarvis`. Any other value is rejected. |
-| `ssh_user` | no | SSH user for this host; overrides env `ssh_user`. Non-empty string. |
-| `k3s_kubelet_kube_reserved` | no | Host kubelet `kube-reserved`; overrides the env value. Non-empty string. |
-| `k3s_kubelet_system_reserved` | no | Host kubelet `system-reserved`; overrides the env value. Non-empty string. |
-| `k3s_kubelet_eviction_hard` | no | Host kubelet `eviction-hard`; overrides the env value. Non-empty string. The env's node memory reserve still applies to it. |
+Each host is a mapping with `node_roles` and the optional keys in the reference. No other host keys.
 
 ### Node roles and labels
 

@@ -17,7 +17,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 
 ## Health
 
-`Certificate/wildcard` (and `Certificate/wildcard-apps` with app hosting on) is Ready and chains to the committed public root. The cert-manager controller, webhook, and cainjector are Ready. Each sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit. The chart's probes stay in place.
+`Certificate/wildcard` (and `Certificate/wildcard-apps` with app hosting on) is Ready and chains to the committed public root. The cert-manager controller, webhook, and cainjector are Ready. Each sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit. The chart's probes stay in place. `jarvis verify` checks that the wildcard served over HTTPS chains to `envs/<env>/ca.crt`, and `jarvis verify --smoke` has `internal-ca` issue a new Certificate.
 
 ## Config
 
@@ -25,13 +25,6 @@ cert-manager issues the wildcard for `<dns_suffix>` from the internal CA. Traefi
 - Controller, webhook, cainjector, startupapicheck, and acmesolver images are `quay.io/jetstack/cert-manager-*` at chart appVersion `v1.21.3`, digest-pinned. Renovate updates the chart, the tags and the digests in one PR.
 - CA lifetime is 10 years, set when `jarvis secrets` generates the key. The leaf lifetime is cert-manager's default.
 - TLSStore name `default` is the one Traefik uses. The HelmChartConfig limits the default store to this namespace.
-
-## Proven by
-
-- `ci/tests/test_cert_manager.py` (controller, issuer, wildcard, TLSStore).
-- `ci/tests/test_bootstrap_secrets.py` (public root, no key, no rewrite).
-- `ci/tests/test_traefik.py` (env `k3s_version` matches the checked line in the Traefik contract).
-- Certificate Ready and the chain to `ca.crt` are a post-merge drill (`jarvis verify`).
 
 ## Operations
 

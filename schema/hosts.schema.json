@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/gordoncooper/jarvis/schema/hosts.schema.json",
   "title": "inventory/hosts.yml",
-  "description": "An env's hosts and their roles (schema/CONTRACT.md). env-schema also checks one control_plane and one backup host, and that every role is held.",
+  "description": "An env's hosts and their roles. jarvis validate also checks one control_plane and one backup host, and at least one edge host.",
   "type": "object",
   "required": [
     "all"
@@ -27,6 +27,7 @@
             "additionalProperties": false,
             "properties": {
               "node_roles": {
+                "description": "The host's roles. Across hosts: exactly one control_plane, exactly one backup, at least one edge. A host may hold several, and no role implies another.",
                 "type": "array",
                 "minItems": 1,
                 "uniqueItems": true,
@@ -41,21 +42,26 @@
                 }
               },
               "data_disk": {
+                "description": "true when a filesystem of its own is mounted at /var/lib/jarvis; omit it otherwise. node-disk checks the mount before any change.",
                 "const": true
               },
               "ssh_user": {
+                "description": "The user Ansible logs in to this host as, in place of the env's ssh_user.",
                 "type": "string",
                 "minLength": 1
               },
               "k3s_kubelet_kube_reserved": {
+                "description": "This host's kubelet kube-reserved, in place of the env's.",
                 "type": "string",
                 "minLength": 1
               },
               "k3s_kubelet_system_reserved": {
+                "description": "This host's kubelet system-reserved, in place of the env's.",
                 "type": "string",
                 "minLength": 1
               },
               "k3s_kubelet_eviction_hard": {
+                "description": "This host's kubelet eviction-hard, in place of the env's. The env's node memory reserve still applies.",
                 "type": "string",
                 "minLength": 1
               }
