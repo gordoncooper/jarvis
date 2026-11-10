@@ -12,9 +12,16 @@ on:
 jobs:
   # Core holds no env: its env checks run on a sample instance (ci/checks/sample-instance), so one
   # leg covers it. Real envs live in instance repos, whose CI runs jarvis validate.
-  ci:
-    name: ci
+  # Two groups run side by side: "checks" (the rule checks, lint, every test but the Ansible role
+  # proofs, the app-check Action) and "roles" (the role proofs, over half the suite's time;
+  # ROLE_PROOFS in ci/tests/conftest.py). The ci job below is the one check a merge waits on.
+  suite:
+    name: suite (${{ matrix.group }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [checks, roles]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,6 +42,7 @@ jobs:
       # mise.lock must hold every tool's checksum for every platform mise.toml serves. On a
       # mismatch the step prints the lock to commit (Renovate's PRs update it themselves).
       - name: mise.lock matches mise.toml
+        if: matrix.group == 'checks'
         run: |
           set -euo pipefail
           mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64
@@ -50,6 +58,7 @@ jobs:
           mise bin-paths >> "${GITHUB_PATH}"
 
       - name: uv.lock matches pyproject.toml
+        if: matrix.group == 'checks'
         run: uv lock --check
 
       # A docs-only PR runs no tests and a Renovate PR only the tests its files reach (ci/select-tests);
@@ -71,26 +80,51 @@ jobs:
           echo "pytest: ${tests}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - name: Run ci/checks
+        if: matrix.group == 'checks'
         run: bash ci/run-checks
 
       - name: ruff and pyright
+        if: matrix.group == 'checks'
         run: bash ci/lint
 
       - name: pytest
         if: steps.select.outputs.tests != 'none'
         env:
           TESTS: ${{ steps.select.outputs.tests }}
+          MARK: ${{ matrix.group == 'roles' && 'roles' || 'not roles' }}
         run: |
+          set +e
           if [[ "${TESTS}" == all ]]; then
-            .venv/bin/pytest -ra
+            .venv/bin/pytest -ra -m "${MARK}"
           else
             # shellcheck disable=SC2086
-            .venv/bin/pytest -ra ${TESTS}
+            .venv/bin/pytest -ra -m "${MARK}" ${TESTS}
           fi
+          status=$?
+          # 5: no selected test is in this group (a Renovate PR's few tests may all be in the other).
+          [[ ${status} -eq 5 ]] && exit 0
+          exit ${status}
 
       # The Action an apps repository runs at a core tag, here at this commit over the fixture apps.
       - name: app-check Action over the fixture apps repository
+        if: matrix.group == 'checks'
         uses: ./.github/actions/app-check
         with:
           path: ci/tests/fixtures/app-hosting/jarvis-apps
           exclude: ""
+
+  # The required check: green only when every suite group passed.
+  ci:
+    name: ci
+    needs: suite
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every suite group passed
+        env:
+          RESULT: ${{ needs.suite.result }}
+        run: |
+          if [[ "${RESULT}" != success ]]; then
+            echo "::error::a suite group ended ${RESULT}"
+            exit 1
+          fi

@@ -25,5 +25,16 @@ def test_checks_job_fetches_full_history() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert _shallow_checkouts(workflow) == []
     shallow = copy.deepcopy(workflow)
-    del shallow["jobs"]["ci"]["steps"][0]["with"]["fetch-depth"]
-    assert _shallow_checkouts(shallow) == ["ci"]
+    del shallow["jobs"]["suite"]["steps"][0]["with"]["fetch-depth"]
+    assert _shallow_checkouts(shallow) == ["suite"]
+
+
+def test_the_required_ci_check_waits_on_every_suite_group() -> None:
+    """Rule: branch protection requires the check named ci. It is the gate job: it needs the suite
+    matrix, runs even when a group fails, and passes only when the suite succeeded."""
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    gate = workflow["jobs"]["ci"]
+    assert gate["name"] == "ci" and gate["needs"] == "suite" and gate["if"] == "always()"
+    assert "needs.suite.result" in str(gate["steps"])
+    assert workflow["jobs"]["suite"]["strategy"]["matrix"]["group"] == ["checks", "roles"]
+    assert not any(job.get("name") == "ci" for key, job in workflow["jobs"].items() if key != "ci")

@@ -27,6 +27,8 @@ from jarvis.env import scaffold  # noqa: E402
 FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 FIXTURE_ADDONS = REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"
 NAME = "env-00"
+# Every role, a host with a data disk and one without, in as few hosts as cover them: each
+# Ansible proof runs on every host, so each host here costs every proof time.
 HOSTS = """# Host names only; each must resolve from the controller and every node.
 all:
   hosts:
@@ -34,19 +36,11 @@ all:
       node_roles: [control_plane]
       data_disk: true
     wk-1:
-      node_roles: [workers, edge]
+      node_roles: [workers, edge, gpu]
       data_disk: true
     wk-2:
-      node_roles: [workers, gpu]
-      data_disk: true
-    wk-3:
-      node_roles: [workers, gpu]
-      data_disk: true
-    wk-4:
+      # Keeps data on the root disk. No data_disk.
       node_roles: [workers]
-    wk-5:
-      node_roles: [workers]
-      data_disk: true
     bk-1:
       node_roles: [backup]
       data_disk: true

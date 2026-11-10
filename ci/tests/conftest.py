@@ -28,6 +28,30 @@ for _key, _value in (("maintenance.auto", "false"), ("gc.auto", "0")):
 os.environ["GIT_CONFIG_COUNT"] = str(_count)
 
 
+# The test files that prove the Ansible roles by running ansible-playbook. They are over half the
+# suite's time, so CI runs them (-m roles) beside the rest (-m "not roles"), each on its own runner.
+ROLE_PROOFS = frozenset(
+    {
+        "test_ansible_operator_tags.py",
+        "test_base_os.py",
+        "test_flux_operator.py",
+        "test_flux_operator_install.py",
+        "test_inventory_roles.py",
+        "test_k3s.py",
+        "test_kubeconfig.py",
+        "test_node_disk.py",
+        "test_pci_gpu.py",
+        "test_preflight.py",
+    }
+)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        if item.path.name in ROLE_PROOFS:
+            item.add_marker(pytest.mark.roles)
+
+
 @pytest.fixture(scope="session")
 def example_copy(tmp_path_factory: pytest.TempPathFactory):
     """One bootstrapped copy of env-00 for the structural env rules."""
