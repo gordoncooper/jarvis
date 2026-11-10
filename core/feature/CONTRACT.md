@@ -28,8 +28,3 @@ To enable a piece, list its name under `features` in `values/switches.yaml`, run
 Observability (metrics, logs, dashboards, uptime checks and alerts) is a feature, not an add-on. It stays off in an env until that env lists `observability` under `features`, by the same steps as above.
 
 It is not built yet. `observability` has no row in `OPTIONAL_COMPONENTS`, so env-schema and the render refuse the name today and no env can turn it on. The build adds that row and puts its files in `core/feature/observability/`. Core never depends on it: core's own health is `jarvis verify`.
-
-## Proven by
-
-- `ci/tests/test_switches.py` (each backup piece renders from here only when named, and an unknown name, `observability` included, fails before the render writes anything).
-- `ci/tests/test_restic_rest_server.py`, `ci/tests/test_backup_isolation.py` and `ci/tests/test_rest_server_isolation.py` (what the two pieces do).

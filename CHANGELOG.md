@@ -7,8 +7,15 @@ the upgrade.
 
 ## Unreleased
 
+## v0.5.0
+
 ### Added
 
+- [docs/reference.md](docs/reference.md): every key of an env's values files, with its type,
+  default, when it is required and what it means, generated from the JSON Schemas
+  (`python -m jarvis.schema.reference`, kept current by a test). Each key's description now lives
+  in its schema, so editors show it as you type; `schema/CONTRACT.md` keeps only the rules that span
+  keys.
 - [docs/quickstart.md](docs/quickstart.md): one node to a verified cluster in seven steps, and
   [docs/concepts.md](docs/concepts.md). The README starts there. CI runs the Quickstart's
   commands as written (`.github/workflows/quickstart.yml`) on every release tag, nightly and on
@@ -142,25 +149,36 @@ the upgrade.
 
 ### Upgrading
 
-- Install mise on the controller (https://mise.jdx.dev/getting-started.html). Then delete the
-  binaries the old installer left in `~/.local/bin` (`sops age age-keygen kubectl kustomize
-  kubeconform kyverno gitleaks restic rest-server`; keep `mise`): a shell finds them before mise's,
-  so after the next version bump a hand-typed command would run the old one. A service started
-  from one of them (an off-host rest-server, say) needs a copy of its own first
-  (core/platform/backups/CONTRACT.md, off-host copy).
-- Install the jarvis CLI on the controller, once: `mise use -g uv`, then
-  `uv tool install git+https://github.com/<owner>/jarvis@v0.5.0`. From then on run `jarvis`
-  from inside the instance repository in place of `make … ENV=… INSTANCE=…` from a core
-  checkout: `make site ENV=env-01 INSTANCE=<path>` is `jarvis site`, `make restore APP=<ns>` is
-  `jarvis restore --app <ns>`, `make bootstrap-secrets` is `jarvis secrets`, and so on
-  (`jarvis --help`). The core checkout on the controller is no longer needed for operating an env.
-- Give each env its recovery key, from inside the instance repository with the working key at
-  `age_key_file`: `jarvis secrets --add-recovery-key`. Store the key it prints once offline,
-  then commit and push the re-encrypted files. Until then `jarvis doctor` warns. The keep-safe
-  list in docs/secrets.md is now two items; the working key copy in the password manager is no
-  longer one of them.
-- In the instance CI caller, add `workflow_dispatch:` under `on:`. Renovate moves the preset
-  ref and the workflow pin in the core release's PR.
+In this order, on the controller, for each instance repository:
+
+1. Install mise (https://mise.jdx.dev/getting-started.html), then delete the binaries the old
+   installer left in `~/.local/bin` (`sops age age-keygen kubectl kustomize kubeconform kyverno
+   gitleaks restic rest-server`; keep `mise`): a shell finds them before mise's, so after the next
+   version bump a hand-typed command would run the old one. A service started from one of them
+   (an off-host rest-server, say) needs a copy of its own first (core/platform/backups/CONTRACT.md,
+   off-host copy).
+2. Install the jarvis CLI, once, as docs/quickstart.md does:
+   `mise use -g uv`, then
+   `mise exec -- uv tool install "git+https://github.com/<owner>/jarvis@v0.5.0"`.
+   From then on run `jarvis` from inside the instance repository, in place of
+   `make … ENV=… INSTANCE=…` from a core checkout: `make site ENV=env-01 INSTANCE=<path>` is
+   `jarvis site`, `make restore APP=<ns>` is `jarvis restore --app <ns>`, `make bootstrap-secrets`
+   is `jarvis secrets`, and so on (`jarvis --help`). The core checkout on the controller is no
+   longer needed for operating an env.
+3. Merge the core release's Renovate PR (the grouped `jarvis core` one): it moves every env's
+   `core_git_ref`, the instance workflow and the preset, and core's instance workflow renders each
+   env's `flux/` at the new tag. Flux then applies v0.5.0's manifests; nothing on the hosts changes,
+   so no `jarvis site` is needed.
+4. Pull, then run `jarvis doctor` once: it installs the pre-commit hook (`jarvis render --check`
+   and `jarvis validate` on every commit) in a clone that lacks it.
+5. Give each env its recovery key, with the working key at `age_key_file`:
+   `jarvis secrets --add-recovery-key`. Store the key it prints, once, offline; then commit and push
+   the re-encrypted files. Until then `jarvis doctor` warns. The keep-safe list in docs/secrets.md
+   is now two items, and the working key copy in a password manager is no longer one of them.
+6. In the instance CI caller, add `workflow_dispatch:` under `on:`.
+7. Optional, what `jarvis init` now writes for a new repository: copy `jarvis/kit/devcontainer/`
+   to `.devcontainer/` for the devcontainer, and the files in `jarvis/kit/agents/` for the agent
+   kit (agents/README.md).
 
 ## v0.4.0
 

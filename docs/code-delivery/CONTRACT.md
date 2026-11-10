@@ -26,7 +26,3 @@ Not a single daemon. Health means:
 ## Config
 
 There is no env setting. Provider-specific URLs, org, and tokens are bootstrap or workflow secrets, not duplicated in core.
-
-## Proven by
-
-- `.github/workflows/ci.yml`: the `ci` job runs every `ci/checks/` rule and pytest. The required check name is `ci`.

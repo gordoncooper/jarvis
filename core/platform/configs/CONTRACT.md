@@ -18,8 +18,3 @@ Flux `platform-configs` reports Ready.
 ## Config
 
 - Order is the render order. Moving an object between this list and another Flux path takes two commits (add, reconcile, then remove).
-
-## Proven by
-
-- `ci/tests/test_flux_entry.py` (kustomize build and schema check of every Flux path, no object on two paths, the four standard Kustomizations, each env's platform-configs list is `core/platform/configs` plus its own SOPS secrets).
-- the `flux-prune` check (`jarvis validate`) (protected kinds on this path keep `prune: disabled`).

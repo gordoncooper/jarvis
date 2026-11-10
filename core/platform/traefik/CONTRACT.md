@@ -32,9 +32,3 @@ Manifests that expose the endpoint set probes, log to stdout, set a memory reque
 - Chart v40 does not template `providers.kubernetesCRD.defaultTLSResourcesNamespace`. `additionalArguments` passes `--providers.kubernetesCRD.defaultTLSResourcesNamespace=platform-cert-manager`, so only that namespace's default store counts.
 - Ports 80 and 443 stay the chart's LoadBalancer Service ports. k3s ServiceLB publishes them on nodes labeled for the edge set.
 - Checked: bundled Traefik chart v40 on k3s v1.36.5+k3s1.
-
-## Proven by
-
-- `ci/tests/test_traefik.py` (HelmChartConfig and `coredns-custom` in `kube-system`, Gateway provider off, memory limit, CPU request without a CPU limit, LoadBalancer Service).
-- `ci/checks/manifest-lint`.
-- `jarvis verify` (reachability from the LAN).

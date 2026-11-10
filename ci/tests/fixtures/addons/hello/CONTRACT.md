@@ -23,9 +23,4 @@ The sample add-on. It fills no slot and exists to prove [the add-on contract](..
 
 - Image `nginxinc/nginx-unprivileged:1.31.7-alpine-slim`, digest-pinned, uid 101, read-only root filesystem, the same build as the platform canary. Renovate updates both.
 - No PVC, so the backup policy has nothing to enroll.
-
-## Proven by
-
-- `ci/checks/addons`, the `flux-identity` check (`jarvis validate`), `ci/checks/manifest-lint` and `ci/checks/digest-pin` on the example env.
-- `ci/tests/test_addons.py` builds a bootstrapped copy of the example env with a placeholder Secret sealed to a throwaway key in `secrets/hello/`, and runs every env-level check on it. That proves the sealed file renders on the decrypting Kustomization, which sets `targetNamespace: hello`. The tenant's Role is what limits the plain Secret to `hello` on the cluster; nothing in CI decrypts it. `ci/tests/test_flux_entry.py` renders and schema-checks each of its paths.
-- `ci/tests/test_verify.py` runs its standing check with kubectl stubbed.
+- Its sealed Secret is decrypted by a Kustomization with `targetNamespace: hello`, and the tenant's Role is what limits the plain Secret to `hello` on the cluster.

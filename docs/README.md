@@ -24,10 +24,11 @@
 | [../agents/README.md](../agents/README.md) | The agent kit for instance repositories (`jarvis init --with-agents`) |
 | [../agents/coding-agents.md](../agents/coding-agents.md) | Agent workflow on core |
 
-## Reference: contracts
+## Reference
 
 | Path | Topic |
 | --- | --- |
+| [reference.md](reference.md) | Every key of an env's values files: type, default, when it is required, what it means (generated from `schema/`) |
 | [CONTRACT.template.md](CONTRACT.template.md) | Shared contract section layout |
 | [code-delivery/CONTRACT.md](code-delivery/CONTRACT.md) | Code delivery provider (`github`) |
 | [../schema/CONTRACT.md](../schema/CONTRACT.md) | Env schema |

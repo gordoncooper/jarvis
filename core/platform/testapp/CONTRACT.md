@@ -21,7 +21,7 @@ It answers `https://testapp.<dns_suffix>/` through one Traefik Ingress. The cert
 
 The Deployment is Ready. The container sets a memory request of `64Mi` and limit of `128Mi`, and a CPU request of `50m` with no CPU limit (`ci/checks/manifest-lint`). Readiness and liveness are HTTP `GET /` on port 8080. The image writes access and error logs to stdout and stderr.
 
-An HTTPS response on `testapp.<dns_suffix>` whose body is the file above and whose certificate chains to the internal CA. That check is the post-merge curl.
+An HTTPS response on `testapp.<dns_suffix>` whose body is the file above and whose certificate chains to the internal CA. `jarvis verify` checks it; by hand, from the LAN: `curl -fsS --cacert envs/<env>/ca.crt https://testapp.<dns_suffix>/`.
 
 ## Config
 
@@ -29,9 +29,3 @@ An HTTPS response on `testapp.<dns_suffix>` whose body is the file above and who
 - The page is ConfigMap `testapp` key `index.html`, mounted at `/usr/share/nginx/html`. No PVC, so the backup policy has nothing to enroll.
 - Ingress host `testapp.${dns_suffix}`. Annotations `traefik.ingress.kubernetes.io/router.entrypoints: websecure` and `traefik.ingress.kubernetes.io/router.tls: "true"`. No `spec.tls` secret. Traefik 3.7 ignores a TLS section that has no secret name, and the default store's certificate is the wildcard.
 - Prune stays enabled on the namespace.
-
-## Proven by
-
-- `ci/tests/test_testapp.py` (known file, non-root uid, host `${dns_suffix}`, no TLS secret, ClusterIP).
-- `ci/checks/manifest-lint`, `ci/checks/loadbalancer`, and `ci/checks/digest-pin`.
-- Post-merge, from the LAN: `curl -fsS --cacert envs/<env>/ca.crt https://testapp.<dns_suffix>/`.

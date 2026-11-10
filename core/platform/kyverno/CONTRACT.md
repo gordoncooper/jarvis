@@ -25,8 +25,3 @@ Deployment `kyverno-admission-controller` in `kyverno` is Ready. That is the gat
 - Permissions are extra aggregated ClusterRoles. The chart's own roles are not edited.
 - `kyverno:backup-generate` lists ConfigMaps cluster-wide: the enrollment policies list `kube-system` and `platform-backups` for the rebuild hold and the overrides, and a list cannot be narrowed by name. No Kyverno role updates Namespaces; `volsync.backube/privileged-movers` is set in Namespace manifests.
 - In an env that turns app hosting on, `kyverno:app-derive` (from the app-hosting Component) lets both controllers read hosted apps' Apps and manage NetworkPolicies and ResourceQuotas, for GeneratingPolicies `app-derive` and `app-derive-backups` ([core/feature/app-hosting/CONTRACT.md](../../feature/app-hosting/CONTRACT.md)), which writes them only in an app's own namespace.
-
-## Proven by
-
-- `ci/tests/test_backup_enrollment.py` (controllers off, digest pins, aggregated roles, the policies run with the pinned CLI).
-- `ci/tests/test_flux_entry.py` (kustomize render and schema validation).

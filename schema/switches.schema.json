@@ -2,11 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/gordoncooper/jarvis/schema/switches.schema.json",
   "title": "values/switches.yaml",
-  "description": "What an env turns on, by name only (schema/CONTRACT.md). env-schema also checks each add-on and app name against core and the apps repository.",
+  "description": "What an env turns on, by name only. jarvis validate also checks each add-on and app name against core and the apps repository.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "features": {
+      "description": "Core features this env turns on, by name. Off until listed.",
       "type": [
         "array",
         "null"
@@ -22,6 +23,7 @@
       }
     },
     "addons": {
+      "description": "Add-ons this env turns on, by folder name under core's addons/. At most one per slot.",
       "type": [
         "array",
         "null"
@@ -33,6 +35,7 @@
       "uniqueItems": true
     },
     "apps": {
+      "description": "Hosted apps this env runs, by folder name in the apps repository. Listing an app turns it on and grants it nothing; needs the app-hosting feature.",
       "type": [
         "array",
         "null"
