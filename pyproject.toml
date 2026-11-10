@@ -1,14 +1,15 @@
 # The jarvis package: the jarvis CLI and the Python behind it, its checks, schema and verify. It
 # is not published; `make deps` installs it editable into the repo's .venv with uv (uv.lock pins
 # every package with hashes; Renovate updates pyproject.toml and uv.lock together). A core release
-# is its git tag (CHANGELOG.md), so the version here never moves.
+# is its git tag (CHANGELOG.md), and the package version is derived from it (hatch-vcs): exactly
+# 0.5.2 at v0.5.2, a dev version between tags. Nothing here moves at a release.
 [build-system]
-requires = ["uv_build>=0.13.7,<0.14"]
-build-backend = "uv_build"
+requires = ["hatchling==1.33.0", "hatch-vcs==0.5.0"]
+build-backend = "hatchling.build"
 
 [project]
 name = "jarvis"
-version = "0"
+dynamic = ["version"]
 requires-python = ">=3.12"
 # What the operator tools and the app-check Action import.
 dependencies = [
@@ -37,9 +38,14 @@ dev = [
   "ruff==0.17.4",
 ]
 
-[tool.uv.build-backend]
-module-name = "jarvis"
-module-root = ""
+[tool.hatch.version]
+source = "vcs"
+# Only release tags (v<x.y.z>) are versions: CI's throwaway tags (quickstart/<run>) on the commit
+# under test are not, and must not break the build. A source tree with no git history still builds.
+raw-options = { fallback_version = "0", scm = { git = { describe_command = "git describe --dirty --tags --long --match v[0-9]*" } } }
+
+[tool.hatch.build.targets.wheel]
+packages = ["jarvis"]
 
 [tool.ruff]
 target-version = "py312"

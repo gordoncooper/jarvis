@@ -223,3 +223,26 @@ def test_the_installed_package_carries_the_kit(tmp_path: Path) -> None:
     names = set(zipfile.ZipFile(next(tmp_path.glob("*.whl"))).namelist())
     kit = {path.relative_to(REPO_ROOT).as_posix() for path in scaffold.KIT.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
     assert kit and kit <= names, sorted(kit - names)
+
+
+def test_the_package_version_is_the_release_tag(tmp_path: Path) -> None:
+    """Rule: a core release is its tag, and the package says so: a wheel built at v1.2.3 is 1.2.3
+    (hatch-vcs), so uv tool list and pip agree with jarvis --version. Nothing is bumped by hand."""
+    import zipfile
+
+    files = subprocess.run(["git", "-C", str(REPO_ROOT), "ls-files", "-z"], capture_output=True, text=True, check=True).stdout
+    for rel in filter(None, files.split("\0")):
+        source = REPO_ROOT / rel
+        if source.is_file() and not source.is_symlink():
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_bytes(source.read_bytes())
+    who = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    # A throwaway tag on the same commit, as the quickstart gate pushes, is not a version.
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], [*who, "commit", "-q", "-m", "one"],
+                 [*who, "tag", "-a", "v1.2.3", "-m", "v1.2.3"], ["tag", "quickstart/1-1"]):  # fmt: skip
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
+    subprocess.run(["uv", "build", "--wheel", "-q", "-o", str(tmp_path / "dist")], cwd=tmp_path, check=True, capture_output=True)
+    wheel = next((tmp_path / "dist").glob("*.whl"))
+    assert wheel.name.startswith("jarvis-1.2.3-")
+    metadata = next(name for name in zipfile.ZipFile(wheel).namelist() if name.endswith("METADATA"))
+    assert "Version: 1.2.3" in zipfile.ZipFile(wheel).read(metadata).decode()

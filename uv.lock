@@ -291,7 +291,6 @@ wheels = [
 
 [[package]]
 name = "jarvis"
-version = "0"
 source = { editable = "." }
 dependencies = [
     { name = "bcrypt" },
