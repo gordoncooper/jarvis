@@ -4,7 +4,7 @@
 // kubeconfigs and SSH keys stay on the machine and are mounted in, never copied.
 {
   "name": "jarvis",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae",
   "initializeCommand": "mkdir -p \"${localEnv:HOME}/.config/sops/age\" \"${localEnv:HOME}/.kube\" \"${localEnv:HOME}/.ssh\"",
   "mounts": [
     "source=${localEnv:HOME}/.config/sops/age,target=/home/vscode/.config/sops/age,type=bind",
