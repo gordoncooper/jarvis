@@ -6,12 +6,19 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-from support import REPO_ROOT, instance_apps_repo_for_checks, link_core_trees, render_switches, set_switches
+from support import (
+    REPO_ROOT,
+    copy_sample,
+    instance_apps_repo_for_checks,
+    render_switches,
+    set_switches,
+)
 
 _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
 
@@ -19,9 +26,7 @@ _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"
 def _instance(tmp_path: Path, *, core_only: bool) -> Path:
     """Instance checkout with env-00; core-only drops its apps but keeps a backups section."""
     instance = tmp_path / "instance"
-    env_dir = instance / "envs" / "env-00"
-    shutil.copytree(REPO_ROOT / "envs" / "env-00", env_dir)
-    link_core_trees(instance, REPO_ROOT)
+    env_dir = copy_sample(instance) / "envs" / "env-00"
     if core_only:
         (env_dir / "values" / "apps.yaml").write_text("backups:\n  mode: selected\n", encoding="utf-8")
         set_switches(env_dir, apps=[])
@@ -35,7 +40,7 @@ def _env_schema(instance: Path, apps_repo: Path | None) -> subprocess.CompletedP
     if apps_repo is not None:
         env["APPS_REPO"] = str(apps_repo)
     return subprocess.run(
-        ["bash", str(REPO_ROOT / "ci" / "checks" / "env-schema")],
+        [sys.executable, "-m", "jarvis.env.validate", "--only", "env-schema"],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -61,7 +66,7 @@ def test_instance_listing_apps_refuses_an_empty_checkout(tmp_path: Path) -> None
     checkout.mkdir()
     proc = _env_schema(instance, checkout)
     assert proc.returncode != 0
-    assert "not an apps repository" in proc.stderr
+    assert "not an apps repository" in proc.stdout + proc.stderr
 
 
 def _apps_remote(path: Path) -> str:

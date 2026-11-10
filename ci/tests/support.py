@@ -6,10 +6,12 @@ copy from each other. Ansible role renders stay in ansible_role_proof.
 
 from __future__ import annotations
 
+import functools
 import importlib
 import re
 import shutil
 import subprocess
+import tempfile
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,13 +107,14 @@ def _ensure_sops_creation_rule(root: Path, env_name: str) -> None:
 
 
 def _valid_cluster_vars() -> dict:
+    """The sample env's cluster-vars, as jarvis init writes them plus the sample's LAN range."""
+    import sample
     import yaml
 
-    from jarvis.schema.env import EXAMPLE_ENV
+    from jarvis.env import scaffold
 
-    cluster_vars_path = REPO_ROOT / "envs" / EXAMPLE_ENV / "values" / "cluster-vars.yaml"
-    reference = yaml.safe_load(cluster_vars_path.read_text(encoding="utf-8"))
-    assert isinstance(reference, dict)
+    reference = yaml.safe_load(scaffold.cluster_vars(sample.spec()))
+    reference["lan_cidrs"] = ["10.200.0.0/24"]
     return dict(reference)
 
 
@@ -125,8 +128,6 @@ def _write_env(
 ) -> Path:
     import yaml
 
-    from jarvis.schema.env import EXAMPLE_ENV, is_example_env
-
     env = root / "envs" / env_name
     (env / "values").mkdir(parents=True)
     (env / "inventory").mkdir(parents=True)
@@ -134,7 +135,7 @@ def _write_env(
     cv = cluster_vars if cluster_vars is not None else _valid_cluster_vars()
     if omit_ssh_user:
         cv = {k: v for k, v in cv.items() if k != "ssh_user"}
-    if cv.get("jarvis_env") in (None, EXAMPLE_ENV):
+    if cv.get("jarvis_env") in (None, "env-00"):
         cv["jarvis_env"] = env_name
 
     (env / "values" / "cluster-vars.yaml").write_text(
@@ -144,14 +145,13 @@ def _write_env(
         hosts_yml if hosts_yml is not None else _default_hosts(),
         encoding="utf-8",
     )
-    if not is_example_env(env_name):
-        _ensure_sops_creation_rule(root, env_name)
+    _ensure_sops_creation_rule(root, env_name)
     return env
 
 
 @dataclass(frozen=True)
 class ExampleCopy:
-    """A throwaway env built from env-00. The age private key stays in tmp."""
+    """A throwaway sample env, built as jarvis init builds one. The age private key stays in tmp."""
 
     root: Path
     name: str
@@ -162,12 +162,8 @@ class ExampleCopy:
 
 
 def real_and_copy_envs(copy: ExampleCopy) -> list[tuple[Path, str]]:
-    """Non-example envs in this tree, then the bootstrapped copy."""
-    from ansible_role_proof import non_example_env_names
-
-    return [(REPO_ROOT, name) for name in non_example_env_names(REPO_ROOT)] + [
-        (copy.root, copy.name)
-    ]
+    """The envs a whole-env rule runs on: core ships none, so the sample copy."""
+    return [(copy.root, copy.name)]
 
 
 def bootstrap_example_copy(
@@ -177,43 +173,37 @@ def bootstrap_example_copy(
     hosts_text: str | None = None,
     core_only: bool = False,
 ) -> ExampleCopy:
-    """Copy env-00 into a tmp repo, rename it, bootstrap secrets, and render.
-
-    Steps, and nothing is written into the real tree:
-    1. Link platform, services, and apps so kustomize can build the Flux paths.
-    2. Copy envs/env-00 to envs/<name>.
-    3. Set jarvis_env to <name> and rewrite every envs/env-00/ path.
-    4. Replace inventory/hosts.yml when hosts_text is set. With core_only, drop the add-on list.
-    5. Write a .sops.yaml age rule from a throwaway age-keygen key.
-    6. Run bootstrap-secrets' bootstrap() against the tmp repo, then seal a placeholder
-       backups-offsite and one placeholder Secret per namespace an enabled add-on decrypts.
-    7. Render the cluster-vars ConfigMap over the copied file.
-    """
-    from jarvis.schema.env import EXAMPLE_ENV
+    """A sample instance in tmp_path/repo holding one env, <name> (ci/tests/sample.py): written by
+    jarvis init's code, edited as an owner would, sealed to a throwaway key, and rendered. With
+    core_only it lists no add-on; hosts_text replaces its inventory."""
+    import sample
 
     root = (tmp_path / "repo").resolve()
     repo = REPO_ROOT.resolve()
     if (root == repo or repo in root.parents) and not _git_ignored(repo, root):
         raise RuntimeError("refusing to write the example copy at a tracked path in the repo")
-    root.mkdir()
-    # core/ and addons/ where the root artifact holds them (sync.yaml includes them by fromPath),
-    # with the fixture add-on beside core's own.
-    link_core_with_fixture_addons(root)
-    dest = root / "envs" / name
-    shutil.copytree(repo / "envs" / EXAMPLE_ENV, dest)
-    _rename_copied_env(dest, EXAMPLE_ENV, name)
-    if hosts_text is not None:
-        (dest / "inventory" / "hosts.yml").write_text(hosts_text, encoding="utf-8")
-    if core_only:
-        _drop_addons(dest)
-    else:
-        _list_fixture_addons(dest)
-    _write_copy_sops_rule(root, name, _throwaway_age_public(tmp_path))
-    _bootstrap_copy(root, name)
-    _seal_copy_offsite(root, name)
-    _seal_copy_addons(root, name)
-    _render_copy(dest)
+    sample.build(root, name, hosts_text=hosts_text or sample.HOSTS, with_addons=not core_only)
     return ExampleCopy(root, name)
+
+
+@functools.cache
+def sample_root() -> Path:
+    """A pristine sample instance holding env-00 (no add-on), built once per test process. Read
+    it; to change it, copy it (copy_sample) first."""
+    import atexit
+
+    import sample
+
+    base = Path(tempfile.mkdtemp(prefix="jarvis-sample-"))
+    atexit.register(shutil.rmtree, base, True)
+    # No add-on, so a copy of one env builds in any tree; example_copy lists the fixture add-on.
+    return sample.build(base / "instance", with_addons=False)
+
+
+def copy_sample(dest: Path) -> Path:
+    """A copy of the sample instance at dest (which may exist), its core links kept."""
+    shutil.copytree(sample_root(), dest, symlinks=True, dirs_exist_ok=True)
+    return dest
 
 
 def link_core_trees(instance: Path, product: Path) -> None:
@@ -241,67 +231,11 @@ def render_switches(env_dir: Path, root: Path) -> None:
     render_env(env_dir, root)
 
 
-FIXTURE_ADDONS = REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"
-
-
 def link_core_with_fixture_addons(root: Path) -> None:
-    """root/core links to core, and root/addons holds core's add-ons and the fixture ones (hello):
-    the product ships no sample add-on, so tests run the add-on rules on the fixture."""
-    if not (root / "core").exists():
-        (root / "core").symlink_to(REPO_ROOT / "core")
-    addons = root / "addons"
-    addons.mkdir(exist_ok=True)
-    for source in (REPO_ROOT / "addons", FIXTURE_ADDONS):
-        for entry in source.iterdir():
-            if entry.name != "__pycache__" and not (addons / entry.name).exists():
-                (addons / entry.name).symlink_to(entry)
+    """root/core links to core, and root/addons holds core's add-ons and the fixture ones."""
+    import sample
 
-
-def _list_fixture_addons(env_dir: Path) -> None:
-    """The copy lists the fixture add-on, so every check on add-ons has one to check."""
-    from jarvis.env import switches as _switches
-    from jarvis.schema.env import SERVICES_KUSTOMIZATION
-
-    names = sorted(entry.name for entry in FIXTURE_ADDONS.iterdir() if entry.is_dir())
-    set_switches(env_dir, addons=names)
-    (env_dir / "flux" / SERVICES_KUSTOMIZATION).write_text(_switches.services({"addons": names}), encoding="utf-8")
-
-
-def _drop_addons(env_dir: Path) -> None:
-    from jarvis.env import switches as _switches
-    from jarvis.schema.env import SERVICES_KUSTOMIZATION
-
-    set_switches(env_dir, addons=[])
-    (env_dir / "flux" / SERVICES_KUSTOMIZATION).write_text(_switches.services({}), encoding="utf-8")
-
-
-def _seal_copy_addons(root: Path, name: str) -> None:
-    """One placeholder Secret, sealed to the copy's throwaway key, per namespace an enabled add-on decrypts."""
-    from jarvis.schema.env import addon_documents, addon_secret_namespaces, enabled_addons
-    from jarvis.secrets.sops import encrypt_secret_to_file
-
-    for addon in enabled_addons(root / "envs" / name):
-        for namespace in addon_secret_namespaces(addon_documents(root, addon)):
-            secret = f"{namespace}-fixture"
-            document = {
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {
-                    "name": secret,
-                    "namespace": namespace,
-                    "annotations": {"kustomize.toolkit.fluxcd.io/prune": "disabled"},
-                },
-                "type": "Opaque",
-                "stringData": {"greeting": "placeholder"},
-            }
-            encrypt_secret_to_file(
-                repo_root=root,
-                env=name,
-                name=secret,
-                namespace=namespace,
-                document=document,
-                sops_bin=shutil.which("sops"),
-            )
+    sample.link_core(root)
 
 
 def _git_ignored(repo: Path, path: Path) -> bool:
@@ -315,29 +249,6 @@ def _git_ignored(repo: Path, path: Path) -> bool:
     return proc.returncode == 0
 
 
-def _seal_copy_offsite(root: Path, name: str) -> None:
-    """The owner seals backups-offsite with jarvis encrypt; the copy gets a placeholder to the same key."""
-    from jarvis.secrets.sops import encrypt_secret_to_file
-
-    document = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": "backups-offsite",
-            "namespace": "platform-backups",
-            "annotations": {"kustomize.toolkit.fluxcd.io/prune": "disabled"},
-        },
-        "type": "Opaque",
-        "stringData": {
-            "RESTIC_REPOSITORY": "rest:https://offsite.example.invalid/",
-            "RESTIC_PASSWORD": "placeholder",
-        },
-    }
-    encrypt_secret_to_file(
-        repo_root=root, env=name, name="backups-offsite", document=document, sops_bin=shutil.which("sops")
-    )
-
-
 def _rename_copied_env(env_dir: Path, old: str, new: str) -> None:
     for path in sorted(item for item in env_dir.rglob("*") if item.is_file()):
         text = path.read_text(encoding="utf-8")
@@ -346,52 +257,6 @@ def _rename_copied_env(env_dir: Path, old: str, new: str) -> None:
         )
         if updated != text:
             path.write_text(updated, encoding="utf-8")
-
-
-def _throwaway_age_public(tmp_path: Path) -> str:
-    """Public half of a new age key. The private key is not returned or printed."""
-    age_keygen = shutil.which("age-keygen")
-    if not age_keygen:
-        raise RuntimeError("age-keygen not found on PATH (run make deps)")
-    proc = subprocess.run(
-        [age_keygen, "-o", str(tmp_path / "age-key.txt")],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    # Public key is on stderr. The private key stays in the file and is not read.
-    match = re.search(r"age1[0-9a-z]+", proc.stderr)
-    if match is None:
-        raise RuntimeError("age-keygen did not produce a public key")
-    return match.group(0)
-
-
-def _write_copy_sops_rule(root: Path, name: str, public: str) -> None:
-    text = textwrap.dedent(
-        f"""
-        creation_rules:
-          - path_regex: envs/{name}/secrets/.*\\.sops\\.yaml$
-            encrypted_regex: ^(data|stringData)$
-            age: {public}
-        """
-    ).strip()
-    (root / ".sops.yaml").write_text(text + "\n", encoding="utf-8")
-
-
-def _bootstrap_copy(root: Path, name: str) -> None:
-    sops = shutil.which("sops")
-    if not sops:
-        raise RuntimeError("sops not found on PATH (run make deps)")
-    mod = importlib.import_module("jarvis.secrets.mint")
-    previous_root = mod.REPO_ROOT
-    previous_repo_root = mod._repo_root
-    mod.REPO_ROOT = root
-    mod._repo_root = lambda: root
-    try:
-        mod.bootstrap(name, sops_bin=sops)
-    finally:
-        mod.REPO_ROOT = previous_root
-        mod._repo_root = previous_repo_root
 
 
 def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
@@ -421,14 +286,6 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
         mod.bootstrap_app(copy.name, namespace, sops_bin=sops)
     finally:
         mod.REPO_ROOT, mod._repo_root = previous_root, previous_repo_root
-
-
-def _render_copy(env_dir: Path) -> None:
-    from jarvis.render.cluster_vars import render_document
-
-    source = env_dir / "values" / "cluster-vars.yaml"
-    output = env_dir / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    output.write_text(render_document(source), encoding="utf-8")
 
 
 def kyverno_generated(work: Path, policies: list[dict], triggers: list[dict], cluster: list[dict] | None = None) -> list[dict]:

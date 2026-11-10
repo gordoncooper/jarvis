@@ -6,8 +6,10 @@ import subprocess
 
 from ansible_role_proof import ANSIBLE_DIR, REPO_ROOT, env_name
 
+from support import sample_root
+
 LIST_TASKS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
-CLUSTER_VARS_REL = f"../../envs/{env_name()}/values/cluster-vars.yaml"
+CLUSTER_VARS_REL = str(sample_root() / "envs" / env_name() / "values" / "cluster-vars.yaml")
 
 
 def list_tasks_for_tag(tag: str) -> str:

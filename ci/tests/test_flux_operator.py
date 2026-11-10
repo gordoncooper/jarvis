@@ -33,7 +33,7 @@ from ansible_role_proof import (
 from conftest import require_cli
 
 from jarvis.schema.env import DEFAULT_SSH_USER
-from support import REPO_ROOT
+from support import REPO_ROOT, sample_root
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
 
@@ -1378,7 +1378,7 @@ def test_fresh_cluster_sets_the_hold_then_applies_the_flux_instance_and_root_sou
     stdin_path = tmp_path / "apply.stdin"
     flux_stdin_path = tmp_path / "flux-apply.stdin"
     sync_stdin_path = tmp_path / "sync-apply.stdin"
-    sync_file = REPO_ROOT / "envs" / env_name() / "flux" / "sync.yaml"
+    sync_file = sample_root() / "envs" / env_name() / "flux" / "sync.yaml"
     env_file = example_flux_entry(tmp_path).instance_file
     binary = tmp_path / "k3s"
     restic = tmp_path / "backup" / "restic"
@@ -1783,8 +1783,9 @@ def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
     assert "create" not in log.read_text(encoding="utf-8")
 
 
-def test_example_env_known_hosts_is_the_role_default() -> None:
-    """Rule: the example env's flux_known_hosts is the role default, so a GitHub key rotation
-    updates both or the copy an env starts from trusts a stale key."""
-    example = yaml.safe_load((REPO_ROOT / "envs" / "env-00" / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    assert example["flux_known_hosts"] == load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"]
+def test_a_new_env_trusts_the_role_default_host_key() -> None:
+    """Rule: jarvis init writes no flux_known_hosts, so a new env trusts the role's default (GitHub's
+    published key, checked above) and a GitHub key rotation is one change in core."""
+    written = yaml.safe_load((sample_root() / "envs" / "env-00" / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
+    assert "flux_known_hosts" not in written
+    assert load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"].startswith("github.com ssh-ed25519 ")

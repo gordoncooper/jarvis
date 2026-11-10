@@ -1,5 +1,5 @@
-"""The values-file schemas (schema/*.schema.json): valid JSON Schemas that every committed env file
-and env shape passes, named by each env-00 file's yaml-language-server line."""
+"""The values-file schemas (schema/*.schema.json): valid JSON Schemas that the sample env's files
+and the env shapes pass, and that each file jarvis init writes names for editors."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-from support import REPO_ROOT
+from support import REPO_ROOT, sample_root
 
 _FILES = {
     "cluster-vars": "values/cluster-vars.yaml",
@@ -27,16 +27,23 @@ def _validator(name: str) -> Draft202012Validator:
 
 @pytest.mark.parametrize("name", sorted(_FILES))
 def test_each_env_file_passes_its_schema_and_names_it(name: str) -> None:
-    """Rule: every committed env's file passes its schema; env-00's names the schema for editors."""
-    paths = sorted((REPO_ROOT / "envs").glob(f"*/{_FILES[name]}"))
+    """Rule: the sample env's file (and every env shape) passes its schema; a file jarvis init
+    writes names its schema at the core release the env pins, for editors."""
+    paths = [sample_root() / "envs/env-00" / _FILES[name]]
     if name == "hosts":
         paths += sorted((REPO_ROOT / "ci/tests/fixtures/env-shapes").glob("*/hosts.yml"))
-    assert paths
     for path in paths:
         errors = [error.message for error in _validator(name).iter_errors(yaml.safe_load(path.read_text(encoding="utf-8")) or {})]
         assert errors == [], f"{path}: {errors}"
-    example = (REPO_ROOT / "envs/env-00" / _FILES[name]).read_text(encoding="utf-8")
-    assert example.startswith(f"# yaml-language-server: $schema=../../../schema/{name}.schema.json\n")
+    import sample
+
+    from jarvis.env import scaffold
+
+    spec = sample.spec()
+    written = {"cluster-vars": scaffold.cluster_vars, "switches": scaffold.switches, "hosts": scaffold.hosts}
+    if name in written:
+        hint = f"https://raw.githubusercontent.com/example-owner/example-core/{spec.core_tag}/schema/{name}.schema.json"
+        assert written[name](spec).startswith(f"# yaml-language-server: $schema={hint}\n")
 
 
 @pytest.mark.parametrize(

@@ -1,11 +1,11 @@
 name: e2e
 
 # A real cluster from this commit: k3d (k3s in Docker), the env's FluxInstance and sync.yaml
-# applied by the flux-operator role, every Kustomization and HelmRelease Ready, env-00's hosted
+# applied by the flux-operator role, every Kustomization and HelmRelease Ready, the sample hosted
 # apps running at their pinned tags from the apps repository, then jarvis verify and jarvis drill.
-# The env is a throwaway copy of env-00 whose root source is a temporary branch of this
-# repository; its core source is that branch too, or on a release tag push the tag itself. The
-# job deletes the branch.
+# The env is a throwaway one written by jarvis init's code (ci/e2e/make-env), whose root source is
+# a temporary branch of this repository; its core source is that branch too, or on a release tag
+# push the tag itself. The job deletes the branch.
 on:
   push:
     tags:
@@ -66,7 +66,7 @@ jobs:
         app_dns: ["on", "off"]
     env:
       E2E_ENV: e2e
-      # The apps env-00 lists, at the tags its values/apps.yaml pins.
+      # The sample apps (ci/tests/sample.py), at the tags the env's values/apps.yaml pins.
       APPS_URL: https://github.com/${{ github.repository_owner }}/jarvis-apps
       E2E_BRANCH: e2e/${{ github.run_id }}-${{ github.run_attempt }}-app-dns-${{ matrix.app_dns }}
       KUBECONFIG: /home/runner/.kube/jarvis-e2e.yaml

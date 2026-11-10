@@ -9,6 +9,8 @@ checkout of the tag cached under ~/.cache/jarvis/core/, set up from that release
 --core <path> runs a local core checkout instead, whatever the env pins (core development).
 
 Commands:
+  init [<dir>]           Start an instance repo with its first env (jarvis init --help)
+  env add <name>         Add another env (cluster) to this instance repo
   doctor                 Check this controller: CLIs, the age key, the remote, host names
   validate               Every env check: schema, wiring, committed files, secret scan
   render [--check]       Write the env's flux/ from its values; --check lists stale files
@@ -212,6 +214,59 @@ def _help(command: Command) -> int:
     return 0
 
 
+def _take(args: list[str], name: str) -> tuple[str | None, list[str]]:
+    """Take one --<name> <value> option out of args."""
+    for i, arg in enumerate(args):
+        if arg == name and i + 1 < len(args):
+            return args[i + 1], args[:i] + args[i + 2 :]
+        if arg.startswith(name + "="):
+            return arg.partition("=")[2], args[:i] + args[i + 1 :]
+    return None, args
+
+
+def _start(command: str, args: list[str], core: str | None, env_name: str | None) -> int:
+    """jarvis init and jarvis env add: no env to read a pin from yet, so the new env pins the core
+    release this CLI came from (--core-url and --core-ref name another), and runs from it."""
+    from jarvis.cli import init
+
+    if command == "env" and (not args or args[0] != "add"):
+        raise UsageError("usage: jarvis env add <name> --domain <dns suffix> --node <host>[:<roles>] ...")
+    if "-h" in args or "--help" in args:
+        init.parser("init" if command == "init" else "env add").print_help()
+        return 0
+    url, args = _take(args, "--core-url")
+    tag, args = _take(args, "--core-ref")
+    if env_name is not None:
+        args = ["--env", env_name, *args] if command == "init" else args
+    if core is not None:
+        os.environ[_core.UNPINNED_VAR] = "1"
+        checkout = Path(core).expanduser().resolve()
+        if checkout != PRODUCT_ROOT:
+            forward = [*(["--core-url", url] if url else []), *(["--core-ref", tag] if tag else [])]
+            _core.hand_off(checkout, [command, *args, *forward])
+    if not (url and tag):
+        own = _core.own_release()
+        if own is None:
+            raise UsageError(f"jarvis {command} cannot tell which core release it is; pass --core-url and --core-ref")
+        url, tag = url or own[0], (tag or own[1]).removeprefix("refs/tags/")
+    tag = tag.removeprefix("refs/tags/")
+    if not os.environ.get(_core.UNPINNED_VAR) and not _core.at_tag(PRODUCT_ROOT, tag):
+        if os.environ.get(_core.DELEGATED_VAR):
+            raise _core.CoreError(f"{PRODUCT_ROOT} is not core {tag}")
+        _core.hand_off(_core.checkout_tag(url, tag), [command, *args, "--core-url", url, "--core-ref", tag])
+    activate_toolchain(PRODUCT_ROOT)
+    try:
+        if command == "init":
+            return init.run_init(args, (url, tag))
+        return init.run_env_add(find_instance(Path.cwd()), args[1:], (url, tag))
+    except init.scaffold.ScaffoldError as exc:
+        print(f"FAIL {command}: {exc}", file=sys.stderr)
+        return USAGE
+    except init._age.AgeError as exc:
+        print(f"FAIL {command}: {exc}", file=sys.stderr)
+        return ENVIRONMENT
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -233,6 +288,8 @@ def _main(argv: list[str]) -> int:
         print(__doc__)
         return 0 if rest else USAGE
     command, args = rest[0], rest[1:]
+    if command in ("init", "env"):
+        return _start(command, args, core, env_name)
     if command not in COMMANDS:
         raise UsageError(f"unknown command {command!r}; see jarvis --help")
     if "-h" in args or "--help" in args:

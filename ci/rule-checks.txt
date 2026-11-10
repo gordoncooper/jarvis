@@ -1,14 +1,9 @@
 addons
-app-hosting
-backup-isolation
 contract-md
 digest-pin
-env-schema
-flux-identity
-flux-prune
-flux-substitute
 loadbalancer
 manifest-lint
 product-ci
 pvc-backup
+sample-instance
 secret-scan

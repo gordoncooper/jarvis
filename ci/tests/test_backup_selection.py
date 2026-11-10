@@ -22,6 +22,7 @@ from support import (
     ExampleCopy,
     _kustomize_build,
     bootstrap_example_copy,
+    copy_sample,
     kyverno_generated,
     register_copy_app,
     set_switches,
@@ -291,8 +292,8 @@ def _instance_with_backups(tmp_path: Path) -> Path:
     product, instance = tmp_path / "product", tmp_path / "instance"
     for name in ("core", "addons"):
         shutil.copytree(REPO_ROOT / name, product / name)
-    (instance / "envs").mkdir(parents=True)
-    shutil.copytree(REPO_ROOT / "envs" / "env-00", instance / "envs" / "env-00")
+    copy_sample(instance)
+    (instance / "core").unlink()
     (instance / "core").symlink_to(product)
     apps_path = instance / "envs" / "env-00" / "values" / "apps.yaml"
     data = yaml.safe_load(apps_path.read_text(encoding="utf-8"))
@@ -353,13 +354,13 @@ def test_instance_env_schema_without_apps_repo_fails(
 def test_env_schema_check_fails_under_instance_without_apps_repo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Rule: ci/checks/env-schema refuses INSTANCE without a real APPS_REPO."""
+    """Rule: the env schema refuses an instance that selects backups without a real APPS_REPO."""
     instance = _instance_with_backups(tmp_path)
     env = os.environ.copy()
     env.pop("APPS_REPO", None)
     env["INSTANCE"] = str(instance)
     proc = subprocess.run(
-        ["bash", str(REPO_ROOT / "ci" / "checks" / "env-schema")],
+        [sys.executable, "-m", "jarvis.env.validate", "--only", "env-schema"],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
@@ -368,21 +369,6 @@ def test_env_schema_check_fails_under_instance_without_apps_repo(
     )
     assert proc.returncode != 0
     assert "APPS_REPO" in proc.stdout + proc.stderr
-
-
-def test_env_schema_check_refuses_fixture_apps_repo_under_instance(tmp_path: Path) -> None:
-    """Rule: ci/checks/env-schema refuses INSTANCE with APPS_REPO pointed at core's own fixtures."""
-    instance = _instance_with_backups(tmp_path)
-    proc = subprocess.run(
-        ["bash", str(REPO_ROOT / "ci" / "checks" / "env-schema")],
-        cwd=str(REPO_ROOT),
-        env={**os.environ, "INSTANCE": str(instance), "APPS_REPO": str(FIXTURE_APPS)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode != 0
-    assert "must not point at core test fixtures" in proc.stderr
 
 
 _OVERRIDES = {"mode": "selected", "selected": ["notes"]}

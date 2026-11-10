@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CI rule check: workloads set probes, resources, and stdout logs.
-# The check itself lives in jarvis/env/validate.py, which jarvis validate runs on an instance.
+# On core itself (its core/ and addons/ trees; core holds no env). The check lives in
+# jarvis/env/validate.py; sample-instance and jarvis validate run it on an instance.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

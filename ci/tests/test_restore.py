@@ -16,6 +16,14 @@ import yaml
 restore_tool = importlib.import_module("jarvis.backups.restore")
 
 
+@pytest.fixture(autouse=True)
+def _sample_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """restore reads env-00's repository marker from the instance: the sample one."""
+    from support import sample_root
+
+    monkeypatch.setenv("INSTANCE", str(sample_root()))
+
+
 def _completed(
     args: Sequence[str], stdout: str, *, returncode: int = 0, stderr: str = ""
 ) -> CompletedProcess[str]:
@@ -987,7 +995,7 @@ def test_repository_environment_marker_must_match(
         "jarvis_env: wrong-env\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(restore_tool, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("INSTANCE", str(tmp_path))
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True)
     assert _run(cluster, app="demo", all_pvcs=False) != 0
     assert "does not match its repository marker" in capsys.readouterr().out

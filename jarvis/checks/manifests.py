@@ -12,12 +12,14 @@ from pathlib import Path
 
 import yaml
 
-from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, EXAMPLE_ENV, ROOT_SOURCE, core_dir
+from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, ROOT_SOURCE, core_dir
 
 # The trees the root artifact takes from the core repository.
 _CORE_TREES = (CORE_SOURCE_DIR, ADDONS_DIR)
 
 SCAN_ROOTS = ("core/", "addons/", "envs/")
+# Core holds core/ and addons/ and no env; an instance repo holds envs/. require_roots requires these.
+REQUIRED_ROOTS = ("core/", "addons/")
 SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
 FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _KUSTOMIZATION_FILES = ("kustomization.yaml", "kustomization.yml", "Kustomization")
@@ -30,15 +32,15 @@ def load_documents(
 ) -> list[tuple[str, dict | None, str | None]]:
     """Return (relative path, document, error). One of document or error is set.
 
-    The checks pass require_roots=True, so a missing manifest root is an error
-    instead of an empty scan. Fixture trees in tests build only the roots they use.
+    The checks pass require_roots=True, so a missing core/ or addons/ is an error instead of an
+    empty scan; envs/ is scanned when present. Fixture trees in tests build only the roots they use.
     """
     root = Path(repo_root).resolve()
     found: list[tuple[str, dict | None, str | None]] = []
     for scan_root in SCAN_ROOTS:
         base = root / scan_root.rstrip("/")
         if not base.is_dir():
-            if require_roots:
+            if require_roots and scan_root in REQUIRED_ROOTS:
                 found.append((scan_root.rstrip("/"), None, "manifest root is missing"))
             continue
         for path in sorted(item for item in base.rglob("*") if item.is_file()):
@@ -238,32 +240,13 @@ def build_flux_path(root: Path, env_rel: str, doc: dict, *, parent: dict | None 
         return FluxPath(doc, parent, [], "spec.path is unset", False)
     rel = path.strip().removeprefix("./")
     partial = False
-    if example_platform_configs(env_rel, path):
-        # Only the core list of the example's platform-configs path is in Git.
-        rel, partial = f"{CORE_SOURCE_DIR}/platform/configs", True
-    elif env_rel.startswith(f"envs/{EXAMPLE_ENV}/") and rel.startswith(f"envs/{EXAMPLE_ENV}/secrets/"):
-        # The example env holds no secret files; a bootstrapped copy builds this path.
-        return FluxPath(doc, parent, [], None, True)
     docs, error = kustomize_build(root, rel)
-    if partial and error:
-        # A tree without the core list builds nothing here, as before bootstrap.
-        return FluxPath(doc, parent, [], None, True)
     for component in spec.get("components") or []:
         if error:
             break
         more, error = kustomize_build(root, posixpath.join(rel, str(component)))
         docs = docs + more
     return FluxPath(doc, parent, docs, error, partial)
-
-
-def example_platform_configs(env_rel: str, path: str) -> bool:
-    """The example env's platform-configs path lists bootstrap secrets that are not in Git.
-
-    A copy builds this path after bootstrap-secrets. The example tree does not.
-    """
-    if not env_rel.startswith(f"envs/{EXAMPLE_ENV}/"):
-        return False
-    return path.strip().removeprefix("./") == f"envs/{EXAMPLE_ENV}/flux/platform-configs"
 
 
 def namespace_of(doc: dict) -> str:

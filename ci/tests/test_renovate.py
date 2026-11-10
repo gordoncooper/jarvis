@@ -11,6 +11,7 @@ import yaml
 
 from support import REPO_ROOT as ROOT
 from support import renovate_python_pattern as _js_to_python
+from support import sample_root
 
 
 def test_core_flux_instance_version_is_a_renovate_pin() -> None:
@@ -507,7 +508,7 @@ def _preset_matches(rel: str, text: str) -> list[re.Match[str]]:
 def test_instance_preset_reads_every_pin_an_env_holds() -> None:
     """Rule: the instance preset opens PRs for an env's core tag (cluster-vars only: sync.yaml is
     rendered from it) and k3s; a core that follows a branch is not a pin it moves."""
-    cluster_vars = (ROOT / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8")
+    cluster_vars = (sample_root() / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8")
     cluster_vars = re.sub(r"(?m)^core_git_ref:.*$", "core_git_ref: refs/tags/v1.2.3", cluster_vars)
     core = {m.group("depName"): m.group("currentValue")
             for m in _preset_matches("envs/env-x/values/cluster-vars.yaml", cluster_vars) if "depName" in m.groupdict()}
@@ -519,7 +520,7 @@ def test_instance_preset_reads_every_pin_an_env_holds() -> None:
            if "depName" not in m.groupdict()]
     assert k3s == ["v1.36.5+k3s1"]
     # The render writes the core GitRepository's ref from core_git_ref; the preset reads no render output.
-    sync = (ROOT / "envs/env-00/flux/sync.yaml").read_text(encoding="utf-8")
+    sync = (sample_root() / "envs/env-00/flux/sync.yaml").read_text(encoding="utf-8")
     assert not _preset_matches("envs/env-x/flux/sync.yaml", sync)
     # Flux comes with the core tag: an env holds no FluxInstance, and the preset reads none.
     instance = (ROOT / "core/flux/flux-instance.yaml").read_text(encoding="utf-8")
@@ -536,7 +537,7 @@ def test_instance_preset_moves_nothing_on_its_own() -> None:
 
 def test_instance_preset_reads_each_app_pin() -> None:
     """Rule: the preset opens one PR per app pin under versions, and no exception line reads as one."""
-    text = (ROOT / "envs/env-00/values/apps.yaml").read_text(encoding="utf-8")
+    text = (sample_root() / "envs/env-00/values/apps.yaml").read_text(encoding="utf-8")
     pins = {m.group("depName"): m.group("currentValue") for m in _preset_matches("envs/env-x/values/apps.yaml", text)}
     assert pins == yaml.safe_load(text)["versions"]
 

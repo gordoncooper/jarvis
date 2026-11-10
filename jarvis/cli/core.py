@@ -9,9 +9,11 @@ one repo can pin different releases.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 import yaml
@@ -67,16 +69,66 @@ def pinned_tag(env_dir: Path) -> str:
 def checkout(env_dir: Path) -> Path:
     """The cached checkout of the env's pinned core, cloned and set up on first use."""
     tag = pinned_tag(env_dir)
+    return checkout_tag(core_url(env_dir), tag)
+
+
+def checkout_tag(url: str, tag: str) -> Path:
+    """The cached checkout of core at tag, cloned from url and set up on first use."""
     dest = cache_dir() / "core" / tag
     if not (dest / _READY).is_file():
         if not dest.is_dir():
             partial = dest.with_name(f".{tag}.partial")
             shutil.rmtree(partial, ignore_errors=True)
             partial.parent.mkdir(parents=True, exist_ok=True)
-            _run(["git", "clone", "--quiet", "--depth", "1", "--branch", tag, core_url(env_dir), str(partial)])
+            _run(["git", "clone", "--quiet", "--depth", "1", "--branch", tag, url, str(partial)])
             partial.rename(dest)
         setup(dest)
     return dest
+
+
+def at_tag(core_root: Path, tag: str) -> bool:
+    """True when core_root is a clean checkout of tag."""
+
+    def git(*args: str) -> str | None:
+        proc = subprocess.run(["git", "-C", str(core_root), *args], capture_output=True, text=True, check=False)
+        return proc.stdout.strip() if proc.returncode == 0 else None
+
+    tagged = git("rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}")
+    return tagged is not None and git("rev-parse", "HEAD") == tagged and not git("status", "--porcelain", "--untracked-files=no")
+
+
+def own_release() -> tuple[str, str] | None:
+    """(core URL, tag) of the core this CLI came from, or None when it cannot tell.
+
+    A core checkout at a tag knows its origin and tag. An installed CLI (uv tool install
+    git+<url>@<tag>) knows both from its install record (PEP 610 direct_url.json).
+    """
+    tag = _git_out(PRODUCT_ROOT, "describe", "--exact-match", "--tags", "HEAD")
+    url = _git_out(PRODUCT_ROOT, "remote", "get-url", "origin")
+    if tag and url:
+        return https_url(url), tag
+    try:
+        record = json.loads(distribution("jarvis").read_text("direct_url.json") or "{}")
+    except (PackageNotFoundError, ValueError):
+        return None
+    vcs = record.get("vcs_info") or {}
+    url, tag = str(record.get("url", "")), str(vcs.get("requested_revision", ""))
+    if vcs.get("vcs") != "git" or not url or not tag:
+        return None
+    return https_url(url.removeprefix("git+")), tag
+
+
+def https_url(url: str) -> str:
+    """A GitHub remote as the https:// URL Flux reads core from; any other URL as it is."""
+    for prefix in ("git@github.com:", "ssh://git@github.com/"):
+        if url.startswith(prefix):
+            url = "https://github.com/" + url.removeprefix(prefix)
+    return url.removesuffix(".git")
+
+
+def _git_out(root: Path, *args: str) -> str | None:
+    proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
 
 
 def setup(core: Path) -> None:

@@ -12,8 +12,7 @@ from typing import NamedTuple
 
 import yaml
 
-from jarvis.schema.env import EXAMPLE_ENV, is_example_env
-from support import REPO_ROOT
+from support import REPO_ROOT, sample_root
 
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
 K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"
@@ -26,37 +25,29 @@ FLUX_INSTANCE_NAME = "flux"
 
 
 def env_name() -> str:
-    return EXAMPLE_ENV
-
-
-def non_example_env_names(repo_root: Path = REPO_ROOT) -> list[str]:
-    envs = repo_root / "envs"
-    return sorted(
-        path.name
-        for path in envs.iterdir()
-        if path.is_dir() and not is_example_env(path.name)
-    )
+    """The sample instance's env (ci/tests/sample.py)."""
+    return "env-00"
 
 
 def cluster_vars_playbook_path() -> str:
-    return f"../../envs/{env_name()}/values/cluster-vars.yaml"
+    return str(sample_root() / "envs" / env_name() / "values" / "cluster-vars.yaml")
 
 
-def inventory_path(repo_root: Path = REPO_ROOT) -> Path:
-    return repo_root / "envs" / env_name() / "inventory" / "hosts.yml"
+def inventory_path(repo_root: Path | None = None) -> Path:
+    return (repo_root or sample_root()) / "envs" / env_name() / "inventory" / "hosts.yml"
 
 
 def roles_inventory_path(repo_root: Path = REPO_ROOT) -> Path:
     return repo_root / "infra" / "inventory" / "roles"
 
 
-def env_inventory_args(repo_root: Path = REPO_ROOT) -> list[str]:
+def env_inventory_args(repo_root: Path | None = None) -> list[str]:
     """Env hosts first, then the constructed role groups. Order is required."""
     return [
         "-i",
         str(inventory_path(repo_root).resolve()),
         "-i",
-        str(roles_inventory_path(repo_root).resolve()),
+        str(roles_inventory_path().resolve()),
     ]
 
 
@@ -67,13 +58,16 @@ def load_role_defaults(role_dir: Path) -> dict[str, object]:
 
 
 def load_cluster_vars(
-    repo_root: Path = REPO_ROOT, *, env: str | None = None
+    repo_root: Path | None = None, *, env: str | None = None
 ) -> dict[str, object]:
     name = env_name() if env is None else env
-    path = repo_root / "envs" / name / "values" / "cluster-vars.yaml"
+    path = (repo_root or sample_root()) / "envs" / name / "values" / "cluster-vars.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
-    return data
+    # With the schema's defaults, as Ansible and the renderer see the env.
+    from jarvis.schema.env import resolve_cluster_vars
+
+    return resolve_cluster_vars(data)
 
 
 def standard_flux_kustomization_paths(env: str) -> dict[str, str]:

@@ -21,9 +21,9 @@ from ansible_role_proof import (
 )
 from conftest import require_cli
 
-from support import REPO_ROOT, bootstrap_example_copy
+from support import REPO_ROOT, bootstrap_example_copy, sample_root
 
-_EXAMPLE_SYNC = REPO_ROOT / "envs" / "env-00" / "flux" / "sync.yaml"
+_EXAMPLE_SYNC = sample_root() / "envs" / "env-00" / "flux" / "sync.yaml"
 
 _REQUIRED = (
     "k3s_version",

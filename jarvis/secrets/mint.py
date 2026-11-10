@@ -28,6 +28,7 @@ import bcrypt
 from jarvis.backups import app_credentials as _app_backups
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
+from jarvis.secrets import age as _age
 from jarvis.secrets import sops as _sops
 
 REPO_ROOT = PRODUCT_ROOT
@@ -55,7 +56,6 @@ _DNS_SUFFIX = re.compile(
     r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
 )
-_DEFAULT_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 
 # One htpasswd user. The password stays out of the repository URL.
 RESTIC_REST_USERNAME = "restic"
@@ -129,7 +129,7 @@ def _sops_child_env(env: str) -> dict[str, str]:
     child = os.environ.copy()
     if child.get("SOPS_AGE_KEY_FILE"):
         return child
-    configured = _yaml_scalar(_cluster_text(env), "age_key_file") or _DEFAULT_AGE_KEY_FILE
+    configured = _yaml_scalar(_cluster_text(env), "age_key_file") or _age.DEFAULT_KEY_FILE
     child["SOPS_AGE_KEY_FILE"] = _expand_path(configured)
     return child
 
