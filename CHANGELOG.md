@@ -7,6 +7,11 @@ the upgrade.
 
 ## Unreleased
 
+### Fixed
+
+- The package version is the release tag (hatch-vcs): `uv tool list` and pip show `0.5.2` for an
+  install from `v0.5.2`, where they showed `0`. Nothing is bumped by hand at a release.
+
 ## v0.5.2
 
 ### Added
