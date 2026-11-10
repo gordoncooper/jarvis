@@ -45,7 +45,7 @@ module-root = ""
 target-version = "py312"
 line-length = 120
 # The extensionless commands, which ruff would not find by suffix.
-extend-include = ["ci/e2e/make-env", "ci/release-notes", "ci/select-tests"]
+extend-include = ["ci/e2e/make-env", "ci/quickstart/script", "ci/release-notes", "ci/select-tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

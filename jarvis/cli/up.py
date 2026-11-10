@@ -8,7 +8,9 @@ that step's exit code.
 
 from __future__ import annotations
 
+import json
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,7 +25,7 @@ from jarvis.render import env as render
 from jarvis.secrets import mint
 from jarvis.verify import run as verify
 
-FLUX_READY_TIMEOUT = "20m"
+FLUX_READY_TIMEOUT_SECONDS = 20 * 60
 
 
 def _git(instance: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -46,18 +48,59 @@ def unpushed(instance: Path, env: str) -> str | None:
     return None
 
 
-def wait_for_flux(env: str) -> int:
-    proc = kubectl(
-        ["wait", "kustomizations.kustomize.toolkit.fluxcd.io", "--all", "-n", "flux-system",
-         "--for=condition=Ready", f"--timeout={FLUX_READY_TIMEOUT}"],
-        repo_root=PRODUCT_ROOT,
-        kubeconfig=kubeconfig_for(env),
-    )  # fmt: skip
-    if proc.returncode:
-        print(f"FAIL up: Flux is not Ready after {FLUX_READY_TIMEOUT}: {(proc.stderr or proc.stdout).strip()}", flush=True)
-        return 1
-    print("PASS up: every Flux Kustomization is Ready", flush=True)
-    return 0
+_FLUX_KUSTOMIZATION = "kustomize.toolkit.fluxcd.io/"
+POLL_SECONDS = 10
+# Kept as module names so the tests can replace them.
+_sleep: Callable[[float], None] = time.sleep
+_clock: Callable[[], float] = time.monotonic
+
+
+def expected_kustomizations(env_dir: Path) -> set[str]:
+    """The Flux Kustomizations the env's wiring declares: core's layers and every one in its
+    rendered flux/ (the root, services, the app wiring). Add-ons' appear once services applies."""
+    names: set[str] = set()
+    for path in [*sorted((PRODUCT_ROOT / "core" / "flux" / "layers").glob("*.yaml")), *sorted((env_dir / "flux").rglob("*.yaml"))]:
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
+            if isinstance(doc, dict) and doc.get("kind") == "Kustomization" and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION):
+                names.add(str((doc.get("metadata") or {}).get("name")))
+    return names
+
+
+def _not_ready(items: list[dict]) -> dict[str, str]:
+    """Each listed Kustomization that is not Ready, with its Ready condition's message."""
+    waiting = {}
+    for item in items:
+        ready = next((c for c in (item.get("status") or {}).get("conditions") or [] if c.get("type") == "Ready"), {})
+        if ready.get("status") != "True":
+            waiting[str(item["metadata"]["name"])] = str(ready.get("message") or "no Ready condition yet")
+    return waiting
+
+
+def wait_for_flux(env: str, env_dir: Path) -> int:
+    """Until every expected Kustomization exists and every one in flux-system has been Ready on
+    two polls in a row: a layer applies its children after it is Ready, so one pass is not enough.
+    `kubectl wait --all` would see only the root, the one object that exists when it starts."""
+    expected = expected_kustomizations(env_dir)
+    deadline = _clock() + FLUX_READY_TIMEOUT_SECONDS
+    settled, waiting = 0, {name: "not created yet" for name in expected}
+    while _clock() < deadline:
+        proc = kubectl(
+            ["get", "kustomizations.kustomize.toolkit.fluxcd.io", "-n", "flux-system", "-o", "json"],
+            repo_root=PRODUCT_ROOT,
+            kubeconfig=kubeconfig_for(env),
+        )
+        if proc.returncode == 0:
+            items = (json.loads(proc.stdout or "{}") or {}).get("items") or []
+            listed = {str(item["metadata"]["name"]) for item in items}
+            waiting = _not_ready(items) | {name: "not created yet" for name in expected - listed}
+            settled = settled + 1 if not waiting else 0
+            if settled >= 2:
+                print(f"PASS up: every Flux Kustomization is Ready ({len(listed)})", flush=True)
+                return 0
+        _sleep(POLL_SECONDS)
+    detail = "; ".join(f"{name}: {why}" for name, why in sorted(waiting.items()))
+    print(f"FAIL up: Flux is not Ready after {FLUX_READY_TIMEOUT_SECONDS // 60} minutes: {detail}", flush=True)
+    return 1
 
 
 def run(instance: Path, env: str) -> int:
@@ -69,7 +112,7 @@ def run(instance: Path, env: str) -> int:
         ("secrets", lambda: mint.main(["--env", env])),
         ("pushed", lambda: _refuse_unpushed(instance, env)),
         ("site", lambda: site.main(["--env", env])),
-        ("flux", lambda: wait_for_flux(env)),
+        ("flux", lambda: wait_for_flux(env, env_dir)),
         ("verify", lambda: verify.main(["--env", env])),
     ]
     for name, step in steps:

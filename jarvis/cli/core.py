@@ -74,10 +74,11 @@ def checkout(env_dir: Path) -> Path:
 
 def checkout_tag(url: str, tag: str) -> Path:
     """The cached checkout of core at tag, cloned from url and set up on first use."""
+    # A tag may hold slashes (release/1.0): its checkout nests, and the partial clone sits beside it.
     dest = cache_dir() / "core" / tag
     if not (dest / _READY).is_file():
         if not dest.is_dir():
-            partial = dest.with_name(f".{tag}.partial")
+            partial = dest.parent / f".{dest.name}.partial"
             shutil.rmtree(partial, ignore_errors=True)
             partial.parent.mkdir(parents=True, exist_ok=True)
             _run(["git", "clone", "--quiet", "--depth", "1", "--branch", tag, url, str(partial)])

@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Print docs/quickstart.md's commands as one bash script, for the quickstart workflow.
+
+  ci/quickstart/script --vars <file> [--until <text>] > quickstart.sh
+
+The script is the doc's ```bash blocks, in order, as written, with two changes:
+- the "Your choices" block is replaced by --vars, which must set exactly the variables it sets;
+- each `jarvis node prep` line reads its answers from "$QUICKSTART_ANSWERS", in the order the
+  doc lists them.
+--until stops before the first block that holds that text (the macOS job stops before the node).
+Standard library only: it runs before any install.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+DOC = Path(__file__).resolve().parents[2] / "docs" / "quickstart.md"
+CHOICES = "# Your choices"
+_BLOCK = re.compile(r"^```bash\n(.*?)^```$", re.S | re.M)
+_ASSIGN = re.compile(r"^([A-Z_][A-Z0-9_]*)=", re.M)
+
+
+class QuickstartError(Exception):
+    pass
+
+
+def blocks(text: str) -> list[str]:
+    return [match.group(1) for match in _BLOCK.finditer(text)]
+
+
+def names(block: str) -> list[str]:
+    return _ASSIGN.findall(block)
+
+
+def script(text: str, choices: str, *, until: str | None = None) -> str:
+    found = blocks(text)
+    if not found or not found[0].startswith(CHOICES):
+        raise QuickstartError(f"the doc's first bash block must start with {CHOICES!r}")
+    if sorted(names(choices)) != sorted(names(found[0])):
+        raise QuickstartError(f"--vars sets {sorted(names(choices))}; the doc's choices are {sorted(names(found[0]))}")
+    lines = ["set -euxo pipefail", choices.rstrip("\n")]
+    for block in found[1:]:
+        if until and until in block:
+            break
+        for line in block.rstrip("\n").splitlines():
+            if line.startswith("jarvis node prep "):
+                line += ' < "${QUICKSTART_ANSWERS}"'
+            lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--vars", required=True, type=Path, help="The choices block CI uses")
+    parser.add_argument("--until", help="Stop before the first block holding this text")
+    args = parser.parse_args(argv)
+    try:
+        sys.stdout.write(script(DOC.read_text(encoding="utf-8"), args.vars.read_text(encoding="utf-8"), until=args.until))
+    except QuickstartError as exc:
+        print(f"FAIL quickstart: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

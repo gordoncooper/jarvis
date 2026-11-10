@@ -1,10 +1,17 @@
 # jarvis documentation
 
-## Deploy
+## Start
 
 | Path | Topic |
 | --- | --- |
-| [deploy.md](deploy.md) | Fresh copy to a running, verified cluster |
+| [quickstart.md](quickstart.md) | One node to a verified cluster, command by command |
+| [concepts.md](concepts.md) | The repositories, layers, pins, checks, secrets and backups, one section each |
+
+## How-to
+
+| Path | Topic |
+| --- | --- |
+| [deploy.md](deploy.md) | Every step of a deploy in detail: init, node prep, site, verify, drill, restore |
 | [releasing.md](releasing.md) | Cut a core release, and move an env to it |
 | [add-an-addon.md](add-an-addon.md) | Write an add-on, and turn it on or off in an env |
 | [add-a-hosted-app.md](add-a-hosted-app.md) | Write a hosted app's folder, and turn it on or off in an env |
@@ -17,7 +24,7 @@
 | [../agents/README.md](../agents/README.md) | The agent kit for instance repositories (`jarvis init --with-agents`) |
 | [../agents/coding-agents.md](../agents/coding-agents.md) | Agent workflow on core |
 
-## Contracts
+## Reference: contracts
 
 | Path | Topic |
 | --- | --- |
@@ -41,6 +48,6 @@
 
 | Path | Topic |
 | --- | --- |
-| [secrets.md](secrets.md) | How an env's secrets are made, kept and recovered; the two age keys |
+| [secrets.md](secrets.md) | How an env's secrets are made, kept, rotated and recovered; the two age keys |
 
 Real envs live in private instance repositories that `jarvis init` writes ([deploy.md](deploy.md#new-env)).
