@@ -7,7 +7,8 @@ Core ships as tags (`v<major>.<minor>.<patch>`). An env runs exactly one: `core_
 ## Cut a release
 
 1. On `main`, rename `## Unreleased` in `CHANGELOG.md` to `## <tag>` and open a new empty
-   `## Unreleased` above it. A minor release lists every env change under **Upgrading**.
+   `## Unreleased` above it. A minor release lists every env change under **Upgrading**. In the
+   same PR, set `JARVIS_VERSION` in [quickstart.md](quickstart.md)'s choices to `<tag>`.
 2. Merge that, then tag the merge commit and push the tag:
 
    ```bash
@@ -17,8 +18,9 @@ Core ships as tags (`v<major>.<minor>.<patch>`). An env runs exactly one: `core_
 
 3. `.github/workflows/release.yml` publishes the GitHub release with that section as its notes.
    A tag with no section fails the workflow; add the section and re-run it.
-4. The tag also runs `e2e` with the cluster's core source at the tag itself. A red run means the
-   release is broken: fix it on `main` and cut a patch release.
+4. The tag also runs `e2e` with the cluster's core source at the tag itself, and `quickstart`:
+   the Quickstart's commands as written, installing the tag. A red run means the release is
+   broken: fix it on `main` and cut a patch release.
 
 ## Move an env to a release
 

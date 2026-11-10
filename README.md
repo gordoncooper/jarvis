@@ -1,18 +1,19 @@
-# jarvis
+# Jarvis
 
-Infra, platform, and services for Jarvis (GitOps on k3s).
+A cluster foundation you clone and run on day 1: k3s and Flux with ingress, an internal CA, admission policies, backups with restore, and sealed secrets. Features, add-ons and hosted apps bolt on top. Each cluster lives in a git repository you own, pins one core release, and moves when you merge the pull request that bumps it.
 
-From a fresh copy to a running cluster: [docs/deploy.md](docs/deploy.md).
-
-Doc index: [docs/README.md](docs/README.md).
+- **Start here:** [Quickstart](docs/quickstart.md), one node to a verified cluster.
+- **How it fits together:** [Concepts](docs/concepts.md).
+- **Everything else:** [docs/README.md](docs/README.md).
 
 ## Requirements
 
-- amd64 hosts only.
-- Exactly one control-plane host.
-- NVIDIA GPUs only, and only on a host with the `gpu` role.
+- Nodes: Ubuntu Server, amd64 only, with exactly one control-plane host.
+- GPUs: NVIDIA only, and only on a host with the `gpu` role.
+- A controller: macOS or Linux, with `curl` and `git`.
+- GitHub for the repository Flux reads.
 
-`site.yml` checks these in its opening play, before it changes a node ([infra/ansible/README.md](infra/ansible/README.md)).
+`site.yml` checks the node requirements in its opening play, before it changes a node ([infra/ansible/README.md](infra/ansible/README.md)).
 
 ## License
 

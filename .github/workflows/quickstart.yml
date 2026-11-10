@@ -1,0 +1,214 @@
+name: quickstart
+
+# docs/quickstart.md's commands as written (ci/quickstart/script), from a bare runner to
+# jarvis verify --smoke PASS. The node job's runner is both the controller and the node: GitHub's
+# runners cannot reach one another, so a second machine is not possible here. The controller
+# job runs the controller's half on macOS (install, init, validate, render) and stops before the
+# node. CI's own values replace the doc's "Your choices": the release is the pushed tag on a tag
+# run, otherwise a throwaway tag at the commit under test; the repository is this one, at a
+# throwaway branch Flux reads over https (so no deploy key). The cleanup job deletes both.
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+  schedule:
+    - cron: "41 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quickstart-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The throwaway ref, as a branch (the instance repository) and a tag (the core release).
+  QS_REF: quickstart/${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    # A fork cannot push the throwaway refs.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Does this change reach the Quickstart?
+        id: paths
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          run=true
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
+            changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+            pattern='^(core/|addons/|infra/|jarvis/|schema/|docs/quickstart\.md$|ci/quickstart/|\.github/workflows/quickstart\.yml$|mise\.(toml|lock)$|uv\.lock$|pyproject\.toml$)'
+            grep -Eq "${pattern}" <<<"${changed}" || run=false
+          fi
+          echo "run=${run}" >> "${GITHUB_OUTPUT}"
+          echo "quickstart runs: ${run}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      - name: The release the Quickstart installs
+        id: version
+        if: steps.paths.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            git push -q origin "HEAD:refs/tags/${QS_REF}"
+            version="${QS_REF}"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "release: ${version}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  node:
+    needs: prepare
+    if: needs.prepare.outputs.run == 'true'
+    name: node (ubuntu, controller and node)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # What a fresh node gives you: SSH in as a sudo user with your key, under a name DNS resolves.
+      - name: Make this runner the node
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq openssh-server >/dev/null
+          sudo systemctl start ssh
+          install -d -m 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          echo "$(hostname -I | awk '{print $1}') node1.home.lan" | sudo tee -a /etc/hosts >/dev/null
+
+      # The instance repository jarvis init writes holds a workflow (its CI caller), and a workflow's
+      # own token may not push one: the quickstart GitHub App's token can (ci/README.md, Quickstart).
+      # That push also runs the instance's CI on the throwaway branch, as it runs in a real one.
+      - name: The quickstart App is set up
+        env:
+          CLIENT_ID: ${{ vars.QUICKSTART_CLIENT_ID }}
+          HAS_KEY: ${{ secrets.QUICKSTART_PRIVATE_KEY != '' }}
+        run: |
+          if [[ -z "${CLIENT_ID}" || "${HAS_KEY}" != true ]]; then
+            echo "::error::set the variable QUICKSTART_CLIENT_ID and the secret QUICKSTART_PRIVATE_KEY (ci/README.md, Quickstart)"
+            exit 1
+          fi
+
+      - name: Mint the quickstart App's token
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.QUICKSTART_CLIENT_ID }}
+          private-key: ${{ secrets.QUICKSTART_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
+      - name: Git pushes to this repository over https
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          gh auth setup-git
+          git config --global user.name quickstart
+          git config --global user.email quickstart@users.noreply.github.com
+          git config --global init.defaultBranch main
+
+      - name: The Quickstart, as written
+        working-directory: ${{ runner.temp }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          # mise asks GitHub's API for releases; anonymous calls from shared runners hit the rate limit.
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+          # git's credential helper is gh (above), which prefers GH_TOKEN: the App's, for the push.
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # The guard on pushing: the doc's push goes to the throwaway branch, never to main.
+          [[ "${QS_REF}" == quickstart/* ]]
+          cat > choices.sh <<EOF
+          JARVIS_VERSION=${VERSION}
+          REPO_URL=https://github.com/${GITHUB_REPOSITORY}
+          BRANCH=${QS_REF}
+          NODE=node1.home.lan
+          LOGIN=$(id -un)
+          EOF
+          # node prep's questions, in the doc's order: keep the Ansible user, add the host key,
+          # keep the hostname, leave SSH password login as it is.
+          printf '\ny\n\nn\n' > answers
+          python3 "${GITHUB_WORKSPACE}/ci/quickstart/script" --vars choices.sh > quickstart.sh
+          QUICKSTART_ANSWERS="${PWD}/answers" bash quickstart.sh
+
+      - name: Show the cluster
+        if: failure()
+        env:
+          KUBECONFIG: /home/runner/.kube/jarvis-home.yaml
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io,gitrepositories.source.toolkit.fluxcd.io -A || true
+          kubectl get pods -A || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -n 60 || true
+          sudo journalctl -u k3s --no-pager | tail -n 80 || true
+
+  controller:
+    needs: prepare
+    if: needs.prepare.outputs.run == 'true'
+    name: controller (macos)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: The Quickstart's controller half, as written
+        working-directory: ${{ runner.temp }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          # mise asks GitHub's API for releases; anonymous calls from shared runners hit the rate limit.
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global user.name quickstart
+          git config --global user.email quickstart@users.noreply.github.com
+          cat > choices.sh <<EOF
+          JARVIS_VERSION=${VERSION}
+          REPO_URL=https://github.com/${GITHUB_REPOSITORY}
+          BRANCH=${QS_REF}
+          NODE=node1.home.lan
+          LOGIN=$(id -un)
+          EOF
+          python3 "${GITHUB_WORKSPACE}/ci/quickstart/script" --vars choices.sh --until "jarvis node prep" > quickstart.sh
+          {
+            cat quickstart.sh
+            # What the controller checks on its own, with no node: the env as init wrote it.
+            echo 'jarvis validate'
+            echo 'jarvis render --check'
+          } > controller.sh
+          bash controller.sh
+
+  cleanup:
+    needs: [prepare, node, controller]
+    if: always() && needs.prepare.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Delete the throwaway branch and tag
+        run: |
+          git push -q origin --delete "refs/heads/${QS_REF}" || true
+          [[ "${GITHUB_REF}" == refs/tags/v* ]] || git push -q origin --delete "refs/tags/${QS_REF}" || true

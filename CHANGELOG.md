@@ -9,6 +9,11 @@ the upgrade.
 
 ### Added
 
+- [docs/quickstart.md](docs/quickstart.md): one node to a verified cluster in seven steps, and
+  [docs/concepts.md](docs/concepts.md). The README starts there. CI runs the Quickstart's
+  commands as written (`.github/workflows/quickstart.yml`) on every release tag, nightly and on
+  changes that reach them: on Ubuntu with the runner as both controller and node, through
+  `jarvis up` and `jarvis verify --smoke`, and the controller's half on macOS.
 - `jarvis init [<dir>] --env <name> --domain <suffix> --repo-url <url> --node <host>[:<roles>]`
   writes a whole instance repository: the env's values and inventory, `.sops.yaml`, a README,
   the Renovate config and CI caller (`--no-ci` skips them), its minted secrets and `ca.crt`, a

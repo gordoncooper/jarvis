@@ -1,6 +1,6 @@
 # Deploy
 
-From a fresh copy of this repo to a running cluster, then `jarvis verify`, `jarvis drill`, and `jarvis restore` to put a volume back. Commands run from the instance repository with the jarvis CLI unless a step says otherwise. Detail lives in [infra/ansible/README.md](../infra/ansible/README.md) and the contracts indexed in [docs/README.md](README.md).
+New here? The [Quickstart](quickstart.md) is the same path in seven steps. This page is the detail: from a fresh copy of this repo to a running cluster, then `jarvis verify`, `jarvis drill`, and `jarvis restore` to put a volume back. Commands run from the instance repository with the jarvis CLI unless a step says otherwise. Detail lives in [infra/ansible/README.md](../infra/ansible/README.md) and the contracts indexed in [docs/README.md](README.md).
 
 ## Prerequisites
 
