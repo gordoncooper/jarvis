@@ -33,10 +33,15 @@ from pathlib import Path
 
 import yaml
 
-from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, ROOT_SOURCE, SYNC_FILE, core_dir
+from jarvis import paths as _paths
+from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, ROOT_SOURCE, SYNC_FILE
 
 FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
 _CORE_TREES = (CORE_SOURCE_DIR, ADDONS_DIR)
+# libyaml's safe loader where PyYAML has it: a build's output is most of the walk's time.
+_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+# What `flux build --dry-run` puts in place of each value of a SOPS-encrypted Secret.
+_SOPS_MASK = "**SOPS**"
 
 
 @dataclass(frozen=True)
@@ -75,12 +80,9 @@ def _name(doc: dict) -> str:
 
 @contextlib.contextmanager
 def root_artifact(root: Path, env_rel: str) -> Iterator[Path]:
-    """The root artifact Flux reads for the env: root itself when it holds core's trees where the
-    artifact does, otherwise the env's files with core's trees beside them, as sync.yaml includes."""
-    core = core_dir(root)
-    if core == root:
-        yield root
-        return
+    """The root artifact Flux reads for the env, in a temporary folder: the env's files, with the
+    trees of the core running this code (core_root, the env's pin) where sync.yaml includes them."""
+    core = _paths.core_root()
     with tempfile.TemporaryDirectory(prefix="jarvis-artifact-") as work:
         stage = Path(work)
         for tree in _CORE_TREES:
@@ -107,7 +109,8 @@ def _substitute_from(doc: dict, built: list[dict]) -> tuple[dict[str, str], list
             if source.get("optional") is not True:
                 problems.append(f"substituteFrom {kind} {_ns(doc)}/{name} is not in the env's flux tree")
             continue
-        if kind == "Secret" and "sops" in match:
+        fields = {**(match.get("data") or {}), **(match.get("stringData") or {})}
+        if kind == "Secret" and ("sops" in match or _SOPS_MASK in fields.values()):
             problems.append(f"substituteFrom Secret {_ns(doc)}/{name} is sealed; its values cannot be read offline")
             continue
         data = {str(k): str(v) for k, v in (match.get("data") or {}).items()}
@@ -153,7 +156,7 @@ def build(artifact: Path, doc: dict, values: dict[str, str]) -> tuple[list[dict]
     if proc.returncode:
         message = (proc.stderr or proc.stdout).strip().replace(str(artifact) + "/", "")
         return [], f"flux build {_name(doc)} failed: {message}"
-    return [item for item in yaml.safe_load_all(proc.stdout) if isinstance(item, dict)], None
+    return [item for item in yaml.load_all(proc.stdout, Loader=_LOADER) if isinstance(item, dict)], None
 
 
 def root_kustomization(root: Path, env_rel: str) -> dict | None:
@@ -196,7 +199,7 @@ def _fingerprint(root: Path, env_rel: str) -> str:
     """Every file the walk can read for the env: its tree and core's, so a cached walk is redone
     whenever one changes (the tests edit trees between checks)."""
     digest = hashlib.sha256()
-    core = core_dir(root)
+    core = _paths.core_root()
     for base in (root / env_rel.rstrip("/").rsplit("/flux", 1)[0], *(core / tree for tree in _CORE_TREES)):
         if not base.exists():
             continue
@@ -209,13 +212,13 @@ def _fingerprint(root: Path, env_rel: str) -> str:
     return digest.hexdigest()
 
 
-_CACHE: dict[tuple[str, str], tuple[str, EnvTree]] = {}
+_CACHE: dict[tuple[str, str, str], tuple[str, EnvTree]] = {}
 
 
 def env_tree(root: Path | str, env_rel: str) -> EnvTree:
     """The env's tree, built once per content: every env check reads the same walk."""
     root = Path(root).resolve()
-    key = (str(root), env_rel.rstrip("/"))
+    key = (str(root), str(_paths.core_root()), env_rel.rstrip("/"))
     stamp = _fingerprint(root, env_rel)
     cached = _CACHE.get(key)
     if cached and cached[0] == stamp:

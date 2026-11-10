@@ -29,10 +29,8 @@ from pathlib import Path
 
 from jarvis.apps import values as _apps
 from jarvis.apps.app_file import SHIPPED_KINDS
+from jarvis.checks.flux_build import env_tree
 from jarvis.checks.manifests import (
-    core_files,
-    env_flux_docs,
-    flux_paths,
     namespace_of,
     ref_of,
 )
@@ -40,7 +38,7 @@ from jarvis.schema.env import env_flux_dirs
 
 FLUX_NAMESPACE = "flux-system"
 _PRUNE = "kustomize.toolkit.fluxcd.io/prune"
-POLICIES = "core/feature/app-hosting/policies"
+PLATFORM_CONFIGS = "platform-configs"
 _KINDS = frozenset(
     {
         "Namespace",
@@ -94,10 +92,11 @@ def format_violations(violations: Iterable[AppHostingViolation]) -> list[str]:
 
 
 def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
-    env_docs, error = env_flux_docs(root, env_rel)
-    if error:
-        yield error
+    tree = env_tree(root, env_rel)
+    if tree.error:
+        yield tree.error
         return
+    env_docs, paths = tree.env_docs, tree.paths
     data, errors = _apps.load_values((root / env_rel).parent)
     if errors:
         return  # env-schema reports the file
@@ -107,10 +106,15 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
     )
     wired: set[str] = set()
     if listed:
-        # From core's folder: the example env's platform-configs stage builds only the core list.
-        policies, error = core_files(root, POLICIES)
-        yield from [error] if error else binding_problems(policies)
-    for path in flux_paths(root, env_rel, env_docs):
+        # The bindings as the env applies them: app-hosting's Component in its platform-configs.
+        configs = next((path for path in paths if path.parent is None and _name(path.kustomization) == PLATFORM_CONFIGS), None)
+        if configs is None:
+            yield f"lists apps, and applies no {PLATFORM_CONFIGS} Kustomization"
+        elif configs.error:
+            yield f"{ref_of(configs.kustomization)}: {configs.error}"
+        else:
+            yield from binding_problems(configs.docs)
+    for path in paths:
         name = _name(path.kustomization)
         if path.parent is not None or not (name.startswith("app-") and name.endswith("-wiring")):
             continue

@@ -15,6 +15,12 @@ the upgrade.
   built. Python no longer resolves paths or substitutes variables itself, so the checks see what
   the reconcile applies. A variable with no value and no default now fails `jarvis validate` as it
   fails the reconcile.
+- One tree layout: an env is always read against the core running the checks (the env's pin, as
+  the CLI and instance CI run it). A `core/` or `addons/` folder in an instance repo is no longer
+  looked for, and nothing guesses where core is.
+- Whether an env runs the off-host copy or the apps backup server comes from
+  `values/switches.yaml`, the decision, not from its rendered platform-configs list. The two
+  env-schema messages name the switch.
 
 ### Removed
 

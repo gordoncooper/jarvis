@@ -11,7 +11,7 @@ import yaml
 
 from jarvis.checks.flux_build import env_tree
 from jarvis.checks.manifests import kustomize_build
-from support import copy_sample, sample_root, write_flux_root
+from support import copy_sample, core_at, sample_root, write_flux_root
 
 _API = "kustomize.toolkit.fluxcd.io/v1"
 
@@ -50,8 +50,14 @@ def _repo(root: Path, root_docs: list[dict], layer_docs: list[dict] | None = Non
     return root
 
 
+def _tree(root: Path):
+    """The env's tree, against root's own core trees (core/layer)."""
+    with core_at(root):
+        return env_tree(root, "envs/env-test/flux")
+
+
 def _layer(root: Path):
-    tree = env_tree(root, "envs/env-test/flux")
+    tree = _tree(root)
     assert tree.error is None, tree.error
     return next(path for path in tree.paths if path.kustomization["metadata"]["name"] == "layer")
 
@@ -68,10 +74,11 @@ def test_walking_the_sample_writes_nothing_to_the_repository(tmp_path: Path) -> 
     """Flux builds in memory: the env and core's trees are byte-for-byte unchanged afterwards."""
     root = copy_sample(tmp_path / "instance")
     core = Path(__file__).resolve().parents[2]
-    before = [_digest(root / "envs"), _digest(core / "core"), _digest(core / "addons")]
+    trees = [root, core / "core", core / "addons", core / "ci" / "tests" / "fixtures" / "addons"]
+    before = [_digest(tree) for tree in trees]
     tree = env_tree(root, "envs/env-00/flux")
     assert tree.error is None, tree.error
-    assert [_digest(root / "envs"), _digest(core / "core"), _digest(core / "addons")] == before
+    assert [_digest(tree) for tree in trees] == before
 
 
 def test_the_sample_tree_holds_every_layer_built() -> None:
@@ -122,7 +129,7 @@ def test_variable_with_no_value_fails_the_build(tmp_path: Path) -> None:
 def test_kustomization_on_another_source_is_partial(tmp_path: Path) -> None:
     """A path read from another source (an app's repository) is listed, not built."""
     root = _repo(tmp_path, [_ks("app-x", "./deploy", source="app-x")])
-    tree = env_tree(root, "envs/env-test/flux")
+    tree = _tree(root)
     (path,) = tree.paths
     assert path.partial and path.docs == [] and path.error is None
 
@@ -130,7 +137,7 @@ def test_kustomization_on_another_source_is_partial(tmp_path: Path) -> None:
 def test_env_without_a_root_kustomization_is_an_error(tmp_path: Path) -> None:
     root = _repo(tmp_path, [])
     (root / "envs" / "env-test" / "flux" / "sync.yaml").write_text("{}\n", encoding="utf-8")
-    assert "declares no root Kustomization flux-system" in (env_tree(root, "envs/env-test/flux").error or "")
+    assert "declares no root Kustomization flux-system" in (_tree(root).error or "")
 
 
 def test_a_changed_file_rebuilds_the_tree(tmp_path: Path) -> None:
@@ -145,5 +152,5 @@ def test_a_changed_file_rebuilds_the_tree(tmp_path: Path) -> None:
 @pytest.mark.parametrize("rel", ["envs/env-00/flux", "../elsewhere", "ci/tests"])
 def test_kustomize_build_reads_core_trees_only(rel: str) -> None:
     """What an env applies is Flux's build; kustomize_build is for core's own folders."""
-    docs, error = kustomize_build(sample_root(), rel)
+    docs, error = kustomize_build(Path(__file__).resolve().parents[2], rel)
     assert docs == [] and error and "is not one of core's trees" in error

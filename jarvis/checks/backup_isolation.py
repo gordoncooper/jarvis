@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis import paths as _paths
 from jarvis.backups import app_credentials as _app_backups
 from jarvis.checks.flux_build import env_tree
 from jarvis.checks.manifests import kustomize_build, pod_spec
@@ -44,7 +45,7 @@ def scan_backup_isolation(root: Path) -> list[Violation]:
     root = Path(root).resolve()
     found: list[Violation] = []
     shipped = _app_backups.APPS_SERVER_DIR
-    docs, error = kustomize_build(root, shipped)
+    docs, error = kustomize_build(_paths.core_root(), shipped)
     if error:
         found.append(Violation(_app_backups.APPS_SERVER_DIR, error))
     found.extend(_render_violations(_app_backups.APPS_SERVER_DIR, docs))

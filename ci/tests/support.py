@@ -6,13 +6,16 @@ copy from each other. Ansible role renders stay in ansible_role_proof.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import importlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -210,12 +213,34 @@ def copy_sample(dest: Path) -> Path:
     return dest
 
 
-def link_core_trees(instance: Path, product: Path) -> None:
-    """Lay instance out like the root artifact: product's core/ and addons/ beside its envs/."""
-    instance.mkdir(parents=True, exist_ok=True)
-    for tree in ("core", "addons"):
-        if (product / tree).is_dir():
-            (instance / tree).symlink_to(product / tree, target_is_directory=True)
+@contextlib.contextmanager
+def core_at(core: Path) -> Iterator[Path]:
+    """Read env trees against core (a folder holding core/ and/or addons/) instead of the test
+    core, for a test that ships its own core trees."""
+    from jarvis import paths
+
+    previous = paths.core_root
+    paths.core_root = lambda: core
+    try:
+        yield core
+    finally:
+        paths.core_root = previous
+
+
+# A jarvis module run in a child process against the test core: [*RUN_MODULE, "jarvis.env.validate", ...].
+RUN_MODULE = (sys.executable, str(Path(__file__).resolve().parent / "run_module.py"))
+
+
+def flux_built(root: Path, env: str, name: str = "platform-configs") -> list[dict]:
+    """The objects the env's Flux Kustomization name applies, as Flux builds them (substituted)."""
+    from jarvis.checks.flux_build import env_tree
+
+    tree = env_tree(root, f"envs/{env}/flux")
+    assert tree.error is None, tree.error
+    path = next((item for item in tree.paths if (item.kustomization.get("metadata") or {}).get("name") == name), None)
+    assert path is not None, f"envs/{env}/flux applies no Kustomization {name}"
+    assert path.error is None, path.error
+    return path.docs
 
 
 def flux_envsubst(docs: list[dict], values: dict[str, str]) -> list[dict]:
@@ -236,33 +261,19 @@ def flux_envsubst(docs: list[dict], values: dict[str, str]) -> list[dict]:
 
 
 def write_flux_root(env_dir: Path) -> Path:
-    """The env's flux/sync.yaml with only what the env checks read: the root source and the root
-    Kustomization applying the env's flux/, as a real sync.yaml declares them."""
-    import yaml
+    """The env's flux/sync.yaml as jarvis render writes it (the root and core sources, and the root
+    Kustomization applying the env's flux/), for a test env written by hand."""
+    from jarvis.env import switches
 
-    env = env_dir.name
-    docs = [
-        {
-            "apiVersion": "source.toolkit.fluxcd.io/v1",
-            "kind": "GitRepository",
-            "metadata": {"name": "flux-system", "namespace": "flux-system"},
-            "spec": {"interval": "1m", "url": "https://example.invalid/env.git", "ref": {"branch": "main"}},
-        },
-        {
-            "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-            "kind": "Kustomization",
-            "metadata": {"name": "flux-system", "namespace": "flux-system"},
-            "spec": {
-                "interval": "10m",
-                "path": f"./envs/{env}/flux",
-                "prune": True,
-                "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
-            },
-        },
-    ]
-    path = env_dir / "flux" / "sync.yaml"
+    cluster_vars = {
+        "flux_git_repo_url": "https://github.com/example-owner/example-cluster",
+        "flux_git_ref": "refs/heads/main",
+        "core_git_repo_url": "https://github.com/example-owner/example-core",
+        "core_git_ref": "refs/tags/v0.0.0",
+    }
+    path = env_dir / "flux" / switches.SYNC_REL
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+    path.write_text(switches.sync(cluster_vars, env_dir.name), encoding="utf-8")
     return path
 
 
@@ -281,13 +292,6 @@ def render_switches(env_dir: Path, root: Path) -> None:
     from jarvis.render.switches import render_env
 
     render_env(env_dir, root)
-
-
-def link_core_with_fixture_addons(root: Path) -> None:
-    """root/core links to core, and root/addons holds core's add-ons and the fixture ones."""
-    import sample
-
-    sample.link_core(root)
 
 
 def _git_ignored(repo: Path, path: Path) -> bool:

@@ -27,6 +27,12 @@ for _key, _value in (("maintenance.auto", "false"), ("gc.auto", "0")):
     _count += 1
 os.environ["GIT_CONFIG_COUNT"] = str(_count)
 
+# Every test reads env trees against the test core: core's trees plus the fixture add-on
+# (sample.use_test_core). A test with its own core trees swaps it with support.core_at.
+import sample  # noqa: E402
+
+sample.use_test_core()
+
 
 # The test files that prove the Ansible roles by running ansible-playbook. They are over half the
 # suite's time, so CI runs them (-m roles) beside the rest (-m "not roles"), each on its own runner.

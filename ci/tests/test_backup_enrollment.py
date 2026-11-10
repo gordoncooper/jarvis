@@ -13,6 +13,7 @@ from support import REPO_ROOT as ROOT
 from support import (
     ExampleCopy,
     _kustomize_build,
+    flux_built,
     flux_envsubst,
     kyverno_generated,
     real_and_copy_envs,
@@ -233,13 +234,7 @@ def test_enrollment_policy_is_on_the_platform_configs_build(example_copy: Exampl
 
 
 def _assert_enrollment_on_platform_configs(root, env: str) -> None:
-    docs = [
-        doc
-        for doc in yaml.safe_load_all(
-            _kustomize_build(f"envs/{env}/flux/platform-configs", root=root)
-        )
-        if isinstance(doc, dict)
-    ]
+    docs = flux_built(root, env)
     names = {doc["metadata"]["name"] for doc in docs if doc.get("kind") == "GeneratingPolicy"}
     assert {"pvc-backup", "pvc-backup-app"} <= names
     assert not any(doc.get("kind") == "ClusterPolicy" for doc in docs)

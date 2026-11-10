@@ -6,7 +6,8 @@ nodes, the sample hosted apps from the apps fixture, the fixture add-on, and pla
 files for what an owner seals by hand. Its secrets are sealed to a throwaway age key that stays
 in the instance's own .age/ folder.
 
-  python ci/tests/sample.py <dest>    writes a sample instance at <dest> and prints its path
+  python ci/tests/sample.py <dest>               writes a sample instance at <dest> and prints its path
+  python ci/tests/sample.py --validate <dest>    and runs every env check on it (ci/checks/sample-instance)
 """
 
 from __future__ import annotations
@@ -61,17 +62,41 @@ def spec(name: str = NAME, *, features: list[str] | None = None) -> scaffold.Env
     )
 
 
-def link_core(root: Path) -> None:
-    """root/core links to core, and root/addons holds core's add-ons and the fixture ones (hello):
-    the product ships no sample add-on, so the add-on rules run on the fixture."""
-    if not (root / "core").exists():
-        (root / "core").symlink_to(REPO_ROOT / "core")
-    addons = root / "addons"
+def test_core(dest: Path) -> Path:
+    """Core as the tests run it, at dest: core's core/ tree, and its add-ons with the fixture one
+    (hello) beside them. The product ships no sample add-on, so the add-on rules run on the
+    fixture; an instance never holds these trees (jarvis.paths.core_root)."""
+    dest.mkdir(parents=True, exist_ok=True)
+    if not (dest / "core").exists():
+        (dest / "core").symlink_to(REPO_ROOT / "core", target_is_directory=True)
+    addons = dest / "addons"
     addons.mkdir(exist_ok=True)
     for source in (REPO_ROOT / "addons", FIXTURE_ADDONS):
         for entry in source.iterdir():
             if entry.name != "__pycache__" and not (addons / entry.name).exists():
                 (addons / entry.name).symlink_to(entry)
+    return dest
+
+
+def use_test_core() -> Path:
+    """Point jarvis.paths.core_root at a test core for this process, once. Every test and the
+    sample-instance check run against it."""
+    import atexit
+    import tempfile
+
+    from jarvis import paths
+
+    if getattr(paths.core_root, "test_core", None) is None:
+        base = Path(tempfile.mkdtemp(prefix="jarvis-test-core-"))
+        atexit.register(shutil.rmtree, base, True)
+        core = test_core(base)
+
+        def core_root() -> Path:
+            return core
+
+        core_root.test_core = core  # type: ignore[attr-defined]
+        paths.core_root = core_root
+    return paths.core_root()
 
 
 def throwaway_key(root: Path) -> str:
@@ -169,28 +194,38 @@ def add_env_from_spec(
     finally:
         if previous is None:
             os.environ.pop("APPS_REPO", None)
+    from jarvis import paths
     from jarvis.schema.env import addon_documents, addon_secret_namespaces, enabled_addons
 
     for addon in enabled_addons(env_dir):
-        for namespace in addon_secret_namespaces(addon_documents(root, addon)):
+        for namespace in addon_secret_namespaces(addon_documents(paths.core_root(), addon)):
             _seal(root, name, f"{namespace}-fixture", namespace, {"greeting": "placeholder"}, folder=namespace)
     return env_dir
 
 
 def build(root: Path, name: str = NAME, **options) -> Path:
-    """A sample instance at root: core linked in, one sample env, sealed to a throwaway key."""
+    """A sample instance at root: one sample env, sealed to a throwaway key, read against the
+    test core (use_test_core)."""
+    use_test_core()
     root.mkdir(parents=True, exist_ok=True)
     (root / ".gitignore").write_text(".age/\n", encoding="utf-8")
-    link_core(root)
     public = throwaway_key(root)
     add_env(root, name, public_keys=[public], **options)
     return root
 
 
 if __name__ == "__main__":
-    dest = Path(sys.argv[1]).resolve()
+    # sample.py <dest>             writes the sample instance at <dest> and prints its path
+    # sample.py --validate <dest>  then runs jarvis validate on it, against the test core
+    validate = sys.argv[1] == "--validate"
+    dest = Path(sys.argv[-1]).resolve()
     subprocess.run(["git", "init", "-q", str(dest)], check=True)
     build(dest)
     for args in (["add", "-A"], ["-c", "user.email=sample@example.invalid", "-c", "user.name=sample", "commit", "-q", "-m", "sample"]):
         subprocess.run(["git", "-C", str(dest), *args], check=True)
-    print(dest)
+    if not validate:
+        print(dest)
+        sys.exit(0)
+    from jarvis.env import validate as _validate
+
+    sys.exit(_validate.run(dest))

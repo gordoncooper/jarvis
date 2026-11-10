@@ -14,7 +14,7 @@ from jarvis.cli import core as cli_core
 from jarvis.cli import init
 from jarvis.env import scaffold
 from jarvis.secrets import age
-from support import REPO_ROOT
+from support import REPO_ROOT, RUN_MODULE
 
 FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 CORE = ("https://github.com/example-owner/example-core", "v0.5.0")
@@ -44,7 +44,7 @@ def _init(tmp_path: Path, *extra: str) -> tuple[int, Path]:
 
 def _validate(instance: Path, env: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["python3", "-m", "jarvis.env.validate"],
+        [*RUN_MODULE, "jarvis.env.validate"],
         cwd=REPO_ROOT,
         env={**os.environ, "INSTANCE": str(instance), "ENVS": env, "APPS_REPO": str(FIXTURE_APPS)},
         capture_output=True,

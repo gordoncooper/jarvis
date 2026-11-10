@@ -17,7 +17,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis.checks.manifests import env_flux_docs, flux_paths, kind_of
+from jarvis.checks.flux_build import env_tree
+from jarvis.checks.manifests import kind_of
 from jarvis.schema.env import ROOT_SOURCE, env_flux_dirs
 
 PRUNE = "kustomize.toolkit.fluxcd.io/prune"
@@ -144,9 +145,10 @@ def _applied(root: Path, env_rel: str) -> tuple[dict[Key, dict], list[str], bool
     The example env's platform-configs lists bootstrap secrets that are not in Git, so
     the product tree skips it; a bootstrapped copy builds it.
     """
-    docs, error = env_flux_docs(root, env_rel)
-    if error:
-        return {}, [error], True
+    tree = env_tree(root, env_rel)
+    docs = tree.env_docs
+    if tree.error:
+        return {}, [tree.error], True
     applied = index(docs)
     problems: list[str] = []
     for layer in LAYERS:
@@ -156,7 +158,7 @@ def _applied(root: Path, env_rel: str) -> tuple[dict[Key, dict], list[str], bool
             problems.append(f"Kustomization {layer} has no spec.path in the env's flux tree")
     partial = False
     # Each layer with its components, and each add-on Kustomization on the services layer.
-    for path in flux_paths(root, env_rel, docs):
+    for path in tree.paths:
         partial = partial or path.partial
         if path.error:
             if path.error != "spec.path is unset":

@@ -9,6 +9,13 @@ from pathlib import Path
 PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def core_root() -> Path:
+    """The core whose trees (core/, addons/) an env reads: the checkout running this code. The CLI
+    hands off to the checkout at the env's pin and instance CI runs the pinned core, so this is
+    always the core the env pins. An instance repository never holds core's trees itself."""
+    return PRODUCT_ROOT
+
+
 def cache_dir() -> Path:
     """Where the CLI keeps its checkouts: $XDG_CACHE_HOME/jarvis, default ~/.cache/jarvis."""
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")

@@ -14,6 +14,7 @@ from support import (
     ExampleCopy,
     _kustomize_build,
     bootstrap_example_copy,
+    flux_built,
     register_copy_app,
     render_switches,
     set_switches,
@@ -37,8 +38,7 @@ def _tree(copy: ExampleCopy) -> dict[str, str]:
 
 
 def _objects(copy: ExampleCopy, rel: str) -> set[tuple[str, str]]:
-    rendered = _kustomize_build(f"envs/{copy.name}/flux/{rel}", root=copy.root)
-    return {(doc["kind"], doc["metadata"]["name"]) for doc in yaml.safe_load_all(rendered) if isinstance(doc, dict)}
+    return {(doc["kind"], doc["metadata"]["name"]) for doc in flux_built(copy.root, copy.name, rel)}
 
 
 def _set_pin(env_dir: Path, app: str, version: str | None) -> None:

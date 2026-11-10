@@ -17,7 +17,7 @@ import yaml
 
 from jarvis.checks.backup_isolation import _render_violations, scan_backup_isolation
 from jarvis.schema.env import ValidationError, validate_one_env
-from support import ExampleCopy, _kustomize_build, bootstrap_example_copy, register_copy_app
+from support import ExampleCopy, bootstrap_example_copy, flux_built, register_copy_app
 
 APP = "app-notes"
 
@@ -29,11 +29,7 @@ def _app_copy(tmp_path: Path) -> ExampleCopy:
 
 
 def _platform_configs(copy: ExampleCopy) -> list[dict]:
-    return [
-        doc
-        for doc in yaml.safe_load_all(_kustomize_build(f"envs/{copy.name}/flux/platform-configs", root=copy.root))
-        if isinstance(doc, dict)
-    ]
+    return flux_built(copy.root, copy.name)
 
 
 def _find(docs: list[dict], kind: str, name: str) -> dict:
@@ -57,7 +53,8 @@ def test_registered_app_renders_its_credential_only_where_needed(app_copy: Examp
     docs = _platform_configs(app_copy)
     secret = _find(docs, "Secret", f"backups-restic-{APP}")
     assert secret["metadata"]["namespace"] == "platform-backups"
-    assert "sops" in secret
+    # Sealed: Flux's build masks a SOPS-encrypted Secret's values.
+    assert set((secret.get("data") or secret.get("stringData") or {}).values()) == {"**SOPS**"}
     expected = {
         "restic-apps": "htpasswd",
         "restic-check": "RESTIC_PASSWORD",
@@ -152,14 +149,12 @@ def _schema_errors(copy: ExampleCopy) -> str:
     return "\n".join(caught.value.messages)
 
 
-def _set_components(copy: ExampleCopy, components: list[str], *, apps_server: bool = True) -> None:
+def _set_components(copy: ExampleCopy, components: list[str]) -> None:
     path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     # The registrations change; the app-hosting switch the copy carries stays.
     switch = [item for item in doc.get("components") or [] if item.endswith("core/feature/app-hosting")]
     doc["components"] = [*switch, *components]
-    if not apps_server:
-        doc["resources"] = [item for item in doc["resources"] if not item.endswith("core/feature/apps-backup-server")]
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
@@ -180,19 +175,13 @@ def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
     assert "differs from the registration jarvis secrets --app app-notes writes" in _schema_errors(copy)
     component.write_text(original, encoding="utf-8")
 
-    _set_components(copy, [f"backups/{APP}"], apps_server=False)
-    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    doc["components"] = [item for item in doc.get("components") or [] if "backup-selection" not in str(item)]
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
-    assert "registers app credentials but does not list core/feature/apps-backup-server" in _schema_errors(copy)
-    _set_components(copy, [f"backups/{APP}"])
-    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    wrapper = "../generated/backup-selection"
-    if wrapper not in (doc.get("components") or []):
-        doc.setdefault("components", []).append(wrapper)
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    switches = copy.env_dir / "values" / "switches.yaml"
+    decided = switches.read_text(encoding="utf-8")
+    data = yaml.safe_load(decided)
+    data["features"] = [item for item in data["features"] if item != "apps-backup-server"]
+    switches.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    assert "registers app credentials, and values/switches.yaml does not list apps-backup-server" in _schema_errors(copy)
+    switches.write_text(decided, encoding="utf-8")
 
     moved = secrets / f"backups-restic-{APP}.sops.yaml"
     shutil.move(sealed, moved)

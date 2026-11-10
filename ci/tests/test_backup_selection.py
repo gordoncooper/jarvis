@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +18,7 @@ from jarvis.schema.env import ValidationError, validate_env_tree, validate_one_e
 from jarvis.verify.backups import backups_checks, check_backups
 from jarvis.verify.common import CheckError
 from support import (
+    RUN_MODULE,
     ExampleCopy,
     bootstrap_example_copy,
     copy_sample,
@@ -290,13 +290,9 @@ def test_wrapper_without_the_override_is_stale(tmp_path: Path) -> None:
 
 
 def _instance_with_backups(tmp_path: Path) -> Path:
-    """Instance checkout (core → product) with env-00 copy and backups all_except excluding notes."""
-    product, instance = tmp_path / "product", tmp_path / "instance"
-    for name in ("core", "addons"):
-        shutil.copytree(REPO_ROOT / name, product / name)
+    """Instance checkout with env-00 copy and backups all_except excluding notes."""
+    instance = tmp_path / "instance"
     copy_sample(instance)
-    (instance / "core").unlink()
-    (instance / "core").symlink_to(product)
     apps_path = instance / "envs" / "env-00" / "values" / "apps.yaml"
     data = yaml.safe_load(apps_path.read_text(encoding="utf-8"))
     data["backups"] = {"mode": "all_except", "exclude": ["notes"]}
@@ -362,7 +358,7 @@ def test_env_schema_check_fails_under_instance_without_apps_repo(
     env.pop("APPS_REPO", None)
     env["INSTANCE"] = str(instance)
     proc = subprocess.run(
-        [sys.executable, "-m", "jarvis.env.validate", "--only", "env-schema"],
+        [*RUN_MODULE, "jarvis.env.validate", "--only", "env-schema"],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
@@ -543,7 +539,7 @@ def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> Non
 def _render_cli(copy: ExampleCopy, **env: str) -> subprocess.CompletedProcess[str]:
     clean = {key: value for key, value in os.environ.items() if key != "APPS_REPO"}
     return subprocess.run(
-        [sys.executable, "-m", "jarvis.render.env", "--env", copy.name],
+        [*RUN_MODULE, "jarvis.render.env", "--env", copy.name],
         env={**clean, "INSTANCE": str(copy.root), **env},
         capture_output=True,
         text=True,
