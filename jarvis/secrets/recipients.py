@@ -26,10 +26,7 @@ from jarvis.secrets import age as _age
 
 
 class RecipientsError(Exception):
-    def __init__(self, message: str, changed: list[str] | None = None) -> None:
-        super().__init__(message)
-        # Files already re-encrypted when it failed, so the caller can name them.
-        self.changed = changed or []
+    pass
 
 
 def sealed_files(env_dir: Path) -> list[Path]:
@@ -111,8 +108,7 @@ def update(instance: Path, env: str) -> list[str]:
             reason = (proc.stderr or proc.stdout).strip().splitlines()
             raise RecipientsError(
                 f"sops updatekeys {path.relative_to(instance)} failed ({reason[-1] if reason else 'no output'}); "
-                "the working key must open it (SOPS_AGE_KEY_FILE or age_key_file)",
-                changed,
+                "the working key must open it (SOPS_AGE_KEY_FILE or age_key_file)"
             )
         changed.append(path.relative_to(instance).as_posix())
     return changed

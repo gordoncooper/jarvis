@@ -248,15 +248,23 @@ def test_ansible_core_stays_on_the_2_21_line() -> None:
     assert "2.21" in rule["description"]
 
 
-def test_python_stays_below_the_first_minor_ansible_core_cannot_run_on() -> None:
-    """Rule: ansible-core 2.21 does not import on Python 3.15, so .python-version stays below it
-    until the ansible-core cap rises with it."""
-    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    rule = next(item for item in renovate["packageRules"] if item.get("matchManagers") == ["pyenv"])
-    assert rule["matchPackageNames"] == ["python"] and rule["allowedVersions"] == "<3.15"
-    assert "ansible-core" in rule["description"]
-    pinned = tuple(int(part) for part in (ROOT / ".python-version").read_text(encoding="utf-8").strip().split("."))
-    assert pinned < (3, 15)
+def test_the_quickstart_release_moves_with_each_core_tag() -> None:
+    """Rule: docs/quickstart.md starts from a core release that Renovate moves when a tag is pushed,
+    read against the repository its own install line names; no release bumps it by hand."""
+    rel = "docs/quickstart.md"
+    text = (ROOT / rel).read_text(encoding="utf-8")
+    (match,) = _manager_matches(rel, text)
+    assert match["depName"] == "gordoncooper/jarvis"
+    assert f"JARVIS_VERSION={match['currentValue']} " in text
+
+
+def test_the_example_app_pins_move_with_their_releases() -> None:
+    """Rule: every app jarvis init --with-examples pins is a Renovate pin on its jarvis-apps tag, so
+    a new instance starts on the current examples."""
+    rel = "jarvis/kit/examples-apps.yaml"
+    versions = yaml.safe_load((ROOT / rel).read_text(encoding="utf-8"))["versions"]
+    found = {match["depName"]: match["currentValue"] for match in _manager_matches(rel, (ROOT / rel).read_text(encoding="utf-8"))}
+    assert found == versions
 
 
 def _next_minor_cap(version: str) -> str:

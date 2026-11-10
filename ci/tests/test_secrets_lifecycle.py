@@ -177,16 +177,25 @@ def test_a_key_that_opens_nothing_changes_nothing_and_shows_no_recovery_key(inst
     assert stranger.read_text().count("AGE-SECRET-KEY-") == 1
 
 
-def test_a_failure_after_the_rule_changed_puts_it_back(instance: Path, capsys, monkeypatch) -> None:
-    """Rule: if re-encrypting fails partway, .sops.yaml is restored and the files already done are
-    named, so the repository goes back to what was committed."""
-    rule = (instance / ".sops.yaml").read_text()
+def test_a_failure_partway_puts_everything_back(instance: Path, capsys, monkeypatch) -> None:
+    """Rule: if re-encrypting fails partway, the operation undoes itself: .sops.yaml, every sealed
+    file already re-encrypted and the key file (a rotation's new identity) are put back as they
+    were, with nothing left for the owner to undo by hand."""
+    env_dir = instance / "envs" / ENV
+    sealed = recipients.sealed_files(env_dir)
 
-    def fail(_instance, _env):
-        raise recipients.RecipientsError("sops updatekeys failed", ["envs/env-00/secrets/k3s-token.sops.yaml"])
+    def fail_after_one(repo: Path, env: str) -> list[str]:
+        # The first file is re-encrypted for the new rule, then sops fails on the next.
+        sealed[0].write_bytes(sealed[0].read_bytes() + b"# re-encrypted\n")
+        raise recipients.RecipientsError("sops updatekeys failed")
 
-    monkeypatch.setattr(recipients, "update", fail)
-    assert mint.main(["--env", ENV, "--add-recovery-key"]) == 1
-    out = capsys.readouterr().out
-    assert (instance / ".sops.yaml").read_text() == rule
-    assert "never used: discard it" in out and "git checkout -- envs/env-00/secrets/k3s-token.sops.yaml" in out
+    monkeypatch.setattr(recipients, "update", fail_after_one)
+    for flags in (["--add-recovery-key"], ["--rotate", "age"]):
+        files = {path: path.read_bytes() for path in [instance / ".sops.yaml", *sealed]}
+        keys = mint._key_file(ENV).read_bytes()
+        assert mint.main(["--env", ENV, *flags]) == 1
+        out = capsys.readouterr().out
+        assert {path: path.read_bytes() for path in files} == files, flags
+        assert mint._key_file(ENV).read_bytes() == keys, flags
+        assert "Put back as they were: .sops.yaml" in out and "git checkout" not in out
+        assert ("never used: discard it" in out) == (flags == ["--add-recovery-key"])

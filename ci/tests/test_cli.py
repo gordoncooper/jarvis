@@ -189,61 +189,73 @@ def test_up_stops_at_the_first_failing_step(tmp_path: Path, monkeypatch: pytest.
     assert "stopped at pushed" in capsys.readouterr().out
 
 
-def _flux_env(tmp_path: Path) -> Path:
-    flux = tmp_path / "envs" / "home" / "flux"
-    flux.mkdir(parents=True)
-    (flux / "sync.yaml").write_text(
-        "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: flux-system\n", encoding="utf-8"
-    )
-    (flux / "services.yaml").write_text(
-        "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: services\n", encoding="utf-8"
-    )
-    (flux / "kustomization.yaml").write_text("apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n", encoding="utf-8")
-    return flux.parent
+_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
-def _listing(*ready: tuple[str, bool]) -> subprocess.CompletedProcess[str]:
+def _listing(*items: tuple[str, bool, int, str]) -> subprocess.CompletedProcess[str]:
+    """kubectl's list of Kustomizations: (name, Ready, observed generation, applied revision), each
+    at generation 2."""
     import json
 
-    items = [
-        {"metadata": {"name": name}, "status": {"conditions": [{"type": "Ready", "status": str(ok), "message": "working"}]}}
-        for name, ok in ready
-    ]
-    return subprocess.CompletedProcess([], 0, json.dumps({"items": items}), "")
+    body = [
+        {"metadata": {"name": name, "generation": 2},
+         "status": {"observedGeneration": observed, "lastAppliedRevision": f"refs/heads/main@sha1:{revision}",
+                    "conditions": [{"type": "Ready", "status": str(ok), "message": "working"}]}}
+        for name, ok, observed, revision in items
+    ]  # fmt: skip
+    return subprocess.CompletedProcess([], 0, json.dumps({"items": body}), "")
 
 
-def test_up_waits_for_the_layers_the_root_has_not_made_yet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    """Rule: a Ready root is not a Ready cluster. up waits until core's layers and the env's
-    declared Kustomizations exist, and every listed one is Ready on two polls in a row."""
-    env_dir = _flux_env(tmp_path)
-    assert up.expected_kustomizations(env_dir) == {"flux-system", "services", "platform-controllers", "platform-configs"}
-    every = ("flux-system", "platform-controllers", "platform-configs", "services")
-    polls = iter(
-        [
-            _listing(("flux-system", True)),
-            _listing(*((name, name != "platform-configs") for name in every)),
-            _listing(*((name, True) for name in every)),
-            _listing(*((name, True) for name in every), ("addon-x", False)),
-            _listing(*((name, True) for name in (*every, "addon-x"))),
-            _listing(*((name, True) for name in (*every, "addon-x"))),
-        ]
-    )
+def test_up_waits_for_everything_the_env_tree_applies() -> None:
+    """Rule: up waits for what Flux's build of the env says the cluster gets: the root, core's
+    layers, the add-ons and every app's wiring and own Kustomizations, not a list of its own."""
+    from support import sample_root
+
+    expected, error = up.expected_kustomizations(sample_root(), "env-00")
+    assert error is None, error
+    assert {"flux-system", "platform-controllers", "platform-configs", "services", "app-notes-wiring"} <= set(expected)
+    # A hosted app's own Kustomizations read the apps repository, so they are not held to the env's commit.
+    assert expected["app-notes"] is False and expected["services"] is True
+
+
+def test_up_is_done_only_when_each_is_ready_for_its_spec_at_the_pushed_commit(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Rule: a Ready root is not a Ready cluster. Each expected Kustomization must exist, be Ready
+    for its current generation and, if it reads the root source, have applied the pushed commit:
+    a Ready from before the push is not this run's."""
+    expected = {"flux-system": True, "services": True, "app-x": False}
+    monkeypatch.setattr(up, "expected_kustomizations", lambda instance, env: (expected, None))
+    monkeypatch.setattr(up, "pushed_revision", lambda instance, env: _SHA)
+    old = "f" * 40
+    polls = iter([
+        _listing(("flux-system", True, 2, old)),
+        _listing(("flux-system", True, 2, _SHA), ("services", True, 1, _SHA), ("app-x", True, 2, old)),
+        _listing(("flux-system", True, 2, _SHA), ("services", False, 2, _SHA), ("app-x", True, 2, old)),
+        _listing(("flux-system", True, 2, _SHA), ("services", True, 2, _SHA), ("app-x", True, 2, old)),
+    ])  # fmt: skip
     calls: list[int] = []
     monkeypatch.setattr(up, "kubectl", lambda *a, **k: calls.append(1) or next(polls))
     monkeypatch.setattr(up, "_sleep", lambda seconds: None)
-    assert up.wait_for_flux("home", env_dir) == 0
-    assert len(calls) == 6 and "Ready (5)" in capsys.readouterr().out
+    assert up.wait_for_flux(Path("."), "home") == 0
+    assert len(calls) == 4 and "Ready at 0123456789ab (3)" in capsys.readouterr().out
 
 
-def test_up_names_what_is_not_ready_when_the_wait_runs_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    env_dir = _flux_env(tmp_path)
+def test_up_names_what_is_not_ready_when_the_wait_runs_out(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(up, "expected_kustomizations", lambda instance, env: ({"flux-system": True, "services": True}, None))
+    monkeypatch.setattr(up, "pushed_revision", lambda instance, env: _SHA)
     now = [0.0]
-    monkeypatch.setattr(up, "kubectl", lambda *a, **k: _listing(("flux-system", True)))
+    monkeypatch.setattr(up, "kubectl", lambda *a, **k: _listing(("flux-system", True, 2, "f" * 40)))
     monkeypatch.setattr(up, "_clock", lambda: now[0])
     monkeypatch.setattr(up, "_sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
-    assert up.wait_for_flux("home", env_dir) == 1
+    assert up.wait_for_flux(Path("."), "home") == 1
     out = capsys.readouterr().out
-    assert "platform-configs: not created yet" in out and "services: not created yet" in out
+    assert "flux-system: not yet at 0123456789ab" in out and "services: not created yet" in out
+
+
+def test_up_stops_when_the_tree_does_not_build(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(up, "expected_kustomizations", lambda instance, env: ({}, "flux build services failed: boom"))
+    monkeypatch.setattr(up, "pushed_revision", lambda instance, env: _SHA)
+    assert up.wait_for_flux(Path("."), "home") == 1
+    assert "FAIL up: flux build services failed: boom" in capsys.readouterr().out
 
 
 def test_the_entry_point_loads_nothing_that_reads_core_trees() -> None:

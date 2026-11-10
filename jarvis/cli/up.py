@@ -16,12 +16,14 @@ from pathlib import Path
 
 import yaml
 
+from jarvis.checks.flux_build import env_tree
 from jarvis.cli import doctor
 from jarvis.env import validate
 from jarvis.env.runtime import kubeconfig_for, kubectl
 from jarvis.node import site
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.render import env as render
+from jarvis.schema.env import ROOT_SOURCE
 from jarvis.secrets import mint
 from jarvis.verify import run as verify
 
@@ -48,41 +50,67 @@ def unpushed(instance: Path, env: str) -> str | None:
     return None
 
 
-_FLUX_KUSTOMIZATION = "kustomize.toolkit.fluxcd.io/"
 POLL_SECONDS = 10
 # Kept as module names so the tests can replace them.
 _sleep: Callable[[float], None] = time.sleep
 _clock: Callable[[], float] = time.monotonic
 
 
-def expected_kustomizations(env_dir: Path) -> set[str]:
-    """The Flux Kustomizations the env's wiring declares: core's layers and every one in its
-    rendered flux/ (the root, services, the app wiring). Add-ons' appear once services applies."""
-    names: set[str] = set()
-    for path in [*sorted((PRODUCT_ROOT / "core" / "flux" / "layers").glob("*.yaml")), *sorted((env_dir / "flux").rglob("*.yaml"))]:
-        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
-            if isinstance(doc, dict) and doc.get("kind") == "Kustomization" and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION):
-                names.add(str((doc.get("metadata") or {}).get("name")))
-    return names
+def expected_kustomizations(instance: Path, env: str) -> tuple[dict[str, bool], str | None]:
+    """Every Flux Kustomization the env applies, from Flux's build of its tree (the root, core's
+    layers, add-ons, each app's wiring and its own Kustomizations), each with whether it reads the
+    root source; or why the tree does not build."""
+    tree = env_tree(instance, f"envs/{env}/flux")
+    if tree.error:
+        return {}, tree.error
+    expected = {ROOT_SOURCE: True}
+    for path in tree.paths:
+        source = (path.kustomization.get("spec") or {}).get("sourceRef") or {}
+        expected[str((path.kustomization.get("metadata") or {}).get("name"))] = source.get("name") == ROOT_SOURCE
+    return expected, None
 
 
-def _not_ready(items: list[dict]) -> dict[str, str]:
-    """Each listed Kustomization that is not Ready, with its Ready condition's message."""
+def pushed_revision(instance: Path, env: str) -> str | None:
+    """The commit Flux reads for the env: the tip of its flux_git_ref on origin."""
+    data = yaml.safe_load((instance / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
+    ref = str((data or {}).get("flux_git_ref") or "")
+    proc = _git(instance, "ls-remote", "origin", ref)
+    line = proc.stdout.split("\n", 1)[0].split() if proc.returncode == 0 else []
+    return line[0] if line else None
+
+
+def _waiting(items: list[dict], expected: dict[str, bool], revision: str) -> dict[str, str]:
+    """Each expected Kustomization that is not yet done, with why: not created, not Ready, Ready on
+    an older spec, or (reading the root source) not yet at the pushed commit."""
+    listed = {str(item["metadata"]["name"]): item for item in items}
     waiting = {}
-    for item in items:
-        ready = next((c for c in (item.get("status") or {}).get("conditions") or [] if c.get("type") == "Ready"), {})
+    for name, root_source in sorted(expected.items()):
+        item = listed.get(name)
+        if item is None:
+            waiting[name] = "not created yet"
+            continue
+        status = item.get("status") or {}
+        ready = next((c for c in status.get("conditions") or [] if c.get("type") == "Ready"), {})
         if ready.get("status") != "True":
-            waiting[str(item["metadata"]["name"])] = str(ready.get("message") or "no Ready condition yet")
+            waiting[name] = str(ready.get("message") or "no Ready condition yet")
+        elif status.get("observedGeneration") != (item.get("metadata") or {}).get("generation"):
+            waiting[name] = "Ready for an older spec; reconciling"
+        elif root_source and not str(status.get("lastAppliedRevision") or "").endswith(revision):
+            waiting[name] = f"not yet at {revision[:12]}"
     return waiting
 
 
-def wait_for_flux(env: str, env_dir: Path) -> int:
-    """Until every expected Kustomization exists and every one in flux-system has been Ready on
-    two polls in a row: a layer applies its children after it is Ready, so one pass is not enough.
-    `kubectl wait --all` would see only the root, the one object that exists when it starts."""
-    expected = expected_kustomizations(env_dir)
+def wait_for_flux(instance: Path, env: str) -> int:
+    """Until every Kustomization the env's tree applies exists, is Ready for its current spec, and,
+    if it reads the root source, has applied the pushed commit. The tree says what to wait for, so
+    a layer that applies its children only once it is Ready is waited for like any other."""
+    expected, error = expected_kustomizations(instance, env)
+    revision = pushed_revision(instance, env)
+    if error or revision is None:
+        print(f"FAIL up: {error or 'cannot read the pushed commit of flux_git_ref from origin'}", flush=True)
+        return 1
     deadline = _clock() + FLUX_READY_TIMEOUT_SECONDS
-    settled, waiting = 0, {name: "not created yet" for name in expected}
+    waiting = {name: "not created yet" for name in expected}
     while _clock() < deadline:
         proc = kubectl(
             ["get", "kustomizations.kustomize.toolkit.fluxcd.io", "-n", "flux-system", "-o", "json"],
@@ -90,12 +118,9 @@ def wait_for_flux(env: str, env_dir: Path) -> int:
             kubeconfig=kubeconfig_for(env),
         )
         if proc.returncode == 0:
-            items = (json.loads(proc.stdout or "{}") or {}).get("items") or []
-            listed = {str(item["metadata"]["name"]) for item in items}
-            waiting = _not_ready(items) | {name: "not created yet" for name in expected - listed}
-            settled = settled + 1 if not waiting else 0
-            if settled >= 2:
-                print(f"PASS up: every Flux Kustomization is Ready ({len(listed)})", flush=True)
+            waiting = _waiting((json.loads(proc.stdout or "{}") or {}).get("items") or [], expected, revision)
+            if not waiting:
+                print(f"PASS up: every Flux Kustomization is Ready at {revision[:12]} ({len(expected)})", flush=True)
                 return 0
         _sleep(POLL_SECONDS)
     detail = "; ".join(f"{name}: {why}" for name, why in sorted(waiting.items()))
@@ -112,7 +137,7 @@ def run(instance: Path, env: str) -> int:
         ("secrets", lambda: mint.main(["--env", env])),
         ("pushed", lambda: _refuse_unpushed(instance, env)),
         ("site", lambda: site.main(["--env", env])),
-        ("flux", lambda: wait_for_flux(env, env_dir)),
+        ("flux", lambda: wait_for_flux(instance, env)),
         ("verify", lambda: verify.main(["--env", env])),
     ]
     for name, step in steps:
