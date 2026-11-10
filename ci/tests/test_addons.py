@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -17,9 +17,10 @@ from jarvis.schema.env import ValidationError, validate_env_tree
 from support import (
     _write_env,
     bootstrap_example_copy,
+    core_at,
     instance_apps_repo_for_checks,
-    link_core_trees,
     render_switches,
+    write_flux_root,
 )
 
 _TENANT = {"kind": "ServiceAccount", "name": "addon-widget", "namespace": "flux-system"}
@@ -128,12 +129,13 @@ def _tree(
     }
     _write(flux / "kustomization.yaml", "resources: [stage.yaml]\n")
     _write(flux / "stage.yaml", yaml.safe_dump_all([stage or _stage(), vars_doc]))
-    link_core_trees(instance, product)
+    write_flux_root(flux.parent)
     return product, instance
 
 
 def _messages(product: Path, instance: Path) -> list[str]:
-    return [f"{item.path}: {item.message}" for item in scan_addons(product, instance)]
+    with core_at(product):
+        return [f"{item.path}: {item.message}" for item in scan_addons(product, instance)]
 
 
 def test_addon_meeting_the_contract_passes(tmp_path: Path) -> None:
@@ -290,11 +292,13 @@ def test_addon_secrets_from_its_namespace_folder_pass(tmp_path: Path) -> None:
     assert _messages(product, instance) == []
 
 
-def _schema_errors(root: Path) -> list[str]:
-    try:
-        validate_env_tree(root, pre_host=True)
-    except ValidationError as exc:
-        return exc.messages
+def _schema_errors(root: Path, core: Path | None = None) -> list[str]:
+    """env-schema's messages for root, against core (default the test core)."""
+    with core_at(core) if core else contextlib.nullcontext():
+        try:
+            validate_env_tree(root, pre_host=True)
+        except ValidationError as exc:
+            return exc.messages
     return []
 
 
@@ -307,14 +311,13 @@ def _schema_env(tmp_path: Path, components: list[str], *, slots: dict[str, str] 
         _write(product / "addons" / name / "kustomization.yaml", "kind: Component\nresources: [flux.yaml]\n")
         _write(product / "addons" / name / "flux.yaml", yaml.safe_dump(ks))
     root.mkdir()
-    link_core_trees(root, product)
     env = _write_env(root)
     _write(env / "flux" / "kustomizations" / "services.yaml", yaml.safe_dump({"spec": {"components": components}}))
     return root
 
 
 def test_env_enabling_known_addons_passes_the_addon_rules(tmp_path: Path) -> None:
-    errors = _schema_errors(_schema_env(tmp_path, ["widget", "gadget"], slots={"widget": "chat-bot"}))
+    errors = _schema_errors(_schema_env(tmp_path, ["widget", "gadget"], slots={"widget": "chat-bot"}), tmp_path / "product")
     assert not [item for item in errors if "add-on" in item], errors
 
 
@@ -331,7 +334,7 @@ def test_env_addon_list_breaking_the_rules_fails(
     tmp_path: Path, components: list[str], slots: dict | None, expected: str
 ) -> None:
     """env-schema rejects an unknown add-on, a duplicate, and two add-ons for one slot."""
-    errors = _schema_errors(_schema_env(tmp_path, components, slots=slots))
+    errors = _schema_errors(_schema_env(tmp_path, components, slots=slots), tmp_path / "product")
     assert any(expected in item for item in errors), errors
 
 
@@ -341,30 +344,33 @@ def test_render_refuses_two_addons_for_one_slot(tmp_path: Path) -> None:
     env = root / "envs" / "env-test"
     _write(env / "values" / "switches.yaml", yaml.safe_dump({"addons": ["widget", "gadget"]}))
     before = (env / "flux" / "kustomizations" / "services.yaml").read_text(encoding="utf-8")
-    with pytest.raises(SystemExit, match="all fill slot chat-bot"):
+    with core_at(tmp_path / "product"), pytest.raises(SystemExit, match="all fill slot chat-bot"):
         render_switches(env, root)
     assert (env / "flux" / "kustomizations" / "services.yaml").read_text(encoding="utf-8") == before
 
 
 def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
-    """Every env-level check, against the copy as an instance. gitleaks reads its git history."""
+    """Every env-level check (jarvis validate), against the copy as an instance and the test core
+    (its fixture add-on). gitleaks reads its git history."""
+    from jarvis.env import validate
+
     git = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
     subprocess.run([*git, "init", "-q"], cwd=root, check=True)
     subprocess.run([*git, "add", "-A"], cwd=root, check=True)
     subprocess.run([*git, "commit", "-q", "-m", "fixture"], cwd=root, check=True)
     instance = root.resolve()
-    env = {
-        **os.environ,
-        "INSTANCE": str(instance),
-        "APPS_REPO": str(instance_apps_repo_for_checks(instance)),
-    }
-    return subprocess.run(
-        [sys.executable, "-m", "jarvis.env.validate"],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
+    out = io.StringIO()
+    previous = os.environ.get("APPS_REPO")
+    os.environ["APPS_REPO"] = str(instance_apps_repo_for_checks(instance))
+    try:
+        with contextlib.redirect_stdout(out):
+            code = validate.run(instance)
+    finally:
+        if previous is None:
+            os.environ.pop("APPS_REPO", None)
+        else:
+            os.environ["APPS_REPO"] = previous
+    return subprocess.CompletedProcess([], code, out.getvalue(), "")
 
 
 def test_core_only_env_passes_every_env_check(tmp_path: Path) -> None:
@@ -373,17 +379,6 @@ def test_core_only_env_passes_every_env_check(tmp_path: Path) -> None:
     proc = _run_env_checks(copy_env.root)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PASS addons" in proc.stdout and "PASS secret-scan" in proc.stdout, proc.stdout
-
-
-def test_an_instance_without_core_trees_is_checked_by_the_running_core(tmp_path: Path) -> None:
-    """Rule: instance CI checks an instance with no core/ or addons/ of its own (the CLI runs the env's
-    pinned core); the running core's trees stand in, as the root artifact's includes would."""
-    copy_env = bootstrap_example_copy(tmp_path, core_only=True)
-    shutil.rmtree(copy_env.root / "addons")  # links to core's add-ons plus the fixture
-    (copy_env.root / "core").unlink()
-    proc = _run_env_checks(copy_env.root)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "PASS flux-identity" in proc.stdout and "PASS flux-substitute" in proc.stdout, proc.stdout
 
 
 def test_env_with_the_sample_addon_and_its_sealed_secret_passes_every_env_check(tmp_path: Path) -> None:

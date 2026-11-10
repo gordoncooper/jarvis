@@ -78,6 +78,8 @@ The jarvis CLI picks the env itself when the instance repository holds one, and 
 
 The FluxInstance sets kustomize-controller `StrictPostBuildSubstitutions=true`. A missing postBuild variable fails the reconcile. `$${...}` escapes a literal `${...}`.
 
+The env checks (`jarvis validate`) read what Flux builds, not their own model of it: each Kustomization the env applies, from the root in `flux/sync.yaml` down, is built with `flux build kustomization --dry-run --strict-substitute`, its `substituteFrom` ConfigMaps and plain Secrets read from what the tree already applies and its inline `substitute` over them. So a missing variable fails `jarvis validate` as it fails the reconcile. A Kustomization reading another source (a hosted app's repository) is not built there; the app checks read it.
+
 The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluster-vars.yaml` for host settings, including every key that is not published. `jarvis_env` is published because verify, drill and restore read it from the live ConfigMap.
 
 The published set is `CLUSTER_VARS_PUBLISHED` in `jarvis/render/cluster_vars.py`. Every other known key in `jarvis/schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.

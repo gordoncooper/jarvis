@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,7 @@ from jarvis.apps import values as _apps
 from jarvis.apps.app_file import check_folder
 from jarvis.render.apps import render_env
 from jarvis.schema import env as env_schema
-from support import REPO_ROOT, copy_sample, sample_root, set_switches
+from support import REPO_ROOT, RUN_MODULE, copy_sample, sample_root, set_switches
 
 EXAMPLES = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 APPS = ["hello-web", "notes", "lan-demo"]
@@ -101,7 +100,7 @@ def test_app_check_repo_mode_checks_every_folder_but_the_excluded(tmp_path: Path
     (repo / ".github").mkdir()
 
     def run(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, "-m", "jarvis.apps.check", "--repo", str(repo), *args],
+        return subprocess.run([*RUN_MODULE, "jarvis.apps.check", "--repo", str(repo), *args],
                               capture_output=True, text=True, check=False)
 
     refused = run()

@@ -19,7 +19,7 @@ from jarvis.schema.env import (
     ValidationError,
     validate_env_tree,
 )
-from support import REPO_ROOT, SEALED_PLACEHOLDER, _valid_cluster_vars, _write_env, copy_sample, sample_root
+from support import REPO_ROOT, RUN_MODULE, SEALED_PLACEHOLDER, _valid_cluster_vars, _write_env, copy_sample, sample_root
 
 
 def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
@@ -830,7 +830,7 @@ def test_cli_requires_env() -> None:
     commands = (
         [sys.executable, "jarvis/secrets/mint.py"],
         [sys.executable, "jarvis/secrets/encrypt.py", "--name", "example"],
-        [sys.executable, "-m", "jarvis.render.env"],
+        [*RUN_MODULE, "jarvis.render.env"],
     )
     for cmd in commands:
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)

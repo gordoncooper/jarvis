@@ -577,9 +577,7 @@ def test_disabled_component_checks_do_not_run(
 
 
 def _enable_addons(root: Path, addons: list[str]) -> None:
-    from support import link_core_with_fixture_addons
-
-    link_core_with_fixture_addons(root)
+    # The test core holds the fixture add-ons.
     path = root / "envs" / "env-test" / "flux" / "kustomizations" / "services.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump({"kind": "Kustomization", "spec": {"components": addons}}), encoding="utf-8")
@@ -757,11 +755,7 @@ def test_offsite_copy_freshness_is_checked_when_the_env_lists_it(
     line: str,
 ) -> None:
     """An env that lists the off-host copy gets its last success checked like restic-check."""
-    configs = tmp_path / "envs" / "env-test" / "flux" / "platform-configs"
-    configs.mkdir(parents=True)
-    (configs / "kustomization.yaml").write_text(
-        "resources:\n  - ../../../../core/feature/offsite-backup-copy\n", encoding="utf-8"
-    )
+    _list_feature(tmp_path, "offsite-backup-copy")
     cluster = Cluster()
     cluster.offsite_sync = last
     assert _run(tmp_path, cluster, monkeypatch) == code
@@ -779,10 +773,18 @@ def test_unreadable_switches_fail_verify(
     assert "FAIL verify components" in capsys.readouterr().out
 
 
+def _list_feature(root: Path, name: str) -> None:
+    """The env's switches list feature name, as its owner decides it."""
+    values = root / "envs" / "env-test" / "values"
+    values.mkdir(parents=True, exist_ok=True)
+    path = values / "switches.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    data["features"] = [*(data.get("features") or []), name]
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
 def _list_apps_server(root: Path) -> None:
-    configs = root / "envs" / "env-test" / "flux" / "platform-configs"
-    configs.mkdir(parents=True, exist_ok=True)
-    (configs / "kustomization.yaml").write_text("resources:\n  - ../../../../core/feature/apps-backup-server\n", encoding="utf-8")
+    _list_feature(root, "apps-backup-server")
 
 
 @pytest.mark.parametrize(

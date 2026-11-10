@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 
+from jarvis import paths as _paths
 from jarvis.apps import values as _apps
 from jarvis.env import switches as _switches
 from jarvis.env.runtime import (
@@ -24,7 +25,7 @@ from jarvis.env.runtime import (
     kubectl as run_kubectl,
 )
 from jarvis.paths import PRODUCT_ROOT
-from jarvis.schema.env import core_dir, enabled_addons
+from jarvis.schema.env import enabled_addons
 from jarvis.verify import apps as _apps_checks  # noqa: F401  (importing it registers its checks)
 from jarvis.verify import backups as _backups  # noqa: F401  (importing it registers its checks)
 from jarvis.verify import platform as _platform
@@ -104,8 +105,7 @@ def run(
     try:
         if enabled is None:
             # The env's add-on list; checks for an add-on it does not enable never load.
-            # The core the env reads: the checkout running this, or a tree laid out like the artifact.
-            enabled = load_addons(core_dir(repo_root), enabled_addons(repo_root / "envs" / env))
+            enabled = load_addons(_paths.core_root(), enabled_addons(repo_root / "envs" / env))
             # Hosted-app checks only for an env that lists an app.
             apps_data, apps_errors = _apps.load_values(repo_root / "envs" / env)
             if apps_errors:

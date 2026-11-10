@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 from ansible_role_proof import REPO_ROOT, load_cluster_vars
 
-from support import ExampleCopy, _kustomize_build, real_and_copy_envs, renovate_python_pattern
+from support import ExampleCopy, _kustomize_build, flux_built, real_and_copy_envs, renovate_python_pattern
 
 _CONFIGS_BEFORE = {
     ("GeneratingPolicy", "", "pvc-backup"),
@@ -62,9 +62,9 @@ _APP_HOSTING = {
 }
 
 
-def _idents(path: str, *, root: Path | None = None) -> set[tuple[str, str, str]]:
+def _idents(docs: list[dict]) -> set[tuple[str, str, str]]:
     found: set[tuple[str, str, str]] = set()
-    for doc in yaml.safe_load_all(_kustomize_build(path, root=root)):
+    for doc in docs:
         if not isinstance(doc, dict) or "kind" not in doc:
             continue
         metadata = doc.get("metadata")
@@ -211,7 +211,7 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
             ("CronJob", "platform-backups", "restic-offsite"),
             ("Secret", "platform-backups", "backups-offsite"),
         }
-        if offsite_copy_listed(root / "envs" / env, root)
+        if offsite_copy_listed(root / "envs" / env)
         else set()
     )
     hosting = app_hosting_listed(root / "envs" / env)
@@ -224,7 +224,7 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         if _switches.APP_DNS in listed
         else set()
     )
-    assert _idents(f"envs/{env}/flux/platform-configs", root=root) == (
+    assert _idents(flux_built(root, env)) == (
         _CONFIGS_BEFORE | _CONFIGS_ADDED | _TESTAPP | (_APP_HOSTING if hosting else set()) | offsite | app_dns
     )
     suffix = str(load_cluster_vars(root, env=env)["dns_suffix"])
@@ -233,17 +233,16 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
             assert suffix not in path.read_text(encoding="utf-8")
     docs = {
         (doc["kind"], doc["metadata"]["name"]): doc
-        for doc in yaml.safe_load_all(
-            _kustomize_build(f"envs/{env}/flux/platform-configs", root=root)
-        )
-        if isinstance(doc, dict) and doc.get("kind") in {"ClusterIssuer", "Certificate", "TLSStore"}
+        for doc in flux_built(root, env)
+        if doc.get("kind") in {"ClusterIssuer", "Certificate", "TLSStore"}
     }
     assert docs[("ClusterIssuer", "internal-ca")]["spec"]["ca"]["secretName"] == "cert-manager-ca"
     certificate = docs[("Certificate", "wildcard")]
     assert certificate["metadata"]["namespace"] == "platform-cert-manager"
     assert certificate["spec"]["secretName"] == "wildcard-tls"
     assert certificate["spec"]["issuerRef"] == {"name": "internal-ca", "kind": "ClusterIssuer"}
-    assert certificate["spec"]["dnsNames"] == ["*.${dns_suffix}"]
+    # As the cluster gets it: the env's suffix, substituted from its cluster-vars.
+    assert certificate["spec"]["dnsNames"] == [f"*.{suffix}"]
     store = docs[("TLSStore", "default")]
     assert store["metadata"]["namespace"] == "platform-cert-manager"
     assert store["spec"]["defaultCertificate"]["secretName"] == "wildcard-tls"
@@ -252,6 +251,6 @@ def _assert_issuer_wildcard_and_store(root: Path, env: str) -> None:
         return
     # Hosted apps: a second wildcard, so core's certificate and key are not reissued for it.
     apps = docs[("Certificate", "wildcard-apps")]
-    assert apps["spec"]["dnsNames"] == ["*.apps.${dns_suffix}"]
+    assert apps["spec"]["dnsNames"] == [f"*.apps.{suffix}"]
     assert apps["spec"]["issuerRef"] == certificate["spec"]["issuerRef"]
     assert store["spec"]["certificates"] == [{"secretName": apps["spec"]["secretName"]}]

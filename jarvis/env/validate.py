@@ -18,13 +18,13 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from jarvis import paths as _paths
 from jarvis.checks import (
     addons,
     app_hosting,
     backup_isolation,
     flux_identity,
     flux_prune,
-    flux_substitute,
     manifest_lint,
 )
 from jarvis.env.runtime import instance_root
@@ -71,12 +71,11 @@ def _scan(module) -> Callable[[Path], list[str]]:
 # Name, then the check. Core's CI runs each under the same name, so a failure reads the same everywhere.
 CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "env-schema": _env_schema,
-    "addons": lambda instance: addons.format_violations(addons.scan_addons(PRODUCT_ROOT, instance)),
+    "addons": lambda instance: addons.format_violations(addons.scan_addons(_paths.core_root(), instance)),
     "app-hosting": _scan(app_hosting),
     "backup-isolation": _scan(backup_isolation),
     "flux-identity": _scan(flux_identity),
     "flux-prune": _scan(flux_prune),
-    "flux-substitute": _scan(flux_substitute),
     "manifest-lint": _manifest_lint,
     "secret-scan": _secret_scan,
 }

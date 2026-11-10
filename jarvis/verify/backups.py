@@ -219,7 +219,7 @@ def backups_checks(ctx: Context) -> list[Check]:
             21,
             "app backup isolation",
             lambda: check_app_isolation(
-                ctx.kubectl, apps_server=apps_server_listed(env_dir, ctx.repo_root)
+                ctx.kubectl, apps_server=apps_server_listed(env_dir)
             ),
         ),
         (
@@ -240,7 +240,7 @@ def backups_checks(ctx: Context) -> list[Check]:
         ),
         ]
     )
-    if offsite_copy_listed(ctx.repo_root / "envs" / ctx.env, ctx.repo_root):
+    if offsite_copy_listed(ctx.repo_root / "envs" / ctx.env):
         checks.append(
             (66, "off-host copy", lambda: check_offsite_copy(ctx.kubectl, now=ctx.now))
         )

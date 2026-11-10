@@ -16,8 +16,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis import paths as _paths
 from jarvis.backups import app_credentials as _app_backups
-from jarvis.checks.manifests import build_flux_path, kustomize_build, pod_spec
+from jarvis.checks.flux_build import env_tree
+from jarvis.checks.manifests import kustomize_build, pod_spec
 from jarvis.schema.env import env_dirs
 
 CORE_SECRET = "backups-restic"
@@ -43,7 +45,7 @@ def scan_backup_isolation(root: Path) -> list[Violation]:
     root = Path(root).resolve()
     found: list[Violation] = []
     shipped = _app_backups.APPS_SERVER_DIR
-    docs, error = kustomize_build(root, shipped)
+    docs, error = kustomize_build(_paths.core_root(), shipped)
     if error:
         found.append(Violation(_app_backups.APPS_SERVER_DIR, error))
     found.extend(_render_violations(_app_backups.APPS_SERVER_DIR, docs))
@@ -51,9 +53,12 @@ def scan_backup_isolation(root: Path) -> list[Violation]:
         rel = f"envs/{env_dir.name}/flux/platform-configs"
         if not (root / rel).is_dir():
             continue
-        path = build_flux_path(root, f"envs/{env_dir.name}/", {"spec": {"path": f"./{rel}"}})
-        if path.error:
-            found.append(Violation(rel, path.error))
+        # The env's platform-configs layer, as Flux builds it.
+        tree = env_tree(root, f"envs/{env_dir.name}/flux")
+        path = next((item for item in tree.paths if (item.kustomization.get("metadata") or {}).get("name") == "platform-configs"), None)
+        error = tree.error or (path.error if path else f"{rel}: the env applies no platform-configs Kustomization")
+        if error or path is None:
+            found.append(Violation(rel, error or "no platform-configs"))
             continue
         found.extend(_render_violations(rel, path.docs))
     return found

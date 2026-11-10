@@ -39,14 +39,10 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.checks.flux_build import FluxPath, env_tree
 from jarvis.checks.manifests import (
-    FluxPath,
-    env_flux_docs,
-    flux_paths,
     namespace_of,
-    postbuild_values,
     ref_of,
-    substitute,
 )
 from jarvis.schema.env import env_flux_dirs
 
@@ -91,11 +87,11 @@ def scan_flux_identity(repo_root: Path | str) -> list[FluxIdentityViolation]:
     violations: list[FluxIdentityViolation] = []
     for flux_dir in env_flux_dirs(root):
         env_rel = flux_dir.relative_to(root).as_posix()
-        env_docs, error = env_flux_docs(root, env_rel)
-        if error:
-            violations.append(FluxIdentityViolation(env_rel, error))
+        tree = env_tree(root, env_rel)
+        if tree.error:
+            violations.append(FluxIdentityViolation(env_rel, tree.error))
             continue
-        problems = list(_env_problems(root, env_rel, env_docs))
+        problems = list(_env_problems(tree.env_docs, tree.paths))
         violations.extend(FluxIdentityViolation(env_rel, problem) for problem in problems)
     return sorted(violations, key=lambda item: (item.path, item.message))
 
@@ -108,7 +104,7 @@ def _accounts(docs: Iterable[dict]) -> set[tuple[str, str]]:
     return {(namespace_of(doc), _name(doc)) for doc in docs if doc.get("kind") == "ServiceAccount"}
 
 
-def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[str]:
+def _env_problems(env_docs: list[dict], paths: list[FluxPath]) -> Iterator[str]:
     accounts = _accounts(env_docs)
     flux_docs = [doc for doc in env_docs if _is_flux(doc)]
     for doc in env_docs:
@@ -116,13 +112,8 @@ def _env_problems(root: Path, env_rel: str, env_docs: list[dict]) -> Iterator[st
             cluster = (doc.get("spec") or {}).get("cluster") or {}
             if cluster.get("multitenant") is not True:
                 yield f"{ref_of(doc)}: spec.cluster.multitenant is not true"
-    paths = flux_paths(root, env_rel, env_docs)
-    # A stage's objects as the cluster gets them, with the stage's postBuild values.
-    stage_docs = {
-        id(path): substitute(path.docs, postbuild_values(path.kustomization, env_docs))
-        for path in paths
-        if path.parent is None
-    }
+    # A stage's objects as the cluster gets them: Flux's build, substituted.
+    stage_docs = {id(path): path.docs for path in paths if path.parent is None}
     # The services stage and each app's wiring, as the platform account, declare each add-on's
     # and each app's tenant account and its bindings.
     wiring = [

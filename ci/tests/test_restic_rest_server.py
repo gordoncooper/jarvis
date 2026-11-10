@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from support import REPO_ROOT as ROOT
-from support import ExampleCopy, _kustomize_build, real_and_copy_envs
+from support import ExampleCopy, flux_built, real_and_copy_envs
 
 _FLAGS = ("--append-only", "--no-auth", "--private-repos")
 _DEDICATED_TOLERATION = {
@@ -265,12 +265,10 @@ def test_nonrelease_etcd_tag_is_rejected(tag: str) -> None:
 
 
 def _restic_check(root: Path, env: str) -> dict:
-    build = _kustomize_build(f"envs/{env}/flux/platform-configs", root=root)
     return next(
         doc
-        for doc in yaml.safe_load_all(build)
-        if isinstance(doc, dict)
-        and doc.get("kind") == "CronJob"
+        for doc in flux_built(root, env)
+        if doc.get("kind") == "CronJob"
         and doc["metadata"]["name"] == "restic-check"
     )
 
@@ -281,7 +279,10 @@ def test_restic_check_reads_repositories_without_a_lock(example_copy: ExampleCop
     etcd copy's pinned image with a memory cap."""
     etcd = _docs(ROOT / "core/platform/backups/etcd-snapshots.yaml")[0]
     etcd_image = etcd["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"]
+    from jarvis.schema.env import resolve_cluster_vars
+
     for root, env in real_and_copy_envs(example_copy):
+        values = resolve_cluster_vars(yaml.safe_load((root / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")))
         pod = _restic_check(root, env)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
         container = pod["containers"][0]
         assert container["image"] == etcd_image
@@ -299,7 +300,7 @@ def test_restic_check_reads_repositories_without_a_lock(example_copy: ExampleCop
         mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
         for volume in pod["volumes"]:
             if "hostPath" in volume:
-                assert volume["hostPath"]["path"] == "${backup_path}/restic"
+                assert volume["hostPath"]["path"] == f"{values['backup_path']}/restic"
                 assert mounts[volume["name"]]["readOnly"] is True
 
 
@@ -422,12 +423,12 @@ def test_restic_check_starts_clear_of_backups_and_the_etcd_copy(
         (ROOT / "infra/ansible/roles/k3s/defaults/main.yml").read_text(encoding="utf-8")
     )["k3s_etcd_snapshot_schedule_cron"]
     for root, env in real_and_copy_envs(example_copy):
-        assert _restic_check(root, env)["spec"]["schedule"] == "${backup_check_schedule}"
         values = resolve_cluster_vars(
             yaml.safe_load(
                 (root / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
             )
         )
+        assert _restic_check(root, env)["spec"]["schedule"] == values["backup_check_schedule"]
         check = values["backup_check_schedule"]
         run = scheduled_instants(check, "Etc/UTC", datetime(2026, 11, 2, tzinfo=UTC), 1)[0]
         for instant in scheduled_instants(values["backup_schedule"], "Etc/UTC", run + timedelta(days=2), 8):
@@ -443,15 +444,9 @@ def test_offsite_copy_renders_only_where_the_env_lists_it(example_copy: ExampleC
     from jarvis.schema.env import offsite_copy_listed
 
     for root, env in real_and_copy_envs(example_copy):
-        docs = [
-            doc
-            for doc in yaml.safe_load_all(
-                _kustomize_build(f"envs/{env}/flux/platform-configs", root=root)
-            )
-            if isinstance(doc, dict)
-        ]
+        docs = flux_built(root, env)
         names = {(doc["kind"], doc["metadata"]["name"]) for doc in docs}
-        listed = offsite_copy_listed(root / "envs" / env, root)
+        listed = offsite_copy_listed(root / "envs" / env)
         assert listed or env != example_copy.name
         assert (("CronJob", "restic-offsite") in names) is listed
         assert (("Secret", "backups-offsite") in names) is listed

@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +13,7 @@ import yaml
 
 from support import (
     REPO_ROOT,
+    RUN_MODULE,
     copy_sample,
     instance_apps_repo_for_checks,
     render_switches,
@@ -40,7 +40,7 @@ def _env_schema(instance: Path, apps_repo: Path | None) -> subprocess.CompletedP
     if apps_repo is not None:
         env["APPS_REPO"] = str(apps_repo)
     return subprocess.run(
-        [sys.executable, "-m", "jarvis.env.validate", "--only", "env-schema"],
+        [*RUN_MODULE, "jarvis.env.validate", "--only", "env-schema"],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

@@ -10,7 +10,7 @@ export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-python3 ci/tests/sample.py "${work}/instance" >/dev/null
-# The sample's apps are the fixture apps repository, at the tags its env pins.
-INSTANCE="${work}/instance" APPS_REPO="${repo_root}/ci/tests/fixtures/app-hosting/jarvis-apps" \
-  python3 -m jarvis.env.validate
+# The sample's apps are the fixture apps repository, at the tags its env pins; its add-on is the
+# fixture one, in the test core the sample is read against.
+APPS_REPO="${repo_root}/ci/tests/fixtures/app-hosting/jarvis-apps" \
+  python3 ci/tests/sample.py --validate "${work}/instance"

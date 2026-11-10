@@ -44,15 +44,11 @@ from pathlib import Path
 
 import yaml
 
+from jarvis.checks.flux_build import env_tree, is_flux_kustomization
 from jarvis.checks.manifests import (
-    build_flux_path,
-    env_flux_docs,
-    is_flux_kustomization,
     kustomize_build,
     namespace_of,
-    postbuild_values,
     ref_of,
-    substitute,
 )
 from jarvis.schema.env import (
     ADDON_SECRETS_PATH,
@@ -60,7 +56,6 @@ from jarvis.schema.env import (
     addon_documents,
     addon_names,
     addon_slots,
-    core_dir,
     env_flux_dirs,
     slot_names,
 )
@@ -121,11 +116,12 @@ class AddonViolation:
 
 def scan_addons(product_root: Path | str, env_root: Path | str) -> list[AddonViolation]:
     """Product rules on product_root, env rules on every env under env_root."""
-    violations = list(_product_problems(Path(product_root).resolve()))
+    core = Path(product_root).resolve()
+    violations = list(_product_problems(core))
     root = Path(env_root).resolve()
     for flux_dir in env_flux_dirs(root):
         env_rel = flux_dir.relative_to(root).as_posix()
-        violations.extend(AddonViolation(env_rel, problem) for problem in _env_problems(root, env_rel))
+        violations.extend(AddonViolation(env_rel, problem) for problem in _env_problems(core, root, env_rel))
     return sorted(violations, key=lambda item: (item.path, item.message))
 
 
@@ -180,11 +176,12 @@ def _core_mentions(core: Path, names: tuple[str, ...]) -> Iterator[AddonViolatio
                     )
 
 
-def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
-    env_docs, error = env_flux_docs(root, env_rel)
-    if error:
-        yield error
+def _env_problems(core: Path, root: Path, env_rel: str) -> Iterator[str]:
+    tree = env_tree(root, env_rel)
+    if tree.error:
+        yield tree.error
         return
+    env_docs = tree.env_docs
     stage = next(
         (doc for doc in env_docs if is_flux_kustomization(doc) and (namespace_of(doc), _name(doc)) == SERVICES_STAGE),
         None,
@@ -197,13 +194,14 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
             f"{ref_of(stage)}: lists add-ons, so it runs as {PLATFORM_SERVICE_ACCOUNT}; "
             "it creates their namespaces and tenant identities"
         )
-    known = addon_names(core_dir(root))
-    values = postbuild_values(stage, env_docs)
+    known = addon_names(core)
+    # Each Kustomization the services stage applies, as Flux built it.
+    applied = {_name(path.kustomization): path for path in tree.paths if _name(path.parent or {}) == _name(stage)}
     for component in components:
         name = str(component).strip().removeprefix("./")
         if name not in known:
             continue  # env-schema reports an unknown add-on
-        wiring, error = kustomize_build(root, f"{ADDONS_DIR}/{name}")
+        wiring, error = kustomize_build(core, f"{ADDONS_DIR}/{name}")
         if error:
             yield f"add-on {name}: {error}"
             continue
@@ -211,7 +209,10 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         yield from (f"add-on {name}: {problem}" for problem in _wiring_problems(name, wiring, namespaces))
         for doc in wiring:
             if is_flux_kustomization(doc):
-                path = build_flux_path(root, env_rel, substitute(doc, values), parent=stage)
+                path = applied.get(_name(doc))
+                if path is None:
+                    yield f"add-on {name}: {ref_of(doc)} is not among what the services stage applies"
+                    continue
                 yield from (f"add-on {name}: {problem}" for problem in _tenant_path_problems(path, namespaces))
 
 

@@ -6,13 +6,12 @@ import importlib
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 from conftest import require_cli
 
-from support import REPO_ROOT, sample_root
+from support import REPO_ROOT, RUN_MODULE, sample_root
 
 _HOSTS = """\
 # inventory header
@@ -204,7 +203,7 @@ def test_unresolvable_host_exits_before_any_change() -> None:
     before_env = {path: path.read_bytes() for path in (sample_root() / "envs").rglob("*") if path.is_file()}
 
     result = subprocess.run(
-        [sys.executable, "-m", "jarvis.node.prep", "--env", "env-00", "--host", host, "--login-user", "tester"],
+        [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", "--host", host, "--login-user", "tester"],
         cwd=REPO_ROOT,
         env={**os.environ, "INSTANCE": str(sample_root()), "SOPS_AGE_KEY_FILE": str(sample_root() / ".age" / "keys.txt")},
         input="\n",
@@ -231,7 +230,7 @@ def test_resolved_host_missing_from_inventory_exits_before_ssh() -> None:
     before_ssh = _ssh_snapshot()
 
     result = subprocess.run(
-        [sys.executable, "-m", "jarvis.node.prep", "--env", "env-00", "--host", "localhost", "--login-user", "tester"],
+        [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", "--host", "localhost", "--login-user", "tester"],
         cwd=REPO_ROOT,
         env={**os.environ, "INSTANCE": str(sample_root()), "SOPS_AGE_KEY_FILE": str(sample_root() / ".age" / "keys.txt")},
         input="\n",

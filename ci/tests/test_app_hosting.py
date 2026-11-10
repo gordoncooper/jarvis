@@ -14,7 +14,7 @@ from jarvis.checks.app_hosting import scan_app_hosting
 from jarvis.checks.flux_identity import scan_flux_identity
 from jarvis.env import switches as _switches
 from jarvis.schema import env as env_schema
-from support import REPO_ROOT, link_core_trees, sample_root, set_switches
+from support import REPO_ROOT, core_at, sample_root, set_switches
 
 EXAMPLE = sample_root() / "envs" / "env-00"
 
@@ -26,12 +26,13 @@ def _tree(tmp_path: Path) -> tuple[Path, Path]:
         shutil.copytree(REPO_ROOT / name, product / name)
     (instance / "envs").mkdir(parents=True)
     shutil.copytree(EXAMPLE, instance / "envs" / "env-00")
-    link_core_trees(instance, product)
     return product, instance
 
 
 def _messages(instance: Path) -> list[str]:
-    return [f"{item.path}: {item.message}" for item in scan_app_hosting(instance)]
+    """The check on instance, against the product copy _tree made beside it."""
+    with core_at(instance.parent / "product"):
+        return [f"{item.path}: {item.message}" for item in scan_app_hosting(instance)]
 
 
 def _edit(path: Path, old: str, new: str) -> None:

@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from jarvis.checks.flux_identity import scan_flux_identity
-from support import REPO_ROOT, sample_root
+from support import REPO_ROOT, core_at, sample_root, write_flux_root
 
 _ACCOUNTS = """
 apiVersion: v1
@@ -87,11 +87,14 @@ def _repo(
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+    write_flux_root(root / "envs" / "env-test")
     return root
 
 
 def _messages(root: Path) -> list[str]:
-    return [item.message for item in scan_flux_identity(root)]
+    """The check on root, which holds its own core trees beside the env."""
+    with core_at(root):
+        return [item.message for item in scan_flux_identity(root)]
 
 
 def test_objects_with_declared_accounts_pass(tmp_path: Path) -> None:

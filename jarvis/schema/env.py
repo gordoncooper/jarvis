@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from jarvis import paths as _paths
 from jarvis.apps import values as _apps
 from jarvis.backups import app_credentials as _app_backups
 from jarvis.backups import selection as _backup_selection
@@ -489,25 +490,21 @@ def _platform_configs(env_dir: Path) -> tuple[Path, dict]:
     return path, doc if isinstance(doc, dict) else {}
 
 
-def _core_dir_listed(env_dir: Path, repo_root: Path, rel: str) -> bool:
-    """True when the env's platform-configs list includes core directory rel."""
-    path, doc = _platform_configs(env_dir)
-    # rel is a path in the root artifact (core/..., addons/...), as the env's list names it.
-    target = (Path(repo_root) / rel).resolve()
-    return any(
-        isinstance(item, str) and (path.parent / item).resolve() == target
-        for item in doc.get("resources") or []
-    )
+def _feature_listed(env_dir: Path, name: str) -> bool:
+    """True when the env's switches list feature name: the decision its platform-configs render
+    follows (env-schema fails a render that does not)."""
+    data, errors = _switches.load(env_dir)
+    return not errors and name in _switches.names(data, _switches.FEATURES)
 
 
-def offsite_copy_listed(env_dir: Path, repo_root: Path) -> bool:
-    """True when the env's platform-configs list includes the off-host copy directory."""
-    return _core_dir_listed(env_dir, repo_root, OFFSITE_COPY_DIR)
+def offsite_copy_listed(env_dir: Path) -> bool:
+    """True when the env lists the off-host copy."""
+    return _feature_listed(env_dir, _switches.OFFSITE_COPY)
 
 
-def apps_server_listed(env_dir: Path, repo_root: Path) -> bool:
-    """True when the env's platform-configs list includes the apps rest-server."""
-    return _core_dir_listed(env_dir, repo_root, _app_backups.APPS_SERVER_DIR)
+def apps_server_listed(env_dir: Path) -> bool:
+    """True when the env lists the apps rest-server."""
+    return _feature_listed(env_dir, _switches.APPS_BACKUP_SERVER)
 
 
 def _app_hosting_component(env_dir: Path, repo_root: Path, item: object) -> bool:
@@ -600,10 +597,10 @@ def _validate_app_backups(env_dir: Path, repo_root: Path, env_name: str, bootstr
                 f"{env_name}: {rel} registers {item}, missing required file "
                 f"{_display_path(sealed, repo_root)}; run jarvis secrets --app {item}"
             )
-    if registered and not apps_server_listed(env_dir, repo_root):
+    if registered and not apps_server_listed(env_dir):
         errors.append(
-            f"{rel}: registers app credentials but does not list {_app_backups.APPS_SERVER_DIR}; "
-            f"an app's backups need the apps server, so list {_switches.APPS_BACKUP_SERVER} in {_switches.SWITCHES_FILE}"
+            f"{rel}: registers app credentials, and {_switches.SWITCHES_FILE} does not list "
+            f"{_switches.APPS_BACKUP_SERVER}; an app's backups need the apps server"
         )
     secrets = env_dir / "secrets"
     for path in sorted(secrets.rglob(f"{_app_backups.secret_name('app-')}*.sops.yaml")):
@@ -620,25 +617,15 @@ def _validate_offsite_secret(env_dir: Path, repo_root: Path, env_name: str) -> l
     """A bootstrapped env that lists the off-host copy holds its sealed target secret. Like the
     k3s tokens, it is not required before bootstrap-secrets, when prep-node checks a new env."""
     secrets = env_dir / "secrets"
-    if not any(secrets.glob("*.sops.yaml")) or not offsite_copy_listed(env_dir, repo_root):
+    if not any(secrets.glob("*.sops.yaml")) or not offsite_copy_listed(env_dir):
         return []
     secret = secrets / OFFSITE_SECRET_FILE
     if secret.is_file():
         return []
     return [
-        f"{env_name}: platform-configs lists {OFFSITE_COPY_DIR}, "
+        f"{env_name}: {_switches.SWITCHES_FILE} lists {_switches.OFFSITE_COPY}, "
         f"missing required file {_display_path(secret, repo_root)}"
     ]
-
-
-def core_dir(repo_root: Path | str) -> Path:
-    """The core repository the env's Flux paths read. A tree laid out like the root artifact
-    (core/ or addons/ beside envs/: the product checkout, or a test copy of it) holds its own; an instance
-    checkout is read by the core running this code, which instance CI checks out at the env's pin.
-    Its core/ and addons/ are the root artifact's core/ and addons/ (sync.yaml includes them by
-    fromPath)."""
-    root = Path(repo_root)
-    return root if any((root / tree).is_dir() for tree in (CORE_SOURCE_DIR, ADDONS_DIR)) else _PRODUCT_ROOT
 
 
 def addon_names(core: Path) -> tuple[str, ...]:
@@ -716,7 +703,7 @@ def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
     data, errors = _switches.load(env_dir)
     if errors:
         return [f"{rel}: {problem}" for problem in errors]
-    core = core_dir(repo_root)
+    core = _paths.core_root()
     errors = [
         f"{rel}: {problem}"
         for problem in _switches.validate(data, addon_names(core))
@@ -802,9 +789,9 @@ def sealed_readers(env_dir: Path, repo_root: Path, cluster_vars_path: Path) -> s
     read = {secrets / f"{name}.sops.yaml" for name in _BOOTSTRAP_SEALED}
     if _ssh_root(cluster_vars_path):
         read.add(secrets / DEPLOY_KEY_FILE)
-    if offsite_copy_listed(env_dir, repo_root):
+    if offsite_copy_listed(env_dir):
         read.add(secrets / OFFSITE_SECRET_FILE)
-    core = core_dir(repo_root)
+    core = _paths.core_root()
     known = addon_names(core)
     for name in enabled_addons(env_dir):
         if isinstance(name, str) and name in known:
@@ -840,7 +827,7 @@ def _validate_addons(env_dir: Path, repo_root: Path, env_name: str, bootstrapped
     the env is bootstrapped. Like the off-host copy, a new env before bootstrap needs no secret."""
     rel = _display_path(env_dir / "flux" / SERVICES_KUSTOMIZATION, repo_root)
     listed = enabled_addons(env_dir)
-    core = core_dir(repo_root)
+    core = _paths.core_root()
     known = addon_names(core)
     errors: list[str] = []
     seen: set[str] = set()
