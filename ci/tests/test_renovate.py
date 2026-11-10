@@ -248,6 +248,16 @@ def test_ansible_core_stays_on_the_2_21_line() -> None:
     assert "2.21" in rule["description"]
 
 
+def test_python_stays_below_the_first_minor_ansible_core_cannot_run_on() -> None:
+    """Rule: ansible-core 2.21 does not import on Python 3.15, so .python-version stays below it
+    until the ansible-core cap rises with it."""
+    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    rule = next(item for item in renovate["packageRules"] if item.get("matchManagers") == ["pyenv"])
+    assert rule["matchPackageNames"] == ["python"] and rule["allowedVersions"] == "<3.15"
+    assert "ansible-core" in rule["description"]
+    assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() < "3.15"
+
+
 def _next_minor_cap(version: str) -> str:
     major, minor, _patch = version.split(".")
     return f"<{major}.{int(minor) + 1}"
