@@ -157,9 +157,7 @@ def validate_env_tree(
 
     env_names = [path.name for path in sorted(envs_dir.iterdir()) if path.is_dir()]
     for env_dir in selected:
-        env_errors, env_resolved, _owner = _validate_env(
-            env_dir, root, pre_host=pre_host
-        )
+        env_errors, env_resolved = _validate_env(env_dir, root, pre_host=pre_host)
         errors.extend(env_errors)
         if env_resolved is not None:
             resolved_by_env[env_dir.name] = env_resolved
@@ -187,7 +185,7 @@ def validate_one_env(repo_root: Path | str, name: str, *, pre_host: bool = False
     env_dir = root / "envs" / name
     if not env_dir.is_dir():
         raise ValidationError([f"unknown env: {name}"])
-    errors, resolved, _owner = _validate_env(env_dir, root, pre_host=pre_host)
+    errors, resolved = _validate_env(env_dir, root, pre_host=pre_host)
     rules, sops_errors = _load_sops_creation_rules(root)
     errors.extend(sops_errors)
     if rules is not None:
@@ -277,7 +275,7 @@ def _display_path(path: Path, repo_root: Path) -> str:
 
 def _validate_env(
     env_dir: Path, repo_root: Path, *, pre_host: bool = False
-) -> tuple[list[str], dict[str, Any] | None, str | None]:
+) -> tuple[list[str], dict[str, Any] | None]:
     errors: list[str] = []
     env_name = env_dir.name
     values = env_dir / "values"
@@ -301,19 +299,14 @@ def _validate_env(
             )
 
     if errors:
-        return errors, None, None
+        return errors, None
 
     cluster_vars = _load_yaml(cluster_vars_path, errors, repo_root)
     hosts = _load_yaml(inventory, errors, repo_root)
     if errors or cluster_vars is None or hosts is None:
-        return errors, None, None
+        return errors, None
 
-    cluster_errors, owner = _validate_cluster_vars(
-        cluster_vars,
-        _display_path(cluster_vars_path, repo_root),
-        env_name,
-    )
-    errors.extend(cluster_errors)
+    errors.extend(_validate_cluster_vars(cluster_vars, _display_path(cluster_vars_path, repo_root), env_name))
     errors.extend(_validate_hosts(hosts, _display_path(inventory, repo_root), env_name))
     errors.extend(_validate_flux_env_paths(env_dir, repo_root, env_name))
     errors.extend(_validate_switches(env_dir, repo_root, env_name, bootstrapped))
@@ -334,8 +327,8 @@ def _validate_env(
     )
 
     if errors:
-        return errors, None, owner
-    return [], resolve_cluster_vars(cluster_vars), owner
+        return errors, None
+    return [], resolve_cluster_vars(cluster_vars)
 
 
 def _load_yaml(
@@ -365,9 +358,7 @@ def _keys_set(data: dict[str, Any]) -> set[str]:
     return {key for key, value in data.items() if value is not None}
 
 
-def _validate_cluster_vars(
-    data: dict[str, Any], rel_path: str, env_name: str
-) -> tuple[list[str], str | None]:
+def _validate_cluster_vars(data: dict[str, Any], rel_path: str, env_name: str) -> list[str]:
     # Shape (keys, types, simple patterns) is the schema's; what follows needs more than one field.
     errors: list[str] = _values.problems(_values.CLUSTER_VARS, data, rel_path)
 
@@ -379,27 +370,11 @@ def _validate_cluster_vars(
         for problem in _apps.lan_cidrs_problems(data.get(_apps.LAN_CIDRS), data.get("pod_cidr"), data.get("service_cidr"))
     )
 
-    flux_errors, flux_owner = _validate_repo_url(
-        rel_path, "flux_git_repo_url", data.get("flux_git_repo_url"), ssh=True
-    )
+    # Each repository may be anyone's: an env can read the example apps, or another team's apps.
+    errors.extend(_validate_repo_url(rel_path, "flux_git_repo_url", data.get("flux_git_repo_url"), ssh=True))
     errors.extend(_validate_known_hosts(rel_path, data.get("flux_known_hosts"), data.get("flux_git_repo_url")))
-    core_errors, _core_owner = _validate_repo_url(
-        rel_path, "core_git_repo_url", data.get("core_git_repo_url")
-    )
-    errors.extend(core_errors)
-    apps_errors, apps_owner = _validate_repo_url(
-        rel_path, "apps_git_repo_url", data.get("apps_git_repo_url")
-    )
-    errors.extend(flux_errors)
-    errors.extend(apps_errors)
-    owner: str | None = None
-    if flux_owner and apps_owner and flux_owner != apps_owner:
-        errors.append(
-            f"{rel_path}: flux_git_repo_url and apps_git_repo_url must use the same owner handle"
-        )
-    elif flux_owner:
-        # apps_git_repo_url is optional. The env owner still comes from flux.
-        owner = flux_owner
+    errors.extend(_validate_repo_url(rel_path, "core_git_repo_url", data.get("core_git_repo_url")))
+    errors.extend(_validate_repo_url(rel_path, "apps_git_repo_url", data.get("apps_git_repo_url")))
 
     jarvis_env = data.get("jarvis_env")
     if isinstance(jarvis_env, str) and jarvis_env and jarvis_env != env_name:
@@ -421,7 +396,7 @@ def _validate_cluster_vars(
     errors.extend(_validate_ntp_pools(rel_path, data.get("ntp_pools")))
     errors.extend(_validate_chrony_nts(rel_path, data.get("chrony_nts")))
 
-    return errors, owner
+    return errors
 
 
 def _validate_time_zone(rel_path: str, value: str) -> list[str]:
@@ -1135,20 +1110,14 @@ def _validate_known_hosts(rel_path: str, value: Any, root_url: Any) -> list[str]
     return []
 
 
-def _validate_repo_url(
-    rel_path: str, key: str, value: Any, *, ssh: bool = False
-) -> tuple[list[str], str | None]:
+def _validate_repo_url(rel_path: str, key: str, value: Any, *, ssh: bool = False) -> list[str]:
     if ssh and isinstance(value, str) and value.startswith("ssh://"):
         errors = _validate_ssh_url(rel_path, key, value)
     else:
         errors = _validate_https_url(rel_path, key, value)
-    if errors or not isinstance(value, str) or not value.strip():
-        return errors, None
-    owner = repo_owner_handle(value)
-    if owner is None:
+    if not errors and isinstance(value, str) and value.strip() and repo_owner_handle(value) is None:
         errors.append(f"{rel_path}: {key} must include an owner and a repo")
-        return errors, None
-    return errors, owner
+    return errors
 
 
 def _validate_ssh_url(rel_path: str, key: str, value: str) -> list[str]:

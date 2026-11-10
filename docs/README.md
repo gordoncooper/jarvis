@@ -14,7 +14,8 @@
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to send a change |
 | [../SECURITY.md](../SECURITY.md) | How to report a vulnerability |
 | [../AGENTS.md](../AGENTS.md) | Where coding agents start |
-| [../agents/coding-agents.md](../agents/coding-agents.md) | Agent workflow |
+| [../agents/README.md](../agents/README.md) | The agent kit for instance repositories (`jarvis init --with-agents`) |
+| [../agents/coding-agents.md](../agents/coding-agents.md) | Agent workflow on core |
 
 ## Contracts
 

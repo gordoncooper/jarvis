@@ -1,10 +1,12 @@
-"""Read-only, fail-closed verification of one environment's standing state."""
+"""Fail-closed verification of one environment: read-only standing checks, and with --smoke the
+short-lived probes (jarvis/verify/smoke.py), which make their objects in namespace platform-smoke
+and delete them again."""
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -26,6 +28,7 @@ from jarvis.schema.env import core_dir, enabled_addons
 from jarvis.verify import apps as _apps_checks  # noqa: F401  (importing it registers its checks)
 from jarvis.verify import backups as _backups  # noqa: F401  (importing it registers its checks)
 from jarvis.verify import platform as _platform
+from jarvis.verify import smoke as _smoke
 from jarvis.verify.common import CheckError, CheckWarning, Context
 from jarvis.verify.platform import (
     _fetch,
@@ -75,6 +78,7 @@ def run(
     *,
     now: datetime | None = None,
     enabled: Sequence[str] | None = None,
+    smoke: bool = False,
 ) -> int:
     try:
         values = repository_values(repo_root, env)
@@ -114,6 +118,27 @@ def run(
         _line(f"FAIL verify components: {exc}")
         return 1
 
+    failed = _report(checks)
+    switches, _ = _switches.load(repo_root / "envs" / env)
+    app_dns = _switches.APP_DNS in _switches.names(switches, _switches.FEATURES)
+    try:
+        # With App DNS off, the LAN's own DNS names apps; verify reaches Traefik's address directly.
+        address = None if app_dns else traefik_address(kubectl)
+        cert_issuer = check_https(
+            repo_root, env, str(values["dns_suffix"]), fetch, issuer, address=address
+        )
+    except (CheckError, KeyError, TypeError) as exc:
+        _line(f"FAIL LAN HTTPS and certificate: {exc}")
+        failed += 1
+    else:
+        _line(f"PASS LAN HTTPS and certificate issuer={cert_issuer}")
+    if smoke:
+        failed += _run_smoke(ctx, (*names, _switches.APP_DNS) if app_dns else names)
+    return int(bool(failed))
+
+
+def _report(checks: Sequence[tuple[str, Callable[[], object]]]) -> int:
+    """Run each check and print its line; returns how many failed."""
     failed = 0
     for label, check in checks:
         try:
@@ -125,24 +150,38 @@ def run(
             failed += 1
         else:
             _line(f"PASS {label}")
+    return failed
+
+
+def _run_smoke(ctx: Context, names: Sequence[str]) -> int:
+    """The enabled components' probes, between creating platform-smoke and deleting it."""
     try:
-        # With App DNS off, the LAN's own DNS names apps; verify reaches Traefik's address directly.
-        switches, _ = _switches.load(repo_root / "envs" / env)
-        address = None if _switches.APP_DNS in _switches.names(switches, _switches.FEATURES) else traefik_address(kubectl)
-        cert_issuer = check_https(
-            repo_root, env, str(values["dns_suffix"]), fetch, issuer, address=address
-        )
-    except (CheckError, KeyError, TypeError) as exc:
-        _line(f"FAIL LAN HTTPS and certificate: {exc}")
-        failed += 1
-    else:
-        _line(f"PASS LAN HTTPS and certificate issuer={cert_issuer}")
-    return int(bool(failed))
+        probes = collect(names, ctx, smoke=True)
+        _smoke.open_scratch(ctx)
+    except (CheckError, EnvError) as exc:
+        _line(f"FAIL smoke: {exc}")
+        return 1
+    try:
+        failed = _report(probes)
+    finally:
+        try:
+            _smoke.close_scratch(ctx)
+        except (CheckError, EnvError) as exc:
+            _line(f"FAIL smoke: {exc}; delete namespace {_smoke.NAMESPACE} by hand")
+            failed = 1
+        else:
+            _line(f"PASS smoke: namespace {_smoke.NAMESPACE} removed")
+    return failed
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Environment under envs/")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Also run the short-lived probes: each makes its objects in namespace platform-smoke, checks them and deletes them",
+    )
     args = parser.parse_args(argv)
     kubeconfig = kubeconfig_for(args.env)
     if not kubeconfig.is_file():
@@ -157,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             kubeconfig=kubeconfig,
         )
 
-    return run(instance_root(REPO_ROOT), args.env, bound, _fetch, _issuer)
+    return run(instance_root(REPO_ROOT), args.env, bound, _fetch, _issuer, smoke=args.smoke)
 
 
 if __name__ == "__main__":

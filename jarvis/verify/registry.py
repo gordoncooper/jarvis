@@ -1,4 +1,8 @@
-"""Named verify components. Core's always run; an add-on's run only when the env enables it."""
+"""Named verify components. Core's always run; an add-on's run only when the env enables it.
+
+A component may also register smoke probes (register_smoke), which only jarvis verify --smoke runs:
+short-lived checks that make something, check it and remove it (jarvis/verify/smoke.py).
+"""
 
 from __future__ import annotations
 
@@ -15,11 +19,23 @@ Builder = Callable[[Context], list[Check]]
 
 DEFAULT_ENABLED = ("platform", "backups")
 COMPONENTS: dict[str, Builder] = {}
+SMOKE: dict[str, Builder] = {}
 
 
 def register(name: str) -> Callable[[Builder], Builder]:
     def wrap(fn: Builder) -> Builder:
         COMPONENTS[name] = fn
+        return fn
+
+    return wrap
+
+
+def register_smoke(name: str) -> Callable[[Builder], Builder]:
+    """A component's smoke probes: each makes its objects in namespace platform-smoke (which
+    verify --smoke creates and deletes) or does a server-side dry run, and leaves nothing behind."""
+
+    def wrap(fn: Builder) -> Builder:
+        SMOKE[name] = fn
         return fn
 
     return wrap
@@ -58,10 +74,16 @@ def enabled_components(enabled: Sequence[str] | None) -> tuple[str, ...]:
 
 
 def collect(
-    names: Sequence[str], ctx: Context
+    names: Sequence[str], ctx: Context, *, smoke: bool = False
 ) -> list[tuple[str, Callable[[], object]]]:
+    """The checks of each named component in order; with smoke, its probes instead (a component
+    with none adds nothing)."""
     checks: list[tuple[int, str, Callable[[], object]]] = []
     for name in names:
+        if smoke:
+            if name in SMOKE:
+                checks.extend(SMOKE[name](ctx))
+            continue
         builder = COMPONENTS.get(name)
         if builder is None:
             raise CheckError(f"unknown verify component {name}")

@@ -29,6 +29,21 @@ the upgrade.
   only the instance repository and prints the cluster steps that follow.
 - `jarvis validate` fails when a sealed file is not SOPS-encrypted with age, or does not open for
   exactly the recipients its env's rule names.
+- `jarvis verify --smoke`: after the standing checks, one short-lived probe per enabled capability,
+  each making something, checking it and removing it (docs/deploy.md, Verify). A Certificate from
+  the internal CA becomes Ready; with App DNS, a new Ingress name answers at App DNS's address; with
+  hosted apps, a copy of a running app pod is admitted and the same copy with an ungranted risk is
+  refused, both as server-side dry runs. An add-on brings its own with `register_smoke`. e2e runs it.
+- `jarvis init --with-examples` turns on app hosting with the example apps, from `jarvis-apps`
+  beside core (`jarvis/kit/examples-apps.yaml`, which core's tests and e2e also run), for a
+  first-run tour. `jarvis env add` takes it too.
+- `jarvis init --with-agents` adds the coding-agent kit to the new repository: `AGENTS.md`,
+  `CLAUDE.md`, and the deny lists in `.claude/settings.json` and `.cursor/cli.json`
+  (agents/README.md). Core's own deny lists are links to the same files.
+- A devcontainer in every repository `jarvis init` writes (`.devcontainer/`): opened on a machine
+  with only a container runtime, it installs mise, uv and the jarvis CLI at the env's core
+  release, and mounts the age key, kubeconfigs and SSH keys from the machine. Core has its own for
+  working on core, which runs `mise run deps`.
 
 - The `jarvis` CLI, one command for an instance repository, replacing the Makefile's operator
   targets and `tools/`. Run it from inside the instance repository: `jarvis doctor`, `validate`,
@@ -87,6 +102,10 @@ the upgrade.
   and the `python-pins` check: mise, uv and their lockfiles replace them.
 
 ### Changed
+
+- An env's `apps_git_repo_url` may name another owner's repository than its `flux_git_repo_url`
+  (the example apps beside core, another team's apps): the rule that they share an owner handle is
+  gone. Hosted apps are untrusted and held by admission wherever they come from.
 
 - `jarvis node prep` no longer creates the age key or writes `.sops.yaml` (init does both). It
   checks, before it touches the host, that the key at `age_key_file` is one of the env's

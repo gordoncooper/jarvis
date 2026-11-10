@@ -4,4 +4,4 @@ Infra, platform, and services for Jarvis (GitOps on k3s).
 
 Read `agents/coding-agents.md` for workflow, reporting, and merge readiness.
 
-Repo-level tool permissions live in `.cursor/cli.json` and `.claude/settings.json`, which express the same deny intent in their own formats.
+Repo-level tool permissions live in `.cursor/cli.json` and `.claude/settings.json`, which express the same deny intent in their own formats. Both link to the agent kit in `jarvis/kit/agents/`, which `jarvis init --with-agents` copies into an instance repository ([agents/README.md](agents/README.md)).

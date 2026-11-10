@@ -2,7 +2,7 @@ name: e2e
 
 # A real cluster from this commit: k3d (k3s in Docker), the env's FluxInstance and sync.yaml
 # applied by the flux-operator role, every Kustomization and HelmRelease Ready, the sample hosted
-# apps running at their pinned tags from the apps repository, then jarvis verify and jarvis drill.
+# apps running at their pinned tags from the apps repository, then jarvis verify --smoke and jarvis drill.
 # The env is a throwaway one written by jarvis init's code (ci/e2e/make-env), whose root source is
 # a temporary branch of this repository; its core source is that branch too, or on a release tag
 # push the tag itself. The job deletes the branch.
@@ -221,8 +221,9 @@ jobs:
           echo "${host}: / ${root}, /notes/ ${notes}, /blocked/ ${blocked}" | tee -a "${GITHUB_STEP_SUMMARY}"
           [[ "${root}" == 200 && "${notes}" == 200 && "${blocked}" =~ ^50[24]$ ]]
 
-      - name: jarvis verify
-        run: .venv/bin/jarvis --env "${E2E_ENV}" verify
+      # The standing checks, then each enabled capability's short-lived probe (jarvis/verify/smoke.py).
+      - name: jarvis verify --smoke
+        run: .venv/bin/jarvis --env "${E2E_ENV}" verify --smoke
 
       - name: Take an etcd snapshot and copy it, as the schedules would
         run: |
