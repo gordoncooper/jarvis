@@ -17,7 +17,7 @@ spec:
     spec:
       chart: kyverno
       # renovate: datasource=helm depName=kyverno registryUrl=https://kyverno.github.io/kyverno
-      version: "3.9.2"
+      version: "3.10.0"
       sourceRef:
         kind: HelmRepository
         name: kyverno
@@ -55,7 +55,7 @@ spec:
           registry: ghcr.io
           repository: kyverno/kyverno
           # renovate: datasource=docker depName=ghcr.io/kyverno/kyverno
-          tag: "v1.19.2@sha256:c8c4dd09e720d2cd7fd24ca73ac28e46651001372f988e0cba3f2f612f04b955"
+          tag: "v1.20.0@sha256:9de49c5416ea536f00a205527197ac048abdf32c5a75d633cd9afff8928f359d"
         # Chart default for the admission container.
         resources:
           requests:
@@ -68,13 +68,13 @@ spec:
           registry: ghcr.io
           repository: kyverno/kyvernopre
           # renovate: datasource=docker depName=ghcr.io/kyverno/kyvernopre
-          tag: "v1.19.2@sha256:27f3cc52e628559b56d08363b85316819802086c9808606914f7805a244148f4"
+          tag: "v1.20.0@sha256:339067e083430e0c97007541bef9cfdbac89bee13f7228772c77ae8aead14b8b"
     backgroundController:
       image:
         registry: ghcr.io
         repository: kyverno/background-controller
         # renovate: datasource=docker depName=ghcr.io/kyverno/background-controller
-        tag: "v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2"
+        tag: "v1.20.0@sha256:c72df38320a48fc9de10f9d23d087a117853bb08207b7f60f6d1e8457fb3ddb7"
       # Chart default for the background controller.
       resources:
         requests:
