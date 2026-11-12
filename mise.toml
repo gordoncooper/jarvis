@@ -7,7 +7,7 @@ lockfile = true
 
 [tools]
 # Python packages: uv installs them from uv.lock into .venv.
-uv = "0.13.7"
+uv = "0.13.8"
 # Secrets: sops encrypts with age.
 sops = "3.13.3"
 age = "1.3.2"
