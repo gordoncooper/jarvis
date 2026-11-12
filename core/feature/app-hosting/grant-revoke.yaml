@@ -283,7 +283,7 @@ spec:
           containers:
             - name: revoke
               # renovate: datasource=docker depName=python
-              image: python:3.15.2-alpine3.23@sha256:8d77d813a53e534dec9e1e5182cbd5b651b70d63b27e4ea7c1f616b37cf9aad2
+              image: python:3.15.2-alpine3.23@sha256:32f06114a111c2467804d06194c5584f16804a78cfaf427fb1fcbb0b3391d0f1
               imagePullPolicy: IfNotPresent
               command: [python3, /scripts/revoke.py]
               resources:
