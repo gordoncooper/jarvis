@@ -7,9 +7,9 @@ Growth in tests, docs or tooling: one sentence on what a user gets from it. Keep
 
 <!-- Each departure from the brief, and what it gives up. Or "None". -->
 
-## Deleted
+## Deleted and set aside
 
-<!-- What this deletes, and what else was looked at for deletion. -->
+<!-- What this deletes, what else was looked at for deletion, and each option set aside, one line each. -->
 
 ## Checks run
 
