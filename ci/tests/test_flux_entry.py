@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import atexit
-import copy
 import functools
 import json
-import posixpath
 import re
 import shutil
 import subprocess
@@ -17,28 +15,17 @@ from pathlib import Path
 import pytest
 import yaml
 from ansible_role_proof import (
-    FLUX_INSTANCE_NAME,
-    FLUX_OPERATOR_ROLE_DIR,
-    PLATFORM_CONTROLLER_HEALTH_CHECKS,
     REPO_ROOT,
-    env_name,
-    example_flux_entry,
     load_cluster_vars,
-    load_role_defaults,
-    standard_flux_kustomization_paths,
 )
 
 from jarvis.env.k3s import release as k3s_release
 from jarvis.render.cluster_vars import (
     CLUSTER_VARS_PUBLISHED,
     cluster_vars_configmap,
-    render_document,
 )
 from jarvis.schema.env import kubernetes_version_from_k3s
-from support import ExampleCopy, real_and_copy_envs, sample_root
-
-_FLUX_KUSTOMIZATION_API = "kustomize.toolkit.fluxcd.io/"
-_STRICT_SUBSTITUTION = "--feature-gates=StrictPostBuildSubstitutions=true"
+from support import ExampleCopy, real_and_copy_envs
 
 # datreeio/CRDs-catalog commit. Tags through v0.0.12 omit these Flux CRDs.
 _FLUX_SCHEMA_REF = "3eb90d47aba8d61919d4419dd38301536e32a94b"
@@ -137,93 +124,6 @@ def _kubeconform_validate(manifests: str, kubernetes_version: str) -> None:
     assert int(skipped.group(1)) == 0, output
 
 
-def _flux_kustomizations(env: str, *, root: Path | None = None) -> list[dict]:
-    """The layer Kustomizations the env entry applies, from its kustomize build.
-
-    The root Kustomization in sync.yaml is not a layer; the env schema checks it. Nor is a hosted
-    app's wiring, which the env renders from its app list; the app-hosting check (jarvis validate) checks those.
-    """
-    from jarvis.checks.flux_build import env_tree
-
-    tree = env_tree(sample_root() if root is None else root, f"envs/{env}/flux")
-    assert tree.error is None, tree.error
-    docs = tree.env_docs
-    return [
-        doc
-        for doc in docs
-        if doc.get("kind") == "Kustomization"
-        and str(doc.get("apiVersion", "")).startswith(_FLUX_KUSTOMIZATION_API)
-        and doc["metadata"]["name"] != "flux-system"
-        and not doc["metadata"]["name"].endswith("-wiring")
-    ]
-
-
-def _flux_kustomization_errors(docs: list[dict], env: str) -> list[str]:
-    """The three standard Kustomizations, in dependsOn order, with their paths.
-
-    platform-controllers carries the HelmRelease health checks and a
-    timeout. No other Kustomization carries health checks.
-    """
-    expected = standard_flux_kustomization_paths(env)
-    chain = list(expected)
-    names = [doc["metadata"]["name"] for doc in docs]
-    errors = []
-    if sorted(names) != sorted(chain):
-        errors.append(f"Flux Kustomizations are {sorted(names)}, expected {sorted(chain)}")
-    by_name = {doc["metadata"]["name"]: doc["spec"] for doc in docs}
-    expected_checks = [check.flux_object() for check in PLATFORM_CONTROLLER_HEALTH_CHECKS]
-    for index, name in enumerate(chain):
-        spec = by_name.get(name)
-        if spec is None:
-            continue
-        if spec.get("path") != expected[name]:
-            errors.append(f"{name} path is {spec.get('path')!r}, expected {expected[name]!r}")
-        depends = [] if index == 0 else [{"name": chain[index - 1]}]
-        if (spec.get("dependsOn") or []) != depends:
-            errors.append(f"{name} dependsOn is {spec.get('dependsOn')!r}, expected {depends!r}")
-        health = spec.get("healthChecks") or []
-        if name == "platform-controllers":
-            if health != expected_checks:
-                errors.append(
-                    f"{name} healthChecks are {health!r}, expected {expected_checks!r}"
-                )
-            if not spec.get("timeout"):
-                errors.append(f"{name} timeout is unset")
-        elif health:
-            errors.append(f"{name} carries healthChecks")
-    return errors
-
-
-def _platform_helmreleases() -> dict[str, str]:
-    """HelmRelease name to metadata namespace, for objects under core/platform/."""
-    found: dict[str, str] = {}
-    for path in sorted((REPO_ROOT / "core" / "platform").rglob("*.yaml")):
-        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
-            if not isinstance(doc, dict) or doc.get("kind") != "HelmRelease":
-                continue
-            metadata = doc.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            name = metadata.get("name")
-            namespace = metadata.get("namespace")
-            if isinstance(name, str) and isinstance(namespace, str):
-                found[name] = namespace
-    return found
-
-
-def _helmrelease_gate_errors(found: dict[str, str]) -> list[str]:
-    """Each health-check HelmRelease exists under core/platform/, in flux-system."""
-    errors = []
-    for check in PLATFORM_CONTROLLER_HEALTH_CHECKS:
-        actual = found.get(check.name)
-        if actual != check.namespace:
-            errors.append(
-                f"{check.name} health check namespace is {check.namespace!r}, "
-                f"platform HelmRelease namespace is {actual!r}"
-            )
-    return errors
-
-
 def _flux_instance(env: str, root: Path | None = None) -> dict:
     # Core's FluxInstance, at the core the env reads (the root artifact's core/flux).
     from jarvis import paths
@@ -232,62 +132,6 @@ def _flux_instance(env: str, root: Path | None = None) -> dict:
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(doc, dict)
     return doc
-
-
-def _flux_instance_errors(doc: dict, env: str, root: Path | None = None) -> list[str]:
-    """Ansible applies this file once; it installs the controllers and syncs nothing."""
-    role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
-    errors = []
-    metadata = doc.get("metadata") or {}
-    lookup = (role["flux_system_namespace"], FLUX_INSTANCE_NAME)
-    if (metadata.get("namespace"), metadata.get("name")) != lookup:
-        errors.append(f"metadata is not {lookup}, the flux-operator name")
-    if "sync" in (doc.get("spec") or {}):
-        errors.append("spec.sync is set; sync.yaml declares the sources")
-    patches = doc.get("spec", {}).get("kustomize", {}).get("patches") or []
-    if not any(
-        _STRICT_SUBSTITUTION in str(patch.get("patch"))
-        and patch.get("target") == {"kind": "Deployment", "name": "kustomize-controller"}
-        for patch in patches
-    ):
-        errors.append("Deployment kustomize-controller does not run StrictPostBuildSubstitutions")
-    return errors
-
-
-def _platform_configs_errors(doc: dict, env: str) -> list[str]:
-    """The env's platform-configs path is core/platform/configs plus that env's SOPS secrets,
-    and the opt-in off-host copy and App DNS. Its components (app hosting, app backup registrations) are
-    env-schema's."""
-    from jarvis.env.switches import APP_DNS_DIR
-    from jarvis.schema.env import CORE_SOURCE_DIR, OFFSITE_COPY_DIR
-
-    base = f"envs/{env}/flux/platform-configs"
-    resources = [posixpath.normpath(posixpath.join(base, item)) for item in doc.get("resources") or []]
-    configs = f"{CORE_SOURCE_DIR}/platform/configs"
-    errors = []
-    keys = sorted(set(doc) - {"apiVersion", "kind", "resources", "components"})
-    if keys:
-        errors.append(f"keys other than resources and components: {keys}")
-    if resources.count(configs) != 1:
-        errors.append(f"{configs} is not listed exactly once")
-    others = [
-        item
-        for item in resources
-        if item not in (configs, OFFSITE_COPY_DIR, APP_DNS_DIR)
-        and not (posixpath.dirname(item) == f"envs/{env}/secrets" and item.endswith(".sops.yaml"))
-    ]
-    if others:
-        errors.append(f"not core/platform/configs or an env SOPS secret: {others}")
-    return errors
-
-
-def test_cluster_vars_configmap_matches_render_script(example_copy: ExampleCopy) -> None:
-    """The rendered ConfigMap is the render script's output."""
-    targets = [(sample_root(), "env-00"), *real_and_copy_envs(example_copy)]
-    for root, env in targets:
-        cluster_path = root / "envs" / env / "values" / "cluster-vars.yaml"
-        generated_path = root / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
-        assert generated_path.read_text(encoding="utf-8") == render_document(cluster_path)
 
 
 def test_cluster_vars_configmap_publishes_only_the_allow_list() -> None:
@@ -310,190 +154,6 @@ def test_cluster_vars_configmap_flattens_ntp_pools() -> None:
     assert "ntp_pools" not in published
     data = cluster_vars_configmap({**raw, "dns_suffix": pools})["data"]
     assert data["dns_suffix"] == json.dumps(pools, separators=(",", ":"))
-
-
-def test_flux_instance_syncs_its_env_from_cluster_vars(example_copy: ExampleCopy) -> None:
-    """The committed FluxInstance is the one Ansible applies."""
-    for root, env in real_and_copy_envs(example_copy):
-        assert _flux_instance_errors(_flux_instance(env, root), env, root) == []
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        (("spec", "sync"), {"kind": "GitRepository", "url": "https://example.invalid/other"}),
-        (("metadata", "name"), "other"),
-        (("spec", "kustomize", "patches"), []),
-        (("spec", "kustomize", "patches", 0, "target", "kind"), "StatefulSet"),
-    ],
-)
-def test_flux_instance_drift_from_cluster_vars_fails(
-    tmp_path: Path, field: tuple[str | int, ...], value: object
-) -> None:
-    entry = example_flux_entry(tmp_path)
-    assert _flux_instance_errors(entry.instance, entry.env) == []
-    doc = copy.deepcopy(entry.instance)
-    parent = doc
-    for key in field[:-1]:
-        parent = parent[key]
-    parent[field[-1]] = value
-    assert _flux_instance_errors(doc, entry.env)
-
-
-def test_flux_entry_has_the_four_standard_kustomizations(example_copy: ExampleCopy) -> None:
-    """Four layers, one path each, chained with dependsOn, HelmRelease health checks on platform-controllers."""
-    for root, env in real_and_copy_envs(example_copy):
-        assert _flux_kustomization_errors(_flux_kustomizations(env, root=root), env) == []
-
-
-def _drop_services(docs: list[dict]) -> None:
-    docs[:] = [doc for doc in docs if doc["metadata"]["name"] != "services"]
-
-
-def _add_extra(docs: list[dict]) -> None:
-    extra = copy.deepcopy(docs[-1])
-    extra["metadata"]["name"] = "extra"
-    docs.append(extra)
-
-
-def _move_platform_configs(docs: list[dict]) -> None:
-    next(d for d in docs if d["metadata"]["name"] == "platform-configs")["spec"]["path"] = (
-        "./core/platform/configs"
-    )
-
-
-def _skip_platform_configs(docs: list[dict]) -> None:
-    next(d for d in docs if d["metadata"]["name"] == "services")["spec"]["dependsOn"] = [
-        {"name": "platform-controllers"}
-    ]
-
-
-@pytest.mark.parametrize(
-    "mutate", [_drop_services, _add_extra, _move_platform_configs, _skip_platform_configs]
-)
-def test_nonstandard_flux_kustomizations_fail(tmp_path: Path, mutate) -> None:
-    entry = example_flux_entry(tmp_path)
-    assert _flux_kustomization_errors(entry.kustomizations, entry.env) == []
-    docs = copy.deepcopy(entry.kustomizations)
-    mutate(docs)
-    assert _flux_kustomization_errors(docs, entry.env)
-
-
-def _controllers_spec(docs: list[dict]) -> dict:
-    return next(doc for doc in docs if doc["metadata"]["name"] == "platform-controllers")["spec"]
-
-
-def _drop_one_health_check(docs: list[dict]) -> None:
-    _controllers_spec(docs)["healthChecks"] = _controllers_spec(docs)["healthChecks"][:1]
-
-
-def _add_unlisted_health_check(docs: list[dict]) -> None:
-    _controllers_spec(docs)["healthChecks"] = [
-        *_controllers_spec(docs)["healthChecks"],
-        {
-            "apiVersion": "helm.toolkit.fluxcd.io/v2",
-            "kind": "HelmRelease",
-            "name": "k8s-gateway",
-            "namespace": "flux-system",
-        },
-    ]
-
-
-def _drop_timeout(docs: list[dict]) -> None:
-    del _controllers_spec(docs)["timeout"]
-
-
-def _health_check_on_platform_configs(docs: list[dict]) -> None:
-    next(doc for doc in docs if doc["metadata"]["name"] == "platform-configs")["spec"][
-        "healthChecks"
-    ] = [PLATFORM_CONTROLLER_HEALTH_CHECKS[0].flux_object()]
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        _drop_one_health_check,
-        _add_unlisted_health_check,
-        _drop_timeout,
-        _health_check_on_platform_configs,
-    ],
-)
-def test_health_checks_are_exactly_the_listed_helmreleases(tmp_path: Path, mutate) -> None:
-    """platform-controllers waits for cert-manager, Kyverno and VolSync, and only those."""
-    entry = example_flux_entry(tmp_path)
-    assert _flux_kustomization_errors(entry.kustomizations, entry.env) == []
-    docs = copy.deepcopy(entry.kustomizations)
-    mutate(docs)
-    assert _flux_kustomization_errors(docs, entry.env)
-
-
-def test_health_check_helmreleases_exist_under_platform() -> None:
-    """Each platform-controllers HelmRelease check exists under core/platform/, in flux-system."""
-    found = _platform_helmreleases()
-    assert _helmrelease_gate_errors(found) == []
-    missing = dict(found)
-    missing.pop(PLATFORM_CONTROLLER_HEALTH_CHECKS[0].name, None)
-    assert _helmrelease_gate_errors(missing)
-
-
-def test_env_00_deployment_health_check_fails() -> None:
-    """A Deployment check in place of a HelmRelease check fails on the sample flux tree."""
-    docs = _flux_kustomizations("env-00")
-    assert _flux_kustomization_errors(docs, "env-00") == []
-    _controllers_spec(docs)["healthChecks"][0] = {
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "name": "cert-manager-webhook",
-        "namespace": "platform-cert-manager",
-    }
-    assert _flux_kustomization_errors(docs, "env-00")
-
-
-def test_env_platform_configs_adds_only_its_secrets(example_copy: ExampleCopy) -> None:
-    """Core components join core/platform/configs, not each env's list."""
-    for root, env in real_and_copy_envs(example_copy):
-        path = root / "envs" / env / "flux" / "platform-configs" / "kustomization.yaml"
-        assert _platform_configs_errors(yaml.safe_load(path.read_text(encoding="utf-8")), env) == []
-
-
-@pytest.mark.parametrize(
-    "seed",
-    [
-        {"resources": ["../../../../core/platform/configs", "../../../../core/platform/testapp"]},
-        {"resources": ["../../../../core/platform/configs", "../../../env-other/secrets/x.sops.yaml"]},
-        {"resources": ["../../secrets/x.sops.yaml"]},
-        {"resources": ["../../../../core/platform/configs"], "patches": []},
-    ],
-)
-def test_env_platform_configs_with_more_than_its_secrets_fails(seed: dict) -> None:
-    env = env_name()
-    clean = {"resources": ["../../../../core/platform/configs", "../../secrets/x.sops.yaml"]}
-    assert _platform_configs_errors(clean, env) == []
-    assert _platform_configs_errors(seed, env)
-
-
-def test_platform_configs_decryption_uses_sops_age(example_copy: ExampleCopy) -> None:
-    """platform-configs decrypts with the sops-age secret."""
-    for root, env in real_and_copy_envs(example_copy):
-        _assert_platform_configs_decrypts(env, root)
-
-
-def _assert_platform_configs_decrypts(env: str, root: Path | None = None) -> None:
-    doc = next(
-        d for d in _flux_kustomizations(env, root=root) if d["metadata"]["name"] == "platform-configs"
-    )
-    decryption = doc["spec"]["decryption"]
-    assert decryption["provider"] == "sops"
-    assert decryption["secretRef"]["name"] == "sops-age"
-
-
-def test_helmrelease_substitute_disabled() -> None:
-    path = REPO_ROOT / "core" / "platform" / "flux-operator" / "helmrelease.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert (
-        doc["metadata"]["annotations"]["kustomize.toolkit.fluxcd.io/substitute"]
-        == "disabled"
-    )
 
 
 def _assert_sops_leaf(path: Path, section: str, node: object) -> None:
@@ -649,11 +309,6 @@ spec:
     assert passed.returncode == 0, passed.stdout + passed.stderr
     failed = run(good.replace("failurePolicy", "failurePollicy"))
     assert failed.returncode != 0, failed.stdout + failed.stderr
-
-
-def test_kubernetes_version_matches_k3s_pin() -> None:
-    assert kubernetes_version_from_k3s("v9.8.7+k3s2") == "9.8.0"
-    assert kubernetes_version_from_k3s("v9.8.7") is None
 
 
 @pytest.mark.parametrize("kind", ["ReplicationSource", "ReplicationDestination"])

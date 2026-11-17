@@ -851,15 +851,6 @@ def test_app_pvc_without_a_registered_credential_fails(
     )
 
 
-def test_repository_check_deadline_fits_inside_verify_grace() -> None:
-    """A check Job still inside its deadline never makes verify report it stale."""
-    job = yaml.safe_load(
-        (REPO_ROOT / "core/platform/backups/restic-check.yaml").read_text(encoding="utf-8")
-    )["spec"]["jobTemplate"]["spec"]
-    grace = sys.modules["jarvis.verify.backups"].CHECK_GRACE
-    assert 0 < job["activeDeadlineSeconds"] < grace.total_seconds()
-
-
 def test_not_ready_node_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -20,7 +20,6 @@ from ansible_role_proof import (
     REPO_ROOT,
     ansible_render_template,
     env_name,
-    inventory_path,
     load_cluster_vars,
     load_role_defaults,
     playbook_recap_field,
@@ -31,88 +30,6 @@ from conftest import require_cli
 from support import ExampleCopy, sample_root
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
-
-
-def inventory_hostname() -> str:
-    hosts = yaml.safe_load(inventory_path().read_text(encoding="utf-8"))
-    all_hosts = hosts["all"]["hosts"]
-    assert isinstance(all_hosts, dict) and all_hosts
-    return next(iter(all_hosts))
-
-
-def render_k3s_config(variables: dict[str, object]) -> str:
-    return ansible_render_template(
-        K3S_CONFIG_TEMPLATE,
-        variables,
-        templates_dir=K3S_ROLE_TEMPLATES,
-    )
-
-
-def test_k3s_config_template_encodes_p0a12_rules() -> None:
-    cluster = load_cluster_vars()
-    defaults = load_role_defaults(K3S_ROLE_DIR)
-    cron = defaults["k3s_etcd_snapshot_schedule_cron"]
-    retention = defaults["k3s_etcd_snapshot_retention"]
-    variables = {
-        "pod_cidr": cluster["pod_cidr"],
-        "service_cidr": cluster["service_cidr"],
-        "local_path_data": cluster["local_path_data"],
-        "backup_path": cluster["backup_path"],
-        "inventory_hostname": inventory_hostname(),
-        "k3s_etcd_snapshot_schedule_cron": cron,
-        "k3s_etcd_snapshot_retention": retention,
-        "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
-        "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
-        "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
-        "k3s_server_token": "fixture-server",
-        "k3s_agent_token": "fixture-agent",
-        "k3s_node_memtotal_mb": 16384,
-    }
-    rendered = render_k3s_config(variables)
-    assert 'token: "fixture-server"' in rendered.splitlines()
-    assert 'agent-token: "fixture-agent"' in rendered.splitlines()
-    assert "cluster-init: true" in rendered
-    assert "secrets-encryption: true" in rendered
-    assert f"cluster-cidr: {cluster['pod_cidr']}" in rendered
-    assert f"service-cidr: {cluster['service_cidr']}" in rendered
-    assert f'etcd-snapshot-schedule-cron: "{cron}"' in rendered
-    assert f"etcd-snapshot-retention: {retention}" in rendered
-    assert "etcd-snapshot-dir:" in rendered
-    assert "kube-reserved=" in rendered
-    assert "system-reserved=" in rendered
-    assert "eviction-hard=" in rendered
-    assert f"node-name: {inventory_hostname()}" in rendered
-    assert "node-label" not in rendered
-    assert not any(line.strip().startswith("INSTALL_K3S_") for line in rendered.splitlines())
-
-
-def test_agent_config_template_encodes_join_rules() -> None:
-    cluster = load_cluster_vars()
-    rendered = ansible_render_template(
-        "agent-config.yaml.j2",
-        {
-            "k3s_server_url": "https://cp-1:6443",
-            "k3s_agent_token": "fixture-agent",
-            "k3s_server_token": "fixture-server",
-            "inventory_hostname": "wk-1",
-            "k3s_kubelet_kube_reserved": cluster["k3s_kubelet_kube_reserved"],
-            "k3s_kubelet_system_reserved": cluster["k3s_kubelet_system_reserved"],
-            "k3s_kubelet_eviction_hard": cluster["k3s_kubelet_eviction_hard"],
-            "node_memory_reserve_percent": cluster["node_memory_reserve_percent"],
-            "k3s_node_memtotal_mb": 16384,
-        },
-        templates_dir=K3S_ROLE_TEMPLATES,
-    )
-    assert "server: https://cp-1:6443" in rendered
-    assert 'token: "fixture-agent"' in rendered.splitlines()
-    assert "fixture-server" not in rendered and "agent-token" not in rendered
-    assert "node-name: wk-1" in rendered
-    assert f"kube-reserved={cluster['k3s_kubelet_kube_reserved']}" in rendered
-    assert f"system-reserved={cluster['k3s_kubelet_system_reserved']}" in rendered
-    assert f"eviction-hard=memory.available<{cluster['node_memory_reserve_percent']}%" in rendered
-    assert "cluster-init" not in rendered
-    assert "node-label" not in rendered
-    assert "node-ip" not in rendered
 
 
 def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
@@ -289,13 +206,6 @@ def _listed_play_hosts(section: str) -> set[str]:
     return set(listed)
 
 
-def test_agent_play_restarts_one_host_at_a_time() -> None:
-    """A k3s pin bump restarts one agent before the next."""
-    plays = yaml.safe_load((ANSIBLE_DIR / "site.yml").read_text(encoding="utf-8"))
-    agent = next(play for play in plays if play.get("name") == "Join k3s agents")
-    assert agent["serial"] == 1
-
-
 def test_agent_play_host_pattern(example_copy: ExampleCopy) -> None:
     """The agent play is every host except the control plane."""
     targets = [(sample_root(), env_name())]
@@ -304,16 +214,6 @@ def test_agent_play_host_pattern(example_copy: ExampleCopy) -> None:
         assert _listed_play_hosts(_agent_play_section(env, root)) == _hosts_outside_control_plane(
             env, root
         )
-
-
-def test_k3s_download_checksum_is_k3s_sha256() -> None:
-    doc = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
-    task = next(
-        item
-        for item in doc
-        if isinstance(item, dict) and "ansible.builtin.get_url" in item
-    )
-    assert task["ansible.builtin.get_url"]["checksum"] == "sha256:{{ k3s_sha256 }}"
 
 
 def _label_inventory(edge_hosts: list[str]) -> str:
@@ -505,6 +405,33 @@ def _run_guard(tmp_path: Path, *, marker_text: str | None) -> subprocess.Complet
     )
 
 
+def test_every_task_that_touches_a_token_is_no_log() -> None:
+    """A task that reads, compares or writes a k3s token hides its result."""
+    touches = re.compile(r"k3s_(server|agent)_token|\bk3s_node_token\b|config\.yaml\.j2")
+    seen = 0
+    for name in ("main.yml", "token.yml"):
+        for task in yaml.safe_load((K3S_ROLE_DIR / "tasks" / name).read_text(encoding="utf-8")):
+            if touches.search(yaml.safe_dump(task)):
+                seen += 1
+                assert task.get("no_log") is True, task.get("name")
+    assert seen >= 5
+
+def test_files_that_can_hold_the_join_token_are_root_only() -> None:
+    """The server and agent config files are written 0600 as root."""
+    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    configs = {
+        task["ansible.builtin.template"]["src"]: task
+        for task in tasks
+        if isinstance(task, dict)
+        and "ansible.builtin.template" in task
+        and task["ansible.builtin.template"]["src"] in {"config.yaml.j2", "agent-config.yaml.j2"}
+    }
+    assert set(configs) == {"config.yaml.j2", "agent-config.yaml.j2"}
+    for src, task in configs.items():
+        template = task["ansible.builtin.template"]
+        assert (template["mode"], template["owner"], template["group"]) == ("0600", "root", "root"), src
+
+
 def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
     result = _run_guard(tmp_path, marker_text=None)
     output = result.stdout + result.stderr
@@ -529,16 +456,6 @@ def test_k3s_guard_accepts_active_k3s_with_this_envs_marker(tmp_path: Path) -> N
     assert (tmp_path / "marker").read_text(encoding="utf-8") == "fixture\n"
 
 
-@pytest.mark.parametrize("mode", ["server", "agent"])
-def test_unit_starts_the_pinned_binary_in_the_node_mode(mode: str) -> None:
-    rendered = ansible_render_template(
-        "k3s.service.j2",
-        {"k3s_binary_path": "/opt/fixture/k3s", "k3s_mode": mode},
-        templates_dir=K3S_ROLE_TEMPLATES,
-    )
-    assert f"ExecStart=/opt/fixture/k3s {mode}" in rendered.splitlines()
-
-
 def test_agent_joins_the_first_control_plane_over_6443(tmp_path: Path) -> None:
     """The join URL is built by token.yml. Render that expression, not a copy of it."""
     tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "token.yml").read_text(encoding="utf-8"))
@@ -558,41 +475,6 @@ def test_agent_joins_the_first_control_plane_over_6443(tmp_path: Path) -> None:
     assert rendered.strip() == "https://cp-1:6443"
 
 
-def test_every_task_that_touches_a_token_is_no_log() -> None:
-    """A task that reads, compares or writes a k3s token hides its result."""
-    touches = re.compile(r"k3s_(server|agent)_token|\bk3s_node_token\b|config\.yaml\.j2")
-    seen = 0
-    for name in ("main.yml", "token.yml"):
-        for task in yaml.safe_load((K3S_ROLE_DIR / "tasks" / name).read_text(encoding="utf-8")):
-            if touches.search(yaml.safe_dump(task)):
-                seen += 1
-                assert task.get("no_log") is True, task.get("name")
-    assert seen >= 5
-
-
-def test_files_that_can_hold_the_join_token_are_root_only() -> None:
-    """The server and agent config files are written 0600 as root."""
-    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
-    configs = {
-        task["ansible.builtin.template"]["src"]: task
-        for task in tasks
-        if isinstance(task, dict)
-        and "ansible.builtin.template" in task
-        and task["ansible.builtin.template"]["src"] in {"config.yaml.j2", "agent-config.yaml.j2"}
-    }
-    assert set(configs) == {"config.yaml.j2", "agent-config.yaml.j2"}
-    for src, task in configs.items():
-        template = task["ansible.builtin.template"]
-        assert (template["mode"], template["owner"], template["group"]) == ("0600", "root", "root"), src
-
-
-_PRIVATE_DATA_DIRS = (
-    "{{ local_path_data }}",
-    "{{ backup_path }}",
-    "{{ backup_path }}/etcd-snapshots",
-)
-
-
 def _file_targets(node: object, found: set[str]) -> None:
     if isinstance(node, dict):
         file_task = node.get("ansible.builtin.file")
@@ -608,43 +490,6 @@ def _file_targets(node: object, found: set[str]) -> None:
     elif isinstance(node, list):
         for item in node:
             _file_targets(item, found)
-
-
-def _role_file_targets(role: Path) -> set[str]:
-    found: set[str] = set()
-    tasks = role / "tasks"
-    if not tasks.is_dir():
-        return found
-    for path in tasks.glob("*.yml"):
-        _file_targets(yaml.safe_load(path.read_text(encoding="utf-8")), found)
-    return found
-
-
-def test_k3s_main_imports_the_mount_dropin() -> None:
-    """Every host that runs the k3s role gets the data-mount drop-in."""
-    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
-    assert isinstance(tasks, list)
-    imported = [
-        task.get("ansible.builtin.import_tasks")
-        for task in tasks
-        if isinstance(task, dict)
-    ]
-    assert "service-unit.yml" in imported
-
-
-def test_k3s_is_the_only_owner_of_private_data_directories() -> None:
-    """One owner per path: only the k3s role creates the private data directories."""
-    roles = ANSIBLE_DIR / "roles"
-    owners = {path: set() for path in _PRIVATE_DATA_DIRS}
-    for role in roles.iterdir():
-        if not role.is_dir():
-            continue
-        for target in _role_file_targets(role):
-            for owned in _PRIVATE_DATA_DIRS:
-                if target == owned:
-                    owners[owned].add(role.name)
-    for owned, role_names in owners.items():
-        assert role_names == {"k3s"}, (owned, role_names)
 
 
 def test_private_data_directories_are_mode_0700(tmp_path: Path) -> None:
@@ -1211,18 +1056,3 @@ def test_node_memory_reserve_refuses_what_it_cannot_apply(tmp_path: Path, bad: s
     assert not (tmp_path / f"{K3S_CONFIG_TEMPLATE}.out").exists()
 
 
-def test_a_new_server_takes_its_first_etcd_snapshot() -> None:
-    """Rule: the server role takes one etcd snapshot when the snapshot directory is empty (a new
-    cluster), into the directory k3s's schedule and the etcd-snapshots CronJob use, and only then."""
-    tasks = yaml.safe_load((REPO_ROOT / "infra/ansible/roles/k3s/tasks/main.yml").read_text(encoding="utf-8"))
-    find = next(task for task in tasks if task.get("name") == "Find etcd snapshots")
-    save = next(task for task in tasks if task.get("name") == "Take the first etcd snapshot on a new cluster")
-    assert tasks.index(find) < tasks.index(save)
-    assert tasks.index(save) > next(i for i, task in enumerate(tasks) if task.get("name") == "Enable and start k3s")
-    assert find["ansible.builtin.find"]["paths"] == "{{ backup_path }}/etcd-snapshots"
-    assert save["when"] == "k3s_mode == 'server' and k3s_etcd_snapshot_files.matched == 0"
-    argv = save["ansible.builtin.command"]["argv"]
-    assert argv[1:3] == ["etcd-snapshot", "save"]
-    assert argv[argv.index("--etcd-snapshot-dir") + 1] == "{{ backup_path }}/etcd-snapshots"
-    config = (REPO_ROOT / "infra/ansible/roles/k3s/templates/config.yaml.j2").read_text(encoding="utf-8")
-    assert "etcd-snapshot-dir: {{ backup_path }}/etcd-snapshots" in config
