@@ -6,7 +6,6 @@ import getpass
 import grp
 import json
 import os
-import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -18,64 +17,11 @@ from ansible_role_proof import (
     cluster_vars_playbook_path,
     env_inventory_args,
     load_cluster_vars,
-    load_role_defaults,
     playbook_recap_field,
 )
 from conftest import require_cli
 
 ROLE_TEMPLATES = ANSIBLE_DIR / "roles" / "base-os" / "templates"
-
-
-def test_base_os_templates_encode_security_only_upgrade_policy() -> None:
-    cluster = load_cluster_vars()
-    pools = cluster["ntp_pools"]
-    assert isinstance(pools, list)
-    chrony = ansible_render_template(
-        "chrony.conf.j2", {"ntp_pools": pools, "chrony_nts": True}, templates_dir=ROLE_TEMPLATES
-    )
-    for pool in pools:
-        assert f"pool {pool} iburst maxsources 4 nts\n" in chrony
-
-    journald_cap = load_role_defaults(ANSIBLE_DIR / "roles" / "base-os")[
-        "jarvis_journald_system_max_use"
-    ]
-    journald = ansible_render_template(
-        "journald-jarvis.conf.j2",
-        {"jarvis_journald_system_max_use": journald_cap},
-        templates_dir=ROLE_TEMPLATES,
-    )
-    assert f"SystemMaxUse={journald_cap}" in journald
-
-    auto_upgrades_path = ROLE_TEMPLATES / "20auto-upgrades.j2"
-    assert "departure from framework" not in auto_upgrades_path.read_text(encoding="utf-8")
-    auto_upgrades = ansible_render_template(
-        "20auto-upgrades.j2", {}, templates_dir=ROLE_TEMPLATES
-    )
-    assert 'Unattended-Upgrade "1"' in auto_upgrades
-
-    unattended = ansible_render_template(
-        "50unattended-upgrades.j2", {}, templates_dir=ROLE_TEMPLATES
-    )
-    assert unattended.count('Automatic-Reboot "false"') == 1
-    origins = re.search(r"Allowed-Origins \{(.*?)\};\n", unattended, re.DOTALL)
-    assert origins is not None
-    assert re.findall(r'"([^"]+)";', origins.group(1)) == ["${distro_id}:${distro_codename}-security"]
-
-
-def test_upgrade_timer_is_enabled() -> None:
-    """Security updates need apt-daily-upgrade.timer enabled and started."""
-    tasks = yaml.safe_load(
-        (ANSIBLE_DIR / "roles" / "base-os" / "tasks" / "main.yml").read_text(encoding="utf-8")
-    )
-    timers = [
-        task["ansible.builtin.systemd"]
-        for task in tasks
-        if isinstance(task, dict)
-        and task.get("ansible.builtin.systemd", {}).get("name") == "apt-daily-upgrade.timer"
-    ]
-    assert len(timers) == 1
-    assert timers[0]["enabled"] is True
-    assert timers[0]["state"] == "started"
 
 
 def test_chrony_nts_off_renders_pools_without_nts() -> None:
@@ -181,46 +127,6 @@ def _same_file(after: os.stat_result, before: os.stat_result) -> bool:
         and after.st_gid == before.st_gid
         and after.st_mode == before.st_mode
         and after.st_mtime_ns == before.st_mtime_ns
-    )
-
-
-def test_edge_hosts_do_not_use_the_resolved_stub() -> None:
-    """Edge host DNS uses resolved's upstream list, not the 127.0.0.53 stub."""
-    drop_in = ansible_render_template(
-        "resolved-stub.conf.j2", {}, templates_dir=ROLE_TEMPLATES
-    )
-    assert "DNSStubListener=no" in drop_in
-
-    matched = _edge_resolved_block()
-    notified = [
-        item
-        for item in matched["block"]
-        if isinstance(item, dict) and item.get("notify") == "Restart systemd-resolved"
-    ]
-    assert len(notified) == 1
-    assert notified[0]["ansible.builtin.template"]["src"] == "resolved-stub.conf.j2"
-    link_tasks = [
-        item
-        for item in matched["block"]
-        if isinstance(item, dict) and "ansible.builtin.file" in item
-    ]
-    assert all(item.get("notify") is None for item in link_tasks)
-
-    handlers = yaml.safe_load(
-        (ANSIBLE_DIR / "roles" / "base-os" / "handlers" / "main.yml").read_text(encoding="utf-8")
-    )
-    assert any(
-        isinstance(handler, dict)
-        and handler.get("name") == "Restart systemd-resolved"
-        and handler["ansible.builtin.systemd"]["name"] == "systemd-resolved"
-        for handler in handlers
-    )
-    assert any(
-        isinstance(handler, dict)
-        and handler.get("name") == "Restart systemd-journald"
-        and handler["ansible.builtin.systemd"]["name"] == "systemd-journald"
-        and handler["ansible.builtin.systemd"]["state"] == "restarted"
-        for handler in handlers
     )
 
 

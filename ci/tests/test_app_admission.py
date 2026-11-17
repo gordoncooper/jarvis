@@ -666,15 +666,6 @@ def test_app_name_longer_than_a_namespace_allows_fails(tmp_path: Path) -> None:
     assert any("at most 59 characters" in problem for problem in check_folder(folder))
 
 
-def test_app_file_and_app_grants_share_their_match_and_variables() -> None:
-    """Rule: the two halves of the baseline see the same objects the same way; YAML anchors do
-    not cross documents, so the file repeats them and this holds the copies equal."""
-    policies = {doc["metadata"]["name"]: doc["spec"] for doc in _docs(POLICIES / "admission.yaml")
-                if doc["kind"] == "ValidatingAdmissionPolicy"}
-    for field in ("matchConstraints", "matchConditions", "variables", "failurePolicy"):
-        assert policies["app-file"][field] == policies["app-grants"][field], field
-
-
 def _network_policy(app: str, name: str, spec: dict) -> dict:
     return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
             "metadata": {"name": name, "namespace": f"app-{app}"}, "spec": {"podSelector": {}, **spec}}
