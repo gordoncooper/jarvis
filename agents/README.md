@@ -3,7 +3,7 @@
 Two things live under this name.
 
 - **The agent kit for instance repositories.** `jarvis init --with-agents` copies it into a new repository: `AGENTS.md` (the rules for a coding agent working on envs), `CLAUDE.md` (which points at it), and a short deny list in each client's own format, `.claude/settings.json` and `.cursor/cli.json`. Its files are in `jarvis/kit/agents/`, inside the package, because init runs from the installed CLI before any core checkout exists. To add the kit to a repository made without it, copy those four files to the same places.
-- **The rules for working on core itself:** [coding-agents.md](coding-agents.md). Core's own `.claude/settings.json` and `.cursor/cli.json` are links to the kit's deny lists, so core and every instance block the same commands.
+- **The rules for working on core itself:** [coding-agents.md](coding-agents.md), and [review.md](review.md) for the session that reviews a pull request. Core's own `.claude/settings.json` and `.cursor/cli.json` are links to the kit's deny lists, so core and every instance block the same commands.
 
 ## What the kit relies on
 
