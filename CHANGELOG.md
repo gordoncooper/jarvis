@@ -9,6 +9,14 @@ the upgrade.
 
 ### Changed
 
+- Each values file is checked against its own JSON Schema (`schema/*.schema.json`), and the
+  messages are the validator's own: `<file>: <key>: <message>`. `inventory/hosts.yml`,
+  `values/switches.yaml` and `values/apps.yaml` were checked by hand-written Python that copied
+  their schemas; `cluster-vars.schema.json` now also holds the DNS name, URL, path, NTP pool and
+  known-hosts patterns. A required key set to `null` is reported as the wrong type.
+- `jarvis validate` runs `jarvis render --check` as its `render` check, and env-schema no longer
+  compares rendered files itself. A hand-edited file under `flux/` is reported as differing from
+  the render.
 - The env checks read Flux's own build: each Kustomization an env applies is built with
   `flux build kustomization --dry-run --strict-substitute --in-memory-build`, from the root in
   `flux/sync.yaml` down, its `substituteFrom` ConfigMaps and Secrets read from what is already

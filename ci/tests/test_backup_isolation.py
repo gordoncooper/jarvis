@@ -149,38 +149,19 @@ def _schema_errors(copy: ExampleCopy) -> str:
     return "\n".join(caught.value.messages)
 
 
-def _set_components(copy: ExampleCopy, components: list[str]) -> None:
-    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    # The registrations change; the app-hosting switch the copy carries stays.
-    switch = [item for item in doc.get("components") or [] if item.endswith("core/feature/app-hosting")]
-    doc["components"] = [*switch, *components]
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
-
-
 def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
-    """A registration outside app-, an edited Component, a missing sealed file, no apps server,
-    and an app credential sealed outside its own folder each fail env-schema."""
+    """No apps server, a missing sealed file, and an app credential sealed outside its own folder
+    each fail env-schema. A hand-edited registration is the render check's (test_render.py)."""
     copy = _app_copy(tmp_path)
     secrets = copy.env_dir / "secrets"
     sealed = secrets / APP / f"backups-restic-{APP}.sops.yaml"
-    component = copy.env_dir / "flux" / "platform-configs" / "backups" / APP / "kustomization.yaml"
-
-    _set_components(copy, [f"backups/{APP}", "backups/notes"])
-    assert "hand-copying registrations" in _schema_errors(copy)
-    _set_components(copy, [f"backups/{APP}"])
-
-    original = component.read_text(encoding="utf-8")
-    component.write_text(original.replace("name: restic-apps", "name: restic"), encoding="utf-8")
-    assert "differs from the registration jarvis secrets --app app-notes writes" in _schema_errors(copy)
-    component.write_text(original, encoding="utf-8")
 
     switches = copy.env_dir / "values" / "switches.yaml"
     decided = switches.read_text(encoding="utf-8")
     data = yaml.safe_load(decided)
     data["features"] = [item for item in data["features"] if item != "apps-backup-server"]
     switches.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    assert "registers app credentials, and values/switches.yaml does not list apps-backup-server" in _schema_errors(copy)
+    assert "registers app credentials, and does not list apps-backup-server" in _schema_errors(copy)
     switches.write_text(decided, encoding="utf-8")
 
     moved = secrets / f"backups-restic-{APP}.sops.yaml"

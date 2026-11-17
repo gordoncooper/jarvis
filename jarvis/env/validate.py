@@ -29,7 +29,8 @@ from jarvis.checks import (
 )
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
-from jarvis.schema.env import ValidationError, validate_env_tree
+from jarvis.render import env as _render
+from jarvis.schema.env import ValidationError, env_dirs, validate_env_tree
 
 
 def _env_schema(instance: Path) -> list[str]:
@@ -38,6 +39,18 @@ def _env_schema(instance: Path) -> list[str]:
     except ValidationError as exc:
         return list(exc.messages)
     return []
+
+
+def _render_check(instance: Path) -> list[str]:
+    """Each env's committed flux/ is the render of its values: jarvis render --check."""
+    problems = []
+    for env_dir in env_dirs(instance):
+        try:
+            stale = _render.stale(env_dir, instance)
+        except SystemExit as exc:
+            stale = [str(exc)]
+        problems += [f"envs/{env_dir.name}/{line}" for line in stale]
+    return problems
 
 
 def _manifest_lint(instance: Path) -> list[str]:
@@ -71,6 +84,7 @@ def _scan(module) -> Callable[[Path], list[str]]:
 # Name, then the check. Core's CI runs each under the same name, so a failure reads the same everywhere.
 CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "env-schema": _env_schema,
+    "render": _render_check,
     "addons": lambda instance: addons.format_violations(addons.scan_addons(_paths.core_root(), instance)),
     "app-hosting": _scan(app_hosting),
     "backup-isolation": _scan(backup_isolation),
