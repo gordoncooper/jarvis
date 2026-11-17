@@ -24,6 +24,7 @@ What each env under `envs/<env>/` may set. Run from an instance repository, the 
 | An `ssh://` root's host is among `flux_known_hosts`; unset, only `github.com` | env-schema |
 | Across hosts: exactly one `control_plane` and one `backup` host, at least one `edge` host | env-schema |
 | Once the env has `flux/` or sealed files, `values/switches.yaml` exists | env-schema |
+| Each feature in `switches.yaml` is a row of `FEATURE_COMPONENTS` in `jarvis/env/switches.py`, its one list | env-schema, and the render refuses before it writes |
 | Each add-on in `switches.yaml` is a folder under core's `addons/`; at most one per slot (label `addons.jarvis.io/slot`) | env-schema, and the render refuses before it writes |
 | Each app in `switches.yaml` has `<app>/app.yaml` in the apps repository (`apps_git_repo_url` beside the instance, or `APPS_REPO`) | env-schema, render |
 | An env that lists apps lists `app-hosting` and sets `apps_git_repo_url`; each listed app has one `versions` pin, and only listed apps | env-schema, render |

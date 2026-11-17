@@ -49,7 +49,7 @@ What an env turns on, by name only. jarvis validate also checks each add-on and 
 | --- | --- | --- | --- | --- |
 | `addons` | no | array |  | Add-ons this env turns on, by folder name under core's addons/. At most one per slot. |
 | `apps` | no | array |  | Hosted apps this env runs, by folder name in the apps repository. Listing an app turns it on and grants it nothing; needs the app-hosting feature. |
-| `features` | no | array of `app-dns`, `app-hosting`, `apps-backup-server`, `offsite-backup-copy` |  | Core features this env turns on, by name. Off until listed. |
+| `features` | no | array |  | Core features this env turns on, by name: a folder under core/feature/. Off until listed. |
 
 ## `values/apps.yaml`
 

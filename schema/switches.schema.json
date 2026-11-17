@@ -7,19 +7,14 @@
   "additionalProperties": false,
   "properties": {
     "features": {
-      "description": "Core features this env turns on, by name. Off until listed.",
+      "description": "Core features this env turns on, by name: a folder under core/feature/. Off until listed.",
       "type": [
         "array",
         "null"
       ],
       "uniqueItems": true,
       "items": {
-        "enum": [
-          "app-dns",
-          "app-hosting",
-          "apps-backup-server",
-          "offsite-backup-copy"
-        ]
+        "type": "string"
       }
     },
     "addons": {

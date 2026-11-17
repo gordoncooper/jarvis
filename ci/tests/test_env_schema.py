@@ -78,6 +78,27 @@ def test_ssh_user_defaults_to_ubuntu_when_omitted(tmp_path: Path):
     assert resolved["env-test"]["ssh_user"] == DEFAULT_SSH_USER
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("backup_path", "srv/backups"),
+        ("backup_path", "/srv/../etc"),
+        ("local_path_data", "/var/lib/jarvis"),
+        ("local_path_data", "/var/lib/jarvis/../etc"),
+    ],
+    ids=["backup-relative", "backup-dot-segment", "data-is-the-mount", "data-dot-segment"],
+)
+def test_a_data_path_that_could_land_off_its_disk_fails(tmp_path: Path, key: str, value: str):
+    """Rule: backup_path is absolute with no '.' or '..' segment, and local_path_data is a
+    subdirectory of /var/lib/jarvis, so neither hostPath can resolve onto another disk."""
+    cv = _valid_cluster_vars()
+    cv[key] = value
+    _write_env(tmp_path, cluster_vars=cv)
+    with pytest.raises(ValidationError) as excinfo:
+        validate_env_tree(tmp_path)
+    assert any(f"cluster-vars.yaml: {key}: " in item for item in excinfo.value.messages), excinfo.value.messages
+
+
 def test_jarvis_env_must_match_env_directory(tmp_path: Path):
     cv = _valid_cluster_vars()
     cv["jarvis_env"] = "env-other"

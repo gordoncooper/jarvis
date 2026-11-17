@@ -396,14 +396,20 @@ def addon_secret_namespaces(docs: list[dict]) -> list[str]:
 
 
 def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
-    """Why the env's switches cannot render: a shape its schema refuses, an add-on core does not
-    ship, two add-ons for one slot, or an app the apps repository does not hold. A listed app must
-    exist; a missing checkout fails, like backup eligibility."""
+    """Why the env's switches cannot render: a shape its schema refuses, a feature or add-on core
+    does not ship, two add-ons for one slot, or an app the apps repository does not hold. A listed
+    app must exist; a missing checkout fails, like backup eligibility."""
     rel = _rel(env_dir / _switches.SWITCHES_FILE, repo_root)
     data, errors = _switches.load(env_dir)
     errors = [f"{rel}: {problem}" for problem in errors] or _values.problems("switches", data, rel)
     if errors:
         return errors
+    features = tuple(_switches.FEATURE_COMPONENTS)
+    errors = [
+        f"{rel}: {_switches.FEATURES}: unknown name {name!r} (known: {', '.join(features)})"
+        for name in _switches.names(data, _switches.FEATURES)
+        if name not in features
+    ]
     core = _paths.core_root()
     known = addon_names(core)
     by_slot: dict[str, list[str]] = {}
