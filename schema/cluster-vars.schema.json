@@ -4,9 +4,6 @@
   "title": "values/cluster-vars.yaml",
   "description": "An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the CIDRs, the App DNS address, LAN ranges, known hosts, the time zone, paths) are checked by jarvis validate.",
   "type": "object",
-  "propertyNames": {
-    "pattern": "^[a-z][a-z0-9_]*$"
-  },
   "required": [
     "jarvis_env",
     "dns_suffix",
@@ -37,250 +34,183 @@
       "k3s_version"
     ]
   },
-  "x-messages": {
-    "dependentRequired": "k3s_version and k3s_sha256 override core's k3s release together; set both or neither"
-  },
   "properties": {
     "age_key_file": {
       "description": "The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. SOPS_AGE_KEY_FILE overrides it.",
       "default": "~/.config/sops/age/keys.txt",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "age_key_file must be a string",
-        "pattern": "age_key_file must not be empty"
-      }
+      "pattern": "\\S"
     },
     "app_dns_cluster_ip": {
       "description": "ClusterIP of the App DNS Service, which cluster DNS forwards the zone to. A host address inside service_cidr, not its first address (the Kubernetes API) or its tenth (cluster DNS).",
-      "x-required": "when switches.yaml lists app-dns"
+      "x-required": "when switches.yaml lists app-dns",
+      "type": "string",
+      "pattern": "\\S"
     },
     "apps_git_repo_url": {
       "description": "The hosted apps repository, https, read with no credential. Anyone's: the example apps beside core, or your own.",
       "x-required": "when switches.yaml lists an app",
-      "type": "string"
+      "type": "string",
+      "pattern": "^https://[^/@?#\\s]+(/[^/?#\\s]+){2,}/?$"
     },
     "backup_check_schedule": {
       "description": "Five-field cron for the weekly restic repository check (CronJob platform-backups/restic-check), in time_zone. The check takes no lock, so it never blocks a backup; a prune at the same time can fail one run, and the Job retries.",
       "default": "30 6 * * 3",
       "type": "string",
-      "pattern": "^\\s*\\S+(\\s+\\S+){4}\\s*$",
-      "x-messages": {
-        "type": "backup_check_schedule must be a five-field cron",
-        "pattern": "backup_check_schedule must be a five-field cron"
-      }
+      "pattern": "^\\s*\\S+(\\s+\\S+){4}\\s*$"
     },
     "backup_path": {
       "description": "Absolute path on the backup node: etcd snapshots under backup_path/etcd-snapshots, and one restic repository per PVC under backup_path/restic/ns-<namespace>/pvc-<pvc>.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "backup_path must be a string",
-        "pattern": "backup_path must not be empty"
-      }
+      "pattern": "^(/(?!\\.\\.?(/|$))[^/]+)+/?$"
     },
     "backup_retention_daily": {
       "description": "Daily snapshots restic keeps, per PVC.",
       "type": "integer",
-      "minimum": 1,
-      "x-messages": {
-        "type": "backup_retention_daily must be an integer",
-        "minimum": "backup_retention_daily must be > 0",
-        "maximum": "backup_retention_daily must be > 0"
-      }
+      "minimum": 1
     },
     "backup_retention_monthly": {
       "description": "Monthly snapshots restic keeps, per PVC.",
       "type": "integer",
-      "minimum": 1,
-      "x-messages": {
-        "type": "backup_retention_monthly must be an integer",
-        "minimum": "backup_retention_monthly must be > 0",
-        "maximum": "backup_retention_monthly must be > 0"
-      }
+      "minimum": 1
     },
     "backup_retention_weekly": {
       "description": "Weekly snapshots restic keeps, per PVC.",
       "type": "integer",
-      "minimum": 1,
-      "x-messages": {
-        "type": "backup_retention_weekly must be an integer",
-        "minimum": "backup_retention_weekly must be > 0",
-        "maximum": "backup_retention_weekly must be > 0"
-      }
+      "minimum": 1
     },
     "backup_schedule": {
       "description": "Five-field cron for each PVC's backup (its VolSync ReplicationSource), in time_zone.",
       "type": "string",
-      "pattern": "^\\s*\\S+(\\s+\\S+){4}\\s*$",
-      "x-messages": {
-        "type": "backup_schedule must be a five-field cron",
-        "pattern": "backup_schedule must be a five-field cron"
-      }
+      "pattern": "^\\s*\\S+(\\s+\\S+){4}\\s*$"
     },
     "chrony_nts": {
       "description": "Whether chrony asks the pools for NTS. false for a LAN or router time source that does not speak it. Host-only (Ansible).",
-      "default": true
+      "default": true,
+      "type": "boolean"
     },
     "core_git_ref": {
       "description": "The core release the env runs: refs/tags/<tag>. Every jarvis command runs that release, and refuses a branch ref.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "core_git_ref must be a non-empty string",
-        "pattern": "core_git_ref must be a non-empty string"
-      }
+      "pattern": "\\S"
     },
     "core_git_repo_url": {
       "description": "The public core repository, Flux's core source. https, read with no credential.",
-      "type": "string"
+      "type": "string",
+      "pattern": "^https://[^/@?#\\s]+(/[^/?#\\s]+){2,}/?$"
     },
     "dns_suffix": {
       "description": "The env's internal DNS zone: services are <name>.<dns_suffix>, hosted apps <app>.apps.<dns_suffix>. A lowercase DNS name.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "dns_suffix must be a string",
-        "pattern": "dns_suffix must not be empty"
-      }
+      "maxLength": 253,
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
     },
     "flux_git_ref": {
       "description": "The root source's Git ref, e.g. refs/heads/main.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "flux_git_ref must be a string",
-        "pattern": "flux_git_ref must not be empty"
-      }
+      "pattern": "\\S"
     },
     "flux_git_repo_url": {
       "description": "The env repository, Flux's root source. https:// with no userinfo, query or fragment, or ssh://<user>@<host>/<owner>/<repo>, read with the sealed deploy key.",
-      "type": "string"
+      "type": "string",
+      "anyOf": [
+        {
+          "pattern": "^https://[^/@?#\\s]+(/[^/?#\\s]+){2,}/?$"
+        },
+        {
+          "pattern": "^ssh://([^@/?#\\s:]+@)?[^@/?#\\s:]+(:\\d+)?(/[^/?#\\s]+){2,}/?$"
+        }
+      ]
     },
     "flux_known_hosts": {
       "description": "SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. Unset, GitHub's published key. Host-only (Ansible).",
-      "x-required": "for an ssh:// root not on github.com"
+      "x-required": "for an ssh:// root not on github.com",
+      "type": "string",
+      "pattern": "^\\s*\\S+ (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+=*(\\s*\\n\\s*\\S+ (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+=*)*\\s*$"
     },
     "jarvis_env": {
       "description": "The env's name: its folder under envs/, the /etc/jarvis/env marker on its nodes, and the name its guards check.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "jarvis_env must be a string",
-        "pattern": "jarvis_env must not be empty"
-      }
+      "pattern": "\\S"
     },
     "k3s_kubelet_eviction_hard": {
       "description": "kubelet eviction-hard. Its memory.available is raised to node_memory_reserve_percent when that is larger. A host may override it.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "k3s_kubelet_eviction_hard must be a non-empty string",
-        "pattern": "k3s_kubelet_eviction_hard must be a non-empty string"
-      }
+      "pattern": "\\S"
     },
     "k3s_kubelet_kube_reserved": {
       "description": "kubelet kube-reserved, without the kube-reserved= prefix. A host may override it.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "k3s_kubelet_kube_reserved must be a non-empty string",
-        "pattern": "k3s_kubelet_kube_reserved must be a non-empty string"
-      }
+      "pattern": "\\S"
     },
     "k3s_kubelet_system_reserved": {
       "description": "kubelet system-reserved, without the system-reserved= prefix. A host may override it.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "k3s_kubelet_system_reserved must be a non-empty string",
-        "pattern": "k3s_kubelet_system_reserved must be a non-empty string"
-      }
+      "pattern": "\\S"
     },
     "k3s_sha256": {
       "description": "SHA-256 of that release's amd64 k3s binary, checked on install.",
       "x-required": "with k3s_version",
       "type": "string",
-      "pattern": "^[a-f0-9]{64}$",
-      "x-messages": {
-        "type": "k3s_sha256 must be a 64-character lowercase hex string",
-        "pattern": "k3s_sha256 must be a 64-character lowercase hex string"
-      }
+      "pattern": "^[a-f0-9]{64}$"
     },
     "k3s_version": {
       "description": "A k3s release in place of core's (v<major>.<minor>.<patch>+k3s<n>). Set with k3s_sha256, or neither. The host binary changes only by a pull request.",
       "x-required": "with k3s_sha256",
       "type": "string",
-      "pattern": "^v\\d+\\.\\d+\\.\\d+\\+k3s\\d+$",
-      "x-messages": {
-        "type": "k3s_version must be a k3s version string (v<major>.<minor>.<patch>+k3s<n>)",
-        "pattern": "k3s_version must be a k3s version string (v<major>.<minor>.<patch>+k3s<n>)"
-      }
+      "pattern": "^v\\d+\\.\\d+\\.\\d+\\+k3s\\d+$"
     },
     "lan_cidrs": {
       "description": "The LAN's ranges: IPv4 CIDRs inside RFC 1918, clear of pod_cidr and service_cidr. Hosted apps' internet egress excludes them; lan-all opens them and a lan-target range sits inside them. Not published to the cluster; the app wiring render carries it.",
-      "x-required": "when apps.yaml grants lan-all or lan-target"
+      "x-required": "when apps.yaml grants lan-all or lan-target",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
     },
     "local_path_data": {
       "description": "Where the k3s local-path provisioner keeps volumes: a subdirectory of /var/lib/jarvis, not the mount itself.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "local_path_data must be a string",
-        "pattern": "local_path_data must not be empty"
-      }
+      "pattern": "^/var/lib/jarvis(/(?!\\.\\.?(/|$))[^/]+)+/?$"
     },
     "node_memory_reserve_percent": {
       "description": "The share of every node's memory no pod is scheduled into (0 to 50): the kubelet's memory.available hard eviction threshold. Under it, pods over their requests are evicted first, by priority, before the kernel's OOM killer acts. 0 leaves eviction-hard as written. Host-only (Ansible).",
       "default": 10,
       "type": "integer",
       "minimum": 0,
-      "maximum": 50,
-      "x-messages": {
-        "type": "node_memory_reserve_percent must be an integer from 0 to 50",
-        "minimum": "node_memory_reserve_percent must be an integer from 0 to 50",
-        "maximum": "node_memory_reserve_percent must be an integer from 0 to 50"
-      }
+      "maximum": 50
     },
     "ntp_pools": {
-      "description": "Chrony pool hostnames for the nodes, one pool line each (with nts while chrony_nts is on)."
+      "description": "Chrony pool hostnames for the nodes, one pool line each (with nts while chrony_nts is on).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$"
+      }
     },
     "pod_cidr": {
       "description": "The pod network, set once per env.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "pod_cidr must be a string",
-        "pattern": "pod_cidr must not be empty"
-      }
+      "pattern": "\\S"
     },
     "service_cidr": {
       "description": "The service network, set once per env.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "service_cidr must be a string",
-        "pattern": "service_cidr must not be empty"
-      }
+      "pattern": "\\S"
     },
     "ssh_user": {
       "description": "The user Ansible logs in to the nodes as; tasks run as root through sudo. jarvis init writes the user who ran it. A host's own ssh_user overrides it.",
       "default": "ubuntu",
       "type": "string",
-      "minLength": 1,
-      "x-messages": {
-        "type": "ssh_user must be a string",
-        "minLength": "ssh_user must not be empty"
-      }
+      "minLength": 1
     },
     "time_zone": {
       "description": "IANA time zone for the nodes and for every schedule (VolSync, the restic check). Unknown names fail.",
       "type": "string",
-      "pattern": "\\S",
-      "x-messages": {
-        "type": "time_zone must be a string",
-        "pattern": "time_zone must not be empty"
-      }
+      "pattern": "\\S"
     }
   }
 }

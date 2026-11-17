@@ -1,7 +1,8 @@
 """An env's switches: the one short file naming what it enables, and the Flux wiring rendered from it.
 
-CONTRACT: schema/CONTRACT.md. env-schema validates the names and compares the committed wiring;
-render_switches.py writes it. The file holds names only: an app's settings stay in its app file.
+CONTRACT: schema/CONTRACT.md. schema/switches.schema.json holds the file's shape, env-schema checks
+the names against core and the apps repository, and jarvis render writes the wiring. The file holds
+names only: an app's settings stay in its app file.
 """
 
 from __future__ import annotations
@@ -74,31 +75,6 @@ def load(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
 def names(data: dict[str, Any], section: str) -> list[str]:
     value = data.get(section)
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
-
-
-def validate(data: dict[str, Any], addons: Sequence[str]) -> list[str]:
-    """Each section is a list of names, each once, features and addons only what core ships. Core
-    itself is on in every env, so it has no section. _apps validates the shape of an app name."""
-    errors = [f"unknown key {key!r} (allowed: {', '.join(SECTIONS)})" for key in sorted(set(data) - set(SECTIONS), key=str)]
-    known = {FEATURES: tuple(FEATURE_COMPONENTS), ADDONS: addons}
-    for section in SECTIONS:
-        value = data.get(section)
-        if value is None:
-            value = []
-        if not isinstance(value, list):
-            errors.append(f"{section} must be a list of names")
-            continue
-        seen: set[str] = set()
-        for item in value:
-            if not isinstance(item, str):
-                errors.append(f"{section}: {item!r} is not a name")
-            elif section in known and item not in known[section]:
-                errors.append(f"{section}: unknown name {item!r} (known: {', '.join(known[section]) or 'none'})")
-            elif item in seen:
-                errors.append(f"{section}: {item} is listed twice")
-            else:
-                seen.add(item)
-    return errors
 
 
 def _dump(doc: dict[str, Any], note: str = "") -> str:

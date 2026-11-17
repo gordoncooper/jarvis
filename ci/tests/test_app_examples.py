@@ -62,7 +62,7 @@ def test_committed_env_00_render_wires_the_examples_and_passes_env_schema() -> N
     assert list(subs) == APPS
     assert subs["lan-demo"]["app_grant_lan_ports"] == "8080/TCP"
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    assert env_schema._validate_apps(env_dir, REPO_ROOT, cluster_vars, pre_host=False) == []
+    assert env_schema._apps_problems(env_dir, REPO_ROOT, cluster_vars) == []
 
 
 def test_examples_pass_admission_with_the_env_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

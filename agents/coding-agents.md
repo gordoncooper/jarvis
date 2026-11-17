@@ -6,7 +6,7 @@ How an agent works on core. The brief, and the charter when the session has one,
 
 - **No real hosts, clusters or secrets.** No SSH, no `kubectl`, `helm` or `flux` against a cluster, and no `jarvis` command that reaches a host, a cluster or a secret. Never decrypt a file or read the age key, a kubeconfig, an SSH key or k3s's own files. The [deny lists](../ci/README.md#coding-agent-deny-lists) block many forms; treat the rest as blocked too. The real guard is that the agent's user holds none of those credentials.
 - **No merges, tags, force-pushes or pushes to `main`.** The owner merges every PR and pushes every tag.
-- **Core holds no identity.** No env name, hostname, `dns_suffix`, `ssh_user`, owner handle or personal name ([schema/CONTRACT.md](../schema/CONTRACT.md#identity-values)), and no real LAN address or numeric user ID; examples and tests use made-up or documentation ranges. A value that differs per deployment is an env setting, not a role default or a literal. A finding from one env or operator becomes a general rule or fix, never a special case.
+- **Core holds no identity.** No env name, hostname, `dns_suffix`, `ssh_user`, owner handle or personal name ([schema/CONTRACT.md](../schema/CONTRACT.md)), and no real LAN address or numeric user ID; examples and tests use made-up or documentation ranges. A value that differs per deployment is an env setting, not a role default or a literal. A finding from one env or operator becomes a general rule or fix, never a special case.
 
 ## Guards already in place
 
