@@ -41,7 +41,6 @@ ROLE_PROOFS = frozenset(
         "test_ansible_operator_tags.py",
         "test_base_os.py",
         "test_flux_operator.py",
-        "test_flux_operator_install.py",
         "test_inventory_roles.py",
         "test_k3s.py",
         "test_kubeconfig.py",

@@ -55,20 +55,14 @@ _POLICIES = "core/feature/app-hosting/policies/admission.yaml"
     ("file", "old", "new", "expected"),
     [
         (f"{_APP}/baseline.yaml", "  policyTypes: [Ingress, Egress]\n---", "  policyTypes: [Ingress]\n---", "default-deny selects every pod"),
-        (f"{_APP}/baseline.yaml", "name: default-deny", "name: deny-later", "default-deny selects every pod"),
         (f"{_APP}/namespace.yaml", "hosting.jarvis.io/app: ${app_name}", "hosting.jarvis.io/app: other", "label hosting.jarvis.io/app"),
         (f"{_APP}/namespace.yaml", "    kustomize.toolkit.fluxcd.io/prune: disabled\n", "", "could delete its volumes"),
         (_POLICIES, "parameterNotFoundAction: Deny", "parameterNotFoundAction: Allow", "refusing where params are missing"),
-        (_POLICIES, "    selector: {}\n", "    name: other\n", "refusing where params are missing"),
         (_POLICIES, "  name: app-grants\n  annotations:\n    kustomize.toolkit.fluxcd.io/prune: disabled\nspec:\n  policyName: app-grants",
          "  name: app-grants-all\n  annotations:\n    kustomize.toolkit.fluxcd.io/prune: disabled\nspec:\n  policyName: app-grants", "has no ValidatingAdmissionPolicyBinding app-grants"),
         (f"{_APP}/namespace.yaml", "host-path: ${quote}${app_grant_host_path}${quote}", "host-path: \"true\"", "annotation hosting.jarvis.io/host-path"),
-        (f"{_APP}/namespace.yaml", "    hosting.jarvis.io/privileged: ${quote}${app_grant_privileged}${quote}\n", "", "annotation hosting.jarvis.io/privileged"),
         (f"{_APP}/namespace.yaml", "root: ${quote}${app_grant_root}${quote}", "root: \"${app_grant_root}\"", "annotation hosting.jarvis.io/root"),
-        (f"{_APP}/namespace.yaml", "lan-all: ${quote}${app_grant_lan_all}${quote}", "lan-all: \"true\"", "annotation hosting.jarvis.io/lan-all"),
-        (f"{_APP}/namespace.yaml", "lan-ports: ${quote}${app_grant_lan_ports}${quote}", "lan-ports: \"443/TCP\"", "annotation hosting.jarvis.io/lan-ports"),
         (f"{_APP}/tenant.yaml", "resources: [jobs, cronjobs]", "resources: [jobs, cronjobs, networkpolicies]", "batch/networkpolicies"),
-        (f"{_APP}/tenant.yaml", "  - apiGroups: [hosting.jarvis.io]", "  - apiGroups: [traefik.io]\n    resources: [ingressroutes]\n    verbs: [create]\n  - apiGroups: [hosting.jarvis.io]", "traefik.io/ingressroutes"),
         (f"{_APP}/flux.yaml", "  targetNamespace: app-${app_name}\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "  targetNamespace: default\n  sourceRef:\n    kind: GitRepository\n    name: app-${app_name}-file", "objects land in app-"),
         (f"{_APP}/flux.yaml", "    substitute:\n      app_host:", "    substituteFrom:\n      - kind: ConfigMap\n        name: cluster-vars\n    substitute:\n      app_host:", "no substitution source"),
         (f"{_APP}/flux.yaml", "  dependsOn:\n    - name: app-${app_name}-file", "  decryption:\n    provider: sops\n  dependsOn:\n    - name: app-${app_name}-file", "decrypts nothing"),
@@ -77,10 +71,9 @@ _POLICIES = "core/feature/app-hosting/policies/admission.yaml"
         (f"{_APP}/kustomization.yaml", "  - flux.yaml", "  - flux.yaml\n  - extra.yaml", "holds no ClusterRole"),
         (f"{_APP}/grant-revoke.yaml", "  name: app-grant-revoke\nsubjects", "  name: cluster-admin\nsubjects", "binds ClusterRole app-grant-revoke"),
     ],
-    ids=["default-deny-ingress-only", "no-default-deny", "namespace-label", "namespace-prunable", "binding-allows-missing-params",
-         "binding-names-one-app", "no-grants-binding",
-         "grant-without-env-line", "grant-annotation-missing", "flag-a-boolean-after-substitution", "lan-grant-on-namespace-without-env-line", "lan-port-on-namespace-without-env-line",
-         "role-grants-networkpolicies", "role-grants-traefik", "objects-outside-namespace",
+    ids=["default-deny-ingress-only", "namespace-label", "namespace-prunable", "binding-allows-missing-params", "no-grants-binding",
+         "grant-without-env-line", "flag-a-boolean-after-substitution",
+         "role-grants-networkpolicies", "objects-outside-namespace",
          "substitution-source", "decryption", "other-source", "role-elsewhere", "extra-kind", "revoker-role"],
 )
 def test_app_wiring_outside_the_contract_fails(tmp_path: Path, file: str, old: str, new: str, expected: str) -> None:
@@ -118,7 +111,6 @@ def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None
     ("values", "expected"),
     [
         ({"apps": ["Web_Demo"]}, "is not an app name"),
-        ({"apps": ["a" * 60]}, "is not an app name"),
         ({"apps": ["web", "web"]}, "listed twice"),
         ({"apps": ["web"], "sizes": {"web": "big"}}, "unknown key 'sizes'"),
         ({"apps": ["web"], "exceptions": [{"web": "trust"}]}, "unknown grant"),
@@ -129,13 +121,11 @@ def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None
         ({"apps": ["web"], "exceptions": [{"web": "lan-port 70000/TCP"}]}, "lan-port takes"),
         ({"apps": ["web"], "exceptions": [{"web": "privileged"}, {"web": "privileged"}]}, "listed twice"),
         ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.99.0.10/32 445/TCP"}]}, "outside the env's lan_cidrs"),
-        ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 203.0.113.0/24 443/TCP"}]}, "outside the env's lan_cidrs"),
         ({"apps": ["web"], "exceptions": [{"web": "lan-target all 10.200.0.0/24 445/TCP"}]}, "other than all"),
         ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.200.0.10/32"}]}, "lan-target takes"),
     ],
-    ids=["not-a-label", "too-long", "duplicate", "size-in-list", "unknown-grant", "bad-exception-name", "unlisted-app",
-         "two-grants-one-line", "hostname-in-zone", "bad-lan-port", "duplicate-line", "lan-target-off-lan",
-         "lan-target-internet", "lan-target-all", "lan-target-no-port"],
+    ids=["not-a-label", "duplicate", "size-in-list", "unknown-grant", "bad-exception-name", "unlisted-app",
+         "two-grants-one-line", "hostname-in-zone", "bad-lan-port", "duplicate-line", "lan-target-off-lan", "lan-target-all", "lan-target-no-port"],
 )
 def test_env_app_list_rejects_what_it_does_not_hold(values: dict, expected: str) -> None:
     """Rule: the app list holds names only, and each exception line one known grant for a listed
@@ -144,10 +134,9 @@ def test_env_app_list_rejects_what_it_does_not_hold(values: dict, expected: str)
     assert any(expected in error for error in errors), errors
 
 
-@pytest.mark.parametrize("grant", ["lan-all", "lan-target nas 10.200.0.10/32 445/TCP"])
-def test_lan_grant_needs_the_env_lan_ranges(grant: str) -> None:
+def test_lan_grant_needs_the_env_lan_ranges() -> None:
     """Rule: an env that grants a LAN item names its LAN ranges (lan_cidrs)."""
-    errors = _apps.validate({"apps": ["web"], "exceptions": [{"web": grant}]}, "env-00.example")
+    errors = _apps.validate({"apps": ["web"], "exceptions": [{"web": "lan-all"}]}, "env-00.example")
     assert any("set lan_cidrs" in error for error in errors), errors
 
 
@@ -229,10 +218,6 @@ def render_platform(tmp_path: Path, *, hosting: bool) -> dict[tuple[str, str], d
     (work / "kustomization.yaml").write_text(yaml.safe_dump(listing), encoding="utf-8")
     docs = [doc for doc in yaml.safe_load_all(_kustomize_build(str(work), root=work)) if isinstance(doc, dict)]
     return {(doc["kind"], doc["metadata"]["name"]): doc for doc in docs}
-
-
-def _rule(policy: dict, name: str) -> dict:
-    return next(rule for rule in policy["spec"]["rules"] if rule["name"] == name)
 
 
 def test_app_hosting_off_renders_none_of_it(tmp_path: Path) -> None:

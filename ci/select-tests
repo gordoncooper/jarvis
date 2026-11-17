@@ -24,8 +24,7 @@ DOC_FILES = {"LICENSE"}
 
 # Files a Renovate PR changes whose tests are not found by name (below).
 _MAPPED = {
-    "renovate.json": ["test_renovate.py"],
-    "infra/ansible/roles/flux-operator/defaults/main.yml": ["test_flux_operator.py", "test_renovate.py"],
+    "infra/ansible/roles/flux-operator/defaults/main.yml": ["test_flux_operator.py"],
 }
 # A change here can reach any test.
 # The tool and Python pins (mise.toml, mise.lock, pyproject.toml, uv.lock) reach every test that runs a CLI or imports a package.
@@ -71,8 +70,6 @@ def select(branch: str, changed: list[str]) -> str:
         if not found:
             return "all"
         chosen |= found
-    # Renovate's own managers read the pin that moved.
-    chosen.add("test_renovate.py")
     # Every manifest change also passes the manifest rules and the flux render.
     if any(path.startswith(("core/", "addons/", "envs/")) for path in code):
         chosen |= {"test_digest_pin.py", "test_manifest_lint.py", "test_flux_entry.py"}

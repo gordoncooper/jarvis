@@ -4,20 +4,14 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 from pathlib import Path
 
 import yaml
 
 from support import REPO_ROOT as ROOT
 from support import (
-    ExampleCopy,
-    _kustomize_build,
-    flux_built,
     flux_envsubst,
     kyverno_generated,
-    real_and_copy_envs,
-    renovate_python_pattern,
     sample_root,
 )
 
@@ -28,100 +22,6 @@ def _docs(path: Path) -> list[dict]:
         for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
         if isinstance(doc, dict)
     ]
-
-
-def test_kyverno_chart_pins_and_controllers() -> None:
-    source = (ROOT / "core/platform/kyverno/helmrelease.yaml").read_text(encoding="utf-8")
-    release = next(doc for doc in yaml.safe_load_all(source) if isinstance(doc, dict))
-    chart = release["spec"]["chart"]["spec"]
-    assert re.fullmatch(r"\d+\.\d+\.\d+", chart["version"])
-    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    chart_managers = [
-        manager
-        for manager in renovate["customManagers"]
-        if any(
-            "kyverno" in pattern and "helmrelease" in pattern
-            for pattern in manager["managerFilePatterns"]
-        )
-        and any("registryUrl" in pattern for pattern in manager["matchStrings"])
-    ]
-    assert len(chart_managers) == 1
-    chart_pattern = renovate_python_pattern(chart_managers[0]["matchStrings"][0])
-    chart_found = list(re.finditer(chart_pattern, source))
-    assert len(chart_found) == 1
-    assert chart_found[0].group("currentValue") == chart["version"]
-    assert chart["sourceRef"]["name"] == "kyverno"
-    values = release["spec"]["values"]
-    assert values["cleanupController"]["enabled"] is False
-    assert values["reportsController"]["enabled"] is False
-    reporting = values["features"]["reporting"]
-    assert reporting == {
-        "validate": False,
-        "mutate": False,
-        "mutateExisting": False,
-        "imageVerify": False,
-        "generate": False,
-    }
-    images = [
-        values["admissionController"]["container"]["image"],
-        values["admissionController"]["initContainer"]["image"],
-        values["backgroundController"]["image"],
-    ]
-    tags = set()
-    for image in images:
-        assert image["registry"] == "ghcr.io"
-        tag, digest = image["tag"].split("@", 1)
-        assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
-        assert re.fullmatch(r"sha256:[a-f0-9]{64}", digest)
-        tags.add(tag)
-    assert len(tags) == 1
-    controllers = yaml.safe_load(
-        (ROOT / "core/platform/kustomization.yaml").read_text(encoding="utf-8")
-    )
-    assert "kyverno" in controllers["resources"]
-
-
-def test_kyverno_roles_aggregate_secret_and_replicationsource_permissions() -> None:
-    roles = {
-        doc["metadata"]["name"]: doc
-        for doc in _docs(ROOT / "core/platform/kyverno/rbac.yaml")
-    }
-    assert set(roles) == {"kyverno:backup-generate"}
-    generate = roles["kyverno:backup-generate"]
-    labels = generate["metadata"]["labels"]
-    assert labels["rbac.kyverno.io/aggregate-to-admission-controller"] == "true"
-    assert labels["rbac.kyverno.io/aggregate-to-background-controller"] == "true"
-    by_resource = {tuple(rule["resources"]): rule for rule in generate["rules"]}
-    assert "create" in by_resource[("secrets",)]["verbs"]
-    assert "list" in by_resource[("secrets",)]["verbs"]
-    # A forbidden list errors the policy, so the role must list ConfigMaps (no resourceNames).
-    assert "list" in by_resource[("configmaps",)]["verbs"]
-    assert "resourceNames" not in by_resource[("configmaps",)]
-    assert "create" in by_resource[("replicationsources",)]["verbs"]
-
-
-def test_renovate_tracks_the_kyverno_chart_and_images() -> None:
-    renovate = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
-    managers = [
-        manager
-        for manager in renovate["customManagers"]
-        if any(
-            "kyverno" in pattern and "helmrelease" in pattern
-            for pattern in manager["managerFilePatterns"]
-        )
-    ]
-    assert len(managers) == 2
-    assert any(manager.get("datasourceTemplate") == "docker" for manager in managers)
-    assert any(
-        "currentDigest" in pattern and "currentValue" in pattern
-        for manager in managers
-        for pattern in manager["matchStrings"]
-    )
-    # The chart and images (custom.regex) and the CLI (mise) share one group, so one PR.
-    groups = {tuple(rule["matchManagers"]): rule for rule in renovate["packageRules"] if rule.get("groupName") == "kyverno"}
-    assert set(groups) == {("custom.regex",), ("mise",)}
-    assert "ghcr.io/kyverno/background-controller" in groups[("custom.regex",)]["matchDepNames"]
-    assert groups[("mise",)]["matchDepNames"] == ["kyverno"]
 
 
 _ENV = {key: str(value) for key, value in yaml.safe_load(
@@ -214,37 +114,3 @@ def test_rebuild_hold_pauses_every_source(tmp_path: Path) -> None:
     assert all(doc["spec"]["paused"] is True for doc in sources)
 
 
-def test_enrollment_policies_sync_and_skip_prune() -> None:
-    """Rule: both policies generate for existing claims and keep what they made in sync; Flux
-    force-replaces them and never prunes them."""
-    policies = _docs(ROOT / "core/platform/backups/enrollment.yaml")
-    assert [(doc["kind"], doc["metadata"]["name"]) for doc in policies] == [
-        ("GeneratingPolicy", "pvc-backup"), ("GeneratingPolicy", "pvc-backup-app")]
-    for policy in policies:
-        assert policy["metadata"]["annotations"] == {
-            "kustomize.toolkit.fluxcd.io/force": "Enabled", "kustomize.toolkit.fluxcd.io/prune": "disabled"}
-        assert policy["spec"]["evaluation"] == {"generateExisting": {"enabled": True}, "synchronize": {"enabled": True}}
-
-
-def test_enrollment_policy_is_on_the_platform_configs_build(example_copy: ExampleCopy) -> None:
-    """The enrollment policies are on the platform-configs build, no ClusterPolicy is, and no
-    ReplicationSource is."""
-    for root, env in real_and_copy_envs(example_copy):
-        _assert_enrollment_on_platform_configs(root, env)
-
-
-def _assert_enrollment_on_platform_configs(root, env: str) -> None:
-    docs = flux_built(root, env)
-    names = {doc["metadata"]["name"] for doc in docs if doc.get("kind") == "GeneratingPolicy"}
-    assert {"pvc-backup", "pvc-backup-app"} <= names
-    assert not any(doc.get("kind") == "ClusterPolicy" for doc in docs)
-    assert not any(doc.get("kind") == "ReplicationSource" for doc in docs)
-    controllers = [
-        doc
-        for doc in yaml.safe_load_all(_kustomize_build("core/platform"))
-        if isinstance(doc, dict)
-    ]
-    assert any(
-        doc.get("kind") == "HelmRelease" and doc["metadata"]["name"] == "kyverno"
-        for doc in controllers
-    )

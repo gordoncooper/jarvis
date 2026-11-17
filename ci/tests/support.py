@@ -9,7 +9,6 @@ from __future__ import annotations
 import contextlib
 import functools
 import importlib
-import re
 import shutil
 import subprocess
 import sys
@@ -31,18 +30,6 @@ def instance_apps_repo_for_checks(instance_root: Path) -> Path:
     if not dest.is_dir():
         shutil.copytree(_FIXTURE_APPS_REPO, dest)
     return dest
-
-
-_RENOVATE_NAMED_GROUP = re.compile(r"\(\?<([A-Za-z_]\w*)>")
-
-
-def renovate_python_pattern(pattern: str) -> str:
-    """Renovate's RE2 named group `(?<name>...)` as Python `re` `(?P<name>...)`.
-
-    This is not Renovate's engine. A pattern RE2 accepts and Python reads
-    differently still matches here.
-    """
-    return _RENOVATE_NAMED_GROUP.sub(r"(?P<\1>", pattern)
 
 
 def _kustomize_build(rel_path: str, *, root: Path | None = None) -> str:
@@ -303,16 +290,6 @@ def _git_ignored(repo: Path, path: Path) -> bool:
         ["git", "check-ignore", "-q", str(path)], cwd=repo, check=False, capture_output=True
     )
     return proc.returncode == 0
-
-
-def _rename_copied_env(env_dir: Path, old: str, new: str) -> None:
-    for path in sorted(item for item in env_dir.rglob("*") if item.is_file()):
-        text = path.read_text(encoding="utf-8")
-        updated = text.replace(f"envs/{old}/", f"envs/{new}/").replace(
-            f"jarvis_env: {old}", f"jarvis_env: {new}"
-        )
-        if updated != text:
-            path.write_text(updated, encoding="utf-8")
 
 
 def register_copy_app(copy: ExampleCopy, namespace: str) -> None:

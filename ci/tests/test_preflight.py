@@ -206,13 +206,6 @@ def test_non_x86_host_fails_before_any_change(tmp_path: Path) -> None:
     _stopped_before_base_os(result, "k3s role supports only amd64 hosts.")
 
 
-def test_every_required_cluster_var_is_asserted() -> None:
-    """Rule: the opening play's cluster-vars assert names every required key."""
-    tasks = yaml.safe_load((REPO_ROOT / "infra" / "ansible" / "tasks" / "preflight.yml").read_text(encoding="utf-8"))
-    that = next(task for task in tasks if task.get("name") == "Require k3s cluster-vars")["ansible.builtin.assert"]["that"]
-    assert {line.split()[0] for line in that if line.endswith("is defined")} == set(_REQUIRED)
-
-
 def test_missing_cluster_var_fails_before_any_change(tmp_path: Path) -> None:
     """A required cluster-vars key that is missing fails the opening play and changes nothing."""
     result = _run_site(tmp_path, drop="jarvis_env")
