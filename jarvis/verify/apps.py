@@ -63,7 +63,7 @@ def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None
     if leftover:
         raise CheckWarning(
             f"{', '.join(leftover)}: the env no longer lists these apps; delete what they left "
-            "(core/feature/app-hosting/CONTRACT.md, Operations)"
+            "(docs/add-a-hosted-app.md, Turn it off)"
         )
 
 

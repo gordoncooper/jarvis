@@ -31,7 +31,7 @@ def render_env(env_dir: Path) -> str | None:
     if not _apps.app_names(data):
         return None
     if not app_hosting_listed(env_dir):
-        raise SystemExit(f"{env_dir}: lists apps, but app hosting is off (core/feature/app-hosting/CONTRACT.md, Config)")
+        raise SystemExit(f"{env_dir}: lists apps, but app hosting is off (list app-hosting under features in values/switches.yaml)")
     if not cluster_vars.get("apps_git_repo_url"):
         raise SystemExit(f"{env_dir}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
     return _apps.render(data, resolve_cluster_vars(cluster_vars))

@@ -453,7 +453,7 @@ def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
     if not restic.exists() and _git_records(restic_rel) and not rotate_restic:
         raise SystemExit(
             "refusing to recreate backups-restic because git already records it; "
-            "rotation is in core/platform/backups/CONTRACT.md; "
+            "rotation is in docs/backups.md; "
             "pass --rotate-restic to mint a new password"
         )
     ca_secret = _secrets_dir(env) / CA_SECRET_FILENAME
@@ -465,7 +465,7 @@ def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
         raise SystemExit(
             "refusing to mint k3s tokens for an env that already has secrets; "
             "its cluster has a token already, so the owner seals it as k3s-token "
-            "(core/platform/backups/CONTRACT.md, Rebuild a dead node)"
+            "(docs/backups.md, Rebuild a dead node)"
         )
     if not ca_secret.exists() and ca_root.is_file():
         raise SystemExit(

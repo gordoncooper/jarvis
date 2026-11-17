@@ -4,7 +4,7 @@ A small file server (`sigoden/dufs`, pinned by digest) for plain-text notes, sto
 
 **Demonstrates:**
 
-- **The per-app backup path.** `app.yaml` declares one volume, `data`, with `backup: true`. `deploy/` ships a PVC with that name and no `backup: none` annotation, no `volumeName` and no `dataSource`. The backup runs with the app's **own** credential: the env registers it for `app-notes` (backups contract in Jarvis, "App credentials"). Until it exists the volume is not backed up and the env's verify step fails it.
+- **The per-app backup path.** `app.yaml` declares one volume, `data`, with `backup: true`. `deploy/` ships a PVC with that name and no `backup: none` annotation, no `volumeName` and no `dataSource`. The backup runs with the app's **own** credential: the env registers it for `app-notes` (Jarvis docs/backups.md, "App credentials"). Until it exists the volume is not backed up and the env's verify step fails it.
 - **State survives a restart.** Delete the pod; the notes (and `welcome.txt`) are still there.
 - **An init container and a ConfigMap.** `seed` copies `welcome.txt` from the ConfigMap onto the volume once (marker `/data/.seeded`), never overwriting later edits.
 - **A caller.** `network.callers: [hello-web]`: hello-web may call notes (hello-web lists notes under `egress.apps`); no other app may.

@@ -11,7 +11,8 @@
 
 | Path | Topic |
 | --- | --- |
-| [deploy.md](deploy.md) | Every step of a deploy in detail: init, node prep, site, verify, drill, restore |
+| [deploy.md](deploy.md) | Every step of a deploy in detail: init, node prep, site, verify |
+| [backups.md](backups.md) | Restore, drill, rebuild a node, rotate the restic password, app credentials, the off-host copy |
 | [releasing.md](releasing.md) | Cut a core release, and move an env to it |
 | [add-an-addon.md](add-an-addon.md) | Write an add-on, and turn it on or off in an env |
 | [add-a-hosted-app.md](add-a-hosted-app.md) | Write a hosted app's folder, and turn it on or off in an env |

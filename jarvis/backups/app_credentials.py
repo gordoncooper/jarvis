@@ -1,7 +1,7 @@
 """One hosted app's own backup credential: names, paths and the registration Component.
 
 bootstrap-secrets writes these files and env-schema compares against them, so both read
-the one definition here (core/platform/backups/CONTRACT.md, App credentials).
+the one definition here (docs/backups.md, App credentials).
 """
 
 from __future__ import annotations
