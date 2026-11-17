@@ -578,9 +578,9 @@ def test_disabled_component_checks_do_not_run(
 
 def _enable_addons(root: Path, addons: list[str]) -> None:
     # The test core holds the fixture add-ons.
-    path = root / "envs" / "env-test" / "flux" / "kustomizations" / "services.yaml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump({"kind": "Kustomization", "spec": {"components": addons}}), encoding="utf-8")
+    path = root / "envs" / "env-test" / "values" / "switches.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    path.write_text(yaml.safe_dump({**(data or {}), "addons": addons}), encoding="utf-8")
 
 
 def test_core_only_env_passes_and_a_disabled_addon_is_skipped(

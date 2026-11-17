@@ -305,16 +305,6 @@ def _git_ignored(repo: Path, path: Path) -> bool:
     return proc.returncode == 0
 
 
-def _rename_copied_env(env_dir: Path, old: str, new: str) -> None:
-    for path in sorted(item for item in env_dir.rglob("*") if item.is_file()):
-        text = path.read_text(encoding="utf-8")
-        updated = text.replace(f"envs/{old}/", f"envs/{new}/").replace(
-            f"jarvis_env: {old}", f"jarvis_env: {new}"
-        )
-        if updated != text:
-            path.write_text(updated, encoding="utf-8")
-
-
 def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
     """Turn on backup for one app in the copy: selection, render, bootstrap-secrets, as an owner would."""
     import yaml

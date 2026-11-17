@@ -1,127 +1,46 @@
 # CONTRACT: Env schema
 
-Defines what each deployment target under `envs/<env>/` may set. Core stays env-agnostic; env specifics live only under `envs/`. Config with no consumer is not in the schema; each piece arrives with the code that uses it.
-
-A real env lives in a private instance repository. The jarvis CLI, run from inside it, points the schema, the env-level checks and every command at `<instance>/envs/<env>` and `<instance>/.sops.yaml` (it sets `INSTANCE` for the code under it). Without it, they read this checkout, which holds no env. `instance_root` in `jarvis/env/runtime.py` is the one resolver.
+What each env under `envs/<env>/` may set. Run from an instance repository, the jarvis CLI points every check at `<instance>/envs/<env>` and `<instance>/.sops.yaml` (`instance_root` in `jarvis/env/runtime.py`). Every key, its type, default and meaning: [docs/reference.md](../docs/reference.md), rendered from the schemas by `python -m jarvis.schema.reference`.
 
 ## Offers
 
-- JSON Schemas for an env's four values files: `schema/cluster-vars.schema.json`, `switches.schema.json`, `apps.schema.json` and `hosts.schema.json`. Each file names its schema on its first line (`# yaml-language-server: $schema=<path or URL>`), so an editor checks it as you type; in an instance, use the schema at the env's core tag, `https://raw.githubusercontent.com/<owner>/jarvis/<tag>/schema/<name>.schema.json`. `cluster-vars.schema.json` is env-schema's authority for that file's keys, types and simple patterns (`jarvis.schema.values`, with each key's message in its `x-messages`); the other three describe each file's shape, and env-schema's Python checks their names, grants and selections. Rules that span fields stay in Python: the CIDRs, the App DNS address, LAN ranges, known hosts, the time zone and paths. Each key's `description`, `default` and `x-required` (when it is required only with another choice) are the one home for what it means: editors show them, and [docs/reference.md](../docs/reference.md) is their render (`python -m jarvis.schema.reference`, which a test keeps current).
-- A single validation contract for three files per env:
-  - `values/switches.yaml` — what the env enables, by name only (below).
-  - `values/cluster-vars.yaml` — flat keys for Flux postBuild substitution and Ansible host settings. Inventory keeps hostnames only. Secrets stay in SOPS files that `jarvis secrets` and Flux decrypt.
-  - `inventory/hosts.yml` — one block per host: `node_roles`, optional `data_disk`, and optional per-host `ssh_user` and `k3s_kubelet_*`. Host keys are hostnames. `jarvis validate` rejects an IP used as a host name and any other host key.
-- Rejection of unknown `cluster-vars.yaml` keys (`code_delivery` is one: nothing reads it). The known set is the required keys plus optional `ssh_user`, `age_key_file`, `apps_git_repo_url`, `lan_cidrs`, `chrony_nts`, `flux_known_hosts`, `backup_check_schedule`, and `node_memory_reserve_percent`.
-- Default `ssh_user: ubuntu` when omitted. `jarvis init` writes the one it is given (default: the user running it).
-- Default `backup_check_schedule: 30 6 * * 3` when omitted.
-- Default `age_key_file` is `~/.config/sops/age/keys.txt` when omitted. `SOPS_AGE_KEY_FILE` overrides it on the controller.
-- Rejection of a `time_zone` that is not an IANA zone, and of a `k3s_version` that is not a k3s version string (`v<major>.<minor>.<patch>+k3s<n>`).
-- `apps_git_repo_url`, when set, is https and validated like `flux_git_repo_url`. It is required once the env lists a hosted app.
-- Every sealed file under `envs/<env>/secrets/` has a reader: the bootstrap secrets (`k3s-token`, `cert-manager-ca`, `backups-restic`), the deploy key of an `ssh://` root, `backups-offsite` while the off-host copy is listed, the files in each folder an enabled add-on decrypts, and each registered app credential. Any other sealed file fails `jarvis validate`; delete it, or enable what uses it.
-- `flux_known_hosts`, when set, is one or more `<host> <key type> <base64 key>` lines, and an `ssh://` `flux_git_repo_url`'s host is among them. Unset, Flux trusts GitHub's published key (the flux-operator role default), so an `ssh://` root on another host must set it. Ansible reads it; it is not published to the cluster.
-- `lan_cidrs`, when set, is a non-empty list of IPv4 CIDRs, each inside RFC 1918 and clear of `pod_cidr` and `service_cidr`. It is required once `values/apps.yaml` grants `lan-all` or `lan-target`.
+| What | Where |
+| --- | --- |
+| The shape of each values file: keys, types, patterns, defaults. A file names its schema on its first line (`# yaml-language-server: $schema=…`), so an editor checks it as you type. | `schema/cluster-vars.schema.json`, `hosts.schema.json`, `switches.schema.json`, `apps.schema.json` |
+| The rules that span fields or files | `jarvis/schema/env.py`, the `env-schema` check of `jarvis validate` |
+| That the committed `flux/` is the render of the values | `jarvis render --check`, the `render` check of `jarvis validate` |
+| Resolved cluster-vars: the file with each schema `default` filled in | `resolve_cluster_vars` |
+| Node roles: each is an Ansible group (with `infra/inventory/roles` as the second `-i`) and the label `node-role.jarvis.io/<role>=true`, set by the k3s role. A node with neither `workers` nor `edge` gets the taint `node-role.jarvis.io/dedicated=true:NoSchedule`; only `edge` nodes get `svccontroller.k3s.cattle.io/enablelb=true`. A role arrives with the first service that schedules by it. | `hosts.schema.json`, the k3s role |
+| A pre-host mode for `jarvis node prep`, before the env's keys exist: skips the `.sops.yaml` rule per env and the recipient check | `validate_env_tree(…, pre_host=True)` |
 
 ## Expects
 
-- One folder per env: `envs/<env>/` with the `cluster-vars.yaml` and `hosts.yml` above present when that env is active.
-- Once an env has a `flux/` folder or sealed files, it holds `values/switches.yaml`, and commits `flux/kustomization.yaml`, `flux/kustomizations/services.yaml` and `flux/platform-configs/kustomization.yaml` exactly as `jarvis render` writes them from it. An unknown name, a name listed twice, or a hand-edited render fails, and the render refuses an unknown name or two add-ons for one slot before it writes.
-- Once an env has a `flux/` folder or sealed files, `flux/` holds every Flux entry file: `sync.yaml`, `kustomization.yaml`, `kustomizations/services.yaml` and `platform-configs/kustomization.yaml`; the FluxInstance, identities and platform layers are core's (`flux/` in core). A missing one fails the schema. The root Kustomization in `sync.yaml` sets `spec.postBuild.substitute` to exactly `jarvis_env: <env>`, which core's layers read. An env with neither yet (`jarvis node prep` on a new env) needs none.
-- Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `cert-manager-ca.sops.yaml` and `backups-restic.sops.yaml`, which the env's platform-configs path applies.
-- Once `envs/<env>/secrets/` holds any `*.sops.yaml`, it also holds `k3s-token.sops.yaml`. Before that it is not required, because `jarvis node prep` validates a new env before `jarvis secrets` runs.
-- When `flux_git_repo_url` is `ssh://`, `envs/<env>/secrets/flux-deploy-key.sops.yaml` (the read-only deploy key) is required.
-- Once `envs/<env>/secrets/` holds any `*.sops.yaml` and the env's switches list `offsite-backup-copy`, `envs/<env>/secrets/backups-offsite.sops.yaml` is required. Before bootstrap it is not, for the same `jarvis node prep` reason. An env that does not list it needs nothing new.
-- App backup credentials. A registration is `backups/app-<name>`, carried by the generated wrapper under `components:` in the env's `flux/platform-configs/kustomization.yaml`; any other entry but the app-hosting switch fails. `flux/platform-configs/backups/app-<name>/kustomization.yaml` must be exactly the Component `jarvis secrets --app app-<name>` writes. Once bootstrapped, `envs/<env>/secrets/app-<name>/backups-restic-app-<name>.sops.yaml` is required. An env that registers any app lists `apps-backup-server` in its switches. A file named `backups-restic-app-<name>.sops.yaml` anywhere else under `secrets/` fails. Registration follows the `backups:` selection in `values/apps.yaml`: `mode: selected` (default off, list `selected` backup-eligible apps) or `mode: all_except` (every eligible listed app except `exclude`). Ineligible and excluded apps need no credential; each selected eligible app requires its sealed file once bootstrapped. `jarvis render` generates `flux/generated/backup-selection/` and each registration Component; `components:` then holds only the app-hosting switch and `../generated/backup-selection`, and hand-copied `backups/app-*` entries or any other entry fail. With no `backups:` section the env registers no app; deleting the section while apps still register fails, so set `selected: []` and re-render first. Optional per-app `overrides` under `backups` may set `backup_schedule` and `backup_retention_*`; the render carries them in the wrapper as ConfigMap `platform-backups/backup-overrides`. Eligibility reads each app's file from a checkout of `apps_git_repo_url`, or from `APPS_REPO` when set; a missing checkout, or an app file it is missing or cannot parse, fails. An env that lists no app reads no app file, so it needs no checkout, empty or absent.
-- App hosting is off unless the env's switches list `app-hosting` under `features`. The render writes the kustomize `components:` entry, kept apart from the app backup registrations: any other component must still be a `backups/app-<name>` registration.
-- Hosted apps: with app hosting on, `apps` in `values/switches.yaml` (app names only, each a DNS label of at most 59 characters, once, each with a `<name>/app.yaml` in the apps repository: a missing checkout or a name it does not hold fails) and optional `values/apps.yaml` with `exceptions:` (lines `- <app>: <grant>`, one grant each, for a listed app; grants `privileged`, `root`, `host-network`, `host-path`, `hostname <name>` outside `dns_suffix`, `lan-port <port>/<TCP|UDP>`, `lan-all`, `lan-target <name> <cidr> <port>/<TCP|UDP>` (the name a DNS label other than `all`, the range inside `lan_cidrs`), `no-uptime-check`, each once; `lan-all` and `lan-target` need `lan_cidrs`). Optional `backups:` selects which listed apps register a backup credential: `mode: selected` with `selected` (default off) or `mode: all_except` with optional `exclude`; only apps whose app file declares a `backup: true` volume may appear on `selected`, and `exclude` reads no app file; optional `overrides.<app>` may set `backup_schedule` and `backup_retention_daily`, `backup_retention_weekly`, and `backup_retention_monthly`, for that app's ReplicationSources in place of the `cluster-vars.yaml` values; a field it leaves out keeps the `cluster-vars.yaml` value ([core/platform/backups/CONTRACT.md](../core/platform/backups/CONTRACT.md)). Eligibility reads each app's `app.yaml` from `apps_git_repo_url` or `APPS_REPO`. `backups:` is validated even when the env lists no app, and then needs no apps checkout. `versions:` pins each listed app to a tag of the apps repository, `<app>: v<x.y.z>` for the tag `<app>/v<x.y.z>`: every listed app needs one, and a pin for an app the list lacks or in another form fails; the wiring deploys that tag, and eligibility and app checks read the app at it. Any other key, name or grant fails, and so do an `apps:` key in `values/apps.yaml` and a non-empty list with app hosting off. An env that lists an app sets `apps_git_repo_url`, lists `generated/apps.yaml` in `flux/kustomization.yaml`, and commits that file exactly as `jarvis render` renders it (the render check is skipped pre-host, like the cluster-vars ConfigMap). With `backups:` present, `jarvis render` output must match under `flux/generated/backup-selection/` and `flux/platform-configs/backups/`. A missing or empty list runs no app and has neither the file nor the line. ([core/feature/app-hosting/CONTRACT.md](../core/feature/app-hosting/CONTRACT.md)).
-- `cluster-vars.yaml` keys referenced as `${…}` in manifests must exist in that file. A missing postBuild variable fails the Flux reconcile.
-- Add-ons: `addons` in `values/switches.yaml` lists the add-ons the env turns on, by folder name under core's `addons/` ([addons/CONTRACT.md](../addons/CONTRACT.md)); the render writes them under `spec.components` of `flux/kustomizations/services.yaml`. An empty list is a core-only env. An unknown add-on, the same add-on twice, or two add-ons that fill one slot (label `addons.jarvis.io/slot`) fails the schema. Once `envs/<env>/secrets/` holds any `*.sops.yaml`, each folder an enabled add-on decrypts, `envs/<env>/secrets/<namespace>/`, holds at least one sealed file. Before that it is not required, for the same `jarvis node prep` reason. Every env is held to this: `jarvis init` mints a new env's secrets as it writes it. Core is `<root>/core` when the instance holds it there, and otherwise the product checkout that runs the schema.
+| Rule | Checked by |
+| --- | --- |
+| `values/cluster-vars.yaml` and `inventory/hosts.yml` exist | env-schema |
+| `jarvis_env` is the env's folder name; `time_zone` is an IANA zone | env-schema |
+| `pod_cidr` and `service_cidr` are CIDRs; `app_dns_cluster_ip` is a host address in `service_cidr`, not its first or tenth | env-schema |
+| `lan_cidrs` are IPv4 CIDRs inside RFC 1918, clear of the cluster's ranges | env-schema |
+| An `ssh://` root's host is among `flux_known_hosts`; unset, only `github.com` | env-schema |
+| Across hosts: exactly one `control_plane` and one `backup` host, at least one `edge` host | env-schema |
+| Once the env has `flux/` or sealed files, `values/switches.yaml` exists | env-schema |
+| Each add-on in `switches.yaml` is a folder under core's `addons/`; at most one per slot (label `addons.jarvis.io/slot`) | env-schema, and the render refuses before it writes |
+| Each app in `switches.yaml` has `<app>/app.yaml` in the apps repository (`apps_git_repo_url` beside the instance, or `APPS_REPO`) | env-schema, render |
+| An env that lists apps lists `app-hosting` and sets `apps_git_repo_url`; each listed app has one `versions` pin, and only listed apps | env-schema, render |
+| Each exception line in `apps.yaml` is one known grant for a listed app; `lan-all` and `lan-target` need `lan_cidrs` | env-schema, render |
+| A `backups:` selection names only listed, backup-eligible apps; an app file the checkout cannot read fails | env-schema |
+| An env that registers an app credential lists `apps-backup-server` | env-schema |
+| Once sealed files exist: `k3s-token`, `cert-manager-ca`, `backups-restic`; `backups-offsite` while the off-host copy is listed; each registered app's credential in `secrets/app-<name>/`; a sealed file in each folder an enabled add-on decrypts | env-schema |
+| An `ssh://` root has `secrets/flux-deploy-key.sops.yaml` | env-schema |
+| Every sealed file has a reader, and opens for exactly the env's recipients | env-schema |
+| `.sops.yaml` has one age creation rule per env, and none for an env that does not exist | env-schema |
+| Deleting `backups:` while apps register refuses; set `selected: []` and re-render first | render |
+| Every `${…}` a manifest reads exists; Flux's strict substitution fails the reconcile otherwise | `jarvis validate` builds with `flux build --strict-substitute` |
+| Core holds no env name, hostname, `dns_suffix`, `ssh_user` or owner handle | review |
 
 ## Health
 
-Not a runtime component. Health is “validation passes”: the `env-schema` check (`jarvis validate`) exits 0 for the env tree.
-
-## Config
-
-All keys in env value files use **lowercase snake_case** (including `cluster-vars.yaml`). Every key, its type, default and meaning: [docs/reference.md](../docs/reference.md), generated from the schemas. The rest of this section is what spans keys.
-
-### `values/switches.yaml`
-
-One short file, names only, one per line. Core is on in every env, so it has no section: `core/platform/kustomization.yaml` and `core/platform/configs/kustomization.yaml` list it. `jarvis render --env <env>` turns it into the Flux wiring, and it and `jarvis render` refuse an unknown name before they write; `INSTANCE=<path>` points it at an instance. Settings stay where they were: an app's in its app file, an exception line or backup selection in `values/apps.yaml`, a sealed secret under `secrets/`. A feature is one row of `OPTIONAL_COMPONENTS` in `jarvis/env/switches.py` and adds no bundle to any env; `app-dns` needs `app_dns_cluster_ip` and `offsite-backup-copy` needs `backups-offsite`. A new app in the apps repository never deploys until an env lists it.
-
-### `values/cluster-vars.yaml`
-
-A required key that is present but null counts as unset and fails.
-
-### `inventory/hosts.yml`
-
-Host keys are hostnames, under `all.hosts`. No other top-level key, and no keys under `all` besides `hosts`. Inventory is not encrypted and does not need the age key. `jarvis validate` rejects an IP used as a host name.
-
-Each host is a mapping with `node_roles` and the optional keys in the reference. No other host keys.
-
-### Node roles and labels
-
-`infra/inventory/roles` is the second inventory (a directory). Every env run passes it as the second `-i`, after `envs/<env>/inventory/hosts.yml`. No env copies it. `node_roles` become Ansible groups of the same name, so a play can target `control_plane` or `workers`. `data_disk` is a host var read by the `node-disk` role; it makes no group. The `edge` group is the only set of hosts that receive `svccontroller.k3s.cattle.io/enablelb=true`. `backup` is a label only, and etcd snapshots stay on the control plane.
-
-Kubernetes labels are `node-role.jarvis.io/<role>=true` for each role on the node. That prefix is reserved for them. The k3s role sets and removes them. This schema does not apply labels. A node whose roles include neither `workers` nor `edge` gets one taint, `node-role.jarvis.io/dedicated=true:NoSchedule`. A node that includes `workers` or `edge` gets none, so a single node that includes `workers` stays schedulable for pods that tolerate nothing, and k3s service load-balancer pods can still land on an edge node. Role labels choose the node. The taint only keeps other pods off a dedicated node.
-
-A role is added only in the same PR as the first service that schedules by it, and the sample instance's hosts (`ci/tests/sample.py`) declare it in that PR. `workers` is the general role for app nodes, and a role does not depend on another.
-
-### A new env
-
-`jarvis init` (and `jarvis env add`) writes a new env: `values/cluster-vars.yaml` with the required keys and the choices it was given, `values/switches.yaml`, `inventory/hosts.yml`, the env's `.sops.yaml` creation rule (its working key and the offline recovery key), its minted secrets and `ca.crt`, a sealed deploy key for an `ssh://` root, and the rendered `flux/`. The env passes every check as soon as it is written. Core ships no env: its tests and its env-level rule checks run on a sample instance written by the same code (`ci/tests/sample.py`), with the sample hosted apps, the tests' sample add-on and placeholder sealed files for what an owner seals by hand (`backups-offsite`, the add-on's folder). Every `envs/<name>/` path under an env's `flux/` uses that env's name.
-
-### Explicit env
-
-The jarvis CLI picks the env itself when the instance repository holds one, and otherwise requires `--env`; the modules under it require `--env` and fail when it is omitted.
-
-### postBuild substitution
-
-The FluxInstance sets kustomize-controller `StrictPostBuildSubstitutions=true`. A missing postBuild variable fails the reconcile. `$${...}` escapes a literal `${...}`.
-
-The env checks (`jarvis validate`) read what Flux builds, not their own model of it: each Kustomization the env applies, from the root in `flux/sync.yaml` down, is built with `flux build kustomization --dry-run --strict-substitute`, its `substituteFrom` ConfigMaps and plain Secrets read from what the tree already applies and its inline `substitute` over them. So a missing variable fails `jarvis validate` as it fails the reconcile. A Kustomization reading another source (a hosted app's repository) is not built there; the app checks read it.
-
-The cluster-vars ConfigMap publishes an allow-list. Ansible reads `values/cluster-vars.yaml` for host settings, including every key that is not published. `jarvis_env` is published because verify, drill and restore read it from the live ConfigMap.
-
-The published set is `CLUSTER_VARS_PUBLISHED` in `jarvis/render/cluster_vars.py`. Every other known key in `jarvis/schema/env.py` is host-only (Ansible only). When `flux/generated/cluster-vars-configmap.yaml` is present, it must match that render.
-
-`flux/sync.yaml` is exactly what `jarvis render` renders from `cluster-vars.yaml`: the root `GitRepository` `flux-system` at `flux_git_repo_url` and `flux_git_ref` (with the deploy key's `secretRef` when the URL is `ssh://`), including `core` at `toPath: core`; the public `core` `GitRepository` at `core_git_repo_url` and `core_git_ref`; and the root Kustomization `flux-system` applying `./envs/<env>/flux` from `flux-system` with `postBuild.substitute: {jarvis_env: <env>}`. A hand edit fails. `site.yml` preflight requires the file.
-
-`validate_env_tree(..., pre_host=True)` skips the missing `.sops.yaml` recipient requirement and the generated ConfigMap match. Other `.sops.yaml` checks still run. `jarvis node prep` uses that mode before it contacts a host, then runs the full check at the end.
-
-### Identity values
-
-Core holds no env name, hostname, `dns_suffix`, `ssh_user`, owner handle or personal name. Each comes from `envs/<env>/` at render or run time. No check enforces this; reviewers do.
-
-`.sops.yaml` has one age creation rule per env, keyed on `envs/<env>/secrets/`. A creation rule that names an env folder that does not exist fails.
-
-### Reference shape (documentation)
-
-Each env under `envs/<env>/` supplies its own values, for example: `dns_suffix`, `time_zone`, optional `ssh_user` (default `ubuntu` when omitted), and optional `age_key_file` (default `~/.config/sops/age/keys.txt` when omitted).
-
-## Proven by
-
-- `ci/tests/test_pin.py`: a clean checkout at the env's tag is its pin; another commit, uncommitted changes, a branch ref and a missing tag are not; an env pinned elsewhere runs from a cached checkout of its tag, cloned once; a branch pin is refused; a release's notes are its CHANGELOG section.
-- `ci/checks/sample-instance` in the required `ci` workflow: every env check on a sample instance written by `jarvis init`'s code.
-- `ci/tests/test_env_schema.py`: valid env tree, an env without `hermes.yaml` or `apps.yaml`, `build_agent` and `code_delivery` as unknown keys, `storage` as an unknown role, `ssh_user` defaulting to `ubuntu`, and `age_key_file` defaulting to `~/.config/sops/age/keys.txt`.
-- A behavior test accepts an env that omits either of `apps_git_repo_url` and `lan_cidrs`, and an env that omits both. A value that is set still has to be allowed.
-- A behavior test rejects a `lan_cidrs` that is not a list, holds a non-network address, a public range, or a range overlapping the cluster's.
-- A behavior test accepts two envs whose `flux_git_repo_url` owners differ.
-- A behavior test rejects a `.sops.yaml` creation rule that names an env folder that does not exist.
-- A behavior test rejects a `dns_suffix` that is not a lowercase DNS name.
-- A behavior test accepts a new env that lists the off-host copy before bootstrap, rejects it once bootstrapped without `backups-offsite.sops.yaml`, and accepts it once the file is there.
-- `ci/tests/test_switches.py`: one name enables an app with no other env file and a second render changes nothing; an unknown name in each section fails and refuses the render, and so do two add-ons for one slot; a `core` section, a missing file, a hand-edited render and `apps:` in `values/apps.yaml` fail; an unlisted feature renders nothing; selected backups need the apps server switch.
-- `ci/tests/test_backup_isolation.py` accepts a bootstrapped copy with one registered app credential, and rejects a registration outside `app-`, an edited registration Component, a missing sealed file, a registration without the apps server, and an app credential sealed outside its own folder.
-- `ci/tests/test_backup_selection.py` rejects an ineligible app on `selected`, requires a sealed credential for a selected eligible app once bootstrapped, accepts an `all_except` exclusion without that sealed file, renders registration Components from selection, fails verify when a required app has no credential, rejects each malformed section and an unknown component, and fails closed on an unreadable app file or missing checkout.
-- `ci/tests/test_addons.py` rejects a sealed file nothing reads, at the top level and in a folder no enabled add-on decrypts.
-- `ci/tests/test_addons.py` accepts known add-ons, rejects an unknown add-on, a duplicate, and two add-ons for one slot, and rejects a bootstrapped env whose add-on Secret folder is empty.
-- A behavior test rejects a repo URL that includes userinfo, a query, or a fragment.
-- A behavior test accepts the sample env's source pair and rejects a core source whose url does not match cluster-vars.
-- A behavior test requires `flux-deploy-key.sops.yaml` for an `ssh://` root and accepts the env once it is there.
-- A behavior test rejects a generated ConfigMap that does not match the cluster-vars render, and accepts that tree in pre-host mode.
-- A behavior test rejects a relative `backup_path`.
-- The cluster-vars ConfigMap render publishes only the allow-list in the postBuild section. Host-only keys stay out. A stale render fails the flux entry test.
-- A behavior test rejects an unknown `time_zone` and a `k3s_version` that is not `v<major>.<minor>.<patch>+k3s<n>`.
-- A behavior test rejects a `backup_schedule` or `backup_check_schedule` that is not a five-field cron, and one resolves an omitted `backup_check_schedule` to `30 6 * * 3`.
-- A behavior test rejects an `app_dns_cluster_ip` that is not an IP address, is outside `service_cidr`, is not a host address, or is the first or tenth address of `service_cidr`.
-- Behavior tests reject an unknown role, an env without exactly one `control_plane` or exactly one `backup` host, an env with no `edge` host, and an unknown host key.
-- `ansible-inventory --graph` on the sample env shows each role as a group. `site.yml` syntax-checks against that env's hosts file and `infra/inventory/roles`.
+| Check | Pass |
+| --- | --- |
+| `jarvis validate` | `PASS env-schema` and `PASS render` for every env |
+| `ci/checks/sample-instance` | the same checks on a sample instance written by `jarvis init`'s code |

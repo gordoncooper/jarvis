@@ -14,7 +14,7 @@ from jarvis.checks.app_hosting import scan_app_hosting
 from jarvis.checks.flux_identity import scan_flux_identity
 from jarvis.env import switches as _switches
 from jarvis.schema import env as env_schema
-from support import REPO_ROOT, core_at, sample_root, set_switches
+from support import REPO_ROOT, core_at, sample_root
 
 EXAMPLE = sample_root() / "envs" / "env-00"
 
@@ -169,24 +169,7 @@ def test_env_app_list_and_grants_that_fit_pass() -> None:
 def _schema_errors(instance: Path) -> list[str]:
     env_dir = instance / "envs" / "env-00"
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    return env_schema._validate_apps(env_dir, instance, cluster_vars, pre_host=False)
-
-
-def test_env_schema_requires_the_committed_render(tmp_path: Path) -> None:
-    """Rule: an env that lists apps commits the render and lists it; one that lists none has neither."""
-    _product, instance = _tree(tmp_path)
-    env_dir = instance / "envs" / "env-00"
-    assert _schema_errors(instance) == []
-    _edit(env_dir / _apps.APPS_VALUES, "  - lan-demo: lan-port 8080/TCP\n", "  - lan-demo: privileged\n")
-    assert any("does not match" in error for error in _schema_errors(instance))
-    _edit(env_dir / _apps.APPS_VALUES, "  - lan-demo: privileged\n", "  - lan-demo: lan-port 8080/TCP\n")
-    _edit(env_dir / "flux" / "kustomization.yaml", "- generated/apps.yaml\n", "")
-    assert any("resources lists generated/apps.yaml" in error for error in _schema_errors(instance))
-    (env_dir / _apps.APPS_VALUES).write_text("exceptions: []\n", encoding="utf-8")
-    set_switches(env_dir, apps=[])
-    assert any("the env lists no app; remove it" in error for error in _schema_errors(instance))
-    (env_dir / "flux" / _apps.GENERATED_REL).unlink()
-    assert _schema_errors(instance) == []
+    return env_schema._apps_problems(env_dir, instance, cluster_vars)
 
 
 _APP_PIECES = {
@@ -229,10 +212,6 @@ def render_platform(tmp_path: Path, *, hosting: bool) -> dict[tuple[str, str], d
     (work / "kustomization.yaml").write_text(yaml.safe_dump(listing), encoding="utf-8")
     docs = [doc for doc in yaml.safe_load_all(_kustomize_build(str(work), root=work)) if isinstance(doc, dict)]
     return {(doc["kind"], doc["metadata"]["name"]): doc for doc in docs}
-
-
-def _rule(policy: dict, name: str) -> dict:
-    return next(rule for rule in policy["spec"]["rules"] if rule["name"] == name)
 
 
 def test_app_hosting_off_renders_none_of_it(tmp_path: Path) -> None:

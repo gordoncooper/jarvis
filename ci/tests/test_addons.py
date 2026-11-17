@@ -303,7 +303,7 @@ def _schema_errors(root: Path, core: Path | None = None) -> list[str]:
 
 
 def _schema_env(tmp_path: Path, components: list[str], *, slots: dict[str, str] | None = None) -> Path:
-    """An env listing components, over a core with add-ons widget and gadget (each may fill a slot)."""
+    """An env whose switches list components, over a core with add-ons widget and gadget (each may fill a slot)."""
     product, root = tmp_path / "product", tmp_path / "repo"
     for name in ("widget", "gadget"):
         labels = {"addons.jarvis.io/slot": slots[name]} if slots and name in slots else {}
@@ -312,7 +312,7 @@ def _schema_env(tmp_path: Path, components: list[str], *, slots: dict[str, str] 
         _write(product / "addons" / name / "flux.yaml", yaml.safe_dump(ks))
     root.mkdir()
     env = _write_env(root)
-    _write(env / "flux" / "kustomizations" / "services.yaml", yaml.safe_dump({"spec": {"components": components}}))
+    _write(env / "values" / "switches.yaml", yaml.safe_dump({"addons": components}))
     return root
 
 
@@ -324,16 +324,15 @@ def test_env_enabling_known_addons_passes_the_addon_rules(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("components", "slots", "expected"),
     [
-        (["nothing"], None, "unknown add-on 'nothing'"),
-        (["widget", "widget"], None, "listed twice"),
+        (["nothing"], None, "unknown name 'nothing'"),
         (["widget", "gadget"], {"widget": "chat-bot", "gadget": "chat-bot"}, "all fill slot chat-bot"),
     ],
-    ids=["unknown", "twice", "two-per-slot"],
+    ids=["unknown", "two-per-slot"],
 )
 def test_env_addon_list_breaking_the_rules_fails(
     tmp_path: Path, components: list[str], slots: dict | None, expected: str
 ) -> None:
-    """env-schema rejects an unknown add-on, a duplicate, and two add-ons for one slot."""
+    """env-schema rejects an unknown add-on and two add-ons for one slot."""
     errors = _schema_errors(_schema_env(tmp_path, components, slots=slots), tmp_path / "product")
     assert any(expected in item for item in errors), errors
 
@@ -343,6 +342,7 @@ def test_render_refuses_two_addons_for_one_slot(tmp_path: Path) -> None:
     root = _schema_env(tmp_path, [], slots={"widget": "chat-bot", "gadget": "chat-bot"})
     env = root / "envs" / "env-test"
     _write(env / "values" / "switches.yaml", yaml.safe_dump({"addons": ["widget", "gadget"]}))
+    _write(env / "flux" / "kustomizations" / "services.yaml", "spec: {}\n")
     before = (env / "flux" / "kustomizations" / "services.yaml").read_text(encoding="utf-8")
     with core_at(tmp_path / "product"), pytest.raises(SystemExit, match="all fill slot chat-bot"):
         render_switches(env, root)

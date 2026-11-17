@@ -93,19 +93,6 @@ def test_overrides_on_disabled_app_rejected(tmp_path: Path) -> None:
     assert "overrides apply only to backup-enabled apps" in "\n".join(exc.value.messages)
 
 
-def test_stale_wrapper_rejected(tmp_path: Path) -> None:
-    """Rule: generated backup-selection must list exactly the enabled registration Components."""
-    copy = bootstrap_example_copy(tmp_path)
-    _write_apps(copy, {"mode": "selected", "selected": ["notes"]})
-    _render_selection(copy)
-    register_copy_app(copy, NOTES)
-    path = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
-    path.write_text(path.read_text(encoding="utf-8").replace("app-notes", "app-stale"), encoding="utf-8")
-    with pytest.raises(ValidationError) as exc:
-        validate_one_env(copy.root, copy.name)
-    assert "stale wrapper" in "\n".join(exc.value.messages)
-
-
 def test_apps_repo_resolves_checkout_beside_instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Rule: without APPS_REPO, eligibility reads the checkout of apps_git_repo_url beside the instance."""
     copy = bootstrap_example_copy(tmp_path)
@@ -279,16 +266,6 @@ def test_no_override_renders_no_configmap(tmp_path: Path) -> None:
     assert "configMapGenerator" not in (copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION).read_text(encoding="utf-8")
 
 
-def test_wrapper_without_the_override_is_stale(tmp_path: Path) -> None:
-    """Rule: env-schema refuses a committed wrapper that does not carry the env's overrides."""
-    copy = _override_copy(tmp_path, {"notes": {"backup_schedule": "15 4 * * *"}})
-    path = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
-    path.write_text(path.read_text(encoding="utf-8").replace("15 4", "16 4"), encoding="utf-8")
-    with pytest.raises(ValidationError) as exc:
-        validate_one_env(copy.root, copy.name)
-    assert "does not match" in "\n".join(exc.value.messages)
-
-
 def _instance_with_backups(tmp_path: Path) -> Path:
     """Instance checkout with env-00 copy and backups all_except excluding notes."""
     instance = tmp_path / "instance"
@@ -318,22 +295,6 @@ def test_m10_rejects_invalid_apps_repo(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv("APPS_REPO", str(bad))
     with pytest.raises(_backup_selection.AppsRepoError, match="not an apps repository"):
         _backup_selection.apps_repo_root(copy.root, copy.env_dir)
-
-
-def test_m7b_wrapper_rejected_when_no_app_enabled(tmp_path: Path) -> None:
-    """Rule: generated backup-selection must not remain when no app is backup-enabled."""
-    copy = bootstrap_example_copy(tmp_path)
-    _write_apps(copy, {"mode": "all_except", "exclude": ["notes"]})
-    _render_selection(copy)
-    wrapper = copy.env_dir / _backup_selection.GENERATED_KUSTOMIZATION
-    wrapper.parent.mkdir(parents=True, exist_ok=True)
-    wrapper.write_text(
-        "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\ncomponents: []\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValidationError) as exc:
-        validate_one_env(copy.root, copy.name)
-    assert "no app is backup-enabled" in "\n".join(exc.value.messages)
 
 
 def test_instance_env_schema_without_apps_repo_fails(
@@ -375,30 +336,16 @@ _OVERRIDES = {"mode": "selected", "selected": ["notes"]}
 @pytest.mark.parametrize(
     ("section", "message"),
     [
-        ({"mode": "bogus"}, "mode must be"),
-        ({"mode": "selected", "junk": 1}, "unknown key 'junk'"),
         ({"mode": "selected", "exclude": []}, "exclude is only valid"),
         ({"mode": "all_except", "selected": []}, "selected is only valid"),
-        ({"mode": "selected", "selected": 5}, "must be a list"),
-        ({"mode": "selected", "selected": "notes"}, "must be a list"),
-        ({"mode": "all_except", "exclude": 5}, "must be a list"),
-        ({"mode": "all_except", "exclude": [["notes"]]}, "is not an app name"),
-        ({"mode": "selected", "selected": ["Bad_Name"]}, "is not an app name"),
         ({"mode": "selected", "selected": ["unlisted"]}, "not on this env's app list"),
-        ({"mode": "selected", "selected": ["notes", "notes"]}, "listed twice"),
-        ({"mode": ["selected"]}, "mode must be"),
-        ({"mode": "selected", 1: "x", "junk": "y"}, "unknown key 'junk'"),
-        ({**_OVERRIDES, "overrides": 5}, "must be a mapping of app name"),
-        ({**_OVERRIDES, "overrides": {"Bad_Name": {}}}, "not an app name"),
         ({**_OVERRIDES, "overrides": {"unlisted": {}}}, "not on this env's app list"),
-        ({**_OVERRIDES, "overrides": {"notes": 5}}, "must be a mapping"),
-        ({**_OVERRIDES, "overrides": {"notes": {1: 2, "junk": 3}}}, "unknown key 1"),
         ({**_OVERRIDES, "overrides": {"notes": {"backup_schedule": "daily"}}}, "five-field cron"),
-        ({**_OVERRIDES, "overrides": {"notes": {"backup_retention_daily": -1}}}, "non-negative integer"),
     ],
 )
 def test_env_schema_rejects_bad_selection(tmp_path: Path, section: dict, message: str) -> None:
-    """Rule: each malformed backups section is a schema error, never a crash on the way there."""
+    """Rule: a backups section that names what the env does not hold is refused; its shape is
+    schema/apps.schema.json's."""
     copy = bootstrap_example_copy(tmp_path)
     _write_apps(copy, section)
     with pytest.raises(ValidationError) as exc:
@@ -414,21 +361,7 @@ def test_env_schema_validates_selection_with_no_apps(tmp_path: Path) -> None:
     set_switches(copy.env_dir, apps=[])
     with pytest.raises(ValidationError) as exc:
         validate_one_env(copy.root, copy.name, pre_host=True)
-    assert "mode must be" in "\n".join(exc.value.messages)
-
-
-def test_env_schema_rejects_unknown_component_with_selection(tmp_path: Path) -> None:
-    """Rule: with backups declared, components holds only app hosting and the generated wrapper."""
-    copy = bootstrap_example_copy(tmp_path)
-    _write_apps(copy, {"mode": "selected", "selected": []})
-    validate_one_env(copy.root, copy.name, pre_host=True)
-    path = copy.env_dir / "flux" / "platform-configs" / "kustomization.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    doc["components"].append("../unknown")
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
-    with pytest.raises(ValidationError) as exc:
-        validate_one_env(copy.root, copy.name, pre_host=True)
-    assert "'../unknown' is not an app credential registration" in "\n".join(exc.value.messages)
+    assert "'bogus' is not one of" in "\n".join(exc.value.messages)
 
 
 def test_exclusion_never_reads_the_excluded_app_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -531,7 +464,7 @@ def test_the_backup_render_refuses_an_unknown_switch_name(tmp_path: Path) -> Non
     before = wiring.read_text(encoding="utf-8")
     assert "offsite-backup-copy" in before
     set_switches(copy.env_dir, features=["app-hosting", "offsite-copy", "apps-backup-server"])
-    with pytest.raises(SystemExit, match="unknown name 'offsite-copy'"):
+    with pytest.raises(SystemExit, match="'offsite-copy' is not one of"):
         render_env(copy.env_dir, copy.root)
     assert wiring.read_text(encoding="utf-8") == before
 
