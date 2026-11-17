@@ -1,27 +1,27 @@
 # CONTRACT: [name]
 
+One or two sentences: what the component is, and where its runbooks live if it has any.
+
 ## Offers
 
-What callers may rely on from this component or contract.
+| What | Detail |
+| --- | --- |
+| A name a caller may rely on | What it is, in the fewest words that let a caller use it |
 
 ## Expects
 
-What this component or contract requires from elsewhere.
+| What | From |
+| --- | --- |
+| What it needs from elsewhere | Who provides it |
 
 ## Health
 
-How to tell it is working: its probes, and what `jarvis verify` (and `--smoke`) checks, or "not applicable" with the reason.
-
-## Config
-
-Settings, where they live, and allowed values.
-
-## Operations
-
-Optional. Steps to run, rotate, or restore this component. Omit this heading when there are no steps.
+| Check | Pass |
+| --- | --- |
+| A probe, or a `jarvis verify` / `--smoke` line | What passing looks like |
 
 ## Limits
 
-Optional. What this component deliberately does not do. Omit this heading when there is nothing to say.
+Optional: what it deliberately does not do.
 
-A contract names rules, not tests: each test states the rule it checks (`Rule: …` in its docstring), and a change to this folder runs every test that names it, so a list of tests here would only go stale.
+A contract changes with its component. Rationale goes in a code comment or the PR, runbooks in `docs/`, and rules in the tests that check them.

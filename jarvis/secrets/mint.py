@@ -453,7 +453,7 @@ def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
     if not restic.exists() and _git_records(restic_rel) and not rotate_restic:
         raise SystemExit(
             "refusing to recreate backups-restic because git already records it; "
-            "rotation is in core/platform/backups/CONTRACT.md; "
+            "rotation is in docs/backups.md; "
             "pass --rotate-restic to mint a new password"
         )
     ca_secret = _secrets_dir(env) / CA_SECRET_FILENAME

@@ -1,6 +1,6 @@
 """Env backup selection for hosted apps: modes, eligibility, and registration intent.
 
-CONTRACT: core/platform/backups/CONTRACT.md (App credentials), schema/CONTRACT.md (values/apps.yaml
+CONTRACT: core/platform/backups/CONTRACT.md, docs/backups.md (App credentials), schema/CONTRACT.md (values/apps.yaml
 backups). bootstrap-secrets still mints sealed credentials; render_backup_selection.py writes
 registration Components and the platform-configs wrapper from this intent.
 """

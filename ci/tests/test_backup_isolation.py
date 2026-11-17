@@ -1,6 +1,6 @@
 """A hosted app's own backup credential: registration, render, and the isolation guards.
 
-Rules (core/platform/backups/CONTRACT.md, App credentials): core's credential never reaches an app-
+Rules (core/platform/backups/CONTRACT.md): core's credential never reaches an app-
 namespace; an app credential reaches only the apps server, restic-check and restic-offsite; the
 apps server runs --private-repos; an app credential is sealed only in its own namespace's folder.
 """

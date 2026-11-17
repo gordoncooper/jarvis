@@ -1,36 +1,27 @@
 # CONTRACT: App DNS
 
-A second CoreDNS, with the k8s_gateway plugin, answers `${dns_suffix}` from Ingress routes. Cluster DNS forwards that zone here.
-
-Optional: an env turns it on with `app-dns` under `features` in `values/switches.yaml`, which adds this folder to its `platform-configs` and needs `app_dns_cluster_ip`. Only then do edge hosts move their DNS off the systemd-resolved stub (base-os), so ServiceLB can take port 53. Off, the LAN's own DNS names apps (a wildcard for `${dns_suffix}` at an edge host), and `jarvis verify` reaches the canary at Traefik's ServiceLB address.
+A second CoreDNS with the k8s_gateway plugin answers `${dns_suffix}` from Ingress hosts, and cluster DNS forwards the zone to it. A feature: `app-dns` under `features`. Without it, the LAN's own DNS names services (a wildcard for `${dns_suffix}` at an edge host).
 
 ## Offers
 
-- Names from Ingress `spec.rules[*].host` in `${dns_suffix}`.
-- The address is `status.loadBalancer.ingress`, with IP preferred. For Traefik that is the edge node address ServiceLB publishes.
-- A LoadBalancer Service on UDP and TCP 53. k3s ServiceLB publishes it on the edge nodes.
-- `kube-system` ConfigMap `coredns-custom` forwards the zone to this Service's ClusterIP.
+| What | Detail |
+| --- | --- |
+| Names | Each Ingress `spec.rules[*].host` in `${dns_suffix}`, at its `status.loadBalancer.ingress` address (IP preferred), TTL 30s |
+| Service | LoadBalancer on UDP and TCP 53 at ClusterIP `${app_dns_cluster_ip}`, published by ServiceLB on edge nodes |
+| `kube-system/coredns-custom` | Key `app-dns.server` forwards the zone to that address |
+| HelmRelease `flux-system/k8s-gateway` | Chart `k8s-gateway` from `oci://codeberg.org/k8s-gateway/charts`, image digest-pinned, namespace `platform-app-dns`; prune disabled on all four objects |
 
 ## Expects
 
-- `dns_suffix` and `app_dns_cluster_ip` from `envs/<env>/values/cluster-vars.yaml`. Core does not hardcode them.
-- Traefik's LoadBalancer Service and Ingress class `traefik` (the exposure contract).
-- The `edge` role. The k3s role sets `svccontroller.k3s.cattle.io/enablelb=true` on those nodes only.
-- Edge hosts do not use the systemd-resolved stub (`127.0.0.53`). base-os sets `DNSStubListener=no` and links `/etc/resolv.conf` to `/run/systemd/resolve/resolv.conf`.
-- Chart `k8s-gateway` `4.0.1` from `oci://codeberg.org/k8s-gateway/charts`. The image is chart appVersion `1.9.2` (`codeberg.org/k8s-gateway/k8s_gateway`), digest-pinned in `image.tag`. Renovate updates the digest.
+| What | From |
+| --- | --- |
+| `dns_suffix`, `app_dns_cluster_ip` | `values/cluster-vars.yaml` |
+| Traefik's LoadBalancer Service and Ingress class `traefik` | [traefik](../../platform/traefik/CONTRACT.md) |
+| Edge nodes off the systemd-resolved stub (`DNSStubListener=no`), so port 53 is free | base-os, only when this feature is listed |
 
 ## Health
 
-The k8s-gateway Deployment is Ready. The chart's liveness probe is `/health` on port 8080 and the readiness probe is `/ready` on port 8181, which requires the `health` and `ready` plugins. The container sets a memory request of `128Mi` and limit of `256Mi`, and a CPU request of `100m` with no CPU limit. The chart default sets a CPU limit; `resources.limits.cpu: null` drops it.
-
-A new Ingress host in the zone answers at this Service's address with Traefik's: `jarvis verify --smoke` makes one and asks.
-
-## Config
-
-- Namespace `platform-app-dns`. HelmRelease `k8s-gateway` in `flux-system`.
-- One server block for `${dns_suffix}`, port 53. `use_tcp` on that zone makes the chart open both UDP and TCP 53.
-- Plugin `k8s_gateway` watches Ingress only. `loadBalancerAddressPreference ip`. TTL 30 seconds.
-- `service.clusterIP` is `${app_dns_cluster_ip}`.
-- `coredns-custom` key `app-dns.server` forwards the zone to that address. CoreDNS `forward` takes an address, and k3s CoreDNS resolves names with the node resolver, so the target is not a Service hostname.
-- Prune is disabled on the namespace, the HelmRepository, the HelmRelease, and `coredns-custom`.
-- `kube-system` holds this ConfigMap and the Traefik HelmChartConfig.
+| Check | Pass |
+| --- | --- |
+| Deployment `k8s-gateway` | Ready (`/health` on 8080, `/ready` on 8181) |
+| `jarvis verify --smoke` | a new Ingress host answers at Traefik's address |

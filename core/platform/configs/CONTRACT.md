@@ -1,20 +1,25 @@
 # CONTRACT: platform configs
 
-The one list of core components on the platform-configs Flux stage. A new platform config joins this list once, not once per env.
+The one list of core components on the `platform-configs` Flux stage, joined once rather than once per env.
 
 ## Offers
 
-- `kustomization.yaml` lists `backups`, `cert-manager/config` and `testapp`, in that order. Each component's own contract describes its objects.
+| What | Detail |
+| --- | --- |
+| `kustomization.yaml` | `backups`, `cert-manager/config`, `testapp`, in render order |
 
 ## Expects
 
-- Each env's `envs/<env>/flux/platform-configs/kustomization.yaml`, rendered from `values/switches.yaml`, lists `core/platform/configs`, that env's own SOPS secrets, and the features it names, nothing else. The env's Flux `platform-configs` Kustomization names that env folder as its path, decrypts with `sops-age`, depends on `platform-controllers`, and substitutes from `cluster-vars`. The health checks sit on `platform-controllers`: HelmReleases `cert-manager`, `kyverno` and `volsync` in `flux-system` must be Ready (timeout 15m). `platform-configs` waits only through that `dependsOn`.
-- The CRDs these objects use come from `platform-controllers` (`core/platform/kustomization.yaml`). Nothing in this list is also on that path.
+| What | From |
+| --- | --- |
+| Each env's `flux/platform-configs/kustomization.yaml` lists `core/platform/configs`, the env's SOPS secrets and its features, nothing else | `jarvis render` |
+| Kustomization `platform-configs` decrypts with `sops-age`, substitutes from `cluster-vars`, and depends on `platform-controllers`, which health-checks HelmReleases `cert-manager`, `kyverno`, `volsync` (15m) | core's Flux layers |
+| The CRDs these objects use, from `platform-controllers`; nothing here is also on that path | `core/platform/kustomization.yaml` |
 
 ## Health
 
-Flux `platform-configs` reports Ready.
+| Check | Pass |
+| --- | --- |
+| Kustomization `platform-configs` | Ready |
 
-## Config
-
-- Order is the render order. Moving an object between this list and another Flux path takes two commits (add, reconcile, then remove).
+Moving an object between this list and another Flux path takes two commits: add and reconcile, then remove.

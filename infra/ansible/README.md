@@ -1,91 +1,63 @@
 # Ansible (node bootstrap)
 
-`site.yml` asserts facts before any change (one control-plane host, amd64, required cluster-vars, core's `core/flux/flux-instance.yaml` and a committed `envs/<env>/flux/sync.yaml`), refuses a foreign or unmarked k3s, and checks a declared data disk. It then applies `base-os` on `all`, installs the k3s server on `control_plane`, joins every other host as an agent one at a time, reconciles node role labels and the dedicated taint, then installs kubeconfig and `flux-operator` on `control_plane`. Settings come from the env `cluster-vars.yaml` via `jarvis_cluster_vars`. A host with no `data_disk` skips the disk check and keeps its data on root. A single-node env has no agent hosts; that play matches none.
+`jarvis site --env <env>` runs `site.yml` from the instance repository, after the env schema passes. Settings come from the env's `cluster-vars.yaml` (`jarvis_cluster_vars`); the inventory is the env's hosts file, then core's `infra/inventory/roles`, which turns each `node_roles` entry into a group.
 
-`jarvis site` runs this playbook, from the instance repository (docs/deploy.md). The env schema runs first and stops before Ansible on any error. Before a run, every inventory hostname resolves on the controller and on every node, `ssh_user` has key auth and passwordless sudo, and `known_hosts` is already seeded. Prepare a node (below) gets one node there. An agent fails before it starts if the control-plane name does not resolve on that agent.
+1. The opening play (tag `always`) checks every host before any change: one control-plane host, amd64, the required cluster-vars, core's `core/flux/flux-instance.yaml` and the env's `flux/sync.yaml`, no foreign or unmarked k3s, and each declared data disk.
+2. `base-os` on every host.
+3. The k3s server on `control_plane`, then every other host as an agent, one at a time. Node role labels and the dedicated taint.
+4. `kubeconfig` and `flux-operator` on `control_plane`.
+
+Before a run, every inventory hostname resolves on the controller and every node, `ssh_user` has key login and passwordless sudo, and `known_hosts` is seeded; `jarvis node prep` gets a node there. Any run that touches k3s (`--tags k3s`, untagged, `--check`, adding a node) decrypts `secrets/k3s-token.sops.yaml` on the controller, so it needs the age key file (`age_key_file`, or `SOPS_AGE_KEY_FILE`; mode `0600` and yours). `--tags labels` needs none.
 
 ## Prepare a node
-
-`jarvis node prep <host>` takes a freshly installed Ubuntu Server node to that state, then records the host name and `ssh_user` in the env. Run it from the instance repository on the machine that drives the build. Omitted flags are prompted.
 
 ```bash
 jarvis node prep <hostname> --env <env> --login-user <user>
 ```
 
-The host name must already be an inventory key and must resolve with `getent hosts` before the node is changed. Before it touches the host it settles the Ansible user: the example placeholder defaults to the login user, a recorded user is kept, and a different user is refused. Login may differ from the Ansible user. The script confirms the host key, installs your public key, and asks before changing the short hostname. A new short hostname is recorded as `<short>.<same domain as --host>` and must resolve first. It prints the node's primary address and whether that address came from DHCP. On DHCP it warns that the address must stay stable (for example, a router DHCP reservation), because k3s breaks when the address changes. It does not write or rename netplan files, and it does not write the address into the repo. It installs only `openssh-server`, `python3`, and `sudo` if they are missing, and grants the chosen user passwordless sudo. It checks that key login works, then can turn off SSH password login. If the clock is not synced, it warns and asks before recording the env. If the age key file is missing it can create one. It adds a missing `.sops.yaml` rule for this env and leaves a mismatched recipient unchanged. It shows `git diff` and does not commit.
-
-When you are not using the default age key file, set the same `SOPS_AGE_KEY_FILE` for `jarvis node prep`, `jarvis secrets`, and `site.yml`.
-
-Next, create secrets and commit, then run `jarvis site`. `jarvis secrets` runs from the repo root:
-
-```bash
-jarvis secrets --env <env>
-```
-
-## Before the first run
-
-The age private key defaults to `~/.config/sops/age/keys.txt` (`age_key_file`). `SOPS_AGE_KEY_FILE` overrides that path. The file must hold the private half of the env's recipient in `.sops.yaml` (`age-keygen -y` prints the public half). It may hold other identities and comment lines. When the file exists, `flux-operator` checks it before any cluster change and refuses a file with no identity for that recipient. A new `flux-system/sops-age` holds only the matching identities. An existing secret whose identities include them passes and is left as it is. Any other existing secret refuses the run (see Recovery). When `flux-system/sops-age` already exists and the key file is absent, the flux-operator step leaves the secret alone. Every `TAGS=k3s` or untagged run, including `CHECK=1` and adding a node, decrypts `envs/<env>/secrets/k3s-token.sops.yaml`, so it needs the key file on the controller and refuses one that is not mode `0600` and owned by the runner. `TAGS=labels` reads no token and needs no key. The check runs `age-keygen` on the controller (`make deps`).
-
-Every env run passes the env hosts file, then the constructed role groups. The second inventory lives in core and is not copied into an env. `node_roles` become groups of the same name. `data_disk` is a host var the `node-disk` role reads; it makes no group.
-
-```bash
-jarvis site --env <env>
-```
+The host name must be an inventory key and resolve with `getent hosts`. It settles the Ansible user first (a recorded one is kept; a different one is refused), confirms the host key, installs your public key, and asks before renaming the host. It installs only `openssh-server`, `python3` and `sudo` if missing, grants passwordless sudo, checks key login, and can turn off password login. It prints the node's address and warns when it came from DHCP: keep it stable, since k3s breaks when it changes. It warns on an unsynced clock, can create a missing age key, adds a missing `.sops.yaml` rule (never changes a mismatched one), shows `git diff` and commits nothing.
 
 ## Operator tags
 
-Narrow runs use `jarvis site --tags ...`. `k3s`, `kubeconfig`, and `flux-operator` are play tags. The opening play is tagged `always`, so its asserts run first. The opening play checks every host, so for a narrow run while a node is down, add `LIMIT=` with the control plane or the target hosts. `TAGS=kubeconfig` then runs only the kubeconfig role. Proof runs are localhost plays with fake binaries.
-
 | Tag | Purpose | Example |
 | --- | --- | --- |
-| `base-os` | Full base OS role (packages, journald, chrony, apt policy, timezone; edge hosts also turn off the resolved stub) | `jarvis site --env <env> --tags base-os` |
-| `node-disk` | Check a declared data disk. Does not partition, format, wipe, or mount. Prepare the disk with `docs/deploy.md`, then set `data_disk: true` | `jarvis site --env <env> --tags node-disk` |
-| `k3s` | k3s server, agents, node role labels, and the dedicated taint | `jarvis site --env <env> --tags k3s` |
-| `labels` | Only the node role labels and the dedicated taint. Reads no sealed token, so it needs no age key | `jarvis site --env <env> --tags labels` |
-| `flux-operator` | One-time Flux Operator, sops-age and deploy-key bootstrap, FluxInstance and `sync.yaml` | `jarvis site --env <env> --tags flux-operator` |
-| `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` for the playbook runner | `jarvis site --env <env> --tags kubeconfig` |
-| `time` | Chrony and node timezone (assumes base-os packages are installed; run `base-os` for packages) | `jarvis site --env <env> --tags time` |
-| `apt-policy` | Apt list refresh and upgrade timers and the security-only unattended-upgrades policy | `jarvis site --env <env> --tags apt-policy` |
+| `base-os` | Packages, journald, chrony, apt policy, timezone; edge hosts turn off the resolved stub | `jarvis site --env <env> --tags base-os` |
+| `node-disk` | Check a declared data disk. Never partitions, formats, wipes or mounts | `jarvis site --env <env> --tags node-disk` |
+| `k3s` | k3s server, agents, node role labels, the dedicated taint | `jarvis site --env <env> --tags k3s` |
+| `labels` | Only the node role labels and the taint; reads no sealed token | `jarvis site --env <env> --tags labels` |
+| `flux-operator` | Flux Operator, `sops-age`, deploy key, FluxInstance and `sync.yaml` (once) | `jarvis site --env <env> --tags flux-operator` |
+| `kubeconfig` | Write `~/.kube/jarvis-<jarvis_env>.yaml` (mode `0600`) for the runner; `~/.kube/config` is never touched | `jarvis site --env <env> --tags kubeconfig` |
+| `time` | Chrony and timezone (after `base-os`) | `jarvis site --env <env> --tags time` |
+| `apt-policy` | Apt refresh, upgrade timers, security-only unattended-upgrades | `jarvis site --env <env> --tags apt-policy` |
 | `journald` | journald drop-in and restart | `jarvis site --env <env> --tags journald` |
 | `resolved` | Edge hosts: stub listener off, `/etc/resolv.conf` → resolved's upstream list | `jarvis site --env <env> --tags resolved` |
 
-The kubeconfig role reads `k3s_kubeconfig_path` on the control-plane node, rewrites the server to that node's inventory hostname, and writes `~/.kube/jarvis-<jarvis_env>.yaml` (mode `0600`) on the playbook runner. `~/.kube` is mode `0700`. The role does not write `~/.kube/config` and does not keep a backup. kubectl on that machine uses `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. A run whose server line does not change fails.
+The opening play checks every host, so a narrow run while a node is down needs `--limit` with the control plane or the target hosts.
 
-`node-disk` runs in the opening play, before any change, and only on hosts with `data_disk: true`. It does not partition, format, wipe, label, or mount. It checks `/var/lib/jarvis`: the path exists, it is a mount of its own filesystem (not part of `/`), and its top-level entries are empty or only Jarvis data. Jarvis data is the first directory of `local_path_data` and of `backup_path`, plus `lost+found`. Anything else is refused. An empty path is also refused when `k3s_data_dir` already holds k3s server or agent state, because existing data is missing or hidden under the mount. The env marker alone does not mean the node holds data. `local_path_data` must be a subdirectory of that mount, and `backup_path` must be on it. Prepare the disk with the commands in `docs/deploy.md`, then set `data_disk: true`. k3s is the only role that creates `local_path_data`, `backup_path`, and `backup_path/etcd-snapshots`, at mode `0700` on every host. The same role installs a `RequiresMountsFor=` drop-in for `local_path_data` and `backup_path` on the unit that host runs (`k3s.service.d` on the control plane, `k3s-agent.service.d` on every other host), including hosts with no data disk. A drop-in change reloads systemd and does not restart k3s. A config, binary, or unit change restarts k3s only when it was already running, so a first install starts it once. The server config sets `token` and `agent-token` from `envs/<env>/secrets/k3s-token.sops.yaml`, decrypted on the controller with the age key. Agents get the agent token only. A server whose existing token differs from the sealed one stops before its config changes, and neither value is printed. On a server/agent switch the role disables and stops the opposite unit before it starts its own. A missing opposite unit is fine. Any other error fails.
+**node-disk** (only on `data_disk: true` hosts): `/var/lib/jarvis` is a mount of its own filesystem whose top-level entries are empty or only the first directories of `local_path_data` and `backup_path` (and `lost+found`). An empty mount is refused once k3s has state, since data would be missing. `local_path_data` is under the mount and `backup_path` on it.
 
-`journald`, `resolved`, and `chrony` restart through handlers; handlers do not appear in `ansible-playbook --list-tasks`. A change to `chrony.conf` restarts chrony. Enabling the service does not. A `#` comment in a host template is written to the node, so rewording it counts as a change and restarts the service. Put an explanation in a Jinja `{# #}` comment, which never reaches the node.
+**k3s** creates `local_path_data`, `backup_path` and `backup_path/etcd-snapshots` at mode `0700` on every host, with a `RequiresMountsFor=` drop-in on its unit. It restarts k3s only when it was already running and its config, binary or unit changed. The server gets `token` and `agent-token` from the sealed file, agents the agent token only. A server whose token differs from the sealed one stops before its config changes, printing neither value.
 
-On hosts in the `edge` group, `base-os` turns off systemd-resolved's stub listener (`DNSStubListener=no`) and points `/etc/resolv.conf` at `/run/systemd/resolve/resolv.conf`. Host queries then use the upstream resolvers resolved already has, including after a DHCP or netplan DNS change. `getent hosts` still resolves inventory names. A host that later joins `edge` picks this up on the next `jarvis site`. Leaving `edge` does not turn the stub back on. On an existing cluster, run `jarvis site --env <env> --tags resolved --limit edge` on the edge hosts before App DNS is applied, and again after a `TAGS=k3s` run that adds a host to edge.
+**Edge hosts** (`base-os`): `DNSStubListener=no` and `/etc/resolv.conf` → `/run/systemd/resolve/resolv.conf`. On an existing cluster, run `jarvis site --env <env> --tags resolved --limit edge` before App DNS is applied, and again after adding a host to `edge`.
 
-Use `jarvis site --env <env>` as for a normal run.
+A `#` comment in a host template reaches the node, so rewording it restarts the service; explain in a Jinja `{# #}` comment.
 
 ## Patching and reboots
 
-Every node installs updates from its distro's `-security` origin by itself (`unattended-upgrades` with `apt-daily-upgrade.timer` enabled). No other origin is allowed (Ubuntu Pro ESM included), nothing is auto-removed, and a node never reboots on its own. Old kernels stay in `/boot` because nothing removes them. The owner deletes the ones that node is not running.
-
-When an update needs a reboot, Ubuntu creates `/var/run/reboot-required`. Each `jarvis site` run, `--check` included, prints `REBOOT PENDING on <host>` for every host that has the file. The warning does not fail the run, and it appears only when someone runs `jarvis site`.
-
-Drain and reboot one node at a time, workers before the control plane:
+Nodes install updates from their distro's `-security` origin only, auto-remove nothing, and never reboot on their own. Each `jarvis site` run prints `REBOOT PENDING on <host>` for a host with `/var/run/reboot-required`. One node at a time, workers before the control plane:
 
 1. `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`
 2. `sudo reboot` on that node.
-3. Wait until the node is `Ready`, then `kubectl uncordon <node>`.
-4. Run `jarvis verify --env <env>` before the next node.
+3. Once it is `Ready`, `kubectl uncordon <node>`.
+4. `jarvis verify --env <env>` before the next node.
 
-The single control plane has no peer, so the API is down while it reboots; plan that outage. GPU nodes use Ubuntu's signed `linux-modules-nvidia-*` packages, so a kernel update brings matching modules.
-
-## Rebuild hold
-
-See `core/platform/backups/CONTRACT.md`. `site.yml` may create ConfigMap `kube-system/backup-rebuild-hold` before it first applies the root `GitRepository`.
+The single control plane's reboot is an API outage. Old kernels stay in `/boot` until the owner removes them.
 
 ## Recovery
 
-If node-disk refuses a node because the data path is empty and k3s has already run, restore the data onto that mount, or wipe the node and prepare the disk again (`docs/deploy.md`).
-
-The node address changed and k3s fails with an etcd member URL mismatch. Stop k3s (`systemctl stop k3s`), run `/usr/local/bin/k3s server --cluster-reset` once, then start it (`systemctl start k3s`). A later `site.yml` run does not clear this. A stable address prevents it. `jarvis node prep` prints the address and, when it came from DHCP, warns that it must stay stable (for example, a router DHCP reservation). It does not pin the address.
-
-Flux rollback: while the controllers are up, revert the commit. The root Kustomization (`flux/sync.yaml`) that applies `envs/<env>/flux` runs as kustomize-controller itself, so a revert applies even when a Kustomization's own identity is broken. When the FluxInstance, the sources or the operator is the broken part, from the controller's reverted instance checkout run `kubectl apply -f envs/<env>/flux/flux-instance.yaml`, then the same for `sync.yaml`, with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. The file is plain YAML with no substitution. The Flux Kustomizations and HelmReleases run as the service accounts in `envs/<env>/flux/identities.yaml`. If those are missing, apply that file the same way. If the operator Deployment (`flux-system/flux-operator`) is unusable, delete it and re-run `jarvis site --env <env> --tags flux-operator`.
-
-Age keys: the working key (`age_key_file`, default `~/.config/sops/age/keys.txt`) and the offline recovery key; either opens the env's secrets. Prove a copy with `jarvis age-key-check --env <env> --key-file <path>` as described in `docs/secrets.md`. If the key file is lost and the cluster is up, copy `age.agekey` from Secret `flux-system/sops-age` back to that path at mode `0600`. Do not delete sealed files. If that Secret is gone too and the cluster is still up, reseal the live Secrets to a new key. Do not regenerate. Run `jarvis secrets` only when the cluster is gone as well. `jarvis node prep` refuses an age key that is not one of the env's recipients and changes nothing.
-
-Clock: if Flux is stuck fetching git while the network is fine, check `timedatectl`. chrony uses NTS against cluster-vars' `ntp_pools`; set `chrony_nts: false` for a LAN time source that does not speak NTS.
+- **node-disk refuses an empty data path after k3s has run:** restore the data onto the mount, or wipe the node and prepare the disk again ([deploy.md](../../docs/deploy.md#prepare-a-data-disk)).
+- **The node's address changed** (etcd member URL mismatch): `systemctl stop k3s`, `/usr/local/bin/k3s server --cluster-reset` once, `systemctl start k3s`.
+- **Flux rollback:** revert the commit; the root Kustomization runs as kustomize-controller itself, so it applies even when a Kustomization's identity is broken. If the FluxInstance, sources or operator are broken: `kubectl apply -f` core's `core/flux/flux-instance.yaml` and the env's `flux/sync.yaml` (and `core/flux/identities.yaml` if the accounts are gone) with `KUBECONFIG=~/.kube/jarvis-<env>.yaml`. An unusable operator Deployment: delete it and `jarvis site --env <env> --tags flux-operator`.
+- **Age keys:** [secrets.md](../../docs/secrets.md#recovery).
+- **Flux stuck fetching git with a working network:** check `timedatectl`. Set `chrony_nts: false` for a LAN time source without NTS.
+- **Rebuild hold:** `site.yml` creates `kube-system/backup-rebuild-hold` on a new cluster whose backup host holds repositories ([backups.md](../../docs/backups.md#rebuild-a-dead-node)).
