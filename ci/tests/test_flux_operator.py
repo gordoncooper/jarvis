@@ -20,6 +20,7 @@ import yaml
 from ansible_role_proof import (
     ANSIBLE_DIR,
     FLUX_OPERATOR_ROLE_DIR,
+    FLUX_OPERATOR_ROLE_TASKS,
     env_name,
     example_flux_entry,
     load_cluster_vars,
@@ -39,68 +40,6 @@ _ROLE_KEYS = (
     "ansible.builtin.import_role",
     "import_role",
 )
-_TASK_KEYS = (
-    "ansible.builtin.import_tasks",
-    "import_tasks",
-    "ansible.builtin.include_tasks",
-    "include_tasks",
-)
-_READ_ONLY_MODULES = {
-    "ansible.builtin.assert",
-    "assert",
-    "ansible.builtin.debug",
-    "debug",
-    "ansible.builtin.fail",
-    "fail",
-    "ansible.builtin.setup",
-    "setup",
-    "ansible.builtin.set_fact",
-    "set_fact",
-    "ansible.builtin.stat",
-    "stat",
-    "ansible.builtin.slurp",
-    "slurp",
-    "ansible.builtin.find",
-    "find",
-    "ansible.builtin.command",
-    "command",
-    "ansible.builtin.shell",
-    "shell",
-    *_ROLE_KEYS,
-    *_TASK_KEYS,
-}
-_NON_MODULE_KEYS = {
-    "name",
-    "when",
-    "vars",
-    "tags",
-    "become",
-    "register",
-    "changed_when",
-    "failed_when",
-    "check_mode",
-    "args",
-    "loop",
-    "loop_control",
-    "notify",
-    "ignore_errors",
-    "any_errors_fatal",
-    "delegate_to",
-    "run_once",
-    "environment",
-    "no_log",
-    "timeout",
-    "block",
-    "rescue",
-    "always",
-    "listen",
-    "retries",
-    "delay",
-    "until",
-    "diff",
-    "module_defaults",
-    "ignore_unreachable",
-}
 
 
 def _role_names(play: dict[str, object]) -> list[str]:
@@ -122,77 +61,50 @@ def _role_names(play: dict[str, object]) -> list[str]:
     return names
 
 
-def _imported_task_file(task: dict[str, object], module: str) -> Path | None:
-    if module in _TASK_KEYS:
-        raw = task[module]
-        file = raw if isinstance(raw, str) else raw.get("file") if isinstance(raw, dict) else None
-        if not isinstance(file, str):
-            return None
-        return ANSIBLE_DIR / file
-    if module in _ROLE_KEYS:
-        raw = task[module]
-        if isinstance(raw, str):
-            name, tasks_from = raw, "main.yml"
-        elif isinstance(raw, dict) and isinstance(raw.get("name"), str):
-            name = raw["name"]
-            tasks_from = raw.get("tasks_from") or "main.yml"
-            if not isinstance(tasks_from, str):
-                return None
-        else:
-            return None
-        if not tasks_from.endswith(".yml"):
-            tasks_from = f"{tasks_from}.yml"
-        return ANSIBLE_DIR / "roles" / name / "tasks" / tasks_from
-    return None
 
 
-def _task_modules(task: dict[str, object]) -> list[tuple[str, dict[str, object]]]:
-    found: list[tuple[str, dict[str, object]]] = []
-    for key, value in task.items():
-        if key in {"block", "rescue", "always"} and isinstance(value, list):
-            for child in value:
-                if isinstance(child, dict):
-                    found.extend(_task_modules(child))
-            continue
-        if key in _NON_MODULE_KEYS:
-            continue
-        found.append((str(key), task))
-    return found
 
 
-def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
-    if not isinstance(tasks, list):
-        return ["fact-assert play tasks are not a list"]
-    errors: list[str] = []
-    for task in tasks:
-        if not isinstance(task, dict):
-            errors.append("fact-assert play has a task that is not a mapping")
-            continue
-        for module, owner in _task_modules(task):
-            if module not in _READ_ONLY_MODULES:
-                errors.append(f"fact-assert play runs {module}")
-                continue
-            if module in {"ansible.builtin.command", "command", "ansible.builtin.shell", "shell"}:
-                if owner.get("changed_when") is not False:
-                    errors.append(f"{module} in the fact-assert play can report a change")
-            imported = _imported_task_file(owner, module)
-            if imported is None:
-                continue
-            if imported in seen:
-                continue
-            seen.add(imported)
-            if not imported.is_file():
-                errors.append(f"fact-assert play imports missing {imported.name}")
-                continue
-            loaded = yaml.safe_load(imported.read_text(encoding="utf-8"))
-            errors.extend(_read_only_errors(loaded, seen))
-    return errors
 
 
 def _site_plays() -> list[dict[str, object]]:
     plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
     assert isinstance(plays, list)
     return plays
+
+
+def _task_documents() -> list[dict[str, object]]:
+    docs: list[dict[str, object]] = []
+    for path in sorted(FLUX_OPERATOR_ROLE_TASKS.glob("*.yml")):
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, list):
+            docs.extend(item for item in loaded if isinstance(item, dict))
+    return docs
+
+def _task_text(task: dict[str, object]) -> str:
+    return yaml.safe_dump(task, sort_keys=False)
+
+def test_sops_age_tasks_use_no_log() -> None:
+    needles = (
+        "SOPS_AGE_KEY_FILE",
+        "flux_sops_age_key",
+        "age private key",
+        "age.agekey",
+        "flux_sops_age_existing_json",
+        "flux_sops_age_file_identities",
+        "flux_sops_age_publics",
+    )
+    for task in _task_documents():
+        blob = _task_text(task).lower()
+        if not any(needle.lower() in blob for needle in needles):
+            continue
+        assert task.get("no_log") is True, task.get("name", task)
+    stat = next(
+        task for task in _task_documents() if task.get("name") == "Stat the age private key file"
+    )
+    assert stat.get("delegate_to") == "localhost"
+    assert stat.get("become") is False
+    assert stat.get("run_once") is True
 
 
 def test_untagged_check_run_skips_the_flux_operator_play() -> None:

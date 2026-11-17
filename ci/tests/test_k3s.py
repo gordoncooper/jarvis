@@ -405,6 +405,33 @@ def _run_guard(tmp_path: Path, *, marker_text: str | None) -> subprocess.Complet
     )
 
 
+def test_every_task_that_touches_a_token_is_no_log() -> None:
+    """A task that reads, compares or writes a k3s token hides its result."""
+    touches = re.compile(r"k3s_(server|agent)_token|\bk3s_node_token\b|config\.yaml\.j2")
+    seen = 0
+    for name in ("main.yml", "token.yml"):
+        for task in yaml.safe_load((K3S_ROLE_DIR / "tasks" / name).read_text(encoding="utf-8")):
+            if touches.search(yaml.safe_dump(task)):
+                seen += 1
+                assert task.get("no_log") is True, task.get("name")
+    assert seen >= 5
+
+def test_files_that_can_hold_the_join_token_are_root_only() -> None:
+    """The server and agent config files are written 0600 as root."""
+    tasks = yaml.safe_load((K3S_ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    configs = {
+        task["ansible.builtin.template"]["src"]: task
+        for task in tasks
+        if isinstance(task, dict)
+        and "ansible.builtin.template" in task
+        and task["ansible.builtin.template"]["src"] in {"config.yaml.j2", "agent-config.yaml.j2"}
+    }
+    assert set(configs) == {"config.yaml.j2", "agent-config.yaml.j2"}
+    for src, task in configs.items():
+        template = task["ansible.builtin.template"]
+        assert (template["mode"], template["owner"], template["group"]) == ("0600", "root", "root"), src
+
+
 def test_k3s_guard_refuses_active_k3s_without_marker(tmp_path: Path) -> None:
     result = _run_guard(tmp_path, marker_text=None)
     output = result.stdout + result.stderr
