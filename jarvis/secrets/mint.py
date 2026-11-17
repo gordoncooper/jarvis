@@ -465,7 +465,7 @@ def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
         raise SystemExit(
             "refusing to mint k3s tokens for an env that already has secrets; "
             "its cluster has a token already, so the owner seals it as k3s-token "
-            "(core/platform/backups/CONTRACT.md, Rebuild a dead node)"
+            "(docs/backups.md, Rebuild a dead node)"
         )
     if not ca_secret.exists() and ca_root.is_file():
         raise SystemExit(

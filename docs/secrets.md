@@ -13,7 +13,7 @@ Encryption uses the public recipients in `.sops.yaml`. Decryption (only to resto
 | File | What | When it is missing |
 | --- | --- | --- |
 | `k3s-token` | `server_token`, `agent_token`; read by `site.yml`, not applied | Refused once any other file exists: the cluster already has a token, which the owner seals ([backups.md](backups.md#rebuild-a-dead-node)). Keep it as long as any etcd snapshot it encrypts. |
-| `cert-manager-ca` | The internal CA, constrained to `dns_suffix`; public root `envs/<env>/ca.crt` | Refused while `ca.crt` exists; delete both only to rotate ([cert-manager](../core/platform/cert-manager/CONTRACT.md#rotate-the-ca)) |
+| `cert-manager-ca` | The internal CA, constrained to `dns_suffix`; public root `envs/<env>/ca.crt` | Refused while `ca.crt` exists; delete both only to rotate ([Rotate the CA](#rotate-the-ca)) |
 | `backups-restic` | Core's restic password and rest-server login | Refused once git records it; `--rotate-restic` mints a new one, which opens no existing repository ([backups.md](backups.md#rotate-the-restic-password)) |
 | `app-<name>/backups-restic-app-<name>` | A hosted app's own password and `ns-app-<name>` login, from `jarvis secrets --env <env> --app app-<name>` | Refused once git records it ([backups.md](backups.md#app-credentials)) |
 | `flux-deploy-key` | The read-only deploy key of an `ssh://` root | `jarvis secrets --rotate deploy-key` |
@@ -61,7 +61,17 @@ After `--rotate age`:
 
 After `--rotate deploy-key`: add the printed key to the forge (read-only), commit and push, then `kubectl -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator`. Once Flux reads the repository, remove the old key from the forge.
 
-The restic passwords, the CA and the k3s tokens live in running systems too, so no command rotates them: [backups.md](backups.md#rotate-the-restic-password) and [cert-manager](../core/platform/cert-manager/CONTRACT.md#rotate-the-ca). The k3s server token is the datastore passphrase and does not change.
+The restic passwords, the CA and the k3s tokens live in running systems too, so no command rotates them: [backups.md](backups.md#rotate-the-restic-password) and [Rotate the CA](#rotate-the-ca). The k3s server token is the datastore passphrase and does not change.
+
+## Rotate the CA
+
+`jarvis secrets` never writes over an existing `ca.crt`, and cert-manager does not reissue a leaf when its CA changes.
+
+1. Delete `envs/<env>/secrets/cert-manager-ca.sops.yaml` and `envs/<env>/ca.crt`, then run `jarvis secrets --env <env>`.
+2. Commit both and push. Wait until Secret `platform-cert-manager/cert-manager-ca`'s `tls.crt` matches `ca.crt`.
+3. `KUBECONFIG=~/.kube/jarvis-<env>.yaml kubectl delete secret -n platform-cert-manager wildcard-tls` (and `wildcard-apps-tls`), so cert-manager issues new leaves.
+4. Check: `openssl s_client -connect <svc>.<dns_suffix>:443 -servername <svc>.<dns_suffix> -CAfile envs/<env>/ca.crt -verify_return_error </dev/null >/dev/null` exits 0.
+5. Record `openssl x509 -noout -fingerprint -sha256 -in envs/<env>/ca.crt` in the env's README, trust the new root on every client, and remove the old one.
 
 ## Recovery
 
