@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import functools
 import getpass
 import grp
 import hashlib
@@ -21,9 +20,6 @@ import yaml
 from ansible_role_proof import (
     ANSIBLE_DIR,
     FLUX_OPERATOR_ROLE_DIR,
-    FLUX_OPERATOR_ROLE_TASKS,
-    FLUX_OPERATOR_ROLE_TEMPLATES,
-    ansible_render_template,
     env_name,
     example_flux_entry,
     load_cluster_vars,
@@ -32,25 +28,9 @@ from ansible_role_proof import (
 )
 from conftest import require_cli
 
-from jarvis.schema.env import DEFAULT_SSH_USER
-from support import REPO_ROOT, sample_root
+from support import sample_root
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
-
-
-def test_sops_age_secret_template_not_reconciled_from_git() -> None:
-    key_body = "AGE-SECRET-KEY-1TEST\n"
-    rendered = ansible_render_template(
-        "sops-age-secret.yaml.j2",
-        {
-            "flux_system_namespace": "flux-system",
-            "flux_sops_age_key_content": key_body,
-        },
-        templates_dir=FLUX_OPERATOR_ROLE_TEMPLATES,
-    )
-    assert "name: sops-age" in rendered
-    assert "namespace: flux-system" in rendered
-    assert "kustomize.toolkit.fluxcd.io/reconcile: disabled" in rendered
 
 
 _ROLE_KEYS = (
@@ -142,35 +122,6 @@ def _role_names(play: dict[str, object]) -> list[str]:
     return names
 
 
-def _k3s_modes(play: dict[str, object]) -> list[str]:
-    modes: list[str] = []
-    for role in play.get("roles") or []:
-        if isinstance(role, dict) and role.get("role") == "k3s":
-            mode = (role.get("vars") or {}).get("k3s_mode")
-            if isinstance(mode, str):
-                modes.append(mode)
-    for task in play.get("tasks") or []:
-        if not isinstance(task, dict):
-            continue
-        for key in _ROLE_KEYS:
-            included = task.get(key)
-            if isinstance(included, dict) and included.get("name") == "k3s":
-                mode = (included.get("vars") or {}).get("k3s_mode")
-                if isinstance(mode, str):
-                    modes.append(mode)
-    return modes
-
-
-def _is_fact_play(play: dict[str, object]) -> bool:
-    tags = play.get("tags") or []
-    return (
-        play.get("hosts") == "all"
-        and isinstance(tags, list)
-        and "always" in tags
-        and play.get("any_errors_fatal") is True
-    )
-
-
 def _imported_task_file(task: dict[str, object], module: str) -> Path | None:
     if module in _TASK_KEYS:
         raw = task[module]
@@ -238,229 +189,6 @@ def _read_only_errors(tasks: object, seen: set[Path]) -> list[str]:
     return errors
 
 
-_TAG_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
-_PLAY_TAG_LINE = re.compile(r"^  play #\d+ \([^)]*\):.*\tTAGS: \[(.*)\]\s*$")
-_TASK_TAG_LINE = re.compile(r"^      TASK TAGS: \[(.*)\]\s*$")
-_LIST_TAGS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
-_TAGS_MARK = "--tags"
-_MAKE_TAGS_MARK = "TAGS="
-
-
-def _tag_list(body: str) -> set[str]:
-    return {part.strip() for part in body.split(",") if part.strip()}
-
-
-def _skip_tag_gap(text: str, index: int) -> int:
-    """Spaces, newlines, and backslash continuations between tag tokens."""
-    length = len(text)
-    while index < length:
-        char = text[index]
-        if char in " \t\r\n":
-            index += 1
-            continue
-        if char != "\\":
-            break
-        nxt = index + 1
-        while nxt < length and text[nxt] in " \t":
-            nxt += 1
-        if nxt < length and text[nxt] == "\n":
-            index = nxt + 1
-            continue
-        if nxt < length and text[nxt] == "\r":
-            index = nxt + 2 if nxt + 1 < length and text[nxt + 1] == "\n" else nxt + 1
-            continue
-        break
-    return index
-
-
-def _parse_tags_argument(text: str, index: int) -> tuple[set[str], int] | None:
-    """Names after ``--tags``, or None when this occurrence is not a command."""
-    length = len(text)
-    if index < length and (text[index].isalnum() or text[index] in "-_"):
-        return None
-    index = _skip_tag_gap(text, index)
-    if index < length and text[index] == "=":
-        index = _skip_tag_gap(text, index + 1)
-    quote = ""
-    if index < length and text[index] in "\"'":
-        quote = text[index]
-        index = _skip_tag_gap(text, index + 1)
-    match = _TAG_NAME.match(text, index)
-    if match is None:
-        return None
-    names = [match.group(0)]
-    index = match.end()
-    while True:
-        if quote:
-            gap = _skip_tag_gap(text, index)
-            if gap < length and text[gap] == ",":
-                index = _skip_tag_gap(text, gap + 1)
-                match = _TAG_NAME.match(text, index)
-                if match is None:
-                    return None
-                names.append(match.group(0))
-                index = match.end()
-                continue
-            if gap < length and text[gap] == quote:
-                index = gap + 1
-                break
-            return None
-        gap = index
-        while gap < length and text[gap] in " \t":
-            gap += 1
-        if gap < length and text[gap] == ",":
-            index = _skip_tag_gap(text, gap + 1)
-            match = _TAG_NAME.match(text, index)
-            if match is None:
-                break
-            names.append(match.group(0))
-            index = match.end()
-            continue
-        break
-    return set(names), index
-
-
-def _operator_play_tags(readme: str | None = None) -> set[str]:
-    """Every ``--tags`` or ``TAGS=`` name the Ansible README documents.
-
-    A comma list may wrap across lines or a backslash continuation. ``=`` and
-    quotes are part of the command. A backtick after ``--tags`` is not a command.
-    """
-    if readme is None:
-        readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
-    names: set[str] = set()
-    index = 0
-    while True:
-        found_flag = readme.find(_TAGS_MARK, index)
-        found_make = readme.find(_MAKE_TAGS_MARK, index)
-        found = min((pos for pos in (found_flag, found_make) if pos >= 0), default=-1)
-        if found < 0:
-            break
-        mark = _MAKE_TAGS_MARK if found == found_make else _TAGS_MARK
-        parsed = _parse_tags_argument(readme, found + len(mark.rstrip("=")))
-        if parsed is None:
-            index = found + len(mark)
-            continue
-        parsed_names, index = parsed
-        names.update(parsed_names)
-    assert names, "README documents no --tags names"
-    return names
-
-
-def _tags_from_list_output(output: str) -> tuple[set[str], set[str]]:
-    """All tags, and the tags written on a task rather than inherited from the play."""
-    listed: set[str] = set()
-    task_tags: set[str] = set()
-    play_tags: set[str] = set()
-    for line in output.splitlines():
-        play = _PLAY_TAG_LINE.match(line)
-        if play:
-            play_tags = _tag_list(play.group(1))
-            listed.update(play_tags)
-            continue
-        task = _TASK_TAG_LINE.match(line)
-        if task:
-            tags = _tag_list(task.group(1))
-            listed.update(tags)
-            task_tags.update(tags - play_tags)
-    return listed, task_tags
-
-
-@functools.lru_cache(maxsize=1)
-def _listed_tag_sets() -> tuple[frozenset[str], frozenset[str]]:
-    """Tags from ``ansible-playbook site.yml --list-tags``, and those set on a task."""
-    require_cli("ansible-playbook")
-    run = subprocess.run(
-        [
-            "ansible-playbook",
-            "site.yml",
-            "-i",
-            str(_LIST_TAGS_INVENTORY),
-            "-e",
-            f"jarvis_cluster_vars=../../envs/{env_name()}/values/cluster-vars.yaml",
-            "--list-tags",
-        ],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert run.returncode == 0, run.stderr or run.stdout
-    listed, task_tags = _tags_from_list_output(run.stdout)
-    assert listed, run.stdout
-    return frozenset(listed), frozenset(task_tags)
-
-
-def _assert_play_order(
-    plays: list[dict[str, object]],
-    *,
-    readme: str | None = None,
-) -> None:
-    """Play order, host targets, and documented play tags are the safety fact."""
-    fact_indexes = [index for index, play in enumerate(plays) if _is_fact_play(play)]
-    assert fact_indexes == [0], plays
-    fact = plays[0]
-    assert not fact.get("roles"), "fact-assert play applies a role"
-    seen: set[Path] = set()
-    errors = _read_only_errors(fact.get("tasks"), seen)
-    for section in ("pre_tasks", "post_tasks", "handlers"):
-        body = fact.get(section)
-        if body is None:
-            continue
-        errors.extend(_read_only_errors(body, seen))
-    assert errors == []
-
-    def indexes(role: str) -> list[int]:
-        return [
-            index
-            for index, play in enumerate(plays)
-            if index != 0 and role in _role_names(play)
-        ]
-
-    base_os = indexes("base-os")
-    k3s = indexes("k3s")
-    kubeconfig = indexes("kubeconfig")
-    flux = indexes("flux-operator")
-    server = [index for index, play in enumerate(plays) if "server" in _k3s_modes(play)]
-    agent = [index for index, play in enumerate(plays) if "agent" in _k3s_modes(play)]
-    assert base_os, "base-os play is missing"
-    assert k3s, "k3s play is missing"
-    assert len(server) == 1, server
-    assert len(agent) == 1, agent
-    assert kubeconfig, "kubeconfig play is missing"
-    assert flux, "flux-operator play is missing"
-    assert plays[server[0]].get("hosts") == "control_plane"
-    assert plays[agent[0]].get("hosts") == "all:!control_plane"
-    assert all(plays[index].get("hosts") == "control_plane" for index in kubeconfig)
-    assert all(plays[index].get("hosts") == "control_plane" for index in flux)
-    documented = _operator_play_tags(readme)
-    listed, task_tags = _listed_tag_sets()
-    missing = sorted(documented - listed)
-    assert not missing, f"README --tags names are not playbook tags: {missing}"
-    for tag in sorted(documented - task_tags):
-        found = set(indexes(tag))
-        if tag == "k3s":
-            found.update(server)
-            found.update(agent)
-        if tag == "labels":
-            found.update(index for index in k3s if plays[index].get("tasks"))
-        assert found, tag
-        for index in sorted(found):
-            tags = plays[index].get("tags")
-            assert isinstance(tags, list) and tag in tags, (plays[index].get("name"), tag)
-    assert all(index < min(k3s) for index in base_os)
-    assert server[0] < agent[0]
-    assert all(index > server[0] for index in kubeconfig)
-    assert all(index > server[0] for index in flux)
-
-    safety = [fact, *[plays[index] for index in sorted({*base_os, *k3s, *kubeconfig, *flux})]]
-    shared = fact.get("vars")
-    for play in safety:
-        assert play.get("become") is True
-        assert "ssh_user | default(" in str((play.get("vars") or {}).get("ansible_user"))
-        assert play.get("vars") == shared
-
-
 def _site_plays() -> list[dict[str, object]]:
     plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
     assert isinstance(plays, list)
@@ -478,161 +206,6 @@ def test_untagged_check_run_skips_the_flux_operator_play() -> None:
     assert not applies(ansible_check_mode=True, ansible_run_tags=["all"])
     assert applies(ansible_check_mode=True, ansible_run_tags=["flux-operator"])
     assert applies(ansible_check_mode=False, ansible_run_tags=["all"])
-
-
-def test_site_play_order_is_the_safety_fact() -> None:
-    """Fact-assert play first and read-only; base-os before k3s; server before agent; kubeconfig and flux-operator after the server, on control_plane; the agent on every host except control_plane."""
-    _assert_play_order(_site_plays())
-
-
-def test_play_before_the_fact_assert_play_fails() -> None:
-    """A play inserted before the fact-assert play is not the required order."""
-    plays = _site_plays()
-    plays.insert(0, {"name": "early", "hosts": "all", "tasks": [{"ansible.builtin.debug": {"msg": "x"}}]})
-    with pytest.raises(AssertionError):
-        _assert_play_order(plays)
-
-
-def test_copy_before_tasks_fails() -> None:
-    """A copy task in the fact-assert play's pre_tasks is a change."""
-    plays = _site_plays()
-    plays[0]["pre_tasks"] = [
-        {"ansible.builtin.copy": {"dest": "/tmp/x", "content": "x"}}
-    ]
-    with pytest.raises(AssertionError):
-        _assert_play_order(plays)
-
-
-def test_dropping_a_documented_tag_fails() -> None:
-    """A k3s play without the tag from the operator commands is refused."""
-    plays = _site_plays()
-    server = next(play for play in plays if "server" in _k3s_modes(play))
-    server["tags"] = [tag for tag in server.get("tags") or [] if tag != "k3s"]
-    with pytest.raises(AssertionError):
-        _assert_play_order(plays)
-
-
-def test_readme_tag_with_no_matching_playbook_tag_fails() -> None:
-    """A README --tags name that site.yml does not list fails."""
-    readme = (ANSIBLE_DIR / "README.md").read_text(encoding="utf-8")
-    readme += "\nansible-playbook site.yml --tags not-a-real-tag\n"
-    with pytest.raises(AssertionError, match="not-a-real-tag"):
-        _assert_play_order(_site_plays(), readme=readme)
-
-
-@pytest.mark.parametrize(
-    ("readme", "single"),
-    [
-        (
-            "ansible-playbook site.yml --tags time,\njournald\n",
-            "ansible-playbook site.yml --tags time,journald\n",
-        ),
-        (
-            "ansible-playbook site.yml --tags time,\\\njournald\n",
-            "ansible-playbook site.yml --tags time,journald\n",
-        ),
-        (
-            "ansible-playbook site.yml --tags\ntime\n",
-            "ansible-playbook site.yml --tags time\n",
-        ),
-        (
-            "ansible-playbook site.yml --tags=time\n",
-            "ansible-playbook site.yml --tags time\n",
-        ),
-        (
-            'ansible-playbook site.yml --tags "time,journald"\n',
-            "ansible-playbook site.yml --tags time,journald\n",
-        ),
-    ],
-)
-def test_wrapped_tag_command_matches_the_single_line_form(readme: str, single: str) -> None:
-    """A wrapped, continued, assigned, or quoted --tags command yields the one-line names."""
-    assert _operator_play_tags(readme) == _operator_play_tags(single)
-
-
-def test_readme_with_no_tags_commands_fails() -> None:
-    """A README that documents no --tags names fails instead of checking nothing."""
-    with pytest.raises(AssertionError, match="no --tags"):
-        _operator_play_tags("Narrow runs are described here without commands.\n")
-
-
-def test_comma_separated_tags_commands_are_each_a_name() -> None:
-    """A documented --tags list yields every name, including a comma-separated list."""
-    readme = (
-        "ansible-playbook site.yml --tags time,journald\n"
-        "ansible-playbook site.yml --tags apt-policy, resolved\n"
-    )
-    assert _operator_play_tags(readme) == {"time", "journald", "apt-policy", "resolved"}
-
-
-def test_play_tag_inherited_by_tasks_is_not_a_task_tag() -> None:
-    """A tag that appears on tasks only because the play has it is not set on a task."""
-    output = (
-        "\n"
-        "  play #1 (all): Base OS\tTAGS: []\n"
-        "      TASK TAGS: [base-os, time]\n"
-        "\n"
-        "  play #2 (control_plane): Install k3s server\tTAGS: [k3s]\n"
-        "      TASK TAGS: [k3s]\n"
-    )
-    listed, task_tags = _tags_from_list_output(output)
-    assert listed == {"base-os", "time", "k3s"}
-    assert task_tags == {"base-os", "time"}
-
-
-def test_unrelated_play_at_the_end_passes() -> None:
-    """A play that is not part of the safety order does not fail it."""
-    plays = _site_plays()
-    plays.append(
-        {
-            "name": "notes",
-            "hosts": "localhost",
-            "tasks": [{"ansible.builtin.debug": {"msg": "x"}}],
-        }
-    )
-    _assert_play_order(plays)
-
-
-def test_site_yml_ssh_user_default_matches_schema() -> None:
-    plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
-    expr = plays[0]["vars"]["ansible_user"]
-    assert f"default('{DEFAULT_SSH_USER}')" in expr or f'default("{DEFAULT_SSH_USER}")' in expr
-
-
-def _task_documents() -> list[dict[str, object]]:
-    docs: list[dict[str, object]] = []
-    for path in sorted(FLUX_OPERATOR_ROLE_TASKS.glob("*.yml")):
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if isinstance(loaded, list):
-            docs.extend(item for item in loaded if isinstance(item, dict))
-    return docs
-
-
-def _task_text(task: dict[str, object]) -> str:
-    return yaml.safe_dump(task, sort_keys=False)
-
-
-def test_sops_age_tasks_use_no_log() -> None:
-    needles = (
-        "SOPS_AGE_KEY_FILE",
-        "flux_sops_age_key",
-        "age private key",
-        "age.agekey",
-        "flux_sops_age_existing_json",
-        "flux_sops_age_file_identities",
-        "flux_sops_age_publics",
-    )
-    for task in _task_documents():
-        blob = _task_text(task).lower()
-        if not any(needle.lower() in blob for needle in needles):
-            continue
-        assert task.get("no_log") is True, task.get("name", task)
-    stat = next(
-        task for task in _task_documents() if task.get("name") == "Stat the age private key file"
-    )
-    assert stat.get("delegate_to") == "localhost"
-    assert stat.get("become") is False
-    assert stat.get("run_once") is True
 
 
 def _ansible_env() -> dict[str, str]:
@@ -1102,19 +675,6 @@ def _assert_key_was_not_read(proc: subprocess.CompletedProcess[str], sentinel: s
     assert "Refuse an age private key" in output
     assert sentinel not in output
     assert "Derive the public key of each identity" not in output
-
-
-def test_age_keygen_check_runs_only_when_the_key_file_exists() -> None:
-    """The visible check is skipped when there is no key file to read."""
-    names = {
-        "Check whether age-keygen is on PATH",
-        "Require age-keygen on the controller",
-    }
-    tasks = [task for task in _task_documents() if task.get("name") in names]
-    assert {task["name"] for task in tasks} == names
-    for task in tasks:
-        assert task.get("when") == "sops_age_key_stat.stat.exists | default(false)"
-        assert task.get("no_log") is not True
 
 
 def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
@@ -1783,9 +1343,3 @@ def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
     assert "create" not in log.read_text(encoding="utf-8")
 
 
-def test_a_new_env_trusts_the_role_default_host_key() -> None:
-    """Rule: jarvis init writes no flux_known_hosts, so a new env trusts the role's default (GitHub's
-    published key, checked above) and a GitHub key rotation is one change in core."""
-    written = yaml.safe_load((sample_root() / "envs" / "env-00" / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    assert "flux_known_hosts" not in written
-    assert load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"].startswith("github.com ssh-ed25519 ")

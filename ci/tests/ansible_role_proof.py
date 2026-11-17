@@ -17,7 +17,6 @@ from support import REPO_ROOT, sample_root
 ANSIBLE_DIR = REPO_ROOT / "infra" / "ansible"
 K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"
 FLUX_OPERATOR_ROLE_DIR = ANSIBLE_DIR / "roles" / "flux-operator"
-FLUX_OPERATOR_ROLE_TEMPLATES = FLUX_OPERATOR_ROLE_DIR / "templates"
 FLUX_OPERATOR_ROLE_TASKS = FLUX_OPERATOR_ROLE_DIR / "tasks"
 K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
 # The flux-operator reconciles a FluxInstance only under this name.

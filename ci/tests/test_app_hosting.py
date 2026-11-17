@@ -231,10 +231,6 @@ def render_platform(tmp_path: Path, *, hosting: bool) -> dict[tuple[str, str], d
     return {(doc["kind"], doc["metadata"]["name"]): doc for doc in docs}
 
 
-def _rule(policy: dict, name: str) -> dict:
-    return next(rule for rule in policy["spec"]["rules"] if rule["name"] == name)
-
-
 def test_app_hosting_off_renders_none_of_it(tmp_path: Path) -> None:
     """Rule: without the switch, an env gets no app-hosting object and no apps certificate in the
     TLSStore."""
