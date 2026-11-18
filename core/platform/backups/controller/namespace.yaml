@@ -4,8 +4,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: volsync
+  # Privileged: the HelmRelease's postRenderer mounts the node's zoneinfo (a host path) for TZ.
   labels:
     jarvis.io/layer: platform
-    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce: privileged
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
