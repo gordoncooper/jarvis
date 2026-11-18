@@ -34,6 +34,9 @@ the upgrade.
 - The flux-operator image, Kyverno's hook images and cert-manager's startupapicheck resources are
   now set, which the rendered charts showed were missing.
 - The node bootstrap installs Helm 4.3.2 (was 3.16.4).
+- `jarvis validate` pulls each chart version once into `~/.cache/jarvis/charts` and renders it
+  from there, so a second run reaches no chart host. kubeconform reads the CRDs the objects carry
+  before Kubernetes' own schemas, so only k3s's Traefik kinds still ask a schema host.
 - Core's Renovate reads chart and image pins with its own `flux` and `kubernetes` managers. Regex
   managers stay only where no manager exists: k3s, Flux, the Helm host CLI, mise in the
   devcontainers, the quickstart's release and the example apps.

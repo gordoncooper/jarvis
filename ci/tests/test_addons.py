@@ -17,6 +17,7 @@ from jarvis.schema.env import ValidationError, validate_env_tree
 from support import (
     _write_env,
     bootstrap_example_copy,
+    checks_without_charts,
     core_at,
     instance_apps_repo_for_checks,
     render_switches,
@@ -329,8 +330,9 @@ def test_render_refuses_two_addons_for_one_slot(tmp_path: Path) -> None:
 
 
 def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
-    """Every env-level check (jarvis validate), against the copy as an instance and the test core
-    (its fixture add-on). gitleaks reads its git history."""
+    """Every env-level check (jarvis validate) but the chart renders, against the copy as an
+    instance and the test core (its fixture add-on). gitleaks reads its git history. The sample
+    instance, add-on included, gets the chart renders too (ci/checks/sample-instance)."""
     from jarvis.env import validate
 
     git = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
@@ -343,7 +345,7 @@ def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
     os.environ["APPS_REPO"] = str(instance_apps_repo_for_checks(instance))
     try:
         with contextlib.redirect_stdout(out):
-            code = validate.run(instance)
+            code = validate.run(instance, checks_without_charts())
     finally:
         if previous is None:
             os.environ.pop("APPS_REPO", None)

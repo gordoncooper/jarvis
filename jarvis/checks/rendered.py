@@ -4,7 +4,8 @@ read without their namespace scope) and those only Git keeps (git-rules.yaml bes
 
 The objects are Flux's build of every path on the root artifact (flux_build.env_tree) and each
 HelmRelease's chart, rendered by `helm template` from the source the build names, with the
-release's values, at the env's Kubernetes version. helm-controller renders the same way; its
+release's values, at the env's Kubernetes version. Each chart version is pulled once into the
+jarvis cache and rendered from there, so a run with the cache reaches no chart host. helm-controller renders the same way; its
 postRenderers are not applied here. A hosted app's paths read the apps repository, so the app
 checks read those. k3s's own charts (Traefik, configured by a HelmChartConfig) ship inside k3s and
 are not rendered.
@@ -19,6 +20,7 @@ own schema checks its objects.
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import os
 import shutil
@@ -42,11 +44,11 @@ CATALOG = (
 _LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
-def _schema_cache() -> Path:
-    """kubeconform's download cache: the schemas it reads are fixed by the Kubernetes version and the
-    catalog commit, so one cache serves every run."""
-    base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    path = base / "jarvis" / "kubeconform"
+def _cache(name: str) -> Path:
+    """A download cache in the jarvis cache. kubeconform's schemas are fixed by the Kubernetes
+    version and the catalog commit, and a chart by its source and version, so one cache serves
+    every run."""
+    path = _paths.cache_dir() / name
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -64,7 +66,7 @@ def _key(doc: dict) -> tuple[str, str, str]:
 
 
 def _chart(release_doc: dict, sources: dict[tuple[str, str, str], dict]) -> tuple[list[str], str | None]:
-    """The chart argument and flags `helm template` takes for the release's source."""
+    """The chart argument and flags `helm pull` takes for the release's source."""
     spec = release_doc.get("spec") or {}
     namespace = _key(release_doc)[1]
     if ref := spec.get("chartRef"):
@@ -82,13 +84,35 @@ def _chart(release_doc: dict, sources: dict[tuple[str, str, str], dict]) -> tupl
 
 
 @functools.cache
+def _pulled(chart: tuple[str, ...]) -> tuple[str, str]:
+    """The chart's archive in the cache, pulled by `helm pull` the first time, and the pull's error.
+    A finished pull is renamed into place whole, so runs side by side never read half of one."""
+    folder = _cache("charts") / hashlib.sha256("\0".join(chart).encode()).hexdigest()[:32]
+    if not folder.is_dir():
+        work = tempfile.mkdtemp(prefix=".pull-", dir=folder.parent)
+        proc = subprocess.run([_tool("helm"), "pull", *chart, "--destination", work], capture_output=True, text=True, check=False)
+        if proc.returncode:
+            shutil.rmtree(work, ignore_errors=True)
+            return "", proc.stderr.strip()
+        try:
+            os.rename(work, folder)
+        except OSError:  # another run cached it first
+            shutil.rmtree(work, ignore_errors=True)
+    archives = sorted(folder.glob("*.tgz"))
+    return (str(archives[0]), "") if len(archives) == 1 else ("", f"{folder} holds {len(archives)} chart archives, not one")
+
+
+@functools.cache
 def _template(release_name: str, namespace: str, chart: tuple[str, ...], values: str, kube: str) -> tuple[str, str]:
     """helm template's output and error for one release; the same release renders once per run."""
+    archive, error = _pulled(chart)
+    if error:
+        return "", error
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", prefix="jarvis-values-") as handle:
         handle.write(values)
         handle.flush()
         proc = subprocess.run(
-            [_tool("helm"), "template", release_name, *chart, "--namespace", namespace, "--values", handle.name,
+            [_tool("helm"), "template", release_name, archive, "--namespace", namespace, "--values", handle.name,
              "--kube-version", kube, "--include-crds", "--skip-tests"],
             capture_output=True, text=True, check=False,
         )  # fmt: skip
@@ -167,9 +191,9 @@ def kubeconform(docs: list[dict], k3s: str) -> list[str]:
         docs = [doc for doc in docs if doc.get("kind") != "CustomResourceDefinition" and not (doc.get("kind") == "Secret" and "sops" in doc)]
         proc = subprocess.run(
             [_tool("kubeconform"), "-strict", "-output", "json", "-kubernetes-version", kube,
-             "-cache", str(_schema_cache()),
-             "-schema-location", "default",
+             "-cache", str(_cache("kubeconform")),
              "-schema-location", work + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
+             "-schema-location", "default",
              "-schema-location", CATALOG],
             input=yaml.safe_dump_all(docs, sort_keys=False), capture_output=True, text=True, check=False,
         )  # fmt: skip

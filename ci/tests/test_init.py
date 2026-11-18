@@ -14,7 +14,7 @@ from jarvis.cli import core as cli_core
 from jarvis.cli import init
 from jarvis.env import scaffold
 from jarvis.secrets import age
-from support import REPO_ROOT, RUN_MODULE
+from support import REPO_ROOT, RUN_MODULE, checks_without_charts
 
 FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 CORE = ("https://github.com/example-owner/example-core", "v0.5.0")
@@ -25,6 +25,8 @@ def controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A controller home with no age key yet; init's environment changes are undone after."""
     home = tmp_path / "home"
     home.mkdir()
+    # The download cache stays the real one, so the chart renders reuse it.
+    monkeypatch.setenv("XDG_CACHE_HOME", os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache"))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
     monkeypatch.setenv("INSTANCE", os.environ.get("INSTANCE", ""))
@@ -42,9 +44,10 @@ def _init(tmp_path: Path, *extra: str) -> tuple[int, Path]:
     return code, dest
 
 
-def _validate(instance: Path, env: str) -> subprocess.CompletedProcess[str]:
+def _validate(instance: Path, env: str, *, charts: bool = True) -> subprocess.CompletedProcess[str]:
+    only = [] if charts else [arg for name in checks_without_charts() for arg in ("--only", name)]
     return subprocess.run(
-        [*RUN_MODULE, "jarvis.env.validate"],
+        [*RUN_MODULE, "jarvis.env.validate", *only],
         cwd=REPO_ROOT,
         env={**os.environ, "INSTANCE": str(instance), "ENVS": env, "APPS_REPO": str(FIXTURE_APPS)},
         capture_output=True,
@@ -127,7 +130,8 @@ def test_env_add_reuses_the_recipients_and_passes_every_check(tmp_path: Path, co
     assert values["flux_git_repo_url"] == "ssh://git@github.com/me/lab" and values["flux_git_ref"] == "refs/heads/main"
     subprocess.run(["git", "-C", str(dest), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(dest), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--no-verify", "-qm", "two"], check=True)
-    done = _validate(dest, "lab")
+    # The second env renders the same charts as the first, which the test above checks.
+    done = _validate(dest, "lab", charts=False)
     assert done.returncode == 0, done.stdout + done.stderr
 
 
@@ -190,7 +194,8 @@ def test_with_examples_turns_on_the_example_apps_and_passes_every_check(tmp_path
     cluster_vars = yaml.safe_load((dest / "envs/home/values/cluster-vars.yaml").read_text())
     assert cluster_vars["apps_git_repo_url"] == "https://github.com/example-owner/jarvis-apps"
     assert (dest / "envs/home/flux/generated/apps.yaml").is_file()
-    done = _validate(dest, "home")
+    # The sample instance turns on the same apps and renders their charts (ci/checks/sample-instance).
+    done = _validate(dest, "home", charts=False)
     assert done.returncode == 0, done.stdout + done.stderr
 
 
