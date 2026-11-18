@@ -106,7 +106,7 @@ jobs:
       - name: Install mise
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: 2026.11.5
+          version: 2026.11.9
           install: false
 
       - name: Render each env with its pinned core
@@ -187,7 +187,7 @@ jobs:
       - name: Install mise
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: 2026.11.5
+          version: 2026.11.9
           install: false
 
       # The pinned core's own tools, from its mise.toml and uv.lock, and its jarvis CLI.
