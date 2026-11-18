@@ -10,10 +10,10 @@ the upgrade.
 ### Changed
 
 - Core's rules hold at admission too. `core/platform/kyverno/rules/rules.yaml` is installed on
-  `platform-configs` for namespaces labelled `jarvis.io/layer` `platform`, `feature` or `addon`,
-  and `jarvis validate` applies the same file to everything an env deploys. The Git-only backup
-  rule stays in `jarvis/checks/git-rules.yaml`. Each core namespace sets its layer and Pod
-  Security `enforce` level; every add-on namespace is layer `addon` and enforces `restricted`.
+  `platform-configs` for namespaces labelled `jarvis.io/layer` `platform` or `feature`, and
+  `jarvis validate` applies the same file to everything an env deploys. The Git-only backup rule
+  stays in `jarvis/checks/git-rules.yaml`. Each core namespace sets its layer and Pod Security
+  `enforce` level.
 - `jarvis validate` checks what an env deploys with the upstream tools. Two new checks read
   Flux's build of every env path plus each HelmRelease's chart, rendered with `helm template`
   (Helm 4, pinned in `mise.toml`): `kubeconform` checks every object against its schema, and

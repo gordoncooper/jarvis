@@ -2,19 +2,12 @@
 # them with the Kyverno CLI to Flux's build of every env path and each HelmRelease's rendered chart
 # (jarvis/checks/rendered.py), and platform-configs installs them for admission, scoped by
 # kustomization.yaml beside this file.
-#
-# A workload rule skips an object with an owner: a controller made it from a template that was
-# admitted (a Deployment's ReplicaSet and pods, a CronJob's Jobs) or that a trusted controller
-# writes (VolSync's movers). Git and the charts carry no owned objects, so the CLI checks them all.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
   name: images-pinned
 spec:
   validationActions: [Deny]
-  matchConditions:
-    - name: not-made-by-a-controller
-      expression: size(object.metadata.?ownerReferences.orValue([])) == 0
   matchConstraints:
     resourceRules:
       - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
@@ -39,9 +32,6 @@ metadata:
   name: resources
 spec:
   validationActions: [Deny]
-  matchConditions:
-    - name: not-made-by-a-controller
-      expression: size(object.metadata.?ownerReferences.orValue([])) == 0
   matchConstraints:
     resourceRules:
       - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
@@ -57,11 +47,10 @@ spec:
         (variables.pod.containers + variables.pod.?initContainers.orValue([])).filter(c,
           c.?resources.?requests.?cpu.orValue('') == '' || c.?resources.?requests.?memory.orValue('') == '' ||
           c.?resources.?limits.?memory.orValue('') == '').map(c, c.name)
-    # A long-running container is not throttled. A container that runs to completion (a Job's, a
-    # pod's that does not restart, an init container) may keep its CPU limit.
+    # A long-running container is not throttled; a Job's or an init container's CPU limit may stay.
     - name: throttled
       expression: >-
-        object.kind in ['Job', 'CronJob'] || variables.pod.?restartPolicy.orValue('Always') != 'Always' ? [] :
+        object.kind in ['Job', 'CronJob'] ? [] :
         variables.pod.containers.filter(c, c.?resources.?limits.?cpu.hasValue()).map(c, c.name)
   validations:
     - expression: size(variables.unsized) == 0
@@ -69,9 +58,9 @@ spec:
     - expression: size(variables.throttled) == 0
       messageExpression: "'long-running container has a cpu limit: ' + variables.throttled.join(', ')"
 ---
-# Jobs, CronJobs and a pod that does not restart run to completion, so only long-running pods need
-# probes. The upstream charts listed template no probe for these containers: cert-manager's
-# controller (liveness only) and cainjector, and Kyverno's background controller.
+# Jobs and CronJobs run to completion, so only long-running pods need probes. The upstream charts
+# listed template no probe for these containers: cert-manager's controller (liveness only) and
+# cainjector, and Kyverno's background controller.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -79,10 +68,6 @@ metadata:
 spec:
   validationActions: [Deny]
   matchConditions:
-    - name: not-made-by-a-controller
-      expression: size(object.metadata.?ownerReferences.orValue([])) == 0
-    - name: long-running
-      expression: object.kind != 'Pod' || object.spec.?restartPolicy.orValue('Always') == 'Always'
     - name: upstream-chart-without-probes
       expression: >-
         !(object.kind == 'Deployment' && object.metadata.namespace + '/' + object.metadata.name in [
@@ -107,9 +92,6 @@ metadata:
   name: stdout-logs
 spec:
   validationActions: [Deny]
-  matchConditions:
-    - name: not-made-by-a-controller
-      expression: size(object.metadata.?ownerReferences.orValue([])) == 0
   matchConstraints:
     resourceRules:
       - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}

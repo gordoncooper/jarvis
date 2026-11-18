@@ -22,8 +22,7 @@ def _deployment(namespace: str = "demo", name: str = "web", **container: object)
 
 
 def test_each_rule_fails_its_seeded_object_and_passes_a_sound_one() -> None:
-    """One seeded object per rule fails that rule; a sound workload, a chart's listed exception, a pod
-    that runs to completion and an object a controller made pass."""
+    """One seeded object per rule fails that rule; a sound workload and a chart's listed exception pass."""
     unprobed = _deployment(name="unprobed")
     for probe in ("livenessProbe", "readinessProbe"):
         unprobed["spec"]["template"]["spec"]["containers"][0].pop(probe)
@@ -47,11 +46,7 @@ def test_each_rule_fails_its_seeded_object_and_passes_a_sound_one() -> None:
     assert [line.split(":")[0] for line in policies([throttled])] == ["resources"]
     excepted = copy.deepcopy(unprobed)
     excepted["metadata"] = {"name": "cert-manager-cainjector", "namespace": "platform-cert-manager"}
-    once = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "once", "namespace": "demo"},
-            "spec": {"restartPolicy": "Never", **job["spec"]["template"]["spec"]}}
-    owned = _deployment(name="owned", image="registry.example/app:1.0")
-    owned["metadata"]["ownerReferences"] = [{"apiVersion": "example.io/v1", "kind": "Widget", "name": "w", "uid": "u"}]
-    assert policies([_deployment(), job, excepted, once, owned]) == []
+    assert policies([_deployment(), job, excepted]) == []
 
 
 def test_kubeconform_reads_a_kind_from_the_crd_beside_it() -> None:

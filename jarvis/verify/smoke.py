@@ -6,8 +6,8 @@ make objects work in namespace platform-smoke, which the run creates first and d
 dry run, which leaves nothing.
 
   platform     a Certificate from ClusterIssuer internal-ca becomes Ready; a copy of testapp's running
-               pod is admitted, and refused by core's rules once unpinned and by Pod Security once
-               privileged
+               pod is admitted, and refused by policy images-pinned once unpinned and by Pod
+               Security once privileged
   app-dns      a new Ingress name answers at App DNS's address, with Traefik's address
   app-hosting  a copy of a running pod of a listed app is admitted, and the same copy with one
                risky item the env does not grant that app is refused for that grant
@@ -258,7 +258,7 @@ def probe_core_admission(ctx: Context) -> None:
     proc = _dry_run(ctx, plain)
     if proc.returncode:
         raise CheckError(f"a copy of running pod {TESTAPP_NAMESPACE}/{pod['metadata'].get('name')} was refused: {reason(proc)}")
-    for what, change, because in (("unpinned", _unpinned, "not pinned by digest"), ("privileged", _privileged, "PodSecurity")):
+    for what, change, because in (("unpinned", _unpinned, "images-pinned"), ("privileged", _privileged, "PodSecurity")):
         bad = copy.deepcopy(plain)
         change(bad["spec"])
 

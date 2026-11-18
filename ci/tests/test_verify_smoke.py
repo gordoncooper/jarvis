@@ -200,13 +200,13 @@ def test_admission_picks_a_risk_the_env_does_not_grant(tmp_path: Path) -> None:
         smoke.probe_admission(_ctx(tmp_path / "all", Cluster(), every))
 
 
-PINS = "admission webhook denied the request: image not pinned by digest: web"
+PINS = "admission webhook denied the request: policy images-pinned failed: image not pinned by digest: web"
 PSA = 'pods "x" is forbidden: violates PodSecurity "restricted:latest": privileged'
 
 
 def test_core_admission_wants_each_copy_refused_for_its_own_reason(tmp_path: Path) -> None:
-    """Rule: in platform-testapp the plain copy is admitted, the unpinned one refused by core's rules
-    and the privileged one by Pod Security; a refusal still loading is waited for."""
+    """Rule: in platform-testapp the plain copy is admitted, the unpinned one refused by policy
+    images-pinned and the privileged one by Pod Security; a refusal still loading is waited for."""
     cluster = Cluster()
     cluster.refusals = ["", "", PINS, PSA]
     smoke.probe_core_admission(_ctx(tmp_path, cluster))

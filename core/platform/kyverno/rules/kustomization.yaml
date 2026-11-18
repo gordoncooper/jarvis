@@ -1,7 +1,13 @@
 # Core's rules (rules.yaml) installed for admission, on platform-configs once Kyverno's CRDs are
-# up. They hold only in namespaces labelled with a trusted layer. Hosted apps have their own
-# admission (core/feature/app-hosting), and k3s's and Flux's namespaces carry no layer. The CLI
-# reads rules.yaml without this scope, so it checks every object an env deploys.
+# up. The CLI reads rules.yaml without these patches, so it checks every object an env deploys.
+# At admission:
+# - they hold only in namespaces labelled with a core layer. Hosted apps have their own admission
+#   (core/feature/app-hosting), and k3s's and Flux's namespaces carry no layer;
+# - a workload rule skips an object with an owner: a controller made it from a template that was
+#   admitted (a Deployment's ReplicaSet and pods, a CronJob's Jobs) or that a trusted controller
+#   writes (VolSync's movers);
+# - probes skips a pod that does not restart, which runs to completion as a Job's does (the
+#   drill's pods).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -17,4 +23,29 @@ patches:
           matchExpressions:
             - key: jarvis.io/layer
               operator: In
-              values: [platform, feature, addon]
+              values: [platform, feature]
+  - target:
+      group: policies.kyverno.io
+      kind: ValidatingPolicy
+      name: images-pinned|resources|stdout-logs
+    patch: |-
+      - op: add
+        path: /spec/matchConditions
+        value:
+          - name: not-made-by-a-controller
+            expression: size(object.metadata.?ownerReferences.orValue([])) == 0
+  - target:
+      group: policies.kyverno.io
+      kind: ValidatingPolicy
+      name: probes
+    patch: |-
+      - op: add
+        path: /spec/matchConditions/-
+        value:
+          name: not-made-by-a-controller
+          expression: size(object.metadata.?ownerReferences.orValue([])) == 0
+      - op: add
+        path: /spec/matchConditions/-
+        value:
+          name: long-running
+          expression: object.kind != 'Pod' || object.spec.?restartPolicy.orValue('Always') == 'Always'
