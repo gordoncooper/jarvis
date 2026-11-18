@@ -31,17 +31,23 @@ APP_HOSTING = "app-hosting"
 APP_HOSTING_DIR = "core/feature/app-hosting"
 OFFSITE_COPY = "offsite-backup-copy"
 OFFSITE_COPY_DIR = "core/feature/offsite-backup-copy"
-OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
+ALERTS = "alerts"
+ALERTS_DIR = "core/feature/alerts"
 # From an env's flux/platform-configs/ to the root artifact, which holds core/ and addons/.
 _CORE_PATH = "../../../../"
-# What each feature adds to the env's platform-configs. One name, one row.
+# From an env's flux/platform-configs/ to its secrets/.
+_SECRETS_PATH = "../../secrets/"
+# What each feature adds to the env's platform-configs. One name, one row. "sealed" names the
+# files under the env's secrets/ the feature applies; the owner seals each, and validate
+# requires it once the env is bootstrapped.
 # App DNS (k8s_gateway): the LAN resolves app hostnames through it. Off, the LAN's own DNS does.
 APP_DNS = "app-dns"
 APP_DNS_DIR = "core/feature/app-dns"
 FEATURE_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
+    ALERTS: {"resources": (_CORE_PATH + ALERTS_DIR,), "sealed": ("alerts-notify.sops.yaml",)},
     APP_DNS: {"resources": (_CORE_PATH + APP_DNS_DIR,)},
     APP_HOSTING: {"components": (_CORE_PATH + APP_HOSTING_DIR,)},
-    OFFSITE_COPY: {"resources": (_CORE_PATH + OFFSITE_COPY_DIR, f"../../secrets/{OFFSITE_SECRET_FILE}")},
+    OFFSITE_COPY: {"resources": (_CORE_PATH + OFFSITE_COPY_DIR,), "sealed": ("backups-offsite.sops.yaml",)},
 }
 _BOOTSTRAP_RESOURCES = (
     _CORE_PATH + "core/platform/configs",
@@ -73,6 +79,12 @@ def names(data: dict[str, Any], section: str) -> list[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
+def sealed_files(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """(feature, file name under the env's secrets/) for each sealed file a listed feature applies."""
+    enabled = names(data, FEATURES)
+    return [(name, file) for name, adds in FEATURE_COMPONENTS.items() if name in enabled for file in adds.get("sealed", ())]
+
+
 def _dump(doc: dict[str, Any], note: str = "") -> str:
     return _GENERATED_BY + note + yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
 
@@ -86,6 +98,7 @@ def platform_configs(data: dict[str, Any], *, extra_components: Sequence[str] = 
     for name, adds in FEATURE_COMPONENTS.items():
         if name in enabled:
             resources.extend(adds.get("resources", ()))
+            resources.extend(_SECRETS_PATH + file for file in adds.get("sealed", ()))
             components.extend(adds.get("components", ()))
     components.extend(extra_components)
     doc: dict[str, Any] = {

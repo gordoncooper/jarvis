@@ -18,6 +18,7 @@ Encryption uses the public recipients in `.sops.yaml`. Decryption (only to resto
 | `app-<name>/backups-restic-app-<name>` | A hosted app's own password and `ns-app-<name>` login, from `jarvis secrets --env <env> --app app-<name>` | Refused once git records it ([backups.md](backups.md#app-credentials)) |
 | `flux-deploy-key` | The read-only deploy key of an `ssh://` root | `jarvis secrets --rotate deploy-key` |
 | `backups-offsite` | The off-host target, sealed by the owner with `jarvis encrypt` | ([backups.md](backups.md#off-host-copy)) |
+| `alerts-notify` | The alerts target's webhook URL, sealed by the owner with `jarvis encrypt` | ([deploy.md](deploy.md#alerts)) |
 
 Every sealed file needs a reader; one nothing reads fails `jarvis validate`.
 

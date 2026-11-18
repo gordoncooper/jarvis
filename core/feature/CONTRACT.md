@@ -6,6 +6,7 @@ Core pieces an env runs only once it lists them under `features` in `values/swit
 
 | Feature | What it adds |
 | --- | --- |
+| `alerts/` | Failed reconciles posted to the env's target: [CONTRACT.md](alerts/CONTRACT.md) |
 | `app-hosting/` | Hosted apps and their backups: [CONTRACT.md](app-hosting/CONTRACT.md) |
 | `app-dns/` | DNS for `<dns_suffix>`: [CONTRACT.md](app-dns/CONTRACT.md) |
 | `offsite-backup-copy/` | CronJob `restic-offsite` to the env's off-host target ([backups](../platform/backups/CONTRACT.md)) |

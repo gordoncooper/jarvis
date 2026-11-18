@@ -1,0 +1,28 @@
+# Every Flux object lives in flux-system, hosted apps' Kustomizations included, so one Alert there
+# hears every failed reconcile. notification-controller posts each error event to the env's target.
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Provider
+metadata:
+  name: alerts
+  namespace: flux-system
+spec:
+  # From values/cluster-vars.yaml; the Provider CRD refuses an unknown type.
+  type: ${alerts_provider}
+  # Key address: the target's URL or webhook. Sealed by the env owner, never in Git as plaintext.
+  secretRef:
+    name: alerts-notify
+---
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Alert
+metadata:
+  name: alerts
+  namespace: flux-system
+spec:
+  providerRef:
+    name: alerts
+  eventSeverity: error
+  eventSources:
+    - kind: Kustomization
+      name: "*"
+    - kind: HelmRelease
+      name: "*"
