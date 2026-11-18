@@ -76,7 +76,10 @@ spec:
                 # forget groups by host. The pod name changes every run.
                 - name: RESTIC_HOST
                   value: etcd-snapshots
-              # cat config exit 10 means the repository is missing.
+              # cat config exit 10 means the repository is missing. Two runs at once (a manual run
+              # beside the schedule) wait for each other's lock (--retry-lock). Two inits at once
+              # on a new repository are not safe, so a manual run waits until the schedule's first
+              # run has made it.
               command:
                 - /bin/sh
                 - -c
@@ -89,8 +92,8 @@ spec:
                   elif [ "$status" -ne 0 ]; then
                     exit "$status"
                   fi
-                  restic backup --skip-if-unchanged /snapshots
-                  restic forget --prune \
+                  restic --retry-lock=10m backup --skip-if-unchanged /snapshots
+                  restic --retry-lock=10m forget --prune \
                     --keep-daily=${backup_retention_daily} \
                     --keep-weekly=${backup_retention_weekly} \
                     --keep-monthly=${backup_retention_monthly}

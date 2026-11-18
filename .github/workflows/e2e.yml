@@ -237,8 +237,18 @@ jobs:
           docker exec "${node}" k3s etcd-snapshot save --name e2e --etcd-snapshot-dir "${backup_path}/etcd-snapshots" \
             || { docker logs --tail 40 "${node}" 2>&1 | grep -i snapshot; exit 1; }
           docker exec "${node}" ls -l "${backup_path}/etcd-snapshots"
+          # The repository is new here: a scheduled run (:15) beside this one would race its restic init
+          # (core/platform/backups/CONTRACT.md, Limits). Suspend the schedule and let a started run finish.
+          kubectl -n platform-backups patch cronjob etcd-snapshots --type merge -p '{"spec":{"suspend":true}}'
+          for i in $(seq 1 60); do
+            [ -z "$(kubectl -n platform-backups get cronjob etcd-snapshots -o jsonpath='{.status.active}')" ] && break
+            [ "$i" -lt 60 ] || { echo "::error::a scheduled etcd-snapshots run is still active after 10 minutes"; exit 1; }
+            sleep 10
+          done
           kubectl -n platform-backups create job etcd-snapshots-e2e --from=cronjob/etcd-snapshots
-          kubectl -n platform-backups wait --for=condition=complete job/etcd-snapshots-e2e --timeout=10m
+          kubectl -n platform-backups wait --for=condition=complete job/etcd-snapshots-e2e --timeout=10m \
+            || { kubectl -n platform-backups logs job/etcd-snapshots-e2e --all-containers --tail 50 || true; exit 1; }
+          kubectl -n platform-backups patch cronjob etcd-snapshots --type merge -p '{"spec":{"suspend":false}}'
 
       - name: jarvis drill
         run: .venv/bin/jarvis --env "${E2E_ENV}" drill

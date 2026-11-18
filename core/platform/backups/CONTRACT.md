@@ -54,3 +54,4 @@ Every PVC is backed up by VolSync's restic mover to a rest-server on the backup-
 - App isolation is at the rest-server login. Both servers run as root on one hostPath, and core's login can delete `ns-app-*` files, though it cannot decrypt them.
 - A retired app's repositories left on disk make `restic-check` fail until they are removed.
 - Kyverno's background controller can read every Secret, app credentials included.
+- Two `etcd-snapshots` copies started at the same moment on a repository that doesn't exist yet can leave it unreadable (each runs `restic init`). Don't start a copy by hand in a new cluster's first hour, before the hourly job has run once.
