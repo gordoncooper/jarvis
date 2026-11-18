@@ -6,7 +6,7 @@ The platform canary at `https://testapp.<dns_suffix>/`. It depends on no service
 
 | What | Detail |
 | --- | --- |
-| Namespace `platform-testapp` | Deployment, ClusterIP Service on 8080 and Ingress `testapp` |
+| Namespace `platform-testapp` | Layer `platform`, Pod Security `restricted`. Deployment, ClusterIP Service on 8080 and Ingress `testapp` |
 | `GET /` | ConfigMap `testapp` key `index.html`: `testapp` and a newline, sha256 `60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7` |
 | Image | `nginxinc/nginx-unprivileged` (uid 101), digest-pinned, read-only root, `/tmp` emptyDir |
 | Ingress | Host `testapp.${dns_suffix}`, `router.entrypoints: websecure`, `router.tls: "true"`, no `spec.tls`: the pattern every service follows |

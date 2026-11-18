@@ -1,12 +1,13 @@
 # CONTRACT: kyverno
 
-Kyverno generates the backup objects and, with app hosting on, hosted apps' derived objects and priority class. CEL policies only (`policies.kyverno.io/v1`); no ClusterPolicy. Hosted apps' admission is native ValidatingAdmissionPolicies.
+Kyverno generates the backup objects and, with app hosting on, hosted apps' derived objects and priority class, and admits core's workloads by core's rules. CEL policies only (`policies.kyverno.io/v1`); no ClusterPolicy or PolicyException. Hosted apps' admission is native ValidatingAdmissionPolicies.
 
 ## Offers
 
 | What | Detail |
 | --- | --- |
 | HelmRelease `kyverno` in namespace `kyverno` | OCI chart `ghcr.io/kyverno/charts/kyverno` 3.9.2 (v1.19.2), pinned in `oci-repository.yaml`; admission and background controllers only; reports and cleanup off; images digest-pinned |
+| Core's rules, `rules/` on `platform-configs` | ValidatingPolicies `images-pinned`, `resources`, `probes`, `stdout-logs`, `load-balancers` (`rules/rules.yaml`), Deny, failure policy Fail, in namespaces labelled `jarvis.io/layer` `platform`, `feature` or `addon`. An object with an owner is skipped. `jarvis validate` applies the same file to every object an env deploys, with the Git-only rules (`jarvis/checks/git-rules.yaml`) |
 | Aggregated ClusterRoles | `kyverno:backup-generate` manages Secrets and ReplicationSources and lists ConfigMaps cluster-wide (the hold and overrides); `kyverno:app-derive` (app hosting on) reads Apps and manages NetworkPolicies and ResourceQuotas. The chart's own roles are not edited, and no role updates Namespaces. |
 
 ## Expects
@@ -14,9 +15,11 @@ Kyverno generates the backup objects and, with app hosting on, hosted apps' deri
 | What | From |
 | --- | --- |
 | Reconciled in `platform-controllers`, before the policies in `platform-configs` | core's Flux layers |
+| Each core namespace labelled `jarvis.io/layer` and `pod-security.kubernetes.io/enforce` in its own manifest; each add-on namespace by the services stage | the components; [add-ons](../../../addons/CONTRACT.md) |
 
 ## Health
 
 | Check | Pass |
 | --- | --- |
 | Deployment `kyverno-admission-controller` | Ready |
+| `jarvis verify --smoke` (platform) | a copy of testapp's running pod is admitted, refused by `images-pinned` once unpinned and by Pod Security once privileged |

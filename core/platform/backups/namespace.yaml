@@ -3,6 +3,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: platform-backups
+  # Privileged: rest-server, the etcd copy and the restic CronJobs run as root on host paths.
+  labels:
+    jarvis.io/layer: platform
+    pod-security.kubernetes.io/enforce: privileged
   # No volsync.backube/privileged-movers. No mover in this namespace mounts
   # a hostPath. rest-server is a Deployment, not a mover.
   annotations:

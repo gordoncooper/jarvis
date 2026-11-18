@@ -4,5 +4,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: platform-app-dns
+  # Baseline: no host access. The chart's own pod settings decide whether it could be restricted.
+  labels:
+    jarvis.io/layer: feature
+    pod-security.kubernetes.io/enforce: baseline
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled

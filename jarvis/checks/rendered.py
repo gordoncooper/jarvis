@@ -1,5 +1,6 @@
 """What an env deploys, checked by the upstream tools: kubeconform for schemas, the Kyverno CLI for
-core's rules (rules.yaml beside this file).
+core's rules: those the cluster also enforces at admission (core/platform/kyverno/rules/rules.yaml,
+read without their namespace scope) and those only Git keeps (git-rules.yaml beside this file).
 
 The objects are Flux's build of every path on the root artifact (flux_build.env_tree) and each
 HelmRelease's chart, rendered by `helm template` from the source the build names, with the
@@ -27,12 +28,12 @@ from pathlib import Path
 
 import yaml
 
+from jarvis import paths as _paths
 from jarvis.checks.flux_build import env_tree
 from jarvis.env.k3s import release
 from jarvis.schema.env import env_dirs, kubernetes_version_from_k3s
 
-RULES = Path(__file__).with_name("rules.yaml")
-RULE_EXCEPTIONS = Path(__file__).with_name("rule-exceptions.yaml")
+GIT_RULES = Path(__file__).with_name("git-rules.yaml")
 # datreeio/CRDs-catalog, pinned: tags through v0.0.12 omit kinds this reads.
 CATALOG = (
     "https://raw.githubusercontent.com/datreeio/CRDs-catalog/3eb90d47aba8d61919d4419dd38301536e32a94b/"
@@ -180,11 +181,15 @@ def kubeconform(docs: list[dict], k3s: str) -> list[str]:
     return problems or ([proc.stderr.strip() or "kubeconform failed"] if proc.returncode else [])
 
 
+def _rule_files() -> tuple[Path, Path]:
+    return _paths.core_root() / "core" / "platform" / "kyverno" / "rules" / "rules.yaml", GIT_RULES
+
+
 @functools.cache
-def _ruled_groups() -> frozenset[str]:
+def _ruled_groups(files: tuple[Path, ...]) -> frozenset[str]:
     """The API groups the rules match. The CLI's time grows with every object it reads, so it reads
     only objects in these groups; the CLI itself matches kinds within them."""
-    rules = [doc for doc in yaml.safe_load_all(RULES.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+    rules = [doc for path in files for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
     return frozenset(
         group for rule in rules for match in rule["spec"]["matchConstraints"]["resourceRules"] for group in match["apiGroups"]
     )
@@ -192,12 +197,13 @@ def _ruled_groups() -> frozenset[str]:
 
 def policies(docs: list[dict]) -> list[str]:
     """Each object against core's rules, with the Kyverno CLI."""
-    docs = [doc for doc in docs if str(doc.get("apiVersion", "")).rpartition("/")[0] in _ruled_groups()]
+    files = _rule_files()
+    docs = [doc for doc in docs if str(doc.get("apiVersion", "")).rpartition("/")[0] in _ruled_groups(files)]
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", prefix="jarvis-objects-") as handle:
         yaml.safe_dump_all(docs, handle, sort_keys=False)
         handle.flush()
         proc = subprocess.run(
-            [_tool("kyverno"), "apply", str(RULES), "--exception", str(RULE_EXCEPTIONS), "--resource", handle.name,
+            [_tool("kyverno"), "apply", *map(str, files), "--resource", handle.name,
              "--policy-report", "--output-format", "json", "--remove-color"],
             capture_output=True, text=True, check=False,
         )  # fmt: skip

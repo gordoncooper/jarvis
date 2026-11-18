@@ -552,6 +552,7 @@ def test_namespaced_secret_error_fails_fast() -> None:
                     },
                 }
             ],
+            "resources": {},
             "nodeSelector": {},
             "snapshotHostPath": {"path": "/fixture/etcd-snapshots"},
         }
@@ -870,7 +871,7 @@ def test_etcd_script_restores_only_a_name_the_restic_copy_lists(
         (snaps / "etcd-snapshot-1").write_bytes(b"one")
     (bindir / "restic").write_text(_FAKE_RESTIC, encoding="utf-8")
     (bindir / "restic").chmod(0o755)
-    template = {"image": "x", "env": [], "nodeSelector": {}, "snapshotHostPath": {}}
+    template = {"image": "x", "resources": {}, "env": [], "nodeSelector": {}, "snapshotHostPath": {}}
     command = drill_tool._etcd_pod(template)["spec"]["containers"][0]["command"]
     script = command[2].replace("/snapshots", "\0S").replace("/restore", "\0R")
     script = script.replace("\0S", str(snaps)).replace("\0R", str(target))

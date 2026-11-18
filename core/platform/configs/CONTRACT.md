@@ -6,7 +6,7 @@ The one list of core components on the `platform-configs` Flux stage, joined onc
 
 | What | Detail |
 | --- | --- |
-| `kustomization.yaml` | `backups`, `cert-manager/config`, `testapp`, in render order |
+| `kustomization.yaml` | `backups`, `cert-manager/config`, `testapp`, `kyverno/rules`, in render order |
 
 ## Expects
 

@@ -6,7 +6,7 @@ An add-on is an optional piece Jarvis ships on top of core. Each env turns it on
 
 1. Make `addons/<name>/` with a `CONTRACT.md` (template: [CONTRACT.template.md](CONTRACT.template.md)).
 2. Add the wiring files and list them in `addons/<name>/kustomization.yaml`, a kustomize `Component` with `resources` only:
-   - a Namespace per namespace it uses, labelled `addons.jarvis.io/name: <name>` and annotated `kustomize.toolkit.fluxcd.io/prune: disabled`;
+   - a Namespace per namespace it uses, labelled `addons.jarvis.io/name: <name>` and annotated `kustomize.toolkit.fluxcd.io/prune: disabled`. Core adds `jarvis.io/layer: addon` and Pod Security `restricted`, so its pods must meet `restricted`;
    - ServiceAccount `addon-<name>` in `flux-system`, a Role in each of its namespaces granting only the kinds it ships, and a RoleBinding to that Role for that account, all three annotated `kustomize.toolkit.fluxcd.io/prune: disabled`;
    - a Flux Kustomization `addon-<name>` in `flux-system`, running as `addon-<name>`, with `path: ./addons/<name>/<dir>`, `sourceRef` the root source `flux-system`, and, when its objects use `${...}`, one inline `postBuild.substitute` entry per key (`dns_suffix: ${dns_suffix}`), which the services stage fills. It names no `substituteFrom` source;
    - when it has Secrets, a second Kustomization `addon-<name>-secrets` with `path: ./envs/${jarvis_env}/secrets/<namespace>` and `decryption` with `sops-age`.

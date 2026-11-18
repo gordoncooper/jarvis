@@ -9,7 +9,7 @@ A second CoreDNS with the k8s_gateway plugin answers `${dns_suffix}` from Ingres
 | Names | Each Ingress `spec.rules[*].host` in `${dns_suffix}`, at its `status.loadBalancer.ingress` address (IP preferred), TTL 30s |
 | Service | LoadBalancer on UDP and TCP 53 at ClusterIP `${app_dns_cluster_ip}`, published by ServiceLB on edge nodes |
 | `kube-system/coredns-custom` | Key `app-dns.server` forwards the zone to that address |
-| HelmRelease `flux-system/k8s-gateway` | OCI chart `codeberg.org/k8s-gateway/charts/k8s-gateway`, pinned in `oci-repository.yaml`, image digest-pinned, namespace `platform-app-dns`; prune disabled on all four objects |
+| HelmRelease `flux-system/k8s-gateway` | OCI chart `codeberg.org/k8s-gateway/charts/k8s-gateway`, pinned in `oci-repository.yaml`, image digest-pinned, namespace `platform-app-dns` (layer `feature`, Pod Security `baseline`); prune disabled on all four objects |
 
 ## Expects
 

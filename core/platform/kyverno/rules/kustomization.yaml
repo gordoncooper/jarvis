@@ -1,0 +1,20 @@
+# Core's rules (rules.yaml) installed for admission, on platform-configs once Kyverno's CRDs are
+# up. They hold only in namespaces labelled with a trusted layer. Hosted apps have their own
+# admission (core/feature/app-hosting), and k3s's and Flux's namespaces carry no layer. The CLI
+# reads rules.yaml without this scope, so it checks every object an env deploys.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rules.yaml
+patches:
+  - target:
+      group: policies.kyverno.io
+      kind: ValidatingPolicy
+    patch: |-
+      - op: add
+        path: /spec/matchConstraints/namespaceSelector
+        value:
+          matchExpressions:
+            - key: jarvis.io/layer
+              operator: In
+              values: [platform, feature, addon]

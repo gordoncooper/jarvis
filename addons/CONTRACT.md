@@ -10,6 +10,7 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | Wiring applied for it | The services stage applies the add-on's wiring as the platform account, so it never creates its own namespace or identity |
 | Slots | `addons/slots/<slot>/CONTRACT.md`. One add-on per slot per env. Core and other add-ons refer to the slot, never the add-on |
 | Values | The env's published `cluster-vars` keys, as inline `postBuild.substitute` entries on its Kustomizations |
+| Admission | The services stage labels each of its Namespaces `jarvis.io/layer: addon` and `pod-security.kubernetes.io/enforce: restricted`, over its own labels. Core's rules ([kyverno](../core/platform/kyverno/CONTRACT.md)) admit its workloads |
 | Backups | Its PVCs are enrolled with core's credential ([backups](../core/platform/backups/CONTRACT.md)); it writes no VolSync object or restic URL |
 | TLS | The wildcard on TLSStore `default` serves `<name>.${dns_suffix}` |
 | Checks | Optional `addons/<name>/verify.py`, registered with `verify.registry.register`, loaded only when the env lists the add-on |
@@ -28,7 +29,7 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | Slot | Label `addons.jarvis.io/slot: <slot>` on its Kustomizations; the slot exists |
 | Name | Not `apps` (hosted apps own `*.apps.<dns_suffix>`) |
 | Dependencies | Platform, feature and slot contracts only, never another add-on |
-| Workloads | `policies` (`jarvis validate`) |
+| Workloads | Pod Security `restricted`; core's rules, in `policies` (`jarvis validate`) and at admission |
 
 ## Health
 
@@ -41,4 +42,5 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 ## Limits
 
 - Turning it off prunes its Kustomizations and their workloads; Namespaces, Secrets, tenant and RBAC stay (`prune: disabled`) until deleted by hand ([docs/add-an-addon.md](../docs/add-an-addon.md#turn-it-off)). A renamed Role or RoleBinding stays too.
+- Backups of an add-on's PVC: the movers run as root ([backups](../core/platform/backups/CONTRACT.md)), which `restricted` refuses. No add-on has a PVC yet; the first one settles how its movers run.
 - A sealed-Secret folder needs a file before its Kustomization can go Ready; Git keeps no empty folder.

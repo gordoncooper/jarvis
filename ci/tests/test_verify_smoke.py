@@ -29,6 +29,8 @@ class Cluster:
         self.plain_rc, self.bad_rc = 0, 1
         self.bad_stderr = 'admission webhook denied: grant: anything beyond Pod Security restricted needs the env\'s "x: privileged"'
         self.dry_runs: list[dict] = []
+        # Each dry run's refusal in turn, "" admitting; None alternates plain and risky as above.
+        self.refusals: list[str] | None = None
 
     def __call__(self, args, input=None):  # noqa: A002 - kubectl's own keyword
         args = list(args)
@@ -63,13 +65,16 @@ class Cluster:
                     "labels": {"app": "hello-web", "pod-template-hash": "abc"},
                     "ownerReferences": [{"kind": "ReplicaSet", "name": "hello-web-abc"}],
                 },
-                "spec": {"nodeName": "node1", "containers": [{"name": "web", "image": "x"}]},
+                "spec": {"nodeName": "node1", "containers": [{"name": "web", "image": "x@sha256:" + "a" * 64}]},
                 "status": {"phase": "Running"},
             }
             return ok({"items": [pod]})
         if args[:2] == ["create", "--dry-run=server"]:
             body = json.loads(input)
             self.dry_runs.append(body)
+            if self.refusals is not None:
+                err = self.refusals.pop(0) if self.refusals else ""
+                return CompletedProcess(args, 1 if err else 0, "" if err else "pod/x", err)
             risky = len(self.dry_runs) % 2 == 0
             rc, err = (self.bad_rc, self.bad_stderr) if risky else (self.plain_rc, "" if not self.plain_rc else "denied: other")
             return CompletedProcess(args, rc, "pod/x" if not rc else "", err if rc else "")
@@ -195,6 +200,26 @@ def test_admission_picks_a_risk_the_env_does_not_grant(tmp_path: Path) -> None:
         smoke.probe_admission(_ctx(tmp_path / "all", Cluster(), every))
 
 
+PINS = "admission webhook denied the request: image not pinned by digest: web"
+PSA = 'pods "x" is forbidden: violates PodSecurity "restricted:latest": privileged'
+
+
+def test_core_admission_wants_each_copy_refused_for_its_own_reason(tmp_path: Path) -> None:
+    """Rule: in platform-testapp the plain copy is admitted, the unpinned one refused by core's rules
+    and the privileged one by Pod Security; a refusal still loading is waited for."""
+    cluster = Cluster()
+    cluster.refusals = ["", "", PINS, PSA]
+    smoke.probe_core_admission(_ctx(tmp_path, cluster))
+    plain, _, unpinned, privileged = cluster.dry_runs
+    assert plain["metadata"]["namespace"] == "platform-testapp" and unpinned["spec"]["containers"][0]["image"] == "x"
+    assert privileged["spec"]["containers"][0]["securityContext"]["privileged"] is True
+    for refusals, message in (([""], "still admitted the unpinned copy"), (["", "denied: other"], "not for it")):
+        cluster = Cluster()
+        cluster.refusals = refusals
+        with pytest.raises(CheckError, match=message):
+            smoke.probe_core_admission(_ctx(tmp_path / message, cluster))
+
+
 def test_an_add_on_brings_its_own_probe(tmp_path: Path) -> None:
     ran: list[str] = []
 
@@ -215,7 +240,7 @@ def test_verify_smoke_removes_the_namespace_even_when_a_probe_fails(tmp_path: Pa
     from jarvis.verify import run
 
     cluster = Cluster()
-    cluster.ready_after = 10**6
+    cluster.ready_after, cluster.refusals = 10**6, ["", PINS, PSA]
     assert run._run_smoke(_ctx(tmp_path, cluster), ["platform"]) == 1
     out = capsys.readouterr().out
     assert "FAIL smoke: Certificate" in out and "PASS smoke: namespace platform-smoke removed" in out
