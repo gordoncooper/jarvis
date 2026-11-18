@@ -405,7 +405,7 @@ def test_site_passes_inventories_tags_limit_and_check(tmp_path: Path, monkeypatc
     dash_i = [i for i, a in enumerate(args) if a == "-i"]
     assert args[dash_i[0] + 1] == f"{sample_root()}/envs/env-00/inventory/hosts.yml"
     assert args[dash_i[1] + 1] == "../inventory/roles"
-    assert f"jarvis_cluster_vars={sample_root()}/envs/env-00/values/cluster-vars.yaml" in args
+    assert f"@{sample_root()}/envs/env-00/values/cluster-vars.yaml" in args
     assert f"jarvis_instance_root={sample_root()}" in args
     assert "--tags" not in args and "--limit" not in args and "--check" not in args
     assert "--diff" not in args

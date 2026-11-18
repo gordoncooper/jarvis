@@ -1,4 +1,6 @@
-"""flux-operator Ansible role: template rules and check-mode proof."""
+"""flux-operator Ansible role, against a real API server: a throwaway kube-apiserver on loopback
+(apiserver.py), with stand-ins for the Flux Operator's and Flux's CRDs. Each test starts from an
+empty flux-system and reads what the role left in the API."""
 
 from __future__ import annotations
 
@@ -11,10 +13,12 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tarfile
 import textwrap
 from pathlib import Path
 
+import apiserver
 import pytest
 import yaml
 from ansible_role_proof import (
@@ -32,7 +36,6 @@ from conftest import require_cli
 from support import sample_root
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
-
 
 _ROLE_KEYS = (
     "ansible.builtin.include_role",
@@ -61,12 +64,6 @@ def _role_names(play: dict[str, object]) -> list[str]:
     return names
 
 
-
-
-
-
-
-
 def _site_plays() -> list[dict[str, object]]:
     plays = yaml.safe_load(SITE_YML.read_text(encoding="utf-8"))
     assert isinstance(plays, list)
@@ -90,7 +87,8 @@ def test_sops_age_tasks_use_no_log() -> None:
         "flux_sops_age_key",
         "age private key",
         "age.agekey",
-        "flux_sops_age_existing_json",
+        # A lookup of a Secret returns its data.
+        "kind: secret",
         "flux_sops_age_file_identities",
         "flux_sops_age_publics",
     )
@@ -120,10 +118,128 @@ def test_untagged_check_run_skips_the_flux_operator_play() -> None:
     assert applies(ansible_check_mode=False, ansible_run_tags=["all"])
 
 
-def _ansible_env() -> dict[str, str]:
-    env = os.environ.copy()
+
+# What the role reads and writes, by API path.
+NS = "/api/v1/namespaces/flux-system"
+OPERATOR = "/apis/apps/v1/namespaces/flux-system/deployments/flux-operator"
+HOLD = "/api/v1/namespaces/kube-system/configmaps/backup-rebuild-hold"
+INSTANCE = "/apis/fluxcd.controlplane.io/v1/namespaces/flux-system/fluxinstances/flux"
+SOURCES = "/apis/source.toolkit.fluxcd.io/v1/namespaces/flux-system/gitrepositories"
+ROOT = "/apis/kustomize.toolkit.fluxcd.io/v1/namespaces/flux-system/kustomizations/flux-system"
+
+
+def _secret_path(name: str) -> str:
+    return f"{NS}/secrets/{name}"
+
+
+def _crd(group: str, kind: str, plural: str) -> dict:
+    """A stand-in CRD that keeps any field: the operator's chart and the FluxInstance install the real ones."""
+    return {
+        "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition", "metadata": {"name": f"{plural}.{group}"},
+        "spec": {"group": group, "scope": "Namespaced",
+                 "names": {"kind": kind, "plural": plural, "singular": kind.lower(), "listKind": f"{kind}List"},
+                 "versions": [{"name": "v1", "served": True, "storage": True,
+                               "schema": {"openAPIV3Schema": {"type": "object", "x-kubernetes-preserve-unknown-fields": True}}}]},
+    }
+
+
+_CRDS = (
+    _crd("fluxcd.controlplane.io", "FluxInstance", "fluxinstances"),
+    _crd("source.toolkit.fluxcd.io", "GitRepository", "gitrepositories"),
+    _crd("kustomize.toolkit.fluxcd.io", "Kustomization", "kustomizations"),
+)
+
+
+def _get(api: apiserver.Api, path: str) -> dict | None:
+    status, answer = api.request("GET", path)
+    if status == 404:
+        return None
+    assert status == 200, answer
+    return json.loads(answer)
+
+
+def _post(api: apiserver.Api, path: str, doc: dict) -> dict:
+    status, answer = api.request("POST", path, doc)
+    assert status == 201, answer
+    return json.loads(answer)
+
+
+@pytest.fixture(scope="module")
+def server():
+    admin = apiserver.token()
+    with apiserver.serve({admin: "proof,proof,system:masters"}) as (port, work):
+        api = apiserver.Api(port, admin)
+        for crd in _CRDS:
+            _post(api, "/apis/apiextensions.k8s.io/v1/customresourcedefinitions", crd)
+        apiserver.eventually(lambda: api.request("GET", INSTANCE)[0] == 404, "the stand-in CRDs to be served")
+        api.config = api.kubeconfig(work / "kubeconfig")
+        yield api
+
+
+@pytest.fixture
+def api(server: apiserver.Api) -> apiserver.Api:
+    """The server with flux-system present and nothing the role writes in it."""
+    for path in (OPERATOR, HOLD, INSTANCE, ROOT, f"{SOURCES}/flux-system", f"{SOURCES}/core",
+                 _secret_path("sops-age"), _secret_path("flux-deploy-key")):
+        assert server.request("DELETE", path)[0] in (200, 202, 404)
+    if _get(server, NS) is None:
+        _post(server, "/api/v1/namespaces", {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "flux-system"}})
+    return server
+
+
+def _unreachable(tmp_path: Path) -> Path:
+    """A kubeconfig whose server does not answer."""
+    return apiserver.Api(apiserver.free_port(), "none").kubeconfig(tmp_path / "unreachable.kubeconfig")
+
+
+def _operator_running(api: apiserver.Api) -> None:
+    """The operator's Deployment, Available, as the chart and a kubelet would leave it."""
+    labels = {"app.kubernetes.io/name": "flux-operator"}
+    doc = _post(api, OPERATOR.rsplit("/", 1)[0], {
+        "apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "flux-operator", "namespace": "flux-system"},
+        "spec": {"selector": {"matchLabels": labels},
+                 "template": {"metadata": {"labels": labels}, "spec": {"containers": [{"name": "manager", "image": "operator"}]}}},
+    })
+    doc["status"] = {"conditions": [{"type": "Available", "status": "True", "reason": "MinimumReplicasAvailable"}]}
+    status, answer = api.request("PUT", OPERATOR + "/status", doc)
+    assert status == 200, answer
+
+
+def _root_source(api: apiserver.Api) -> None:
+    _post(api, SOURCES, {"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "GitRepository",
+                         "metadata": {"name": "flux-system", "namespace": "flux-system"}, "spec": {}})
+
+
+def _seal_sops_age(api: apiserver.Api, content: str) -> str:
+    """flux-system/sops-age holding content; returns its resourceVersion."""
+    doc = _post(api, f"{NS}/secrets", {
+        "apiVersion": "v1", "kind": "Secret", "metadata": {"name": "sops-age", "namespace": "flux-system"},
+        "data": {"age.agekey": base64.b64encode(content.encode()).decode()},
+    })
+    return doc["metadata"]["resourceVersion"]
+
+
+def _secret_data(api: apiserver.Api, name: str) -> dict[str, str] | None:
+    doc = _get(api, _secret_path(name))
+    if doc is None:
+        return None
+    return {key: base64.b64decode(value).decode() for key, value in (doc.get("data") or {}).items()}
+
+
+def _version(api: apiserver.Api, path: str) -> int:
+    """The object's resourceVersion: etcd's revision when it was last written, so later writes count higher."""
+    doc = _get(api, path)
+    assert doc is not None, path
+    return int(doc["metadata"]["resourceVersion"])
+
+
+def _ansible_env(kubeconfig: Path | None = None) -> dict[str, str]:
+    """The role's environment, with only kubeconfig's server to reach (none when no task needs one)."""
+    env = {key: value for key, value in os.environ.items() if key.lower() not in ("https_proxy", "http_proxy", "all_proxy")}
     env["ANSIBLE_BECOME"] = "false"
     env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    # kubernetes.core reads this when a task names no kubeconfig; the full role names it.
+    env["K8S_AUTH_KUBECONFIG"] = env["KUBECONFIG"] = str(kubeconfig or "/nonexistent/kubeconfig")
     env.pop("SOPS_AGE_KEY_FILE", None)
     return env
 
@@ -133,17 +249,17 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def _flux_operator_extra(binary: Path) -> list[str]:
+def _flux_operator_extra(kubeconfig: Path) -> list[str]:
     cluster = load_cluster_vars()
     return [
-        "-e",
-        f"k3s_binary_path={binary}",
-        "-e",
-        f"jarvis_env={cluster['jarvis_env']}",
-        "-e",
-        f"flux_git_repo_url={cluster['flux_git_repo_url']}",
-        "-e",
-        f"flux_git_ref={cluster['flux_git_ref']}",
+        "-e", f"k3s_kubeconfig_path={kubeconfig}",
+        "-e", f"jarvis_env={cluster['jarvis_env']}",
+        "-e", f"flux_git_repo_url={cluster['flux_git_repo_url']}",
+        "-e", f"flux_git_ref={cluster['flux_git_ref']}",
+        # A wait that cannot pass fails in seconds, not minutes.
+        "-e", "flux_operator_crd_wait_timeout=20",
+        "-e", "flux_operator_rollout_wait_timeout=20",
+        "-e", "flux_crd_wait_timeout=20",
     ]
 
 
@@ -155,10 +271,28 @@ def _backup_inventory(tmp_path: Path) -> Path:
         "    backup:\n"
         "      hosts:\n"
         "        backup-host:\n"
-        "          ansible_connection: local\n",
+        "          ansible_connection: local\n"
+        f"          ansible_python_interpreter: {sys.executable}\n",
         encoding="utf-8",
     )
     return path
+
+
+def _play(name: str, tasks_from: str | None = None) -> str:
+    """A localhost play that imports the role, or one of its task files."""
+    target = f"\n                tasks_from: {tasks_from}" if tasks_from else ""
+    return textwrap.dedent(
+        f"""\
+        ---
+        - name: {name}
+          hosts: localhost
+          gather_facts: false
+          become: false
+          tasks:
+            - ansible.builtin.import_role:
+                name: flux-operator{target}
+        """
+    )
 
 
 def _run_localhost_role(
@@ -175,147 +309,28 @@ def _run_localhost_role(
     cmd = ["ansible-playbook", str(play)]
     for source in inventory or ["localhost,"]:
         cmd.extend(["-i", source])
-    cmd.extend(
-        [
-            "-e",
-            "ansible_connection=local",
-            *extra,
-        ]
-    )
+    # The venv's Python, which holds kubernetes.core's client.
+    cmd.extend(["-e", "ansible_connection=local", "-e", f"ansible_python_interpreter={sys.executable}", *extra])
     if check:
         cmd.append("--check")
-    return subprocess.run(
-        cmd,
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
+    return subprocess.run(cmd, cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False, env=env)
 
 
-def test_flux_operator_check_mode_idempotent_when_done(tmp_path: Path) -> None:
+def test_a_converged_cluster_changes_nothing(api: apiserver.Api, tmp_path: Path) -> None:
+    """With the operator Available, sops-age present and Flux syncing, a check run passes twice and changes nothing."""
     require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
-    binary = tmp_path / "k3s"
-    _write_executable(
-        binary,
-        textwrap.dedent(
-            f"""\
-            #!/bin/bash
-            set -euo pipefail
-            printf '%s\\n' "$*" >> {log}
-            joined="$*"
-            case "$joined" in
-              *"get deployment flux-operator"*)
-                echo "deployment.apps/flux-operator"
-                exit 0
-                ;;
-              *"get gitrepositories.source.toolkit.fluxcd.io flux-system"*)
-                echo "gitrepository.source.toolkit.fluxcd.io/flux-system"
-                exit 0
-                ;;
-              *"get secret sops-age"*)
-                echo "secret/sops-age"
-                exit 0
-                ;;
-              *" wait "*)
-                exit 0
-                ;;
-            esac
-            echo "unexpected k3s invocation: $*" >&2
-            exit 1
-            """
-        ),
-    )
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: Flux operator already installed
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-        """
-    )
-    extra = _flux_operator_extra(binary)
-    missing_key = tmp_path / "missing-age-key"
-    extra.extend(["-e", f"age_key_file={missing_key}"])
-    env = _ansible_env()
+    _operator_running(api)
+    _seal_sops_age(api, "an existing key")
+    _root_source(api)
+    extra = [*_flux_operator_extra(api.config), "-e", f"age_key_file={tmp_path / 'missing-age-key'}"]
+    env = _ansible_env(api.config)
     inventory = ["localhost,", str(_backup_inventory(tmp_path))]
-    first = _run_localhost_role(play, tmp_path, extra, env=env, check=True, inventory=inventory)
-    second = _run_localhost_role(play, tmp_path, extra, env=env, check=True, inventory=inventory)
-    assert first.returncode == 0, first.stdout + first.stderr
-    assert second.returncode == 0, second.stdout + second.stderr
-    assert playbook_recap_field(second.stdout + second.stderr, "changed") == 0
-    # A re-run with the operator present still waits for the CRD and the rollout.
-    invocations = log.read_text(encoding="utf-8")
-    assert invocations.count("crd/fluxinstances.fluxcd.controlplane.io") == 2
-    assert invocations.count("--for=condition=Available deployment/flux-operator") == 2
+    for _ in range(2):
+        proc = _run_localhost_role(_play("Flux operator already installed"), tmp_path, extra, env=env, check=True, inventory=inventory)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert playbook_recap_field(proc.stdout + proc.stderr, "changed") == 0
+    assert _get(api, INSTANCE) is None
 
-
-def test_existing_sops_age_skips_key_when_unset(tmp_path: Path) -> None:
-    require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
-    binary = tmp_path / "k3s"
-    binary.write_text(
-        "#!/bin/bash\n"
-        f"printf '%s\\n' \"$*\" >> {log}\n"
-        'if [[ "$*" == *"get secret sops-age -o name" ]]; then\n'
-        "  echo secret/sops-age\n"
-        "  exit 0\n"
-        "fi\n"
-        'echo "unexpected k3s: $*" >&2\n'
-        "exit 1\n",
-        encoding="utf-8",
-    )
-    binary.chmod(0o755)
-    play = tmp_path / "play.yml"
-    play.write_text(
-        textwrap.dedent(
-            """\
-            ---
-            - name: Re-run sops-age without the private key
-              hosts: localhost
-              gather_facts: false
-              become: false
-              tasks:
-                - ansible.builtin.import_role:
-                    name: flux-operator
-                    tasks_from: sops_age.yml
-            """
-        ),
-        encoding="utf-8",
-    )
-    env = os.environ.copy()
-    env.pop("SOPS_AGE_KEY_FILE", None)
-    env["ANSIBLE_BECOME"] = "false"
-    proc = subprocess.run(
-        [
-            "ansible-playbook",
-            str(play),
-            "-i",
-            "localhost,",
-            "-e",
-            "ansible_connection=local",
-            "-e",
-            f"k3s_binary_path={binary}",
-            "-e",
-            f"age_key_file={tmp_path / 'missing-age-key'}",
-        ],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    invocations = log.read_text(encoding="utf-8")
-    assert "get secret sops-age -o name" in invocations
-    assert "-o json" not in invocations
-    assert "create" not in invocations
 
 
 _SOPS_ENV = "env-test"
@@ -387,95 +402,54 @@ def _sops_config(tmp_path: Path, env: str, *publics: str, as_list: bool = False)
     return path
 
 
-def _sops_k3s(tmp_path: Path, existing: str | None) -> tuple[Path, Path, Path]:
-    """Fake k3s for the sops-age tasks: (binary, log, created manifest).
-
-    existing is the secret's age.agekey, or None when the secret is absent.
-    The create branch reads all of stdin before it exits.
-    """
-    log = tmp_path / "k3s.log"
-    created = tmp_path / "created.yaml"
-    secret = tmp_path / "secret.json"
-    if existing is None:
-        lookup = "echo 'Error from server (NotFound): secrets \"sops-age\" not found' >&2; exit 1"
-    else:
-        encoded = base64.b64encode(existing.encode("utf-8")).decode("ascii")
-        secret.write_text(json.dumps({"data": {"age.agekey": encoded}}), encoding="utf-8")
-        lookup = "echo secret/sops-age; exit 0"
-    binary = tmp_path / "k3s"
-    _write_executable(
-        binary,
-        "#!/bin/bash\n"
-        f"printf '%s\\n' \"$*\" >> {log}\n"
-        'joined="$*"\n'
-        f'if [[ "$joined" == *"get secret sops-age -o name"* ]]; then {lookup}; fi\n'
-        f'if [[ "$joined" == *"get secret sops-age -o json"* ]]; then cat {secret}; exit 0; fi\n'
-        f'if [[ "$joined" == *"kubectl create -f -"* ]]; then cat > {created}; exit 0; fi\n'
-        'echo "unexpected k3s invocation: $*" >&2\n'
-        "exit 1\n",
-    )
-    return binary, log, created
-
-
-def _run_sops_age(
-    tmp_path: Path, binary: Path, keyfile: Path, sops_config: Path, *, play: str = _SOPS_PLAY,
-    extra: list[str] | None = None,
-) -> subprocess.CompletedProcess[str]:
-    env = _ansible_env()
+def _run_sops_age(api: apiserver.Api, tmp_path: Path, keyfile: Path, sops_config: Path) -> subprocess.CompletedProcess[str]:
+    env = _ansible_env(api.config)
     env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    args = [
-        "-e", f"k3s_binary_path={binary}",
-        "-e", f"jarvis_env={_SOPS_ENV}",
-        "-e", f"flux_sops_config_file={sops_config}",
-        *(extra or []),
-    ]
-    return _run_localhost_role(play, tmp_path, args, env=env)
+    args = ["-e", f"jarvis_env={_SOPS_ENV}", "-e", f"flux_sops_config_file={sops_config}"]
+    return _run_localhost_role(_SOPS_PLAY, tmp_path, args, env=env)
+
+
+def test_existing_sops_age_skips_key_when_unset(api: apiserver.Api, tmp_path: Path) -> None:
+    require_cli("ansible-playbook")
+    version = _seal_sops_age(api, "an existing key")
+    env = _ansible_env(api.config)
+    extra = ["-e", f"age_key_file={tmp_path / 'missing-age-key'}"]
+    proc = _run_localhost_role(_play("Re-run sops-age without the private key", "sops_age.yml"), tmp_path, extra, env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _get(api, _secret_path("sops-age"))["metadata"]["resourceVersion"] == version
 
 
 @pytest.mark.parametrize("as_list", [False, True], ids=["comma-string", "yaml-list"])
-def test_new_sops_age_secret_holds_only_the_env_identity(tmp_path: Path, as_list: bool) -> None:
-    """A new flux-system/sops-age is created (never applied) with only the identity for the env's recipients."""
+def test_new_sops_age_secret_holds_only_the_env_identity(api: apiserver.Api, tmp_path: Path, as_list: bool) -> None:
+    """A new flux-system/sops-age holds only the identity for the env's recipients."""
     require_cli("ansible-playbook")
     other = _age_identity(tmp_path, "other")
     mine = _age_identity(tmp_path, "mine")
     second_recipient = _age_identity(tmp_path, "second")
     keyfile = _key_file(tmp_path, other, mine)
-    binary, log, created = _sops_k3s(tmp_path, existing=None)
-    sops_config = _sops_config(
-        tmp_path, _SOPS_ENV, second_recipient[1], mine[1], as_list=as_list
-    )
-    proc = _run_sops_age(tmp_path, binary, keyfile, sops_config)
+    sops_config = _sops_config(tmp_path, _SOPS_ENV, second_recipient[1], mine[1], as_list=as_list)
+    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    invocations = log.read_text(encoding="utf-8")
-    assert "kubectl create -f -" in invocations
-    assert "kubectl apply" not in invocations
-    secret = yaml.safe_load(created.read_text(encoding="utf-8"))
-    assert (secret["kind"], secret["metadata"]["namespace"], secret["metadata"]["name"]) == (
-        "Secret",
-        "flux-system",
-        "sops-age",
-    )
-    assert secret["stringData"] == {"age.agekey": mine[0]}
+    assert _secret_data(api, "sops-age") == {"age.agekey": mine[0]}
+    assert mine[0] not in proc.stdout + proc.stderr
 
 
 @pytest.mark.parametrize("case", ["full-key-file", "env-identity-only"])
-def test_existing_secret_with_the_env_identity_passes_untouched(tmp_path: Path, case: str) -> None:
+def test_existing_secret_with_the_env_identity_passes_untouched(api: apiserver.Api, tmp_path: Path, case: str) -> None:
     """The refusal compares identities: a secret holding the env's one, with or without other lines, is left alone."""
     require_cli("ansible-playbook")
     other = _age_identity(tmp_path, "other")
     mine = _age_identity(tmp_path, "mine")
     keyfile = _key_file(tmp_path, other, mine)
-    existing = keyfile.read_text(encoding="utf-8") if case == "full-key-file" else mine[0]
-    binary, log, created = _sops_k3s(tmp_path, existing=existing)
-    proc = _run_sops_age(tmp_path, binary, keyfile, _sops_config(tmp_path, _SOPS_ENV, mine[1]))
+    version = _seal_sops_age(api, keyfile.read_text(encoding="utf-8") if case == "full-key-file" else mine[0])
+    proc = _run_sops_age(api, tmp_path, keyfile, _sops_config(tmp_path, _SOPS_ENV, mine[1]))
     output = proc.stdout + proc.stderr
     assert proc.returncode == 0, output
     assert playbook_recap_field(output, "changed") == 0
-    assert "get secret sops-age -o json" in log.read_text(encoding="utf-8")
-    assert not created.exists()
+    assert _get(api, _secret_path("sops-age"))["metadata"]["resourceVersion"] == version
 
 
-def test_two_matching_identities_are_one_line_each(tmp_path: Path) -> None:
+def test_two_matching_identities_are_one_line_each(api: apiserver.Api, tmp_path: Path) -> None:
     """Two identities for the env's recipients land on two lines, and the set check uses both."""
     require_cli("ansible-playbook")
     other = _age_identity(tmp_path, "other")
@@ -484,50 +458,40 @@ def test_two_matching_identities_are_one_line_each(tmp_path: Path) -> None:
     keyfile = _key_file(tmp_path, other, first, second)
     sops_config = _sops_config(tmp_path, _SOPS_ENV, first[1], second[1])
 
-    created_dir = tmp_path / "create"
-    created_dir.mkdir()
-    binary, _log, created = _sops_k3s(created_dir, existing=None)
-    proc = _run_sops_age(created_dir, binary, keyfile, sops_config)
+    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    secret = yaml.safe_load(created.read_text(encoding="utf-8"))
-    assert secret["stringData"]["age.agekey"].splitlines() == [first[0], second[0]]
+    assert _secret_data(api, "sops-age")["age.agekey"].splitlines() == [first[0], second[0]]
 
     # The whole key file, comments and a third identity included, holds both.
-    full_dir = tmp_path / "full"
-    full_dir.mkdir()
-    binary, _log, created = _sops_k3s(full_dir, existing=keyfile.read_text(encoding="utf-8"))
-    proc = _run_sops_age(full_dir, binary, keyfile, sops_config)
+    api.request("DELETE", _secret_path("sops-age"))
+    version = _seal_sops_age(api, keyfile.read_text(encoding="utf-8"))
+    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert not created.exists()
+    assert _get(api, _secret_path("sops-age"))["metadata"]["resourceVersion"] == version
 
     # A secret with only one of the two does not hold the env's identities.
-    partial_dir = tmp_path / "partial"
-    partial_dir.mkdir()
-    binary, _log, created = _sops_k3s(partial_dir, existing=first[0])
-    proc = _run_sops_age(partial_dir, binary, keyfile, sops_config)
+    api.request("DELETE", _secret_path("sops-age"))
+    _seal_sops_age(api, first[0])
+    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
-    assert _failed_task(output) == (
-        "Refuse to overwrite an existing sops-age secret with different content"
-    ), output
-    assert not created.exists()
+    assert _failed_task(output) == "Refuse to overwrite an existing sops-age secret with different content", output
+    assert _secret_data(api, "sops-age") == {"age.agekey": first[0]}
 
 
-def test_existing_secret_with_another_identity_refuses(tmp_path: Path) -> None:
+def test_existing_secret_with_another_identity_refuses(api: apiserver.Api, tmp_path: Path) -> None:
     """A secret without the env's identity may be the only copy of another key, so the run refuses."""
     require_cli("ansible-playbook")
     other = _age_identity(tmp_path, "other")
     mine = _age_identity(tmp_path, "mine")
-    binary, _log, created = _sops_k3s(tmp_path, existing=f"# public key: {other[1]}\n{other[0]}")
-    keyfile = _key_file(tmp_path, mine)
-    proc = _run_sops_age(tmp_path, binary, keyfile, _sops_config(tmp_path, _SOPS_ENV, mine[1]))
+    existing = f"# public key: {other[1]}\n{other[0]}"
+    _seal_sops_age(api, existing)
+    proc = _run_sops_age(api, tmp_path, _key_file(tmp_path, mine), _sops_config(tmp_path, _SOPS_ENV, mine[1]))
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
-    assert _failed_task(output) == (
-        "Refuse to overwrite an existing sops-age secret with different content"
-    ), output
+    assert _failed_task(output) == "Refuse to overwrite an existing sops-age secret with different content", output
     assert mine[0] not in output and other[0] not in output
-    assert not created.exists()
+    assert _secret_data(api, "sops-age") == {"age.agekey": existing}
 
 
 @pytest.mark.parametrize(
@@ -539,46 +503,28 @@ def test_existing_secret_with_another_identity_refuses(tmp_path: Path) -> None:
     ids=["no-matching-identity", "no-recipient-for-env"],
 )
 def test_key_file_without_the_env_identity_refuses_before_the_operator_install(
-    tmp_path: Path, rule_env: str | None, refusal: str
+    api: apiserver.Api, tmp_path: Path, rule_env: str | None, refusal: str
 ) -> None:
     """The full role stops at the age key check, before Helm or any cluster write."""
     require_cli("ansible-playbook")
     other = _age_identity(tmp_path, "other")
     recipient = _age_identity(tmp_path, "recipient")
     keyfile = _key_file(tmp_path, other)
-    binary, log, created = _sops_k3s(tmp_path, existing=None)
     helm_log = tmp_path / "helm.log"
     helm = tmp_path / "helm"
     _write_executable(helm, f"#!/bin/bash\nprintf '%s\\n' \"$*\" >> {helm_log}\nexit 0\n")
-    cluster_env = str(load_cluster_vars()["jarvis_env"])
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: Full flux-operator role
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-        """
-    )
-    sops_config = _sops_config(tmp_path, rule_env or cluster_env, recipient[1])
-    env = _ansible_env()
+    sops_config = _sops_config(tmp_path, rule_env or str(load_cluster_vars()["jarvis_env"]), recipient[1])
+    env = _ansible_env(api.config)
     env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    extra = [
-        *_flux_operator_extra(binary),
-        "-e", f"helm_binary_path={helm}",
-        "-e", f"flux_sops_config_file={sops_config}",
-    ]
-    proc = _run_localhost_role(play, tmp_path, extra, env=env)
+    extra = [*_flux_operator_extra(api.config), "-e", f"helm_binary_path={helm}", "-e", f"flux_sops_config_file={sops_config}"]
+    proc = _run_localhost_role(_play("Full flux-operator role"), tmp_path, extra, env=env)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
     assert _failed_task(output) == refusal, output
     assert other[0] not in output
-    assert "get deployment" not in log.read_text(encoding="utf-8")
+    assert "Check whether Flux Operator deployment exists" not in output
     assert not helm_log.exists()
-    assert not created.exists()
+    assert _get(api, _secret_path("sops-age")) is None
 
 
 def _assert_key_was_not_read(proc: subprocess.CompletedProcess[str], sentinel: str) -> None:
@@ -589,23 +535,12 @@ def _assert_key_was_not_read(proc: subprocess.CompletedProcess[str], sentinel: s
     assert "Derive the public key of each identity" not in output
 
 
-def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
+def test_missing_age_keygen_is_named_before_no_log(api: apiserver.Api, tmp_path: Path) -> None:
     """A missing age-keygen fails in a visible task that names the binary."""
     playbook = Path(require_cli("ansible-playbook"))
     keyfile = tmp_path / "age.key"
     keyfile.write_text("not-read\n", encoding="utf-8")
     keyfile.chmod(0o600)
-    log = tmp_path / "k3s.log"
-    binary = tmp_path / "k3s"
-    _write_executable(
-        binary,
-        "#!/bin/bash\n"
-        f"printf '%s\\n' \"$*\" >> {log}\n"
-        'if [[ "$*" == *"get secret sops-age -o name"* ]]; then\n'
-        "  echo 'Error from server (NotFound): secrets \"sops-age\" not found' >&2\n"
-        "  exit 1\nfi\n"
-        'echo "unexpected k3s: $*" >&2\nexit 1\n',
-    )
     bindir = tmp_path / "bin"
     bindir.mkdir()
     # Hide age-keygen only. ansible-playbook stays, including when it lives
@@ -620,27 +555,10 @@ def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
             dest.symlink_to(entry)
     if not (bindir / "ansible-playbook").exists():
         (bindir / "ansible-playbook").symlink_to(playbook)
-    env = _ansible_env()
+    env = _ansible_env(api.config)
     env["SOPS_AGE_KEY_FILE"] = str(keyfile)
     env["PATH"] = str(bindir)
-    proc = _run_localhost_role(
-        textwrap.dedent(
-            """\
-            ---
-            - name: Missing age-keygen
-              hosts: localhost
-              gather_facts: false
-              become: false
-              tasks:
-                - ansible.builtin.import_role:
-                    name: flux-operator
-                    tasks_from: sops_age.yml
-            """
-        ),
-        tmp_path,
-        ["-e", f"k3s_binary_path={binary}"],
-        env=env,
-    )
+    proc = _run_localhost_role(_play("Missing age-keygen", "sops_age.yml"), tmp_path, [], env=env)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
     assert _failed_task(output) == "Require age-keygen on the controller", output
@@ -649,54 +567,20 @@ def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
     assert "Derive the public key" not in output
 
 
-def test_sops_age_refuses_mode_0644_without_reading_the_key(tmp_path: Path) -> None:
+def test_sops_age_refuses_mode_0644_without_reading_the_key(api: apiserver.Api, tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     sentinel = "SENTINEL-AGE-KEY-NOT-READ"
-    log = tmp_path / "k3s.log"
-    binary = tmp_path / "k3s"
     keyfile = tmp_path / "age.key"
     keyfile.write_text(sentinel + "\n", encoding="utf-8")
     keyfile.chmod(0o644)
-    _write_executable(
-        binary,
-        textwrap.dedent(
-            f"""\
-            #!/bin/bash
-            printf '%s\\n' "$*" >> {log}
-            joined="$*"
-            if [[ "$joined" == *"get secret sops-age -o name"* ]]; then
-              echo 'Error from server (NotFound): secrets "sops-age" not found' >&2
-              exit 1
-            fi
-            echo "unexpected k3s invocation: $*" >&2
-            exit 1
-            """
-        ),
-    )
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: Refuse a world-readable age key
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-                tasks_from: sops_age.yml
-        """
-    )
-    env = _ansible_env()
+    env = _ansible_env(api.config)
     env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    proc = _run_localhost_role(play, tmp_path, ["-e", f"k3s_binary_path={binary}"], env=env)
+    proc = _run_localhost_role(_play("Refuse a world-readable age key", "sops_age.yml"), tmp_path, [], env=env)
     _assert_key_was_not_read(proc, sentinel)
-    invocations = log.read_text(encoding="utf-8")
-    assert "get secret sops-age -o name" in invocations
-    assert "create" not in invocations
-    assert "-o json" not in invocations
+    assert _get(api, _secret_path("sops-age")) is None
 
 
-def test_sops_age_refuses_wrong_owner_from_stat(tmp_path: Path) -> None:
+def test_sops_age_refuses_wrong_owner_from_stat(api: apiserver.Api, tmp_path: Path) -> None:
     """Stat uid is faked when this user cannot chown a file to someone else."""
     require_cli("ansible-playbook")
     sentinel = "SENTINEL-AGE-KEY-NOT-READ"
@@ -710,37 +594,12 @@ def test_sops_age_refuses_wrong_owner_from_stat(tmp_path: Path) -> None:
         chowned = False
     else:
         chowned = keyfile.stat().st_uid == other
+    env = _ansible_env(api.config)
     if chowned:
-        log = tmp_path / "k3s.log"
-        binary = tmp_path / "k3s"
-        _write_executable(
-            binary,
-            "#!/bin/bash\n"
-            f"printf '%s\\n' \"$*\" >> {log}\n"
-            'if [[ "$*" == *"get secret sops-age -o name"* ]]; then\n'
-            '  echo \'Error from server (NotFound): secrets "sops-age" not found\' >&2\n'
-            "  exit 1\n"
-            "fi\n"
-            'echo "unexpected k3s: $*" >&2\nexit 1\n',
-        )
-        play = textwrap.dedent(
-            """\
-            ---
-            - name: Refuse an age key owned by someone else
-              hosts: localhost
-              gather_facts: false
-              become: false
-              tasks:
-                - ansible.builtin.import_role:
-                    name: flux-operator
-                    tasks_from: sops_age.yml
-            """
-        )
-        env = _ansible_env()
         env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-        proc = _run_localhost_role(play, tmp_path, ["-e", f"k3s_binary_path={binary}"], env=env)
+        proc = _run_localhost_role(_play("Refuse an age key owned by someone else", "sops_age.yml"), tmp_path, [], env=env)
         _assert_key_was_not_read(proc, sentinel)
-        assert "create" not in log.read_text(encoding="utf-8")
+        assert _get(api, _secret_path("sops-age")) is None
         return
     play = textwrap.dedent(
         f"""\
@@ -761,56 +620,24 @@ def test_sops_age_refuses_wrong_owner_from_stat(tmp_path: Path) -> None:
                 tasks_from: sops_age_key_mode.yml
         """
     )
-    proc = _run_localhost_role(play, tmp_path, [], env=_ansible_env())
+    proc = _run_localhost_role(play, tmp_path, [], env=env)
     _assert_key_was_not_read(proc, sentinel)
 
 
-def test_rerun_with_root_source_present_does_not_set_rebuild_hold(tmp_path: Path) -> None:
+def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
+    """An API that does not answer is not an absent secret: nothing is read or created."""
     require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
-    binary = tmp_path / "k3s"
-    _write_executable(
-        binary,
-        textwrap.dedent(
-            f"""\
-            #!/bin/bash
-            set -euo pipefail
-            printf '%s\\n' "$*" >> {log}
-            joined="$*"
-            if [[ "$joined" == *"get gitrepositories"* ]]; then
-              echo "gitrepository.source.toolkit.fluxcd.io/flux-system"
-              exit 0
-            fi
-            echo "unexpected k3s invocation: $*" >&2
-            exit 1
-            """
-        ),
-    )
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: Root GitRepository already present
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-                tasks_from: instance.yml
-        """
-    )
-    env = _ansible_env()
-    extra = ["-e", f"k3s_binary_path={binary}"]
-    inventory = ["localhost,", str(_backup_inventory(tmp_path))]
-    first = _run_localhost_role(play, tmp_path, extra, env=env, inventory=inventory)
-    second = _run_localhost_role(play, tmp_path, extra, env=env, inventory=inventory)
-    assert first.returncode == 0, first.stdout + first.stderr
-    assert second.returncode == 0, second.stdout + second.stderr
-    invocations = log.read_text(encoding="utf-8")
-    assert invocations.count("get gitrepositories") == 2
-    assert "apply" not in invocations
-    assert "backup-rebuild-hold" not in invocations
-    assert "configmap" not in invocations.lower()
+    sentinel = "SENTINEL-AGE-KEY-NOT-READ"
+    keyfile = tmp_path / "age.key"
+    keyfile.write_text(sentinel + "\n", encoding="utf-8")
+    keyfile.chmod(0o600)
+    env = _ansible_env(_unreachable(tmp_path))
+    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+    proc = _run_localhost_role(_SOPS_PLAY, tmp_path, [], env=env)
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0, output
+    assert _failed_task(output) == "Check whether flux-system sops-age secret exists", output
+    assert sentinel not in output
 
 
 def _become_exe(tmp_path: Path) -> Path:
@@ -841,154 +668,65 @@ def _become_exe(tmp_path: Path) -> Path:
     return path
 
 
-def test_fresh_cluster_sets_the_hold_then_applies_the_flux_instance_and_root_source(
-    tmp_path: Path,
-) -> None:
+def _restic_data(tmp_path: Path) -> list[str]:
+    """A backup host's restic tree: one PVC repository and one that is not; extra vars for it."""
+    restic = tmp_path / "backup" / "restic"
+    for repo, content in (("ns-demo/pvc-drill", "repo"), ("ns-decoy/notpvc", "nope")):
+        (restic / repo).mkdir(parents=True)
+        (restic / repo / "config").write_text(content + "\n", encoding="utf-8")
+    return ["-e", f"backup_path={tmp_path / 'backup'}", "-e", f"ansible_become_exe={_become_exe(tmp_path)}"]
+
+
+def _instance_extra(api_config: Path, tmp_path: Path) -> list[str]:
+    return [
+        *_flux_operator_extra(api_config), *_restic_data(tmp_path),
+        "-e", f"flux_instance_file={example_flux_entry(tmp_path).instance_file}",
+        "-e", f"flux_sync_file={sample_root() / 'envs' / env_name() / 'flux' / 'sync.yaml'}",
+    ]
+
+
+def test_rerun_with_root_source_present_does_not_set_rebuild_hold(api: apiserver.Api, tmp_path: Path) -> None:
+    """Restic data on the backup host holds nothing back once Flux syncs: no hold, nothing applied."""
+    require_cli("ansible-playbook")
+    _root_source(api)
+    env = _ansible_env(api.config)
+    inventory = ["localhost,", str(_backup_inventory(tmp_path))]
+    extra = _instance_extra(api.config, tmp_path)
+    for _ in range(2):
+        proc = _run_localhost_role(_play("Root GitRepository already present", "instance.yml"), tmp_path, extra,
+                                   env=env, inventory=inventory)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert playbook_recap_field(proc.stdout + proc.stderr, "changed") == 0
+    assert _get(api, HOLD) is None
+    assert _get(api, INSTANCE) is None
+
+
+def test_fresh_cluster_sets_the_hold_then_applies_the_flux_instance_and_root_source(api: apiserver.Api, tmp_path: Path) -> None:
     """On a new cluster: the hold, then the FluxInstance, then sync.yaml with the root source."""
     require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
-    stdin_path = tmp_path / "apply.stdin"
-    flux_stdin_path = tmp_path / "flux-apply.stdin"
-    sync_stdin_path = tmp_path / "sync-apply.stdin"
-    sync_file = sample_root() / "envs" / env_name() / "flux" / "sync.yaml"
-    env_file = example_flux_entry(tmp_path).instance_file
-    binary = tmp_path / "k3s"
-    restic = tmp_path / "backup" / "restic"
-    (restic / "ns-demo" / "pvc-drill").mkdir(parents=True)
-    (restic / "ns-demo" / "pvc-drill" / "config").write_text("repo\n", encoding="utf-8")
-    (restic / "ns-decoy" / "notpvc").mkdir(parents=True)
-    (restic / "ns-decoy" / "notpvc" / "config").write_text("nope\n", encoding="utf-8")
-    _write_executable(
-        binary,
-        textwrap.dedent(
-            f"""\
-            #!/bin/bash
-            set -euo pipefail
-            printf '%s\\n' "$*" >> {log}
-            joined="$*"
-            if [[ "$joined" == *"get gitrepositories"* ]]; then
-              echo 'Error from server (NotFound): gitrepositories.source.toolkit.fluxcd.io "flux-system" not found' >&2
-              exit 1
-            fi
-            if [[ "$joined" == *" wait "* ]]; then
-              exit 0
-            fi
-            if [[ "$joined" == *"kubectl apply -f -"* ]]; then
-              body="$(cat)"
-              if [[ "$body" == *"kind: FluxInstance"* ]]; then
-                printf '%s\\n' "$body" > {flux_stdin_path}
-                echo "applied fluxinstance" >> {log}
-                echo "fluxinstance.fluxcd.controlplane.io/flux created"
-              elif [[ "$body" == *"kind: GitRepository"* ]]; then
-                printf '%s\\n' "$body" > {sync_stdin_path}
-                echo "applied sync" >> {log}
-              else
-                printf '%s\\n' "$body" > {stdin_path}
-                echo "applied hold" >> {log}
-                echo "configmap/backup-rebuild-hold created"
-              fi
-              exit 0
-            fi
-            echo "unexpected k3s invocation: $*" >&2
-            exit 1
-            """
-        ),
-    )
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: Fresh cluster
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-                tasks_from: instance.yml
-        """
-    )
-    env = _ansible_env()
-    extra = [
-        *_flux_operator_extra(binary),
-        "-e",
-        f"backup_path={tmp_path / 'backup'}",
-        "-e",
-        f"ansible_become_exe={_become_exe(tmp_path)}",
-        "-e",
-        f"flux_instance_file={env_file}",
-        "-e",
-        f"flux_sync_file={sync_file}",
-    ]
-    proc = _run_localhost_role(
-        play,
-        tmp_path,
-        extra,
-        env=env,
-        inventory=["localhost,", str(_backup_inventory(tmp_path))],
-    )
-    output = proc.stdout + proc.stderr
-    # changed_when used to fail the play here, before the FluxInstance apply.
-    assert "'stdout' is undefined" not in output
-    assert "Apply the rebuild hold" in output
-    rendered = stdin_path.read_text(encoding="utf-8")
-    assert "ns-demo/pvc-drill" in rendered
-    assert "ns-decoy" not in rendered
-    assert proc.returncode == 0, output
-    invocations = log.read_text(encoding="utf-8").splitlines()
-    assert (
-        invocations.index("applied hold")
-        < invocations.index("applied fluxinstance")
-        < invocations.index("applied sync")
-    )
-    applied = flux_stdin_path.read_text(encoding="utf-8")
-    assert applied.strip() == env_file.read_text(encoding="utf-8").strip()
-    assert sync_stdin_path.read_text(encoding="utf-8").strip() == sync_file.read_text(encoding="utf-8").strip()
+    extra = _instance_extra(api.config, tmp_path)
+    proc = _run_localhost_role(_play("Fresh cluster", "instance.yml"), tmp_path, extra, env=_ansible_env(api.config),
+                               inventory=["localhost,", str(_backup_inventory(tmp_path))])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _get(api, HOLD)["data"] == {"repos": "ns-demo/pvc-drill\n"}
+    instance = yaml.safe_load(example_flux_entry(tmp_path).instance_file.read_text(encoding="utf-8"))
+    assert _get(api, INSTANCE)["spec"] == instance["spec"]
+    sync = list(yaml.safe_load_all((sample_root() / "envs" / env_name() / "flux" / "sync.yaml").read_text(encoding="utf-8")))
+    root = next(doc for doc in sync if doc["kind"] == "GitRepository" and doc["metadata"]["name"] == "flux-system")
+    assert _get(api, f"{SOURCES}/flux-system")["spec"] == root["spec"]
+    assert _get(api, f"{SOURCES}/core") is not None
+    assert _version(api, HOLD) < _version(api, INSTANCE) < _version(api, f"{SOURCES}/flux-system") <= _version(api, ROOT)
 
 
 def test_root_source_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
-    binary = tmp_path / "k3s"
-    _write_executable(
-        binary,
-        textwrap.dedent(
-            f"""\
-            #!/bin/bash
-            set -euo pipefail
-            printf '%s\\n' "$*" >> {log}
-            echo "The connection to the server 127.0.0.1:6443 was refused" >&2
-            exit 1
-            """
-        ),
-    )
-    play = textwrap.dedent(
-        """\
-        ---
-        - name: API error
-          hosts: localhost
-          gather_facts: false
-          become: false
-          tasks:
-            - ansible.builtin.import_role:
-                name: flux-operator
-                tasks_from: instance.yml
-        """
-    )
-    env = _ansible_env()
-    proc = _run_localhost_role(
-        play,
-        tmp_path,
-        ["-e", f"k3s_binary_path={binary}"],
-        env=env,
-        inventory=["localhost,", str(_backup_inventory(tmp_path))],
-    )
-    assert proc.returncode != 0
+    unreachable = _unreachable(tmp_path)
+    proc = _run_localhost_role(_play("API error", "instance.yml"), tmp_path, _instance_extra(unreachable, tmp_path),
+                               env=_ansible_env(unreachable), inventory=["localhost,", str(_backup_inventory(tmp_path))])
     output = proc.stdout + proc.stderr
-    assert "Check whether the root GitRepository exists" in output
+    assert proc.returncode != 0, output
+    assert _failed_task(output) == "Check whether the root GitRepository exists", output
     assert "Stat restic data on the backup host" not in output
-    invocations = log.read_text(encoding="utf-8")
-    assert "backup-rebuild-hold" not in invocations
-    assert "apply" not in invocations
 
 
 _DEPLOY_KEY_PLAY = textwrap.dedent(
@@ -1009,7 +747,7 @@ _DEPLOY_KEY_PLAY = textwrap.dedent(
 )
 
 
-def test_fresh_cluster_creates_the_deploy_key_secret_once(tmp_path: Path) -> None:
+def test_fresh_cluster_creates_the_deploy_key_secret_once(api: apiserver.Api, tmp_path: Path) -> None:
     """An ssh:// root's sealed deploy key becomes flux-system/flux-deploy-key once, with GitHub's host key."""
     require_cli("ansible-playbook")
     require_cli("sops")
@@ -1028,32 +766,17 @@ def test_fresh_cluster_creates_the_deploy_key_secret_once(tmp_path: Path) -> Non
                   "stringData": {"identity": private}},
     )
     sealed = instance / "envs" / _SOPS_ENV / "secrets" / "flux-deploy-key.sops.yaml"
-    log, created, present = tmp_path / "k3s.log", tmp_path / "created.yaml", tmp_path / "present"
-    binary = tmp_path / "k3s"
-    _write_executable(
-        binary,
-        "#!/bin/bash\n"
-        f"printf '%s\\n' \"$*\" >> {log}\n"
-        'joined="$*"\n'
-        'if [[ "$joined" == *"get secret flux-deploy-key -o name"* ]]; then\n'
-        f"  if [[ -e {present} ]]; then echo secret/flux-deploy-key; exit 0; fi\n"
-        "  echo 'Error from server (NotFound): secrets \"flux-deploy-key\" not found' >&2; exit 1\n"
-        "fi\n"
-        f'if [[ "$joined" == *"kubectl create -f -"* ]]; then cat > {created}; touch {present}; exit 0; fi\n'
-        'echo "unexpected k3s invocation: $*" >&2\nexit 1\n',
-    )
-    env = _ansible_env()
+    env = _ansible_env(api.config)
     env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    extra = ["-e", f"k3s_binary_path={binary}", "-e", f"flux_deploy_key_file={sealed}"]
+    versions = []
     for _ in range(2):
-        proc = _run_localhost_role(_DEPLOY_KEY_PLAY, tmp_path, extra, env=env)
+        proc = _run_localhost_role(_DEPLOY_KEY_PLAY, tmp_path, ["-e", f"flux_deploy_key_file={sealed}"], env=env)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert private not in proc.stdout + proc.stderr
-    assert log.read_text(encoding="utf-8").count("kubectl create -f -") == 1
-    secret = yaml.safe_load(created.read_text(encoding="utf-8"))
-    assert (secret["metadata"]["namespace"], secret["metadata"]["name"]) == ("flux-system", "flux-deploy-key")
-    assert secret["metadata"]["annotations"] == {"kustomize.toolkit.fluxcd.io/reconcile": "disabled"}
-    assert secret["stringData"] == {
+        versions.append(_version(api, _secret_path("flux-deploy-key")))
+    assert versions[0] == versions[1]
+    assert _get(api, _secret_path("flux-deploy-key"))["metadata"]["annotations"] == {"kustomize.toolkit.fluxcd.io/reconcile": "disabled"}
+    assert _secret_data(api, "flux-deploy-key") == {
         "identity": private,
         "known_hosts": load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"],
     }
@@ -1154,108 +877,51 @@ def test_helm_cli_with_another_version_is_replaced_then_left_alone(tmp_path: Pat
     assert playbook_recap_field(output, "changed") == 0
 
 
-def _lookup_binary(log: Path, *, kind: str) -> str:
-    """kind is not_found or error. The absent case prints NotFound; any other error does not."""
-    if kind == "not_found":
-        message = "echo 'Error from server (NotFound): missing' >&2"
-    else:
-        message = 'echo "The connection to the server 127.0.0.1:6443 was refused" >&2'
+def _installing_helm(api: apiserver.Api, log: Path) -> str:
+    """A helm at the pinned version whose install leaves the operator's Deployment Available, as
+    the chart and a kubelet would."""
+    deployment = {
+        "apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "flux-operator", "namespace": "flux-system"},
+        "spec": {"selector": {"matchLabels": {"app": "op"}},
+                 "template": {"metadata": {"labels": {"app": "op"}}, "spec": {"containers": [{"name": "m", "image": "op"}]}}},
+    }
     return textwrap.dedent(
         f"""\
-        #!/bin/bash
-        set -euo pipefail
-        printf '%s\\n' "$*" >> {log}
-        joined="$*"
-        if [[ "$joined" == *"get deployment flux-operator"* || "$joined" == *"get secret sops-age -o name"* ]]; then
-          {message}
-          exit 1
-        fi
-        if [[ "$joined" == *" wait "* ]]; then
-          exit 0
-        fi
-        if [[ "$joined" == *"kubectl create"* ]]; then
-          cat > /dev/null
-          exit 0
-        fi
-        echo "unexpected k3s invocation: $*" >&2
-        exit 1
+        #!{sys.executable}
+        import json, ssl, sys, urllib.request
+        with open({str(log)!r}, "a") as out:
+            out.write(" ".join(sys.argv[1:]) + "\\n")
+        if sys.argv[1:2] == ["version"]:
+            print("v{_pinned_helm_version()}+gfixture")
+            sys.exit(0)
+        context = ssl._create_unverified_context()
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({{}}), urllib.request.HTTPSHandler(context=context))
+        def call(method, path, body):
+            request = urllib.request.Request({api.url!r} + path, method=method, data=json.dumps(body).encode(),
+                                             headers={{"Authorization": "Bearer {api.token}", "Content-Type": "application/json"}})
+            return json.load(opener.open(request))
+        doc = call("POST", {OPERATOR.rsplit("/", 1)[0]!r}, {deployment!r})
+        doc["status"] = {{"conditions": [{{"type": "Available", "status": "True"}}]}}
+        call("PUT", {OPERATOR + "/status"!r}, doc)
         """
     )
 
 
-@pytest.mark.parametrize("kind", ["not_found", "error"])
-def test_operator_lookup_classifies_not_found(tmp_path: Path, kind: str) -> None:
-    """NotFound installs the operator chart. Any other lookup error does not."""
+@pytest.mark.parametrize("kind", ["absent", "unreachable"])
+def test_operator_lookup_installs_only_when_absent(api: apiserver.Api, tmp_path: Path, kind: str) -> None:
+    """An absent operator Deployment installs the chart. An API that does not answer does not."""
     require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
     helm_log = tmp_path / "helm.log"
-    binary = tmp_path / "k3s"
     helm = tmp_path / "helm"
-    _write_executable(binary, _lookup_binary(log, kind=kind))
-    if kind == "not_found":
-        _write_executable(helm, _fake_helm(helm_log, _pinned_helm_version()))
-    else:
-        _write_executable(helm, "#!/bin/bash\nexit 99\n")
-    proc = _run_localhost_role(
-        textwrap.dedent(
-            """\
-            ---
-            - name: Operator lookup
-              hosts: localhost
-              gather_facts: false
-              become: false
-              tasks:
-                - ansible.builtin.import_role:
-                    name: flux-operator
-                    tasks_from: operator.yml
-            """
-        ),
-        tmp_path,
-        [
-            "-e",
-            f"k3s_binary_path={binary}",
-            "-e",
-            f"helm_binary_path={helm}",
-            "-e",
-            "flux_operator_chart_version=0.0.0-test",
-            "-e",
-            f"k3s_kubeconfig_path={tmp_path / 'kubeconfig'}",
-        ],
-        env=_ansible_env(),
-    )
+    _write_executable(helm, _installing_helm(api, helm_log))
+    config = api.config if kind == "absent" else _unreachable(tmp_path)
+    extra = [*_flux_operator_extra(config), "-e", f"helm_binary_path={helm}", "-e", "flux_operator_chart_version=0.0.0-test"]
+    proc = _run_localhost_role(_play("Operator lookup", "operator.yml"), tmp_path, extra, env=_ansible_env(config))
     output = proc.stdout + proc.stderr
-    k3s_text = log.read_text(encoding="utf-8")
-    if kind == "not_found":
+    if kind == "absent":
         assert proc.returncode == 0, output
-        assert "upgrade --install" in helm_log.read_text(encoding="utf-8")
-        assert "kubectl wait" in k3s_text
+        assert "upgrade --install flux-operator" in helm_log.read_text(encoding="utf-8")
         return
     assert proc.returncode != 0, output
-    assert "Check whether Flux Operator deployment exists" in output
-    assert "Bootstrap Flux Operator when absent" not in output
+    assert _failed_task(output) == "Check whether Flux Operator deployment exists", output
     assert not helm_log.exists()
-    assert "wait" not in k3s_text
-
-
-def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
-    """An API error is not NotFound, so the sops-age secret is not created."""
-    require_cli("ansible-playbook")
-    log = tmp_path / "k3s.log"
-    binary = tmp_path / "k3s"
-    sentinel = "SENTINEL-AGE-KEY-NOT-READ"
-    keyfile = tmp_path / "age.key"
-    keyfile.write_text(sentinel + "\n", encoding="utf-8")
-    keyfile.chmod(0o600)
-    _write_executable(binary, _lookup_binary(log, kind="error"))
-    env = _ansible_env()
-    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    proc = _run_localhost_role(_SOPS_PLAY, tmp_path, ["-e", f"k3s_binary_path={binary}"], env=env)
-    output = proc.stdout + proc.stderr
-    assert proc.returncode != 0, output
-    assert "Check whether flux-system sops-age secret exists" in output
-    assert "Create flux-system sops-age secret once" not in output
-    assert "Stat the age private key file" not in output
-    assert sentinel not in output
-    assert "create" not in log.read_text(encoding="utf-8")
-
-

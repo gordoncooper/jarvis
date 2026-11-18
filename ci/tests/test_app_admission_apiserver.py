@@ -2,7 +2,7 @@
 bindings on a throwaway kube-apiserver and etcd on loopback. The kyverno CLI does not resolve a
 selector paramRef, so this is the proof of the binding itself.
 
-ci/fetch-test-apiserver downloads the pinned binaries. The client here is a token the test
+apiserver.py starts the pinned binaries. The client here is a token the test
 makes and a loopback URL, with no kubeconfig, so it cannot reach any other cluster.
 """
 
@@ -10,19 +10,14 @@ from __future__ import annotations
 
 import json
 import os
-import secrets
 import shutil
-import socket
-import ssl
 import subprocess
-import tempfile
 import time
-import urllib.error
-import urllib.request
-from pathlib import Path
 
 import pytest
-from conftest import ci_mode
+from apiserver import Api as _Api
+from apiserver import eventually as _eventually
+from apiserver import serve, token
 from test_app_admission import POLICIES, _app, _docs, _job, _pod, _wiring
 
 from support import REPO_ROOT
@@ -37,7 +32,6 @@ REVOKER = "system:serviceaccount:platform-app-hosting:app-grant-revoke"
 SELECTED_NODE = "volume.kubernetes.io/selected-node"
 PVC_PROTECTION_FINALIZER = "kubernetes.io/pvc-protection"
 
-WORK = REPO_ROOT / ".scratch" / "apiserver"
 CRD = REPO_ROOT / "core" / "feature" / "app-hosting" / "crd" / "app-crd.yaml"
 GRANT_REVOKE = REPO_ROOT / "core" / "feature" / "app-hosting" / "grant-revoke.yaml"
 WIRING_BINDING = REPO_ROOT / "core" / "feature" / "app-hosting" / "app" / "grant-revoke.yaml"
@@ -62,57 +56,7 @@ PATHS = {
 }
 
 
-def _binaries() -> dict[str, str]:
-    """kube-apiserver and etcd at their mise.toml pins, which make deps installs on Linux."""
-    found = {name: shutil.which(name) for name in ("kube-apiserver", "etcd")}
-    missing = sorted(name for name, path in found.items() if path is None)
-    if missing:
-        message = f"no {' or '.join(missing)} on PATH (make deps installs them on Linux)"
-        if ci_mode():
-            pytest.fail(f"{message} — required in CI")
-        pytest.skip(message)
-    return {name: str(path) for name, path in found.items()}
-
-
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-def _eventually(check, what: str, seconds: int = 60):
-    """check()'s first truthy answer. Fails naming what, once seconds pass."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        answer = check()
-        if answer:
-            return answer
-        time.sleep(0.2)
-    pytest.fail(f"timed out waiting for {what}")
-
-
-class Api:
-    def __init__(self, port: int, token: str) -> None:
-        self.port, self.url, self.token = port, f"https://127.0.0.1:{port}", token
-        # Its own self-signed certificate, on loopback. No proxy, whatever the environment says.
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
-
-    def request(self, method: str, path: str, body: dict | None = None, *, as_user: str | None = None) -> tuple[int, bytes]:
-        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
-        if as_user is not None:
-            headers["Impersonate-User"] = as_user
-            headers["Impersonate-Group"] = "system:authenticated"
-        request = urllib.request.Request(self.url + path, method=method, data=json.dumps(body).encode() if body else None,
-                                         headers=headers)
-        try:
-            with self.opener.open(request, timeout=10) as response:
-                return response.status, response.read()
-        except urllib.error.HTTPError as error:
-            return error.code, error.read()
-
+class Api(_Api):
     def create(self, doc: dict) -> None:
         path = PATHS[doc["kind"]]
         if "{namespace}" in path:
@@ -236,46 +180,13 @@ def _ensure_pvc_rbac(api: Api) -> None:
 
 @pytest.fixture(scope="module")
 def api():
-    binaries = _binaries()
-    WORK.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="run-", dir=WORK))
-    token = secrets.token_urlsafe(24)
-    revoke_token = secrets.token_urlsafe(24)
-    (work / "tokens.csv").write_text(
-        f"{token},test-admin,test-admin,system:masters\n{revoke_token},{REVOKER},app-grant-revoke\n", encoding="utf-8"
-    )
-    subprocess.run(["openssl", "genrsa", "-out", str(work / "sa.key"), "2048"], check=True, capture_output=True)
-    client, peer, secure = _free_port(), _free_port(), _free_port()
-    log = (work / "server.log").open("wb")
-    env = {key: os.environ[key] for key in ("PATH",) if key in os.environ}
-    servers = [
-        subprocess.Popen([binaries["etcd"], "--data-dir", str(work / "etcd"), "--unsafe-no-fsync",
-                          "--listen-client-urls", f"http://127.0.0.1:{client}", "--advertise-client-urls", f"http://127.0.0.1:{client}",
-                          "--listen-peer-urls", f"http://127.0.0.1:{peer}", "--initial-advertise-peer-urls", f"http://127.0.0.1:{peer}",
-                          "--initial-cluster", f"default=http://127.0.0.1:{peer}"], stdout=log, stderr=subprocess.STDOUT, env=env),
-        subprocess.Popen([binaries["kube-apiserver"], "--etcd-servers", f"http://127.0.0.1:{client}",
-                          "--bind-address", "127.0.0.1", "--advertise-address", "127.0.0.1", "--secure-port", str(secure),
-                          "--cert-dir", str(work / "certs"), "--token-auth-file", str(work / "tokens.csv"),
-                          "--authorization-mode", "RBAC", "--anonymous-auth=false", "--allow-privileged=true",
-                          "--service-cluster-ip-range", "10.0.0.0/24", "--disable-admission-plugins", "ServiceAccount",
-                          "--service-account-issuer", f"https://127.0.0.1:{secure}", "--service-account-key-file", str(work / "sa.key"),
-                          "--service-account-signing-key-file", str(work / "sa.key")], stdout=log, stderr=subprocess.STDOUT, env=env),
-    ]
-    try:
-        server = Api(secure, token)
+    admin, revoke_token = token(), token()
+    with serve({admin: "test-admin,test-admin,system:masters", revoke_token: f"{REVOKER},app-grant-revoke"}) as (port, work):
+        server = Api(port, admin)
         server.account = work / "account"
         server.account.mkdir()
         (server.account / "token").write_text(revoke_token, encoding="utf-8")
         server.certs = work / "certs"
-
-        def ready() -> bool:
-            assert all(proc.poll() is None for proc in servers), (work / "server.log").read_text(encoding="utf-8")[-4000:]
-            try:
-                return server.request("GET", "/readyz")[0] == 200
-            except OSError:
-                return False
-
-        _eventually(ready, "the API server to be ready", seconds=120)
         server.create(_docs(CRD)[0])
         server.create(_docs(CRD.parents[1] / "priority.yaml")[0])
         _ensure_pvc_rbac(server)
@@ -302,12 +213,6 @@ def api():
         for app in apps:
             server.create(app)
         yield server
-    finally:
-        for proc in reversed(servers):
-            proc.terminate()
-            proc.wait(timeout=30)
-        log.close()
-        shutil.rmtree(work)
 
 
 def _refused(api: Api, doc: dict, because: str) -> None:

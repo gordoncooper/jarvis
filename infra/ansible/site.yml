@@ -1,17 +1,13 @@
 ---
 # Fact asserts run before any change. One bad host stops the run. Tags for k3s,
-# kubeconfig, and flux-operator are on the plays.
-# ansible_user prefers a per-host ssh_user, then env ssh_user, then ubuntu.
+# kubeconfig, and flux-operator are on the plays. The env's cluster-vars come in once, as extra
+# vars (jarvis site: -e @values/cluster-vars.yaml).
 - name: Assert facts before any change
   hosts: all
   become: true
   gather_facts: false
   any_errors_fatal: true
   tags: [always]
-  vars: &jarvis_play_vars
-    ansible_user: "{{ jarvis_host_ssh_user | default('') or ssh_user | default('ubuntu') }}"
-  vars_files: &jarvis_vars_files
-    - "{{ jarvis_cluster_vars }}"
   tasks:
     - name: Assert architecture, cluster-vars, and host facts
       ansible.builtin.import_tasks: tasks/preflight.yml
@@ -31,8 +27,6 @@
 - name: Base OS
   hosts: all
   become: true
-  vars: *jarvis_play_vars
-  vars_files: *jarvis_vars_files
   roles:
     - base-os
 
@@ -40,8 +34,6 @@
   hosts: control_plane
   become: true
   tags: [k3s]
-  vars: *jarvis_play_vars
-  vars_files: *jarvis_vars_files
   roles:
     - role: k3s
       vars:
@@ -52,8 +44,6 @@
   become: true
   serial: 1
   tags: [k3s]
-  vars: *jarvis_play_vars
-  vars_files: *jarvis_vars_files
   roles:
     - role: k3s
       vars:
@@ -65,8 +55,6 @@
   gather_facts: false
   # TAGS=labels runs only this play: it reads no sealed token, so it needs no age key.
   tags: [k3s, labels]
-  vars: *jarvis_play_vars
-  vars_files: *jarvis_vars_files
   tasks:
     - ansible.builtin.import_role:
         name: k3s
@@ -77,8 +65,6 @@
   become: true
   gather_facts: false
   tags: [kubeconfig]
-  vars: *jarvis_play_vars
-  vars_files: *jarvis_vars_files
   roles:
     - kubeconfig
 
@@ -86,8 +72,6 @@
   hosts: control_plane
   become: true
   tags: [flux-operator]
-  vars: *jarvis_play_vars
-  vars_files: *jarvis_vars_files
   pre_tasks:
     - name: Say the flux-operator play is skipped in check mode
       ansible.builtin.debug:

@@ -1,24 +1,20 @@
 ---
 # Read-only. Runs before the operator install, so a wrong key file stops the run
 # before any cluster change. sops_age_secret.yml creates the secret.
+# The result holds the secret's data, so it is never shown.
 - name: Check whether flux-system sops-age secret exists
-  ansible.builtin.command:
-    cmd: >-
-      {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
-      get secret sops-age -o name
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    namespace: "{{ flux_system_namespace }}"
+    name: sops-age
   register: flux_sops_age_lookup
-  changed_when: false
-  failed_when: >-
-    flux_sops_age_lookup.rc != 0
-    and 'NotFound' not in (
-      (flux_sops_age_lookup.stderr | default(''))
-      ~ (flux_sops_age_lookup.stdout | default(''))
-    )
   check_mode: false
+  no_log: true
 
 - name: Record flux-system sops-age secret presence
   ansible.builtin.set_fact:
-    flux_sops_age_present: "{{ flux_sops_age_lookup.rc == 0 }}"
+    flux_sops_age_present: "{{ flux_sops_age_lookup.resources | length > 0 }}"
 
 - name: Resolve and stat the SOPS key file
   ansible.builtin.import_tasks: sops_age_key_file.yml
@@ -141,17 +137,6 @@
           or age_key_file at the key for this env.
       no_log: true
 
-    - name: Read existing sops-age secret data when present
-      ansible.builtin.command:
-        cmd: >-
-          {{ k3s_binary_path }} kubectl -n {{ flux_system_namespace }}
-          get secret sops-age -o json
-      register: flux_sops_age_existing_json
-      changed_when: false
-      when: flux_sops_age_present | bool
-      check_mode: false
-      no_log: true
-
     # The secret may hold more than the env's identity, and comment lines.
     # It passes when its identities include every one chosen from the key file.
     - name: Record whether the existing sops-age secret holds the env's identity
@@ -162,7 +147,7 @@
              | length == 0 }}
       vars:
         _existing: >-
-          {{ ((flux_sops_age_existing_json.stdout | from_json).get('data') or {}).get('age.agekey', '')
+          {{ (flux_sops_age_lookup.resources[0].data | default({}, true)).get('age.agekey', '')
              | b64decode }}
       when: flux_sops_age_present | bool
       no_log: true
