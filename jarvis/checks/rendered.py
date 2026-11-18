@@ -181,23 +181,18 @@ def kubeconform(docs: list[dict], k3s: str) -> list[str]:
 
 
 @functools.cache
-def _ruled() -> frozenset[tuple[str, str]]:
-    """The (API group, resource) pairs the rules match. The CLI's time grows with every object it
-    reads, so it reads only these."""
+def _ruled_groups() -> frozenset[str]:
+    """The API groups the rules match. The CLI's time grows with every object it reads, so it reads
+    only objects in these groups; the CLI itself matches kinds within them."""
     rules = [doc for doc in yaml.safe_load_all(RULES.read_text(encoding="utf-8")) if isinstance(doc, dict)]
     return frozenset(
-        (group, resource)
-        for rule in rules
-        for match in rule["spec"]["matchConstraints"]["resourceRules"]
-        for group in match["apiGroups"]
-        for resource in match["resources"]
+        group for rule in rules for match in rule["spec"]["matchConstraints"]["resourceRules"] for group in match["apiGroups"]
     )
 
 
 def policies(docs: list[dict]) -> list[str]:
     """Each object against core's rules, with the Kyverno CLI."""
-    # Every kind the rules name is plural by its lowercase name and an s.
-    docs = [doc for doc in docs if (str(doc.get("apiVersion", "")).rpartition("/")[0], str(doc.get("kind", "")).lower() + "s") in _ruled()]
+    docs = [doc for doc in docs if str(doc.get("apiVersion", "")).rpartition("/")[0] in _ruled_groups()]
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", prefix="jarvis-objects-") as handle:
         yaml.safe_dump_all(docs, handle, sort_keys=False)
         handle.flush()
