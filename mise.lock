@@ -307,32 +307,32 @@ url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/
 url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/621661334"
 
 [[tools.kyverno]]
-version = "1.19.2"
+version = "1.20.0"
 backend = "aqua:kyverno/kyverno"
-specifiers = ["1.19.2"]
+specifiers = ["1.20.0"]
 
 [tools.kyverno."platforms.linux-arm64"]
-checksum = "sha256:250f2a02f143d5c6425e686b13c130d3a3ba7372dba6a7210d599d1b0dd12e92"
-url = "https://github.com/kyverno/kyverno/releases/download/v1.19.2/kyverno-cli_v1.19.2_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/660821014"
+checksum = "sha256:7d002205369f8ebb8a5570efb6a1bfc4fa02e67ca74d6d8cf2f27783e0e54759"
+url = "https://github.com/kyverno/kyverno/releases/download/v1.20.0/kyverno-cli_v1.20.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/736104692"
 provenance = "cosign"
 
 [tools.kyverno."platforms.linux-x64"]
-checksum = "sha256:357eaf1df8bc24ddd5a73979fadeaae6a032e8710f11af264229756e4956bf4a"
-url = "https://github.com/kyverno/kyverno/releases/download/v1.19.2/kyverno-cli_v1.19.2_linux_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/660820927"
+checksum = "sha256:06b8f3ca7b5626473be8fb4d343ad54ab84e317142766f72420e7d44b80942e2"
+url = "https://github.com/kyverno/kyverno/releases/download/v1.20.0/kyverno-cli_v1.20.0_linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/736105729"
 provenance = "cosign"
 
 [tools.kyverno."platforms.macos-arm64"]
-checksum = "sha256:7915c03c613c22363a100adb3da8d06f2e2626d9d21a98b97f921795ffdc536f"
-url = "https://github.com/kyverno/kyverno/releases/download/v1.19.2/kyverno-cli_v1.19.2_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/660820931"
+checksum = "sha256:9f7e537bdf39ff4f1819d978aec791a4dafa1cfd382f75f53baf422702452149"
+url = "https://github.com/kyverno/kyverno/releases/download/v1.20.0/kyverno-cli_v1.20.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/736103885"
 provenance = "cosign"
 
 [tools.kyverno."platforms.macos-x64"]
-checksum = "sha256:b645654ab8e65bd4aa64de9228e274b388bab19b3404a4e9af70174b3d5ad230"
-url = "https://github.com/kyverno/kyverno/releases/download/v1.19.2/kyverno-cli_v1.19.2_darwin_x86_64.tar.gz"
-url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/660820926"
+checksum = "sha256:2e31ed3df7fda3252a74c897eb6b7b581e634e0759796b43ce0d2472d7376275"
+url = "https://github.com/kyverno/kyverno/releases/download/v1.20.0/kyverno-cli_v1.20.0_darwin_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/736104287"
 provenance = "cosign"
 
 [[tools.restic]]
@@ -394,30 +394,30 @@ url_api = "https://api.github.com/repos/getsops/sops/releases/assets/486808228"
 provenance = "cosign"
 
 [[tools.uv]]
-version = "0.13.7"
+version = "0.13.9"
 backend = "aqua:astral-sh/uv"
-specifiers = ["0.13.7"]
+specifiers = ["0.13.9"]
 
 [tools.uv."platforms.linux-arm64"]
-checksum = "sha256:71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009469"
+checksum = "sha256:0797542018e541a9288855df555c8077eed06f7a47d206362030480e8ecc9f3d"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513657"
 provenance = "github-attestations"
 
 [tools.uv."platforms.linux-x64"]
-checksum = "sha256:c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009823"
+checksum = "sha256:a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513954"
 provenance = "github-attestations"
 
 [tools.uv."platforms.macos-arm64"]
-checksum = "sha256:81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009442"
+checksum = "sha256:5aeca67f2283f75235de40d0bd9c0a5bbc5fce23b6d48b3bf9fa1b2db08382ca"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513631"
 provenance = "github-attestations"
 
 [tools.uv."platforms.macos-x64"]
-checksum = "sha256:20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009775"
+checksum = "sha256:617a3211261b0fc739562f0071aa34e9739797c510208ede8e2977c30903d041"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513912"
 provenance = "github-attestations"

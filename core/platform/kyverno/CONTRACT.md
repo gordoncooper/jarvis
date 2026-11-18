@@ -6,7 +6,7 @@ Kyverno generates the backup objects and, with app hosting on, hosted apps' deri
 
 | What | Detail |
 | --- | --- |
-| HelmRelease `kyverno` in namespace `kyverno` | OCI chart `ghcr.io/kyverno/charts/kyverno` 3.9.2 (v1.19.2), pinned in `oci-repository.yaml`; admission and background controllers only; reports and cleanup off; images digest-pinned |
+| HelmRelease `kyverno` in namespace `kyverno` | OCI chart `ghcr.io/kyverno/charts/kyverno`, pinned in `oci-repository.yaml`; admission and background controllers only; reports and cleanup off; images digest-pinned |
 | Core's rules, `rules/` on `platform-configs` | ValidatingPolicies `images-pinned`, `resources`, `probes`, `stdout-logs`, `load-balancers` (`rules/rules.yaml`), Deny, failure policy Fail, in namespaces labelled `jarvis.io/layer` `platform` or `feature`. At admission only (`rules/kustomization.yaml`), an object with an owner is skipped, and `probes` skips a pod that does not restart. `jarvis validate` applies `rules.yaml` as it is to every object an env deploys, with the Git-only rules (`jarvis/checks/git-rules.yaml`) |
 | Aggregated ClusterRoles | `kyverno:backup-generate` manages Secrets and ReplicationSources and lists ConfigMaps cluster-wide (the hold and overrides); `kyverno:app-derive` (app hosting on) reads Apps and manages NetworkPolicies and ResourceQuotas. The chart's own roles are not edited, and no role updates Namespaces. |
 
