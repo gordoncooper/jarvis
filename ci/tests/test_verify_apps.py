@@ -7,7 +7,7 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from jarvis.verify.apps import check_app_baseline, check_declared_unbacked
+from jarvis.verify.apps import check_app_backups, check_app_baseline, check_declared_unbacked
 from jarvis.verify.common import CheckError, CheckWarning
 
 SUFFIX = "env-test.example"
@@ -32,6 +32,7 @@ class Cluster:
         self.hosts = [f"notes.apps.{SUFFIX}", "notes.example.org"]
         self.apps = [_item("App", "app-notes", "notes", spec={"volumes": [{"name": "cache", "backup": False}, {"name": "data", "backup": True}]})]
         self.pvcs = [_item("PersistentVolumeClaim", "app-notes", "cache", metadata={"namespace": "app-notes", "name": "cache", "annotations": {"backup": "none"}})]
+        self.sources: list[dict] = []
 
     def kubectl(self, args, input=None) -> CompletedProcess[str]:
         argv = list(args)
@@ -39,6 +40,7 @@ class Cluster:
         lists = {
             "namespaces": self.namespaces, "networkpolicies": self.policies, "limitranges": self.ranges,
             "validatingadmissionpolicybindings": self.bindings, "apps.hosting.jarvis.io": self.apps, "pvc": self.pvcs,
+            "replicationsource": self.sources,
             "ingresses": [_item("Ingress", "app-notes", "web", spec={"rules": [{"host": host} for host in self.hosts]})],
         }
         if argv[0] == "get" and argv[1] in lists:
@@ -94,3 +96,16 @@ def test_declared_unbacked_volume_is_reported_and_an_undeclared_one_fails() -> N
     cluster.pvcs.append(_item("PersistentVolumeClaim", "app-notes", "data", metadata={"namespace": "app-notes", "name": "data", "annotations": {"backup": "none"}}))
     with pytest.raises(CheckError, match="app-notes/data"):
         check_declared_unbacked(cluster.kubectl)
+
+
+def test_an_app_volume_without_a_credential_is_reported_and_a_registered_one_needs_its_source() -> None:
+    """Rule: a bound app volume with no ReplicationSource is reported as not backed up while its
+    app has no credential, and fails once the credential is registered; one with a source passes."""
+    cluster = Cluster()
+    cluster.pvcs.append(_item("PersistentVolumeClaim", "app-notes", "data", spec={"volumeName": "pv-1"}))
+    with pytest.raises(CheckWarning, match="not backed up: app-notes/data; to turn on: jarvis secrets --app app-notes"):
+        check_app_backups(cluster.kubectl, registered=[])
+    with pytest.raises(CheckError, match="app-notes/data: the app's credential is registered, and no ReplicationSource"):
+        check_app_backups(cluster.kubectl, registered=["app-notes"])
+    cluster.sources.append(_item("ReplicationSource", "app-notes", "data"))
+    check_app_backups(cluster.kubectl, registered=["app-notes"])

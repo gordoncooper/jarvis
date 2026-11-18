@@ -1,0 +1,132 @@
+# Hosted apps' backups. Each app's data has its own restic password and its own login on the
+# apps rest-server (rest-server.yaml), which confines that login to the app's own folder
+# ns-<namespace>/. An app's backups are on once the env seals its credential
+# (jarvis secrets --app app-<name>); the render registers it (core/feature/app-hosting/CONTRACT.md).
+# Core's pvc-backup skips app- namespaces, so core's credential never reaches one.
+#
+# pvc-backup-app: a hosted app's PVC. Its Secret comes only from that app's own credential, so
+# an app with no registered credential gets neither object.
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: pvc-backup-app
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: Enabled
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  evaluation:
+    generateExisting:
+      enabled: true
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [persistentvolumeclaims]
+  matchConditions:
+    # volumeName is empty until the claim binds; that UPDATE triggers generation.
+    - name: bound
+      expression: object.spec.?volumeName.orValue("") != ""
+    - name: enrolled
+      expression: object.metadata.?annotations["backup"].orValue("") != "none"
+    - name: not-a-mover
+      expression: object.metadata.?labels["app.kubernetes.io/created-by"].orValue("") != "volsync"
+    - name: app-namespace
+      expression: object.metadata.namespace.startsWith('app-')
+  variables:
+    # The app's own credential with a password, or none: nothing is generated without one.
+    - name: credentials
+      expression: >-
+        dyn(resource.list("v1", "secrets", "platform-backups").items)
+        .filter(s, s.metadata.name == "backups-restic-" + object.metadata.namespace
+                && s.?data.RESTIC_PASSWORD.orValue("") != "")
+    - name: credential
+      expression: variables.credentials[0].data
+    # A missing ConfigMap is no hold.
+    - name: hold
+      expression: >-
+        dyn(resource.list("v1", "configmaps", "kube-system").items)
+        .exists(c, c.metadata.name == "backup-rebuild-hold")
+    - name: secret
+      expression: >-
+        {
+          "apiVersion": dyn("v1"),
+          "kind": dyn("Secret"),
+          "metadata": dyn({"name": "restic-" + object.metadata.name, "namespace": object.metadata.namespace}),
+          "type": dyn("Opaque"),
+          "data": dyn({
+            "RESTIC_PASSWORD": variables.credential.RESTIC_PASSWORD,
+            "RESTIC_REST_USERNAME": variables.credential.RESTIC_REST_USERNAME,
+            "RESTIC_REST_PASSWORD": variables.credential.RESTIC_REST_PASSWORD,
+            "RESTIC_REPOSITORY": base64.encode(bytes(
+              string(base64.decode(variables.credential.RESTIC_REPOSITORY))
+              + "ns-" + object.metadata.namespace + "/pvc-" + object.metadata.name))
+          })
+        }
+    - name: source
+      expression: >-
+        {
+          "apiVersion": dyn("volsync.backube/v1alpha1"),
+          "kind": dyn("ReplicationSource"),
+          "metadata": dyn({"name": object.metadata.name, "namespace": object.metadata.namespace}),
+          "spec": dyn({
+            "paused": variables.hold || object.metadata.?annotations["backup"].orValue("") == "paused",
+            "sourcePVC": object.metadata.name,
+            "trigger": {"schedule": "${backup_schedule}"},
+            "restic": {
+              "repository": "restic-" + object.metadata.name,
+              "copyMethod": "Direct",
+              "cacheCapacity": "1Gi",
+              "pruneIntervalDays": 7,
+              "retain": {
+                "daily": int("${backup_retention_daily}"),
+                "weekly": int("${backup_retention_weekly}"),
+                "monthly": int("${backup_retention_monthly}"),
+                "within": "7d"
+              }
+            }
+          })
+        }
+  generate:
+    - expression: >-
+        size(variables.credentials) == 0
+        || generator.apply(object.metadata.namespace, [variables.secret, variables.source])
+---
+# app-derive-backups: an app reaches the apps rest-server only once the env registers its
+# credential (platform-backups/backups-restic-app-<name>). Removing the credential removes the allow.
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: app-derive-backups
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  evaluation:
+    generateExisting:
+      enabled: true
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [secrets]
+  matchConditions:
+    - name: app-credential
+      expression: >-
+        object.metadata.namespace == "platform-backups"
+        && object.metadata.name.startsWith("backups-restic-app-")
+  variables:
+    - name: allow
+      expression: >-
+        {"apiVersion": dyn("networking.k8s.io/v1"), "kind": dyn("NetworkPolicy"),
+         "metadata": dyn({"name": "app-backups", "namespace": object.metadata.name.substring(15)}),
+         "spec": dyn({"podSelector": {}, "policyTypes": ["Egress"], "egress": [{
+           "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "platform-backups"}},
+                   "podSelector": {"matchLabels": {"app.kubernetes.io/name": "restic-apps"}}}],
+           "ports": [{"port": 8000, "protocol": "TCP"}]}]})}
+  generate:
+    - expression: generator.apply(object.metadata.name.substring(15), [variables.allow])

@@ -9,6 +9,14 @@ the upgrade.
 
 ### Changed
 
+- Hosted apps' backups belong to app-hosting. The apps rest-server (`restic-apps`) and the
+  `pvc-backup-app` policy move to `core/feature/app-hosting/backups/` and come with
+  `app-hosting`; core's `pvc-backup` enrolls only the trusted zone. An app's backups are on once
+  its credential is sealed (`jarvis secrets --app app-<name>`): the render registers the
+  credential of each listed app that has one, and `jarvis secrets` no longer writes it. `jarvis verify` reports an
+  app volume without a credential as a warning, from the `apps` component.
+- The CLI needs Python 3.13 or later, which uv installs when the controller has an older one.
+  Ansible is 15 (ansible-core 2.22).
 - Core's rules hold at admission too. `core/platform/kyverno/rules/rules.yaml` is installed on
   `platform-configs` for namespaces labelled `jarvis.io/layer` `platform` or `feature`, and
   `jarvis validate` applies the same file to everything an env deploys. The Git-only backup rule
@@ -46,9 +54,8 @@ the upgrade.
 - One tree layout: an env is always read against the core running the checks (the env's pin, as
   the CLI and instance CI run it). A `core/` or `addons/` folder in an instance repo is no longer
   looked for, and nothing guesses where core is.
-- Whether an env runs the off-host copy or the apps backup server comes from
-  `values/switches.yaml`, the decision, not from its rendered platform-configs list. The two
-  env-schema messages name the switch.
+- Whether an env runs the off-host copy comes from `values/switches.yaml`, the decision, not
+  from its rendered platform-configs list. The env-schema message names the switch.
 - `jarvis up` waits for every Kustomization Flux's build of the env says the cluster gets (add-ons
   and hosted apps included), each Ready for its current spec and, if it reads the env repository,
   at the pushed commit. It no longer reads core's layer files itself or waits for two Ready polls
@@ -60,6 +67,11 @@ the upgrade.
 
 ### Removed
 
+- The `apps-backup-server` feature: app-hosting brings the apps server.
+- `backups:` in `values/apps.yaml` (`mode`, `selected`, `exclude`, `overrides`). The sealed
+  credential is the one record of which apps back up, so env-schema no longer compares a
+  selection against it or reads app files for eligibility. Per-app schedule and retention had no
+  user and are gone with it; every volume uses the env's.
 - The `flux-substitute` check: Flux's strict substitution in the build above does its job.
 - The `digest-pin`, `loadbalancer`, `manifest-lint` and `pvc-backup` checks, which read YAML as
   written and missed what kustomize and Helm render. Their rules are Kyverno policies that
@@ -77,6 +89,12 @@ the upgrade.
   `git checkout` by hand.
 - The package version is the release tag (hatch-vcs): `uv tool list` and pip show `0.5.2` for an
   install from `v0.5.2`, where they showed `0`. Nothing is bumped by hand at a release.
+
+### Upgrading
+
+- In each env that hosts apps: delete `backups:` from `values/apps.yaml` and `apps-backup-server`
+  from `features` in `values/switches.yaml`, then `jarvis render`. An app whose credential is
+  sealed keeps its backups; the old selection is not read.
 
 ## v0.5.2
 

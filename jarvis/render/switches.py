@@ -1,9 +1,10 @@
 """Render an env's Flux wiring from values/switches.yaml (schema/CONTRACT.md).
 
 Writes flux/kustomization.yaml, flux/kustomizations/services.yaml,
-flux/platform-configs/kustomization.yaml, flux/generated/apps.yaml and the backup selection.
-Names, slots, app lines and the backup selection are checked before the first write; env-schema
-then checks what needs the whole env, such as sealed files. A second run changes nothing.
+flux/platform-configs/kustomization.yaml with a registration under platform-configs/backups/ for
+each listed app whose backup credential is sealed, and flux/generated/apps.yaml. Names, slots and
+app lines are checked before the first write; env-schema then checks what needs the whole env,
+such as sealed files. A second run changes nothing.
 """
 
 from __future__ import annotations
@@ -13,12 +14,11 @@ from pathlib import Path
 
 import yaml
 
+from jarvis.apps import backups as _app_backups
 from jarvis.apps import values as _apps
-from jarvis.backups import selection as _backup_selection
 from jarvis.env import switches as _switches
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.render import apps as render_apps
-from jarvis.render import backup_selection as render_backup_selection
 from jarvis.schema.env import instance_root, switches_problems
 
 REPO_ROOT = PRODUCT_ROOT
@@ -31,19 +31,17 @@ def render_env(env_dir: Path, repo_root: Path) -> None:
     if problems:
         raise SystemExit("; ".join(problems))
     apps = render_apps.render_env(env_dir)
-    try:
-        selection = render_backup_selection.render_env(env_dir, repo_root)
-    except _backup_selection.AppsRepoError as exc:
-        raise SystemExit(f"{env_dir}: {exc}") from exc
     data, _ = _switches.load(env_dir)
     flux = env_dir / "flux"
-    wrapper = (_backup_selection.WRAPPER_ENTRY,) if selection is not None else ()
+    registrations = _app_backups.write_registrations(
+        env_dir, _app_backups.registered(env_dir, _switches.names(data, _switches.APPS))
+    )
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
     for rel, text in (
         (_switches.SYNC_REL, _switches.sync(cluster_vars, env_dir.name)),
         (_switches.ROOT_REL, _switches.root_kustomization(data, apps_generated=_apps.GENERATED_REL)),
         (_switches.SERVICES_REL, _switches.services(data)),
-        (_switches.PLATFORM_CONFIGS_REL, _switches.platform_configs(data, extra_components=wrapper)),
+        (_switches.PLATFORM_CONFIGS_REL, _switches.platform_configs(data, extra_components=registrations)),
     ):
         (flux / rel).parent.mkdir(parents=True, exist_ok=True)
         (flux / rel).write_text(text, encoding="utf-8")

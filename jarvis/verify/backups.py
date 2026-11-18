@@ -6,11 +6,9 @@ import base64
 import binascii
 from datetime import UTC, datetime, timedelta
 
-from jarvis.apps import values as _apps
-from jarvis.backups import selection as _backup_selection
-from jarvis.backups.app_credentials import APPS_SERVER, rest_username
+from jarvis.apps.backups import APPS_SERVER, rest_username
 from jarvis.env.runtime import json_object, not_found, reason
-from jarvis.schema.env import app_registrations, apps_server_listed, backup_required_registrations, offsite_copy_listed
+from jarvis.schema.env import app_hosting_listed, offsite_copy_listed
 from jarvis.verify.common import (
     CheckError,
     Context,
@@ -92,14 +90,7 @@ def _secret_names(pod: dict) -> set[str]:
     return names
 
 
-def check_backups(
-    kubectl: Kubectl,
-    *,
-    zone_name: str,
-    now: datetime,
-    registered: frozenset[str] = frozenset(),
-    required: frozenset[str] | None = None,
-) -> None:
+def check_backups(kubectl: Kubectl, *, zone_name: str, now: datetime) -> None:
     pvcs = items(kubectl(["get", "pvc", "-A", "-o", "json"]), "list PVCs")
     sources = items(
         kubectl(["get", "replicationsource", "-A", "-o", "json"]),
@@ -124,13 +115,10 @@ def check_backups(
         namespace, name = meta.get("namespace"), meta.get("name")
         if not namespace or not name:
             raise CheckError("PVC has no namespace or name")
-        if namespace.startswith("app-") and required is not None and namespace not in required:
-            continue
         source = indexed.get((namespace, name))
-        if source is None and namespace.startswith("app-") and namespace not in registered:
-            raise CheckError(
-                f"{namespace}/{name}: not backed up; {namespace} has no registered backup credential"
-            )
+        # A hosted app's volume without a source is the apps component's to report.
+        if source is None and namespace.startswith("app-"):
+            continue
         if source is None:
             raise CheckError(f"{namespace}/{name}: no ReplicationSource")
         status = source.get("status") or {}
@@ -200,48 +188,16 @@ def check_offsite_copy(kubectl: Kubectl, *, now: datetime) -> None:
 @register("backups")
 def backups_checks(ctx: Context) -> list[Check]:
     env_dir = ctx.repo_root / "envs" / ctx.env
-    required: frozenset[str] | None
-    checks: list[Check]
-    if problems := _backup_selection.selection_problems(ctx.repo_root, env_dir, _apps.APPS_VALUES):
-        def fail_selection() -> None:
-            raise CheckError("; ".join(problems))
-
-        registered = required = frozenset()
-        checks = [(19, "backup selection", fail_selection)]
-    else:
-        registered = frozenset(app_registrations(env_dir, ctx.repo_root))
-        required = backup_required_registrations(env_dir, ctx.repo_root)
-        checks = []
-    checks.extend(
-        [
+    checks: list[Check] = [
         (20, "backups-restic present", lambda: check_secret(ctx.kubectl)),
-        (
-            21,
-            "app backup isolation",
-            lambda: check_app_isolation(
-                ctx.kubectl, apps_server=apps_server_listed(env_dir)
-            ),
-        ),
+        (21, "app backup isolation", lambda: check_app_isolation(ctx.kubectl, apps_server=app_hosting_listed(env_dir))),
         (
             60,
             "backup freshness",
-            lambda: check_backups(
-                ctx.kubectl,
-                zone_name=str(ctx.values["time_zone"]),
-                now=ctx.now,
-                registered=registered,
-                required=required,
-            ),
+            lambda: check_backups(ctx.kubectl, zone_name=str(ctx.values["time_zone"]), now=ctx.now),
         ),
-        (
-            65,
-            "repository integrity check",
-            lambda: check_repository_integrity(ctx.kubectl, now=ctx.now),
-        ),
-        ]
-    )
-    if offsite_copy_listed(ctx.repo_root / "envs" / ctx.env):
-        checks.append(
-            (66, "off-host copy", lambda: check_offsite_copy(ctx.kubectl, now=ctx.now))
-        )
+        (65, "repository integrity check", lambda: check_repository_integrity(ctx.kubectl, now=ctx.now)),
+    ]
+    if offsite_copy_listed(env_dir):
+        checks.append((66, "off-host copy", lambda: check_offsite_copy(ctx.kubectl, now=ctx.now)))
     return checks

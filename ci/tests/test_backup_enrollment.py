@@ -1,9 +1,8 @@
-"""Backup enrollment rules: Kyverno install and the PVC GeneratingPolicies."""
+"""Backup enrollment rules: core's PVC GeneratingPolicy and app-hosting's for hosted apps."""
 
 from __future__ import annotations
 
 import base64
-import json
 from pathlib import Path
 
 import yaml
@@ -53,30 +52,31 @@ def _cluster(*extra: dict) -> list[dict]:
     return [*({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": name}} for name in namespaces),
             _credential("backups-restic", "rest:http://restic:8000/", "core"),
             _credential("backups-restic-app-notes", "rest:http://restic-apps:8000/", "notes"),
-            {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "backup-overrides", "namespace": "platform-backups"},
-             "data": {"app-notes": json.dumps({"backup_schedule": "15 4 * * *", "backup_retention_daily": 0})}},
+            # Every cluster has this one; the CLI cannot list a kind its context holds none of.
+            {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "kube-root-ca.crt", "namespace": "kube-system"}},
             *extra]
 
 
 def _generated(tmp_path: Path, claims: list[dict], cluster: list[dict]) -> dict[tuple[str, str, str], dict]:
-    policies = flux_envsubst(_docs(ROOT / "core/platform/backups/enrollment.yaml"), _ENV)
+    policies = flux_envsubst([*_docs(ROOT / "core/platform/backups/enrollment.yaml"),
+                              *_docs(ROOT / "core/feature/app-hosting/backups/policies.yaml")], _ENV)
     made = kyverno_generated(tmp_path, policies, claims, cluster)
     return {(doc["kind"], doc["metadata"]["namespace"], doc["metadata"]["name"]): doc for doc in made}
 
 
-def _source(name: str, *, paused: bool = False, schedule: str | None = None, daily: str | None = None) -> dict:
-    return {"paused": paused, "sourcePVC": name, "trigger": {"schedule": schedule or _ENV["backup_schedule"]},
+def _source(name: str, *, paused: bool = False) -> dict:
+    return {"paused": paused, "sourcePVC": name, "trigger": {"schedule": _ENV["backup_schedule"]},
             "restic": {"repository": f"restic-{name}", "copyMethod": "Direct", "cacheCapacity": "1Gi", "pruneIntervalDays": 7,
-                       "retain": {"daily": int(daily or _ENV["backup_retention_daily"]),
+                       "retain": {"daily": int(_ENV["backup_retention_daily"]),
                                   "weekly": int(_ENV["backup_retention_weekly"]),
                                   "monthly": int(_ENV["backup_retention_monthly"]), "within": "7d"}}}
 
 
 def test_enrollment_generates_a_secret_and_source_per_bound_claim(tmp_path: Path) -> None:
-    """Rule: a bound claim gets Secret restic-<pvc> and ReplicationSource <pvc>; a core claim
-    reads core's credential and the env's values, an app- claim only its own credential and its
-    override; an app with no credential, an unbound claim, backup: none and a mover's claim get
-    nothing; backup: paused pauses its source."""
+    """Rule: a bound claim gets Secret restic-<pvc> and ReplicationSource <pvc> on the env's
+    schedule and retention; a core claim reads core's credential, an app- claim only its own; an
+    app with no credential, an unbound claim, backup: none and a mover's claim get nothing;
+    backup: paused pauses its source."""
     claims = [
         _claim("data", "monitoring"),
         _claim("held", "monitoring", backup="paused"),
@@ -101,8 +101,7 @@ def test_enrollment_generates_a_secret_and_source_per_bound_claim(tmp_path: Path
     assert {base64.b64decode(value).decode() for value in app.values()} & {"core", "user-core", "rest-core"} == set()
     assert made[("ReplicationSource", "monitoring", "data")]["spec"] == _source("data")
     assert made[("ReplicationSource", "monitoring", "held")]["spec"] == _source("held", paused=True)
-    assert made[("ReplicationSource", "app-notes", "db")]["spec"] == _source("db", schedule="15 4 * * *", daily="0")
-    assert "rest:http://" not in (ROOT / "core/platform/backups/enrollment.yaml").read_text(encoding="utf-8")
+    assert made[("ReplicationSource", "app-notes", "db")]["spec"] == _source("db")
 
 
 def test_rebuild_hold_pauses_every_source(tmp_path: Path) -> None:

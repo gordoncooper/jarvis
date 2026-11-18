@@ -17,7 +17,7 @@ import yaml
 
 from jarvis.env import switches as _switches
 
-# envs/<env>/values/apps.yaml: exception lines and backup selection. The names are in values/switches.yaml.
+# envs/<env>/values/apps.yaml: exception lines and pins. The names are in values/switches.yaml.
 APPS_VALUES = "values/apps.yaml"
 # The render, under envs/<env>/flux/, which the env's flux/kustomization.yaml lists.
 GENERATED_REL = "generated/apps.yaml"
@@ -38,7 +38,7 @@ LAN_GRANTS = ("lan-all", "lan-target")
 # values/cluster-vars.yaml: the env's LAN ranges.
 LAN_CIDRS = "lan_cidrs"
 _PRIVATE = tuple(ipaddress.IPv4Network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
-_KEYS = frozenset({"apps", "exceptions", "backups", "versions"})
+_KEYS = frozenset({"apps", "exceptions", "versions"})
 # values/apps.yaml versions: each listed app's pinned release, <app>: v<major>.<minor>.<patch>.
 # Flux reads the app at the apps repository's tag <app>/v<version>; nothing follows a branch.
 VERSIONS = "versions"
@@ -50,8 +50,8 @@ def wiring_name(app: str) -> str:
 
 
 def load_values(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
-    """The env's app names from its switches, with the exception lines and backup selection from
-    its app file, as one mapping, or errors. A missing file holds nothing, so no name is no apps."""
+    """The env's app names from its switches, with the exception lines and pins from its app
+    file, as one mapping, or errors. A missing file holds nothing, so no name is no apps."""
     switches, errors = _switches.load(env_dir)
     if errors:
         return {}, [f"{_switches.SWITCHES_FILE}: {problem}" for problem in errors]
@@ -65,7 +65,7 @@ def load_values(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
     if data is None:
         data = {}
     if not isinstance(data, dict):
-        return {}, ["expected a mapping with exceptions and backups"]
+        return {}, ["expected a mapping with exceptions and versions"]
     if _switches.APPS in data:
         return {}, [f"apps: app names live in {_switches.SWITCHES_FILE}, not here"]
     if _switches.APPS in switches:
@@ -115,7 +115,7 @@ def validate(data: dict[str, Any], dns_suffix: str | None, lan_cidrs: list[str] 
     """The app list holds names only, each once; each exception line names a listed app and
     one known grant, once. A custom hostname stays outside the env's own zone; a LAN grant
     needs the env's lan_cidrs, and a lan-target's range sits inside them."""
-    errors = [f"unknown key {key!r} (allowed: exceptions, backups, versions)" for key in sorted(set(data) - _KEYS)]
+    errors = [f"unknown key {key!r} (allowed: exceptions, versions)" for key in sorted(set(data) - _KEYS)]
     apps = data.get("apps")
     if apps is None:
         apps = []

@@ -53,22 +53,12 @@ What an env turns on, by name only. jarvis validate also checks each add-on and 
 
 ## `values/apps.yaml`
 
-What an env decides for its hosted apps. jarvis validate also checks each grant, selection and pin against the app list and the apps repository.
+What an env decides for its hosted apps. jarvis validate also checks each grant and pin against the app list and the apps repository.
 
 | Key | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
-| `backups` | no | object |  | Which listed apps register a backup credential. Without this section, none does. |
 | `exceptions` | no | array |  | Grants, one per line as &lt;app&gt;: &lt;grant&gt;, for a listed app whose app file asks for the same item: privileged, root, host-network, host-path, hostname &lt;name&gt;, lan-port &lt;port&gt;/&lt;TCP\|UDP&gt;, lan-all, lan-target &lt;name&gt; &lt;cidr&gt; &lt;port&gt;/&lt;TCP\|UDP&gt;, no-uptime-check. |
 | `versions` | no | object |  | Each listed app's release: &lt;app&gt;: v&lt;x.y.z&gt;, the apps repository's tag &lt;app&gt;/v&lt;x.y.z&gt;. Every listed app needs one. |
-
-## `values/apps.yaml: backups`
-
-| Key | Required | Type | Default | Meaning |
-| --- | --- | --- | --- | --- |
-| `exclude` | no | array | `[]` | With mode all_except: the apps that do not. |
-| `mode` | yes | `selected` or `all_except` |  | selected: only the apps on selected. all_except: every backup-eligible listed app except those on exclude. |
-| `overrides` | no | object |  | Per app: backup_schedule and backup_retention_daily, _weekly and _monthly for its volumes, in place of cluster-vars.yaml's. |
-| `selected` | no | array | `[]` | With mode selected: the apps that back up. Each must declare a backup: true volume in its app file. |
 
 ## `inventory/hosts.yml: each host under all.hosts`
 

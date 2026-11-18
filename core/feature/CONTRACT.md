@@ -6,9 +6,8 @@ Core pieces an env runs only once it lists them under `features` in `values/swit
 
 | Feature | What it adds |
 | --- | --- |
-| `app-hosting/` | Hosted apps: [CONTRACT.md](app-hosting/CONTRACT.md) |
+| `app-hosting/` | Hosted apps and their backups: [CONTRACT.md](app-hosting/CONTRACT.md) |
 | `app-dns/` | DNS for `<dns_suffix>`: [CONTRACT.md](app-dns/CONTRACT.md) |
-| `apps-backup-server/` | rest-server `restic-apps` for hosted apps' repositories ([backups](../platform/backups/CONTRACT.md)) |
 | `offsite-backup-copy/` | CronJob `restic-offsite` to the env's off-host target ([backups](../platform/backups/CONTRACT.md)) |
 
 ## Expects

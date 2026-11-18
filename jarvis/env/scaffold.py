@@ -108,7 +108,7 @@ class EnvSpec:
 
 
 def example_apps() -> dict:
-    """The example apps' values/apps.yaml: their pins, grants and backup selection."""
+    """The example apps' values/apps.yaml: their pins and grants."""
     return yaml.safe_load(EXAMPLE_APPS.read_text(encoding="utf-8"))
 
 

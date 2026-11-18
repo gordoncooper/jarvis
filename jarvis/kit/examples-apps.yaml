@@ -7,6 +7,3 @@ versions:
   lan-demo: v0.1.0
 exceptions:
   - lan-demo: lan-port 8080/TCP
-backups:
-  mode: selected
-  selected: []

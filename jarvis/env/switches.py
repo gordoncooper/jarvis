@@ -13,8 +13,6 @@ from typing import Any
 
 import yaml
 
-from jarvis.backups import app_credentials as _app_backups
-
 # envs/<env>/values/switches.yaml.
 SWITCHES_FILE = "values/switches.yaml"
 # The features an env turns on.
@@ -34,7 +32,6 @@ APP_HOSTING_DIR = "core/feature/app-hosting"
 OFFSITE_COPY = "offsite-backup-copy"
 OFFSITE_COPY_DIR = "core/feature/offsite-backup-copy"
 OFFSITE_SECRET_FILE = "backups-offsite.sops.yaml"
-APPS_BACKUP_SERVER = "apps-backup-server"
 # From an env's flux/platform-configs/ to the root artifact, which holds core/ and addons/.
 _CORE_PATH = "../../../../"
 # What each feature adds to the env's platform-configs. One name, one row.
@@ -45,7 +42,6 @@ FEATURE_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
     APP_DNS: {"resources": (_CORE_PATH + APP_DNS_DIR,)},
     APP_HOSTING: {"components": (_CORE_PATH + APP_HOSTING_DIR,)},
     OFFSITE_COPY: {"resources": (_CORE_PATH + OFFSITE_COPY_DIR, f"../../secrets/{OFFSITE_SECRET_FILE}")},
-    APPS_BACKUP_SERVER: {"resources": (_CORE_PATH + _app_backups.APPS_SERVER_DIR,)},
 }
 _BOOTSTRAP_RESOURCES = (
     _CORE_PATH + "core/platform/configs",
@@ -83,7 +79,7 @@ def _dump(doc: dict[str, Any], note: str = "") -> str:
 
 def platform_configs(data: dict[str, Any], *, extra_components: Sequence[str] = ()) -> str:
     """The env's platform-configs list: core configs, the two sealed files bootstrap-secrets writes,
-    and what each listed feature adds. extra_components is the backup-selection wrapper."""
+    and what each listed feature adds. extra_components are the app backup registrations."""
     resources: list[str] = list(_BOOTSTRAP_RESOURCES)
     components: list[str] = []
     enabled = names(data, FEATURES)

@@ -1,13 +1,14 @@
 # App hosting, optional and off by default. An env turns it on with one name in
 # envs/<env>/values/switches.yaml:
 #
-#   optional:
+#   features:
 #     - app-hosting
 #
 # and off by removing it (with its app list). It is a Component, not a directory under
 # resources, because it adds to an object platform-configs already has: TLSStore default
 # serves the apps wildcard. Without the name, the env renders none of this.
 # The per-app wiring (app/) is applied by each app's own wiring Kustomization, not here.
+# backups/ is hosted apps' backups: the apps rest-server and the policies that enroll app volumes.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:
@@ -15,6 +16,7 @@ resources:
   - kyverno-rbac.yaml
   - policies/admission.yaml
   - policies/derive.yaml
+  - backups
   - priority.yaml
   - grant-revoke.yaml
   - certificate.yaml

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from jarvis.backups import app_credentials as _app_backups
+from jarvis.apps import backups as _app_backups
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.secrets import sops as _sops

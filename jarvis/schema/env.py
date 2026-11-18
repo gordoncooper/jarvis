@@ -20,9 +20,9 @@ from urllib.parse import urlparse
 import yaml
 
 from jarvis import paths as _paths
+from jarvis.apps import backups as _app_backups
+from jarvis.apps import checkout as _apps_checkout
 from jarvis.apps import values as _apps
-from jarvis.backups import app_credentials as _app_backups
-from jarvis.backups import selection as _backup_selection
 from jarvis.env import switches as _switches
 from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE resolver)
 from jarvis.schema import values as _values
@@ -306,10 +306,6 @@ def offsite_copy_listed(env_dir: Path) -> bool:
     return _feature_listed(env_dir, _switches.OFFSITE_COPY)
 
 
-def apps_server_listed(env_dir: Path) -> bool:
-    return _feature_listed(env_dir, _switches.APPS_BACKUP_SERVER)
-
-
 def app_hosting_listed(env_dir: Path) -> bool:
     return _feature_listed(env_dir, _switches.APP_HOSTING)
 
@@ -318,22 +314,11 @@ def app_dns_listed(env_dir: Path) -> bool:
     return _feature_listed(env_dir, _switches.APP_DNS)
 
 
-def app_registrations(env_dir: Path, repo_root: Path | None = None) -> list[str]:
-    """The app namespaces an env registers a credential for: the backups selection in
-    values/apps.yaml. With no selection it registers none."""
-    registered = backup_required_registrations(env_dir, Path(repo_root) if repo_root is not None else env_dir.parents[1])
-    return sorted(registered or ())
-
-
-def backup_required_registrations(env_dir: Path, repo_root: Path) -> frozenset[str] | None:
-    """App namespaces that must have a backup credential for verify, or None when selection is off."""
-    data, _ = _apps.load_values(env_dir)
-    section = _backup_selection.load_section(data or {})
-    if section is None:
-        return None
-    apps_list = _apps.app_names(data)
-    apps_root = _backup_selection.selection_apps_root(repo_root, env_dir, apps_list)
-    return frozenset(_backup_selection.enabled_namespaces(section, apps_list=apps_list, apps_root=apps_root))
+def app_registrations(env_dir: Path) -> list[str]:
+    """The app namespaces an env registers a backup credential for: each listed app whose
+    credential is sealed."""
+    data, errors = _apps.load_values(env_dir)
+    return [] if errors else _app_backups.registered(env_dir, _apps.app_names(data))
 
 
 def addon_names(core: Path) -> tuple[str, ...]:
@@ -428,11 +413,11 @@ def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
     if not apps:
         return errors
     try:
-        apps_root = _backup_selection.apps_repo_root(repo_root, env_dir)
-    except _backup_selection.AppsRepoError as exc:
+        apps_root = _apps_checkout.apps_repo_root(repo_root, env_dir)
+    except _apps_checkout.AppsRepoError as exc:
         return [*errors, f"{rel}: {exc}"]
     errors.extend(
-        f"{rel}: {_switches.APPS}: unknown name {name!r}, no {name}/app.yaml in the apps repository{_backup_selection.STALE_HINT}"
+        f"{rel}: {_switches.APPS}: unknown name {name!r}, no {name}/app.yaml in the apps repository{_apps_checkout.STALE_HINT}"
         for name in apps
         if not (apps_root / name / "app.yaml").is_file()
     )
@@ -455,8 +440,6 @@ def _apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any])
             errors.append(f"{switches_rel}: lists apps, but app hosting is off; list {_switches.APP_HOSTING} under {_switches.FEATURES}, or remove the list")
         if not cluster_vars.get("apps_git_repo_url"):
             errors.append(f"{switches_rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
-    if _backup_selection.load_section(data) is not None:
-        errors.extend(_backup_selection.selection_problems(repo_root, env_dir, rel))
     return errors
 
 
@@ -476,39 +459,20 @@ def sealed_readers(env_dir: Path, repo_root: Path, cluster_vars_path: Path) -> s
         if name in known:
             for namespace in addon_secret_namespaces(addon_documents(core, name)):
                 read.update((secrets / namespace).glob("*.sops.yaml"))
-    try:
-        registered = app_registrations(env_dir, repo_root)
-    except (_backup_selection.AppsRepoError, TypeError, ValueError, yaml.YAMLError, UnicodeDecodeError):
-        # The selection is unreadable; _apps_problems reports why. Every app credential counts as read.
-        read.update(secrets.rglob(f"{_app_backups.secret_name('app-')}*.sops.yaml"))
-        registered = []
-    for namespace in registered:
+    for namespace in app_registrations(env_dir):
         read.add(repo_root / _app_backups.sealed_rel(env_dir.name, namespace))
     return read
 
 
 def _sealed_problems(env_dir: Path, repo_root: Path, bootstrapped: bool, cluster_path: Path) -> list[str]:
     """Once bootstrapped, each thing that reads a sealed file has it: the off-host copy, an
-    add-on's namespace folder, a registered app's credential. An app credential is sealed only in
-    its own folder and needs the apps server. A sealed file nothing reads is a credential with no
-    owner, so it fails."""
+    add-on's namespace folder. An app credential is sealed only in its own folder. A sealed file
+    nothing reads is a credential with no owner, so it fails."""
     name = env_dir.name
     secrets = env_dir / "secrets"
     errors: list[str] = []
-    # A selection that cannot say which apps are enabled is _apps_problems' to report.
-    unreadable = _backup_selection.selection_problems(repo_root, env_dir, _apps.APPS_VALUES)
-    registered = [] if unreadable else app_registrations(env_dir, repo_root)
-    if registered and not apps_server_listed(env_dir):
-        errors.append(
-            f"{_rel(env_dir / _switches.SWITCHES_FILE, repo_root)}: registers app credentials, and does not list "
-            f"{_switches.APPS_BACKUP_SERVER}; an app's backups need the apps server"
-        )
     if bootstrapped:
         wanted = [(secrets / OFFSITE_SECRET_FILE, f"{_switches.SWITCHES_FILE} lists {_switches.OFFSITE_COPY}", "")] if offsite_copy_listed(env_dir) else []
-        wanted += [
-            (repo_root / _app_backups.sealed_rel(name, item), f"registers {item}", f"; run jarvis secrets --app {item}")
-            for item in registered
-        ]
         errors.extend(f"{name}: {why}, missing required file {_rel(path, repo_root)}{hint}" for path, why, hint in wanted if not path.is_file())
         core = _paths.core_root()
         for addon in set(enabled_addons(env_dir)) & set(addon_names(core)):

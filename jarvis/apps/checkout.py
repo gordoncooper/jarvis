@@ -13,15 +13,18 @@ tag. The jarvis CLI points APPS_REPO at it before a command that reads app files
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
 from jarvis.apps import values as _apps
-from jarvis.backups import selection as _backup_selection
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT, cache_dir
 
@@ -30,6 +33,128 @@ REPO_ROOT = PRODUCT_ROOT
 
 class AppsCheckoutError(Exception):
     pass
+
+
+_APPS_REPO_ENV = "APPS_REPO"
+STALE_HINT = "; the checks read each app at its pinned tag, so check the apps checkout has its tags"
+
+
+class AppsRepoError(Exception):
+    """The apps repository checkout is missing or unreadable."""
+
+
+def _repo_basename(url: str) -> str | None:
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if not parts:
+        return None
+    return parts[-1].removesuffix(".git")
+
+
+def _looks_like_apps_repo(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    return any((path / child / "app.yaml").is_file() for child in path.iterdir() if child.is_dir())
+
+
+def _resolve_apps_checkout(repo_root: Path, env_dir: Path) -> Path | None:
+    cv_path = env_dir / "values" / "cluster-vars.yaml"
+    if not cv_path.is_file():
+        return None
+    try:
+        cluster_vars = yaml.safe_load(cv_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return None
+    url = cluster_vars.get("apps_git_repo_url")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    name = _repo_basename(url)
+    if not name:
+        return None
+    roots = {instance_root(repo_root), repo_root.resolve()}
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.extend((root.parent / name, root / name))
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if _looks_like_apps_repo(resolved):
+            return resolved
+    return None
+
+
+_PINNED_VIEWS: dict[tuple[Path, tuple[tuple[str, str], ...]], Path] = {}
+
+
+def _archive(checkout: Path, tag: str, app: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(["git", "-C", str(checkout), "archive", "--format=tar", tag, app],
+                          capture_output=True, check=False)
+
+
+def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
+    """The app folders the env runs, each at its pinned tag, when the checkout is a git
+    repository and the env pins its apps (values/apps.yaml versions); otherwise the checkout as
+    it is (a fixture tree). A pinned tag the checkout lacks fails: the checks must read the
+    release the cluster runs, not the tip."""
+    if env_dir is None or not (checkout / ".git").exists():
+        return checkout
+    data, errors = _apps.load_values(env_dir)
+    versions = data.get(_apps.VERSIONS) if not errors else None
+    if not isinstance(versions, dict) or not versions:
+        return checkout
+    pins = tuple(sorted((str(app), str(version)) for app, version in versions.items()))
+    key = (checkout, pins)
+    if key in _PINNED_VIEWS:
+        return _PINNED_VIEWS[key]
+    view = Path(tempfile.mkdtemp(prefix="jarvis-apps-pinned-"))
+    fetched = False
+    for app, version in pins:
+        tag = f"refs/tags/{app}/{version}"
+        archive = _archive(checkout, tag, app)
+        if archive.returncode and not fetched:
+            # A pin newer than the checkout's last fetch: fetch its tags once (it moves no branch).
+            fetched = True
+            subprocess.run(["git", "-C", str(checkout), "fetch", "--quiet", "--tags"], capture_output=True, check=False)
+            archive = _archive(checkout, tag, app)
+        if archive.returncode:
+            raise AppsRepoError(f"{checkout}: no tag {app}/{version} with an {app}/ folder, "
+                                "even after fetching the apps repository's tags")
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(view, filter="data")
+    _PINNED_VIEWS[key] = view
+    return view
+
+
+def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
+    """Directory of app folders (<name>/app.yaml), each app as the env pins it.
+
+    APPS_REPO overrides for tests and operators. Otherwise resolve a local checkout of
+    apps_git_repo_url beside the instance or product checkout. A git checkout is read at each
+    app's pinned tag (_pinned_view).
+    """
+    override = os.environ.get(_APPS_REPO_ENV)
+    if override:
+        path = Path(override).expanduser().resolve()
+        if not _looks_like_apps_repo(path):
+            raise AppsRepoError(f"{_APPS_REPO_ENV}={override!r} is not an apps repository checkout")
+        return _pinned_view(path, env_dir)
+    if env_dir is None:
+        raise AppsRepoError(
+            f"set {_APPS_REPO_ENV} to a checkout of the env's apps_git_repo_url, "
+            "or clone that repository beside this checkout"
+        )
+    resolved = _resolve_apps_checkout(repo_root, env_dir)
+    if resolved is not None:
+        return _pinned_view(resolved, env_dir)
+    raise AppsRepoError(
+        f"set {_APPS_REPO_ENV} to a checkout of apps_git_repo_url, "
+        "or clone the apps repository beside this checkout"
+    )
 
 
 def _envs_needing_apps(instance: Path) -> list[Path]:
@@ -82,7 +207,7 @@ def require(instance: Path) -> None:
             "INSTANCE is set but APPS_REPO is unset; run the check through the jarvis CLI, "
             "which checks out the env's apps_git_repo_url, or export APPS_REPO"
         )
-    _backup_selection.apps_repo_root(instance, needing[0])
+    apps_repo_root(instance, needing[0])
 
 
 def _git(dest: Path, *args: str) -> None:
@@ -125,7 +250,7 @@ def main(argv: list[str]) -> int:
             require(instance)
         else:
             raise AppsCheckoutError("usage: python -m jarvis.apps.checkout require")
-    except (AppsCheckoutError, _backup_selection.AppsRepoError) as exc:
+    except (AppsCheckoutError, AppsRepoError) as exc:
         print(f"apps checkout: {exc}", file=sys.stderr)
         return 1
     return 0
