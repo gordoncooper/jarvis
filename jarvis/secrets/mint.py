@@ -6,7 +6,7 @@ records is not recreated unless --rotate-restic is set. k3s tokens are minted
 only for a new env; an env with other secrets gets its cluster's token sealed.
 
 --app app-<name> mints only that hosted app's own backup credential, sealed under
-envs/<env>/secrets/app-<name>/, and writes the Component the env lists to register
+envs/<env>/secrets/app-<name>/, which turns that app's backups on once jarvis render registers
 it. A credential git already records is never minted again.
 """
 
@@ -26,7 +26,8 @@ from pathlib import Path
 import bcrypt
 import yaml
 
-from jarvis.backups import app_credentials as _app_backups
+from jarvis.apps import backups as _app_backups
+from jarvis.apps import values as _apps
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.secrets import age as _age
@@ -510,7 +511,8 @@ def bootstrap(env: str, *, sops_bin: str | None = None, rotate_restic: bool = Fa
 
 
 def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> list[str]:
-    """Create-if-missing one hosted app's sealed credential and its registration Component.
+    """Create-if-missing one hosted app's sealed credential; jarvis render then registers it
+    (core/feature/app-hosting/CONTRACT.md).
 
     Every refusal runs before the first write. A credential git already records is never
     minted again: its repositories only open with the password it holds.
@@ -518,6 +520,10 @@ def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> l
     if not _app_backups.APP_NAMESPACE.fullmatch(namespace):
         raise SystemExit("refusing --app: it must be a hosted app namespace, app-<name>")
     repo = _repo_root()
+    env_dir = repo / "envs" / env
+    data, errors = _apps.load_values(env_dir)
+    if errors or namespace.removeprefix("app-") not in _apps.app_names(data):
+        raise SystemExit(f"refusing --app: the env does not list {namespace.removeprefix('app-')} under apps")
     missing = []
     for spec in _app_specs(namespace):
         path = _sops.secret_path(repo, env, _secret_name(spec.filename), spec.folder)
@@ -527,17 +533,9 @@ def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> l
         if _git_records(rel):
             raise SystemExit(
                 f"refusing to recreate {rel} because git already records it; an app's "
-                "repositories open only with its first password (core/platform/backups/CONTRACT.md, "
-                "App credentials)"
+                "repositories open only with its first password (core/feature/app-hosting/CONTRACT.md)"
             )
         missing.append((spec, path))
-    component = repo / _app_backups.registration_rel(env, namespace)
-    wanted = _app_backups.registration_component(namespace)
-    if component.exists() and component.read_text(encoding="utf-8") != wanted:
-        raise SystemExit(
-            f"refusing to overwrite {component.relative_to(repo)}: it differs from the "
-            "registration this tool writes; delete it and run again"
-        )
     sops = (sops_bin or _sops.require_sops()) if missing else ""
     created: list[str] = []
     for spec, path in missing:
@@ -550,10 +548,6 @@ def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> l
             sops_bin=sops,
         )
         created.append(str(path.relative_to(repo)))
-    if not component.exists():
-        component.parent.mkdir(parents=True, exist_ok=True)
-        component.write_text(wanted, encoding="utf-8")
-        created.append(str(component.relative_to(repo)))
     return created
 
 
@@ -668,7 +662,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--app",
         metavar="NAMESPACE",
-        help="Mint only this hosted app's own backup credential (app-<name>).",
+        help="Mint only this hosted app's own backup credential (app-<name>); jarvis render then turns its backups on.",
     )
     which = parser.add_mutually_exclusive_group()
     which.add_argument(
@@ -695,6 +689,8 @@ def main(argv: list[str] | None = None) -> int:
         return _lifecycle(args)
     if args.app is not None:
         created = bootstrap_app(args.env, args.app)
+        if created:
+            print(f"Next: jarvis render --env {args.env} registers it; then commit and push.")
     else:
         created = bootstrap(args.env, rotate_restic=args.rotate_restic)
     if created:

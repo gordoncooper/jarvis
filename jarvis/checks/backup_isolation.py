@@ -1,13 +1,13 @@
 """No app backup credential reaches core, and core's never reaches an app.
 
-On what each env's platform-configs path renders (and on the apps server core ships):
+On what each env's platform-configs path renders (and on app-hosting's backups, which core ships):
 
 - A GeneratingPolicy that generates a Secret and can match an app- namespace reads only that
   app's own platform-backups/backups-restic-<namespace>, never core's backups-restic.
 - Core's rest-server (Deployment restic) takes its users only from backups-restic.
 - The apps rest-server (Deployment restic-apps) runs --private-repos, never mounts backups-restic,
   and mounts only the htpasswd key of app credentials.
-- An env that renders an app credential also renders the apps server.
+- An env that renders an app credential also renders the apps server (app-hosting).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis import paths as _paths
-from jarvis.backups import app_credentials as _app_backups
+from jarvis.apps import backups as _app_backups
 from jarvis.checks.flux_build import env_tree
 from jarvis.checks.manifests import kustomize_build, pod_spec
 from jarvis.schema.env import env_dirs
@@ -44,11 +44,11 @@ class Violation:
 def scan_backup_isolation(root: Path) -> list[Violation]:
     root = Path(root).resolve()
     found: list[Violation] = []
-    shipped = _app_backups.APPS_SERVER_DIR
+    shipped = _app_backups.APPS_BACKUPS_DIR
     docs, error = kustomize_build(_paths.core_root(), shipped)
     if error:
-        found.append(Violation(_app_backups.APPS_SERVER_DIR, error))
-    found.extend(_render_violations(_app_backups.APPS_SERVER_DIR, docs))
+        found.append(Violation(_app_backups.APPS_BACKUPS_DIR, error))
+    found.extend(_render_violations(_app_backups.APPS_BACKUPS_DIR, docs))
     for env_dir in env_dirs(root):
         rel = f"envs/{env_dir.name}/flux/platform-configs"
         if not (root / rel).is_dir():
@@ -86,7 +86,7 @@ def _render_violations(where: str, docs: list[dict]) -> list[Violation]:
         elif kind == "Secret" and isinstance(name, str) and name.startswith(_app_backups.secret_name("app-")):
             if ("Deployment", _app_backups.APPS_SERVER) not in names:
                 found.append(
-                    Violation(where, f"Secret {name} is an app credential, but {_app_backups.APPS_SERVER_DIR} is not listed")
+                    Violation(where, f"Secret {name} is an app credential, but the apps server ({_app_backups.APPS_BACKUPS_DIR}) is not built")
                 )
     return found
 

@@ -784,7 +784,7 @@ def _list_feature(root: Path, name: str) -> None:
 
 
 def _list_apps_server(root: Path) -> None:
-    _list_feature(root, "apps-backup-server")
+    _list_feature(root, "app-hosting")
 
 
 @pytest.mark.parametrize(
@@ -835,20 +835,18 @@ def test_apps_server_reading_core_secret_fails(
     assert "FAIL app backup isolation: restic-apps mounts core's backups-restic" in capsys.readouterr().out
 
 
-def test_app_pvc_without_a_registered_credential_fails(
+def test_core_freshness_leaves_an_app_volume_without_a_source_to_the_apps_component(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """An app- PVC is never backed up with core's credential, so without its own it fails verify."""
+    """An app- PVC is never backed up with core's credential; one with no source yet is the
+    apps component's to report, so core's freshness check passes."""
     _list_apps_server(tmp_path)
     cluster = Cluster()
     cluster.pvcs = [("app", "data"), ("app-shop", "db")]
-    assert _run(tmp_path, cluster, monkeypatch) == 1
-    assert (
-        "FAIL backup freshness: app-shop/db: not backed up; app-shop has no registered backup credential"
-        in capsys.readouterr().out
-    )
+    assert _run(tmp_path, cluster, monkeypatch) == 0
+    assert "PASS backup freshness" in capsys.readouterr().out
 
 
 def test_not_ready_node_fails(

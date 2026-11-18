@@ -5,6 +5,7 @@ jarvis verify runs this component only for an env whose values/switches.yaml lis
 
 from __future__ import annotations
 
+from jarvis.apps import backups as _app_backups
 from jarvis.apps import values as _apps
 from jarvis.verify.common import CheckError, CheckWarning, Context, Kubectl, items
 from jarvis.verify.registry import Check, register
@@ -92,12 +93,38 @@ def check_declared_unbacked(kubectl: Kubectl) -> None:
         raise CheckWarning(f"declared not backed up by the app file: {', '.join(reported)}")
 
 
+def check_app_backups(kubectl: Kubectl, *, registered: list[str]) -> None:
+    """Each bound app volume not annotated backup: none has a ReplicationSource once its app's
+    credential is registered; until then it is reported as not backed up. The backups
+    component checks every source's freshness."""
+    sources = {_key(item) for item in _list(kubectl, "replicationsource", "list ReplicationSources")}
+    off, problems = [], []
+    for pvc in _list(kubectl, "pvc", "list PVCs"):
+        namespace, name = _key(pvc)
+        meta, spec = pvc.get("metadata") or {}, pvc.get("spec") or {}
+        if not namespace.startswith("app-") or not spec.get("volumeName") or (namespace, name) in sources:
+            continue
+        if (meta.get("annotations") or {}).get("backup") == "none":
+            continue
+        if (meta.get("labels") or {}).get("app.kubernetes.io/created-by") == "volsync":
+            continue
+        (problems if namespace in registered else off).append(f"{namespace}/{name}")
+    if problems:
+        raise CheckError(f"{', '.join(problems)}: the app's credential is registered, and no ReplicationSource")
+    if off:
+        commands = "; ".join(f"jarvis secrets --app {ns}" for ns in sorted({item.split("/", 1)[0] for item in off}))
+        raise CheckWarning(f"not backed up: {', '.join(off)}; to turn on: {commands}")
+
+
 @register("apps")
 def apps_checks(ctx: Context) -> list[Check]:
-    data, errors = _apps.load_values(ctx.repo_root / "envs" / ctx.env)
+    env_dir = ctx.repo_root / "envs" / ctx.env
+    data, errors = _apps.load_values(env_dir)
     if errors:
         raise CheckError(f"values/apps.yaml: {'; '.join(errors)}")
+    registered = _app_backups.registered(env_dir, _apps.app_names(data))
     return [
         (70, "hosted app baseline", lambda: check_app_baseline(ctx.kubectl, data=data, dns_suffix=str(ctx.values["dns_suffix"]))),
         (71, "hosted app volumes", lambda: check_declared_unbacked(ctx.kubectl)),
+        (72, "hosted app backups", lambda: check_app_backups(ctx.kubectl, registered=registered)),
     ]

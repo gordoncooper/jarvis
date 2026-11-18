@@ -682,12 +682,18 @@ _DERIVED = {"quota": "app", "web": "app-web", "internet": "app-internet", "lan-a
             "apps": "app-apps", "callers": "app-callers", "ports": "app-ports", "backups": "app-backups"}
 
 
+def _derive_policies() -> list[dict]:
+    """app-derive, and app-derive-backups from app-hosting's backups."""
+    backups = [doc for doc in _docs(POLICIES.parent / "backups" / "policies.yaml") if doc["metadata"]["name"] == "app-derive-backups"]
+    return [*_docs(POLICIES / "derive.yaml"), *backups]
+
+
 def _derive_test(tmp_path: Path, triggers: list[dict], apps: dict[str, list[str]],
                  results: list[tuple[str, tuple[dict, dict | None]]]) -> None:
     """What the app-derive policies make for the triggers: results are (object, (trigger, the
     object made, or None for none)), the object named as _DERIVED names it."""
     made = {(doc["metadata"]["namespace"], doc["kind"], doc["metadata"]["name"]): doc
-            for doc in kyverno_generated(tmp_path / "derive", _docs(POLICIES / "derive.yaml"), triggers, _namespaces(apps))}
+            for doc in kyverno_generated(tmp_path / "derive", _derive_policies(), triggers, _namespaces(apps))}
     for item, (trigger, expected) in results:
         name = trigger["metadata"]["name"]
         namespace = name.removeprefix("backups-restic-") if trigger["kind"] == "Secret" else trigger["metadata"]["namespace"]

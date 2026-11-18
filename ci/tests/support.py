@@ -293,21 +293,7 @@ def _git_ignored(repo: Path, path: Path) -> bool:
 
 
 def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
-    """Turn on backup for one app in the copy: selection, render, bootstrap-secrets, as an owner would."""
-    import yaml
-
-    app = namespace.removeprefix("app-")
-    apps_path = copy.env_dir / "values" / "apps.yaml"
-    data = yaml.safe_load(apps_path.read_text(encoding="utf-8"))
-    data["backups"] = {"mode": "selected", "selected": [app]}
-    apps_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    switches = yaml.safe_load((copy.env_dir / "values" / "switches.yaml").read_text(encoding="utf-8"))
-    set_switches(
-        copy.env_dir,
-        apps=list(dict.fromkeys([*switches["apps"], app])),
-        features=list(dict.fromkeys([*switches["features"], "apps-backup-server"])),
-    )
-    render_switches(copy.env_dir, copy.root)
+    """Turn on backup for one listed app in the copy as an owner would: jarvis secrets --app, then render."""
     sops = shutil.which("sops")
     if not sops:
         raise RuntimeError("sops not found on PATH (run make deps)")
@@ -319,6 +305,7 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
         mod.bootstrap_app(copy.name, namespace, sops_bin=sops)
     finally:
         mod.REPO_ROOT, mod._repo_root = previous_root, previous_repo_root
+    render_switches(copy.env_dir, copy.root)
 
 
 def kyverno_generated(work: Path, policies: list[dict], triggers: list[dict], cluster: list[dict] | None = None) -> list[dict]:

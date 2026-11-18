@@ -1,0 +1,8 @@
+# Hosted apps' backups: the apps rest-server and the policies that enroll each app's volumes
+# with that app's own credential. The env's render registers each sealed credential
+# (flux/platform-configs/backups/app-<name>), which mounts it here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rest-server.yaml
+  - policies.yaml

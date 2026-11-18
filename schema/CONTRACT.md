@@ -29,13 +29,10 @@ What each env under `envs/<env>/` may set. Run from an instance repository, the 
 | Each app in `switches.yaml` has `<app>/app.yaml` in the apps repository (`apps_git_repo_url` beside the instance, or `APPS_REPO`) | env-schema, render |
 | An env that lists apps lists `app-hosting` and sets `apps_git_repo_url`; each listed app has one `versions` pin, and only listed apps | env-schema, render |
 | Each exception line in `apps.yaml` is one known grant for a listed app; `lan-all` and `lan-target` need `lan_cidrs` | env-schema, render |
-| A `backups:` selection names only listed, backup-eligible apps; an app file the checkout cannot read fails | env-schema |
-| An env that registers an app credential lists `apps-backup-server` | env-schema |
-| Once sealed files exist: `k3s-token`, `cert-manager-ca`, `backups-restic`; `backups-offsite` while the off-host copy is listed; each registered app's credential in `secrets/app-<name>/`; a sealed file in each folder an enabled add-on decrypts | env-schema |
+| Once sealed files exist: `k3s-token`, `cert-manager-ca`, `backups-restic`; `backups-offsite` while the off-host copy is listed; an app credential only in its own `secrets/app-<name>/`; a sealed file in each folder an enabled add-on decrypts | env-schema |
 | An `ssh://` root has `secrets/flux-deploy-key.sops.yaml` | env-schema |
 | Every sealed file has a reader, and opens for exactly the env's recipients | env-schema |
 | `.sops.yaml` has one age creation rule per env, and none for an env that does not exist | env-schema |
-| Deleting `backups:` while apps register refuses; set `selected: []` and re-render first | render |
 | Every `${…}` a manifest reads exists; Flux's strict substitution fails the reconcile otherwise | `jarvis validate` builds with `flux build --strict-substitute` |
 | Core holds no env name, hostname, `dns_suffix`, `ssh_user` or owner handle | review |
 

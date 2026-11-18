@@ -12,8 +12,8 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # pvc-backup lists kube-system and platform-backups ConfigMaps for backup-rebuild-hold and
-  # backup-overrides. A list cannot be narrowed by resourceNames.
+  # The pvc-backup policies list kube-system ConfigMaps for backup-rebuild-hold. A list cannot be
+  # narrowed by resourceNames.
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch"]

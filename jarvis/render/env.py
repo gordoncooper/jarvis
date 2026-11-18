@@ -5,7 +5,7 @@
 From values/cluster-vars.yaml, values/switches.yaml and values/apps.yaml it writes the env's
 whole flux/: sync.yaml, kustomization.yaml, kustomizations/services.yaml,
 platform-configs/kustomization.yaml and its backups/ registrations, and generated/ (the
-cluster-vars ConfigMap, the app wiring and the backup selection). flux/ is render output only: a
+cluster-vars ConfigMap and the app wiring). flux/ is render output only: a
 render replaces it whole, so a file core moved or retired leaves on the next render, and a file
 nobody renders is reported stale. The render runs on a copy and swaps flux/ in only when it
 succeeds, so a refused render leaves the env as it was. --check writes nothing: it lists each file

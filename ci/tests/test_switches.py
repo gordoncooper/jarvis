@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jarvis.backups import app_credentials as _app_backups
 from jarvis.env import switches as _switches
 from jarvis.schema.env import ValidationError, validate_one_env
 from support import (
@@ -97,10 +96,7 @@ def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: s
 
 @pytest.mark.parametrize(
     ("name", "folder", "kind", "object_name"),
-    [
-        (_switches.OFFSITE_COPY, _switches.OFFSITE_COPY_DIR, "CronJob", "restic-offsite"),
-        (_switches.APPS_BACKUP_SERVER, _app_backups.APPS_SERVER_DIR, "Deployment", "restic-apps"),
-    ],
+    [(_switches.OFFSITE_COPY, _switches.OFFSITE_COPY_DIR, "CronJob", "restic-offsite")],
 )
 def test_an_optional_backup_piece_renders_only_from_its_name(name: str, folder: str, kind: str, object_name: str) -> None:
     """Rule: always-on core carries no optional piece. Its folder sits under core/feature, the
@@ -129,29 +125,19 @@ def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:
     assert ("Deployment", "restic-apps") not in off
     assert not any(name.startswith("app-") for _kind, name in off)
     assert not (copy.env_dir / "flux" / "generated" / "apps.yaml").exists()
-    set_switches(copy.env_dir, features=["apps-backup-server"])
-    render_switches(copy.env_dir, copy.root)
-    assert ("Deployment", "restic-apps") in _objects(copy, "platform-configs")
 
 
-def test_app_hosting_with_selected_backups_renders_the_apps_server_once(tmp_path: Path) -> None:
-    """Rule: env-01's shape renders: the selected app's credential on the server its switch turns on."""
+def test_a_sealed_app_credential_registers_on_the_apps_server(tmp_path: Path) -> None:
+    """Rule: env-01's shape renders: app-hosting brings the apps server, and each listed app whose
+    credential is sealed registers on it; a listed app without one registers nothing."""
     copy = bootstrap_example_copy(tmp_path)
+    assert ("Deployment", "restic-apps") in _objects(copy, "platform-configs")
+    assert not any(name.startswith("backups-restic-app-") for _kind, name in _objects(copy, "platform-configs"))
     register_copy_app(copy, "app-notes")
     validate_one_env(copy.root, copy.name)
     objects = _objects(copy, "platform-configs")
     assert {("Deployment", "restic-apps"), ("Secret", "backups-restic-app-notes")} <= objects
-
-
-def test_selected_backups_need_the_apps_server_switch(tmp_path: Path) -> None:
-    """Rule: the render refuses a backup selection with the apps server off, before it writes."""
-    copy = bootstrap_example_copy(tmp_path)
-    register_copy_app(copy, "app-notes")
-    set_switches(copy.env_dir, features=["app-hosting", "offsite-backup-copy"])
-    before = _tree(copy)
-    with pytest.raises(SystemExit, match="apps-backup-server"):
-        render_switches(copy.env_dir, copy.root)
-    assert _tree(copy) == before
+    assert not any(name.startswith("backups-restic-app-") and name != "backups-restic-app-notes" for _kind, name in objects)
 
 
 def test_an_env_with_a_flux_tree_needs_the_file(tmp_path: Path) -> None:
@@ -167,20 +153,6 @@ def test_app_names_are_refused_in_the_app_file(tmp_path: Path) -> None:
     path = copy.env_dir / "values" / "apps.yaml"
     path.write_text("apps:\n  - notes\n" + path.read_text(encoding="utf-8"), encoding="utf-8")
     assert "('apps' was unexpected)" in _errors(copy)
-
-
-def test_deleting_the_backups_section_does_not_drop_a_registered_app(tmp_path: Path) -> None:
-    """Rule: deleting backups: fails while apps register, so it never reads as turning their backups off."""
-    copy = bootstrap_example_copy(tmp_path)
-    register_copy_app(copy, "app-notes")
-    path = copy.env_dir / "values" / "apps.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    del data["backups"]
-    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    before = _tree(copy)
-    with pytest.raises(SystemExit, match="backups is gone"):
-        render_switches(copy.env_dir, copy.root)
-    assert _tree(copy) == before
 
 
 def test_an_exception_line_for_an_unlisted_app_refuses_the_render(tmp_path: Path) -> None:

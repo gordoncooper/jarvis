@@ -22,7 +22,6 @@ FILES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("cluster-vars", "values/cluster-vars.yaml", ()),
     ("switches", "values/switches.yaml", ()),
     ("apps", "values/apps.yaml", ()),
-    ("apps", "values/apps.yaml: backups", ("properties", "backups")),
     ("hosts", "inventory/hosts.yml: each host under all.hosts", ("properties", "all", "properties", "hosts", "additionalProperties")),
 )
 

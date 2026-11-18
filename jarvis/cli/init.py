@@ -32,7 +32,7 @@ from jarvis.env import scaffold
 from jarvis.secrets import age as _age
 from jarvis.secrets import recipients as _recipients
 
-_KNOWN_FEATURES = ("app-dns", "app-hosting", "offsite-backup-copy", "apps-backup-server")
+_KNOWN_FEATURES = ("app-dns", "app-hosting", "offsite-backup-copy")
 
 
 def parser(command: str) -> argparse.ArgumentParser:

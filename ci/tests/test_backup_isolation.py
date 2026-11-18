@@ -1,6 +1,6 @@
 """A hosted app's own backup credential: registration, render, and the isolation guards.
 
-Rules (core/platform/backups/CONTRACT.md): core's credential never reaches an app-
+Rules (core/feature/app-hosting/CONTRACT.md): core's credential never reaches an app-
 namespace; an app credential reaches only the apps server, restic-check and restic-offsite; the
 apps server runs --private-repos; an app credential is sealed only in its own namespace's folder.
 """
@@ -13,7 +13,6 @@ import shutil
 from pathlib import Path
 
 import pytest
-import yaml
 
 from jarvis.checks.backup_isolation import _render_violations, scan_backup_isolation
 from jarvis.schema.env import ValidationError, validate_one_env
@@ -73,9 +72,10 @@ def test_registered_app_renders_its_credential_only_where_needed(app_copy: Examp
 
 
 def test_core_only_env_renders_no_app_workload(example_copy: ExampleCopy) -> None:
-    """With no app registered and the apps server off, nothing for apps renders."""
+    """With no app credential sealed, no app credential renders or is mounted anywhere."""
     docs = _platform_configs(example_copy)
-    assert not any(doc["metadata"]["name"].startswith(("restic-apps", "backups-restic-app-")) for doc in docs)
+    assert not any(doc["metadata"]["name"].startswith("backups-restic-app-") for doc in docs)
+    assert not any(volume["name"].startswith("app-") for volume in _pod(_find(docs, "Deployment", "restic-apps"))["volumes"])
     for name in ("restic-check", "restic-offsite"):
         pod = _pod(_find(docs, "CronJob", name))
         assert not any(volume["name"].startswith("app-") for volume in pod["volumes"])
@@ -132,7 +132,7 @@ def _no_apps_server(docs: list[dict]) -> None:
         (_app_password_in_apps_server, "the apps server mounts backups-restic-app-notes keys None; only htpasswd"),
         (_app_secret_in_core_env, "core's rest-server mounts Secret backups-restic-app-notes"),
         (_no_private_repos, "the apps server runs without --private-repos"),
-        (_no_apps_server, "Secret backups-restic-app-notes is an app credential, but core/feature/apps-backup-server is not listed"),
+        (_no_apps_server, "Secret backups-restic-app-notes is an app credential, but the apps server"),
     ],
 )
 def test_isolation_check_fails_each_seeded_leak(app_copy: ExampleCopy, seed, reason: str) -> None:
@@ -149,36 +149,22 @@ def _schema_errors(copy: ExampleCopy) -> str:
     return "\n".join(caught.value.messages)
 
 
-def test_env_schema_rejects_each_bad_registration(tmp_path: Path) -> None:
-    """No apps server, a missing sealed file, and an app credential sealed outside its own folder
-    each fail env-schema. A hand-edited registration is the render check's (test_render.py)."""
+def test_env_schema_rejects_a_credential_outside_its_folder(tmp_path: Path) -> None:
+    """An app credential sealed outside its own folder fails env-schema, and registers nothing.
+    A hand-edited registration is the render check's (test_render.py)."""
     copy = _app_copy(tmp_path)
     secrets = copy.env_dir / "secrets"
     sealed = secrets / APP / f"backups-restic-{APP}.sops.yaml"
-
-    switches = copy.env_dir / "values" / "switches.yaml"
-    decided = switches.read_text(encoding="utf-8")
-    data = yaml.safe_load(decided)
-    data["features"] = [item for item in data["features"] if item != "apps-backup-server"]
-    switches.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    assert "registers app credentials, and does not list apps-backup-server" in _schema_errors(copy)
-    switches.write_text(decided, encoding="utf-8")
-
     moved = secrets / f"backups-restic-{APP}.sops.yaml"
     shutil.move(sealed, moved)
-    errors = _schema_errors(copy)
-    assert f"registers {APP}, missing required file" in errors
-    assert "an app credential is sealed only in its own folder" in errors
+    assert "an app credential is sealed only in its own folder" in _schema_errors(copy)
     shutil.move(moved, sealed)
-
-    from jarvis.render.backup_selection import render_env
-
-    render_env(copy.env_dir, copy.root)
     validate_one_env(copy.root, copy.name)
 
 
 def test_bootstrap_app_mints_once_and_refuses_a_non_app_name(app_copy: ExampleCopy, monkeypatch) -> None:
-    """A second run changes nothing; a name outside app- is refused before any write."""
+    """A second run changes nothing; a name outside app-, or an app the env does not list, is
+    refused before any write."""
     mod = importlib.import_module("jarvis.secrets.mint")
     monkeypatch.setattr(mod, "REPO_ROOT", app_copy.root)
     monkeypatch.setattr(mod, "_repo_root", lambda: app_copy.root)
@@ -189,4 +175,7 @@ def test_bootstrap_app_mints_once_and_refuses_a_non_app_name(app_copy: ExampleCo
     for bad in ("notes", "platform-backups", "app-", "app-Notes"):
         with pytest.raises(SystemExit, match="hosted app namespace"):
             mod.bootstrap_app(app_copy.name, bad, sops_bin=shutil.which("sops"))
+    with pytest.raises(SystemExit, match="does not list photos"):
+        mod.bootstrap_app(app_copy.name, "app-photos", sops_bin=shutil.which("sops"))
     assert not (app_copy.env_dir / "secrets" / "notes").exists()
+    assert not (app_copy.env_dir / "secrets" / "app-photos").exists()
