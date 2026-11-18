@@ -17,6 +17,7 @@ from jarvis.schema.env import ValidationError, validate_env_tree
 from support import (
     _write_env,
     bootstrap_example_copy,
+    checks_without_charts,
     core_at,
     instance_apps_repo_for_checks,
     render_switches,
@@ -329,8 +330,9 @@ def test_render_refuses_two_addons_for_one_slot(tmp_path: Path) -> None:
 
 
 def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
-    """Every env-level check (jarvis validate), against the copy as an instance and the test core
-    (its fixture add-on). gitleaks reads its git history."""
+    """Every env-level check (jarvis validate) but the chart renders, against the copy as an
+    instance and the test core (its fixture add-on). gitleaks reads its git history. The sample
+    instance, add-on included, gets the chart renders too (ci/checks/sample-instance)."""
     from jarvis.env import validate
 
     git = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
@@ -343,7 +345,7 @@ def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
     os.environ["APPS_REPO"] = str(instance_apps_repo_for_checks(instance))
     try:
         with contextlib.redirect_stdout(out):
-            code = validate.run(instance)
+            code = validate.run(instance, checks_without_charts())
     finally:
         if previous is None:
             os.environ.pop("APPS_REPO", None)
@@ -352,15 +354,15 @@ def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], code, out.getvalue(), "")
 
 
-def test_core_only_env_passes_every_env_check(tmp_path: Path) -> None:
-    """An env with no add-on is a full env: every env-level check passes on it."""
+def test_core_only_env_passes_the_env_checks(tmp_path: Path) -> None:
+    """An env with no add-on is a full env: the env checks pass on it."""
     copy_env = bootstrap_example_copy(tmp_path, core_only=True)
     proc = _run_env_checks(copy_env.root)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PASS addons" in proc.stdout and "PASS secret-scan" in proc.stdout, proc.stdout
 
 
-def test_env_with_the_sample_addon_and_its_sealed_secret_passes_every_env_check(tmp_path: Path) -> None:
+def test_env_with_the_sample_addon_and_its_sealed_secret_passes_the_env_checks(tmp_path: Path) -> None:
     """The example's add-on list with each decrypted folder sealed to a throwaway key passes; without the seal it fails."""
     copy_env = bootstrap_example_copy(tmp_path)
     sealed = sorted((copy_env.env_dir / "secrets").glob("*/*.sops.yaml"))

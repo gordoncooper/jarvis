@@ -51,26 +51,3 @@ def ref_of(doc: dict) -> str:
     if isinstance(namespace, str) and namespace.strip():
         return f"{kind_of(doc)} {namespace.strip()}/{name_text}"
     return f"{kind_of(doc)} {name_text}"
-
-
-def pod_spec(doc: dict) -> dict | None:
-    """Pod spec for a workload document, or None when this document is not one."""
-    kind = doc.get("kind")
-    spec = doc.get("spec")
-    if not isinstance(spec, dict):
-        spec = {}
-    if kind in {"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job"}:
-        template = spec.get("template")
-        if isinstance(template, dict) and isinstance(template.get("spec"), dict):
-            return template["spec"]
-        return {}
-    if kind == "CronJob":
-        job = spec.get("jobTemplate")
-        job_spec = job.get("spec") if isinstance(job, dict) else None
-        template = job_spec.get("template") if isinstance(job_spec, dict) else None
-        if isinstance(template, dict) and isinstance(template.get("spec"), dict):
-            return template["spec"]
-        return {}
-    if kind == "Pod":
-        return spec
-    return None

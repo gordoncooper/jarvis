@@ -218,6 +218,15 @@ def core_at(core: Path) -> Iterator[Path]:
 RUN_MODULE = (sys.executable, str(Path(__file__).resolve().parent / "run_module.py"))
 
 
+def checks_without_charts() -> list[str]:
+    """Every env check but the two that render charts (kubeconform, policies). Those run on the
+    sample instance (ci/checks/sample-instance) and on jarvis init's own env (test_init.py); a
+    test of another env shape runs the rest."""
+    from jarvis.env.validate import CHECKS
+
+    return [name for name in CHECKS if name not in ("kubeconform", "policies")]
+
+
 def flux_built(root: Path, env: str, name: str = "platform-configs") -> list[dict]:
     """The objects the env's Flux Kustomization name applies, as Flux builds them (substituted)."""
     from jarvis.checks.flux_build import env_tree
