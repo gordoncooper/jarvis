@@ -98,17 +98,11 @@
       "matchFileNames": ["pyproject.toml"]
     },
     {
-      "description": "ansible 14.x requires ansible-core 2.21.x. Raise this cap in the same PR as an ansible major bump. Patch updates inside 2.21 still flow.",
+      "description": "ansible 15.x requires ansible-core 2.22.x. Raise this cap in the same PR as an ansible major bump. Patch updates inside 2.22 still flow.",
       "matchManagers": ["pep621"],
       "matchFileNames": ["pyproject.toml"],
       "matchPackageNames": ["ansible-core"],
-      "allowedVersions": "<2.22"
-    },
-    {
-      "description": "Python (.python-version, which uv reads) stays below 3.15: ansible-core 2.21 patches a dataclasses internal that Python 3.15 removed, so Ansible fails to import. Raise this cap in the same PR as the ansible-core bump that supports 3.15.",
-      "matchManagers": ["pyenv"],
-      "matchPackageNames": ["python"],
-      "allowedVersions": "<3.15"
+      "allowedVersions": "<2.23"
     },
     {
       "description": "The devcontainer's base image is pinned by tag; Renovate adds and moves its digest.",

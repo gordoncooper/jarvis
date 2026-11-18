@@ -10,7 +10,7 @@ build-backend = "hatchling.build"
 [project]
 name = "jarvis"
 dynamic = ["version"]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 # What the operator tools and the app-check Action import.
 dependencies = [
   "PyYAML==6.0.3",
@@ -26,8 +26,8 @@ jarvis = "jarvis.cli.main:main"
 [dependency-groups]
 # Ansible, for jarvis site and the role tests.
 ops = [
-  "ansible==14.6.0",
-  "ansible-core==2.21.6",
+  "ansible==15.0.0",
+  "ansible-core==2.22.0",
 ]
 # Everything `make deps` installs: the tools, Ansible and the test and lint tooling.
 dev = [
