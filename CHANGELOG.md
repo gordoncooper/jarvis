@@ -80,6 +80,11 @@ the upgrade.
   `pvc-backup` policy is listed (e2e's backup and restore proves it), the scan of `addons/`
   for restic URLs, and the requests and memory limit in Traefik's HelmChartConfig (k3s ships
   Traefik's chart, so the rendered checks do not see it).
+- The `backup-isolation` check (`jarvis validate`) and `jarvis verify`'s `app backup isolation`
+  check. The first read Kyverno's CEL expressions with a regex; the second re-read on the
+  cluster what core's own manifests fix. Core's tests prove both by behaviour: the pinned
+  rest-server and restic, run as the manifests configure them, keep each app login to its own
+  repositories, and the Kyverno CLI shows each volume gets only its own zone's credential.
 
 ### Fixed
 

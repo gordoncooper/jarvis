@@ -1,20 +1,19 @@
-"""A hosted app's own backup credential: registration, render, and the isolation guards.
+"""A hosted app's own backup credential: registration, render and sealing.
 
-Rules (core/feature/app-hosting/CONTRACT.md): core's credential never reaches an app-
-namespace; an app credential reaches only the apps server, restic-check and restic-offsite; the
-apps server runs --private-repos; an app credential is sealed only in its own namespace's folder.
+Rules (core/feature/app-hosting/CONTRACT.md): an app credential reaches only the apps server,
+restic-check and restic-offsite, and is sealed only in its own namespace's folder. What a login
+can open is test_rest_server_isolation.py's; which credential a volume gets is
+test_backup_enrollment.py's.
 """
 
 from __future__ import annotations
 
-import copy as copy_module
 import importlib
 import shutil
 from pathlib import Path
 
 import pytest
 
-from jarvis.checks.backup_isolation import _render_violations, scan_backup_isolation
 from jarvis.schema.env import ValidationError, validate_one_env
 from support import ExampleCopy, bootstrap_example_copy, flux_built, register_copy_app
 
@@ -48,7 +47,7 @@ def app_copy(tmp_path_factory: pytest.TempPathFactory) -> ExampleCopy:
 def test_registered_app_renders_its_credential_only_where_needed(app_copy: ExampleCopy) -> None:
     """The registration adds the app's sealed Secret and the apps server, mounts the htpasswd
     key in the apps server and the password key in restic-check and restic-offsite, leaves core's
-    rest-server alone, and passes env-schema and the isolation check."""
+    rest-server alone, and passes env-schema."""
     docs = _platform_configs(app_copy)
     secret = _find(docs, "Secret", f"backups-restic-{APP}")
     assert secret["metadata"]["namespace"] == "platform-backups"
@@ -68,7 +67,6 @@ def test_registered_app_renders_its_credential_only_where_needed(app_copy: Examp
     core = _find(docs, "Deployment", "restic")
     assert all(volume.get("secret", {}).get("secretName", "backups-restic") == "backups-restic" for volume in _pod(core)["volumes"])
     validate_one_env(app_copy.root, app_copy.name)
-    assert scan_backup_isolation(app_copy.root) == []
 
 
 def test_core_only_env_renders_no_app_workload(example_copy: ExampleCopy) -> None:
@@ -79,68 +77,6 @@ def test_core_only_env_renders_no_app_workload(example_copy: ExampleCopy) -> Non
     for name in ("restic-check", "restic-offsite"):
         pod = _pod(_find(docs, "CronJob", name))
         assert not any(volume["name"].startswith("app-") for volume in pod["volumes"])
-
-
-def _drop_app_exclude(docs: list[dict]) -> None:
-    spec = _find(docs, "GeneratingPolicy", "pvc-backup")["spec"]
-    spec["matchConditions"] = [item for item in spec["matchConditions"] if item["name"] != "core-namespace"]
-
-
-def _app_rule_reads_core(docs: list[dict]) -> None:
-    variables = _find(docs, "GeneratingPolicy", "pvc-backup-app")["spec"]["variables"]
-    credentials = next(item for item in variables if item["name"] == "credentials")
-    credentials["expression"] = '[resource.get("v1", "secrets", "platform-backups", "backups-restic")]'
-
-
-def _app_secret_in_core_server(docs: list[dict]) -> None:
-    _pod(_find(docs, "Deployment", "restic"))["volumes"].append(
-        {"name": APP, "secret": {"secretName": f"backups-restic-{APP}", "items": [{"key": "htpasswd", "path": "htpasswd"}]}}
-    )
-
-
-def _core_secret_in_apps_server(docs: list[dict]) -> None:
-    _pod(_find(docs, "Deployment", "restic-apps"))["volumes"].append({"name": "core", "secret": {"secretName": "backups-restic"}})
-
-
-def _app_password_in_apps_server(docs: list[dict]) -> None:
-    volume = next(item for item in _pod(_find(docs, "Deployment", "restic-apps"))["volumes"] if item["name"] == APP)
-    volume["secret"].pop("items")
-
-
-def _app_secret_in_core_env(docs: list[dict]) -> None:
-    _pod(_find(docs, "Deployment", "restic"))["containers"][0].setdefault("envFrom", []).append(
-        {"secretRef": {"name": f"backups-restic-{APP}"}}
-    )
-
-
-def _no_private_repos(docs: list[dict]) -> None:
-    container = _pod(_find(docs, "Deployment", "restic-apps"))["containers"][0]
-    container["command"] = [part.replace(" --private-repos", "") for part in container["command"]]
-
-
-def _no_apps_server(docs: list[dict]) -> None:
-    docs[:] = [doc for doc in docs if doc["metadata"]["name"] != "restic-apps"]
-
-
-@pytest.mark.parametrize(
-    ("seed", "reason"),
-    [
-        (_drop_app_exclude, "policy pvc-backup generates a Secret in an app- namespace"),
-        (_app_rule_reads_core, "policy pvc-backup-app generates a Secret in an app- namespace"),
-        (_app_secret_in_core_server, "core's rest-server mounts Secret backups-restic-app-notes"),
-        (_core_secret_in_apps_server, "the apps server mounts Secret backups-restic;"),
-        (_app_password_in_apps_server, "the apps server mounts backups-restic-app-notes keys None; only htpasswd"),
-        (_app_secret_in_core_env, "core's rest-server mounts Secret backups-restic-app-notes"),
-        (_no_private_repos, "the apps server runs without --private-repos"),
-        (_no_apps_server, "Secret backups-restic-app-notes is an app credential, but the apps server"),
-    ],
-)
-def test_isolation_check_fails_each_seeded_leak(app_copy: ExampleCopy, seed, reason: str) -> None:
-    """Each way an app credential could reach core, or core's an app, fails the backup-isolation check (jarvis validate)."""
-    docs = copy_module.deepcopy(_platform_configs(app_copy))
-    assert _render_violations("fixture", docs) == []
-    seed(docs)
-    assert any(reason in item.reason for item in _render_violations("fixture", docs))
 
 
 def _schema_errors(copy: ExampleCopy) -> str:

@@ -17,8 +17,6 @@ SECRET_NAMESPACE = "platform-backups"
 # The apps rest-server. Its users are confined to their own top-level folder (--private-repos).
 APPS_SERVER = "restic-apps"
 APPS_REPOSITORY = f"rest:http://{APPS_SERVER}.platform-backups.svc.cluster.local:8000/"
-# The apps server and the policies that enroll app volumes, inside the app-hosting feature.
-APPS_BACKUPS_DIR = "core/feature/app-hosting/backups"
 # Where a credential is mounted in the apps server, restic-check and restic-offsite.
 CREDENTIALS_MOUNT = "/credentials"
 # Registration Components live under envs/<env>/flux/platform-configs/<REGISTRATION_DIR>/<namespace>.
