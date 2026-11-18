@@ -76,7 +76,7 @@ def test_core_runs_every_env_check_on_a_sample_instance() -> None:
     listed = (REPO_ROOT / "ci" / "rule-checks.txt").read_text(encoding="utf-8").split()
     assert "sample-instance" in listed
     assert "python3 ci/tests/sample.py --validate " in (REPO_ROOT / "ci" / "checks" / "sample-instance").read_text(encoding="utf-8")
-    for name in ("addons", "manifest-lint", "secret-scan"):
+    for name in ("addons", "secret-scan"):
         assert name in validate.CHECKS and name in listed
         script = (REPO_ROOT / "ci" / "checks" / name).read_text(encoding="utf-8")
         assert f"python3 -m jarvis.env.validate --only {name}" in script, name

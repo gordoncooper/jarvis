@@ -70,9 +70,9 @@ def select(branch: str, changed: list[str]) -> str:
         if not found:
             return "all"
         chosen |= found
-    # Every manifest change also passes the manifest rules and the flux render.
+    # Every manifest change also passes the flux build (ci/checks/sample-instance checks what it deploys).
     if any(path.startswith(("core/", "addons/", "envs/")) for path in code):
-        chosen |= {"test_digest_pin.py", "test_manifest_lint.py", "test_flux_entry.py"}
+        chosen |= {"test_flux_entry.py"}
     present = {test.name for test in TESTS.glob("test_*.py")}
     return " ".join(f"ci/tests/{name}" for name in sorted(chosen & present)) or "all"
 

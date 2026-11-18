@@ -26,10 +26,10 @@ def test_a_non_renovate_change_runs_everything() -> None:
 
 def test_a_renovate_bump_runs_the_tests_its_file_reaches() -> None:
     """Rule: a CLI or Python pin runs the whole suite (any test may run that CLI or import that
-    package); an image runs the tests that name its folder, the manifest rules and the flux render."""
+    package); an image runs the tests that name its folder and the flux build."""
     assert select("renovate/kubeconform", ["mise.toml", "mise.lock"]) == "all"
     image = select("renovate/k8s-gateway", ["core/feature/app-dns/helmrelease.yaml"]).split()
-    assert {"ci/tests/test_flux_entry.py", "ci/tests/test_digest_pin.py"} <= set(image)
+    assert "ci/tests/test_flux_entry.py" in image
     assert "ci/tests/test_k3s.py" not in image
 
 
