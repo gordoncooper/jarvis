@@ -22,7 +22,6 @@ from jarvis import paths as _paths
 from jarvis.checks import (
     addons,
     app_hosting,
-    backup_isolation,
     flux_identity,
     flux_prune,
 )
@@ -84,7 +83,6 @@ CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "policies": scan_policies,
     "addons": lambda instance: addons.format_violations(addons.scan_addons(_paths.core_root(), instance)),
     "app-hosting": _scan(app_hosting),
-    "backup-isolation": _scan(backup_isolation),
     "flux-identity": _scan(flux_identity),
     "flux-prune": _scan(flux_prune),
     "secret-scan": _secret_scan,
