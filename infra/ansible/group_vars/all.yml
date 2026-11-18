@@ -7,6 +7,9 @@
 k3s_binary_path: /usr/local/bin/k3s
 k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
 k3s_data_dir: /var/lib/rancher/k3s
+# How long each apt task waits for the dpkg lock (base-os, k3s). A new Ubuntu node often runs
+# unattended-upgrades for minutes after boot; the apt module's own default is 60 seconds.
+apt_lock_timeout: 600
 jarvis_env_dir: "{{ jarvis_instance_root }}/envs/{{ jarvis_env }}"
 # The FluxInstance is core's (flux/), at the checkout the operator runs from: the env's core tag.
 flux_instance_file: "{{ playbook_dir }}/../../core/flux/flux-instance.yaml"

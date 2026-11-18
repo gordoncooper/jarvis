@@ -92,6 +92,8 @@ jobs:
         env:
           TESTS: ${{ steps.select.outputs.tests }}
           MARK: ${{ matrix.group == 'roles' && 'roles' || 'not roles' }}
+          # test_known_hosts_is_a_github_published_host_key calls api.github.com.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
           if [[ "${TESTS}" == all ]]; then
