@@ -3,7 +3,7 @@
 # beside core (each pin is its tag <app>/<version> there); an env's Renovate moves them.
 versions:
   hello-web: v0.1.0
-  notes: v0.1.0
+  notes: v0.1.1
   lan-demo: v0.1.0
 exceptions:
   - lan-demo: lan-port 8080/TCP
