@@ -354,15 +354,15 @@ def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], code, out.getvalue(), "")
 
 
-def test_core_only_env_passes_every_env_check(tmp_path: Path) -> None:
-    """An env with no add-on is a full env: every env-level check passes on it."""
+def test_core_only_env_passes_the_env_checks(tmp_path: Path) -> None:
+    """An env with no add-on is a full env: the env checks pass on it."""
     copy_env = bootstrap_example_copy(tmp_path, core_only=True)
     proc = _run_env_checks(copy_env.root)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PASS addons" in proc.stdout and "PASS secret-scan" in proc.stdout, proc.stdout
 
 
-def test_env_with_the_sample_addon_and_its_sealed_secret_passes_every_env_check(tmp_path: Path) -> None:
+def test_env_with_the_sample_addon_and_its_sealed_secret_passes_the_env_checks(tmp_path: Path) -> None:
     """The example's add-on list with each decrypted folder sealed to a throwaway key passes; without the seal it fails."""
     copy_env = bootstrap_example_copy(tmp_path)
     sealed = sorted((copy_env.env_dir / "secrets").glob("*/*.sops.yaml"))

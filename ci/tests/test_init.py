@@ -121,7 +121,7 @@ def test_a_given_recovery_recipient_is_used_and_nothing_is_printed(tmp_path: Pat
     assert not (dest / "renovate.json").exists() and not (dest / ".github").exists()
 
 
-def test_env_add_reuses_the_recipients_and_passes_every_check(tmp_path: Path, controller: Path) -> None:
+def test_env_add_reuses_the_recipients_and_passes_the_env_checks(tmp_path: Path, controller: Path) -> None:
     code, dest = _init(tmp_path)
     assert code == 0
     assert init.run_env_add(dest, ["lab", "--domain", "lab.lan", "--node", "n1.lab.lan"], CORE) == 0
@@ -180,7 +180,7 @@ def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch
     assert cli_core.https_url("git@github.com:o/jarvis.git") == "https://github.com/o/jarvis"
 
 
-def test_with_examples_turns_on_the_example_apps_and_passes_every_check(tmp_path: Path, controller: Path, monkeypatch) -> None:
+def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_path: Path, controller: Path, monkeypatch) -> None:
     """Rule: --with-examples turns on app-hosting and the example apps, reads them from jarvis-apps
     beside core, and the env still passes validate as written."""
     monkeypatch.setenv("APPS_REPO", str(FIXTURE_APPS))

@@ -57,8 +57,8 @@ jobs:
           mise bin-paths >> "${GITHUB_PATH}"
 
       # The chart archives and kubeconform schemas the env checks download (jarvis/checks/rendered.py),
-      # kept by source and version, so a run that finds them reaches no chart host. The key moves
-      # with the chart pins; an older cache restores first, and only a changed pin downloads.
+      # kept by source and version, so a run that finds them reaches no chart host. The newest cache
+      # restores, and each run saves its own, so only a moved pin (chart or k3s) downloads, once.
       - name: Restore the chart and schema cache
         if: matrix.group == 'checks'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -66,7 +66,7 @@ jobs:
           path: |
             ~/.cache/jarvis/charts
             ~/.cache/jarvis/kubeconform
-          key: jarvis-charts-${{ hashFiles('core/**/oci-repository.yaml', 'core/**/helmrepository.yaml', 'core/**/helmrelease.yaml', 'addons/**/*.yaml', 'jarvis/checks/rendered.py') }}
+          key: jarvis-charts-${{ github.run_id }}
           restore-keys: jarvis-charts-
 
       - name: uv.lock matches pyproject.toml
