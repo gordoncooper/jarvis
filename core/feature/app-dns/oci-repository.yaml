@@ -14,5 +14,4 @@ spec:
     operation: copy
   url: oci://codeberg.org/k8s-gateway/charts/k8s-gateway
   ref:
-    # renovate: datasource=docker depName=codeberg.org/k8s-gateway/charts/k8s-gateway versioning=semver
     tag: "4.0.1"
