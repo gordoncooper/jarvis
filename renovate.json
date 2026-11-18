@@ -2,6 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "automerge": false,
+  "rebaseWhen": "conflicted",
   "devcontainer": {
     "managerFilePatterns": ["/^jarvis\\/kit\\/devcontainer\\/devcontainer\\.json$/"]
   },
@@ -118,6 +119,26 @@
       "description": "The kubernetes manager also reads each object's apiVersion. An API move is a code change, not a pin bump.",
       "matchDatasources": ["kubernetes-api"],
       "enabled": false
+    },
+    {
+      "description": "Patches, digests, pins and minors merge on their own once every check on the PR is green. Renovate merges them itself (GitHub's auto-merge stays off), so the quickstart checks count too. It touches these PRs only overnight Pacific, so main doesn't move under a daytime batch: it opens, rebases (main requires branches up to date) and merges them then. It merges one per run. Majors stay manual; k3s and the Helm CLI need a sha256 by hand.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "matchDepNames": ["!k3s-io/k3s", "!helm/helm"],
+      "automerge": true,
+      "platformAutomerge": false,
+      "rebaseWhen": "behind-base-branch",
+      "timezone": "America/Los_Angeles",
+      "schedule": ["* 0-5 * * *"],
+      "updateNotScheduled": false
+    },
+    {
+      "description": "Below 1.0 a minor can break, so those stay manual like a major.",
+      "matchUpdateTypes": ["minor"],
+      "matchCurrentVersion": "/^v?0\\./",
+      "automerge": false,
+      "rebaseWhen": "conflicted",
+      "schedule": ["at any time"],
+      "updateNotScheduled": true
     }
   ],
   "customManagers": [
