@@ -8,6 +8,10 @@ metadata:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   interval: 30m
+  # The chart layer: an artifact may carry other layers (provenance, signatures) before it.
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
   url: oci://quay.io/jetstack/charts/cert-manager
   ref:
     # renovate: datasource=docker depName=quay.io/jetstack/charts/cert-manager versioning=semver

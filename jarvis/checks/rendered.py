@@ -10,7 +10,7 @@ are not rendered.
 
 kubeconform reads Kubernetes' schemas, then the CRDs these objects carry themselves and the ones
 the pinned flux CLI installs, then one pinned public catalog for the rest (k3s's Traefik and
-HelmChartConfig kinds). Every object must find a schema, except CustomResourceDefinitions:
+HelmChartConfig kinds). Every object must find a schema. CustomResourceDefinitions are not sent:
 kubernetes-json-schema has none for them, the API server checks them in e2e, and here each one's
 own schema checks its objects.
 """
@@ -77,10 +77,7 @@ def _chart(release_doc: dict, sources: dict[tuple[str, str, str], dict]) -> tupl
     source = sources.get(("HelmRepository", str(ref.get("namespace") or namespace), str(ref.get("name"))))
     if source is None:
         return [], f"chart sourceRef HelmRepository/{ref.get('name')} is not in the build"
-    url, name, version = source["spec"]["url"], str(chart.get("chart")), str(chart.get("version"))
-    if source["spec"].get("type") == "oci":
-        return [f"{url.rstrip('/')}/{name}", "--version", version], None
-    return [name, "--repo", url, "--version", version], None
+    return [str(chart.get("chart")), "--repo", source["spec"]["url"], "--version", str(chart.get("version"))], None
 
 
 @functools.cache
@@ -159,16 +156,17 @@ def _crd_schemas(docs: list[dict], out: Path) -> None:
 
 
 def kubeconform(docs: list[dict], k3s: str) -> list[str]:
-    """Each object against its schema, strictly; sealed Secrets are left out (their data is SOPS's)."""
+    """Each object against its schema, strictly. CRDs only give schemas; sealed Secrets are left out
+    (their data is SOPS's)."""
     kube = kubernetes_version_from_k3s(k3s)
     if kube is None:
         return [f"k3s version {k3s} names no Kubernetes release"]
-    docs = [doc for doc in docs if not (doc.get("kind") == "Secret" and "sops" in doc)]
     with tempfile.TemporaryDirectory(prefix="jarvis-schemas-") as work:
         _crd_schemas(docs, Path(work))
+        docs = [doc for doc in docs if doc.get("kind") != "CustomResourceDefinition" and not (doc.get("kind") == "Secret" and "sops" in doc)]
         proc = subprocess.run(
             [_tool("kubeconform"), "-strict", "-output", "json", "-kubernetes-version", kube,
-             "-skip", "CustomResourceDefinition", "-cache", str(_schema_cache()),
+             "-cache", str(_schema_cache()),
              "-schema-location", "default",
              "-schema-location", work + "/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
              "-schema-location", CATALOG],

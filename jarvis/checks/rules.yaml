@@ -102,7 +102,7 @@ spec:
     - expression: size(variables.toFile) == 0
       messageExpression: "'logs to a file, not stdout: ' + variables.toFile.join(', ')"
 ---
-# Traefik's Service comes from k3s's own chart and App DNS's from core/feature/app-dns.
+# App DNS's Service (core/feature/app-dns). Traefik's comes from k3s's own chart, which is not rendered.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -115,8 +115,8 @@ spec:
   validations:
     - expression: >-
         object.spec.?type.orValue('ClusterIP') != 'LoadBalancer' ||
-        object.metadata.namespace + '/' + object.metadata.name in ['kube-system/traefik', 'platform-app-dns/k8s-gateway']
-      message: "only Traefik and App DNS are LoadBalancer Services"
+        object.metadata.namespace + '/' + object.metadata.name == 'platform-app-dns/k8s-gateway'
+      message: "only App DNS is a LoadBalancer Service"
 ---
 # The pvc-backup GeneratingPolicies enroll every PVC (core/platform/backups/enrollment.yaml).
 apiVersion: policies.kyverno.io/v1
