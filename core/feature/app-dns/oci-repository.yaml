@@ -1,0 +1,18 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: k8s-gateway
+  namespace: flux-system
+  # The HelmRelease stays. This is the chart source it reconciles.
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  interval: 30m
+  # The chart layer: an artifact may carry other layers (provenance, signatures) before it.
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  url: oci://codeberg.org/k8s-gateway/charts/k8s-gateway
+  ref:
+    # renovate: datasource=docker depName=codeberg.org/k8s-gateway/charts/k8s-gateway versioning=semver
+    tag: "4.0.1"
