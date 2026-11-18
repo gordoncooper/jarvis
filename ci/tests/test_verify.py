@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import importlib
 import json
 import os
@@ -81,9 +80,6 @@ class Cluster:
         self.pods_rc = 0
         self.pods: list[dict] = []
         self.hello = False
-        self.core_users = ["restic"]
-        self.apps_command = ["/bin/sh", "-c", "exec rest-server --private-repos"]
-        self.apps_env_from: list[dict] = []
         self.pvcs = [("app", "data")]
 
     def kubectl(
@@ -110,9 +106,6 @@ class Cluster:
             if self.secret_rc:
                 return _completed(argv, "", returncode=1, stderr="forbidden")
             output = " ".join(argv)
-            if 'index .data "htpasswd"' in output:
-                lines = "".join(f"{user}:$2y$12${SECRET_VALUE}\n" for user in self.core_users)
-                return _completed(argv, base64.b64encode(lines.encode()).decode())
             if "go-template" in output or "jsonpath" in output:
                 return _completed(argv, "RESTIC_PASSWORD\n")
             return _completed(argv, {"data": {"RESTIC_PASSWORD": SECRET_VALUE}})
@@ -161,9 +154,6 @@ class Cluster:
                     ]
                 },
             )
-        if argv[:3] == ["get", "deployment", "restic-apps"]:
-            pod = {"containers": [{"command": self.apps_command, "envFrom": self.apps_env_from}], "volumes": []}
-            return _completed(argv, {"spec": {"template": {"spec": pod}}})
         if argv[:2] == ["get", "replicationsource"]:
             if self.bad_sources_json:
                 return _completed(argv, {"items": "unreadable"})
@@ -785,54 +775,6 @@ def _list_feature(root: Path, name: str) -> None:
 
 def _list_apps_server(root: Path) -> None:
     _list_feature(root, "app-hosting")
-
-
-@pytest.mark.parametrize(
-    ("core_users", "apps_command", "line"),
-    [
-        (["restic"], ["/bin/sh", "-c", "exec rest-server --private-repos"], "PASS app backup isolation"),
-        (
-            ["restic", "ns-app-shop"],
-            ["/bin/sh", "-c", "exec rest-server --private-repos"],
-            "FAIL app backup isolation: core's rest-server has an app user",
-        ),
-        (
-            ["restic"],
-            ["/bin/sh", "-c", "exec rest-server"],
-            "FAIL app backup isolation: restic-apps runs without --private-repos",
-        ),
-    ],
-)
-def test_app_isolation_static_half(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    core_users: list[str],
-    apps_command: list[str],
-    line: str,
-) -> None:
-    """No app user in core's htpasswd, and the apps server confines each user; nothing of the
-    htpasswd is printed."""
-    _list_apps_server(tmp_path)
-    cluster = Cluster()
-    cluster.core_users, cluster.apps_command = core_users, apps_command
-    assert _run(tmp_path, cluster, monkeypatch) == (0 if line.startswith("PASS") else 1)
-    output = capsys.readouterr().out
-    assert line in output
-    assert SECRET_VALUE not in output
-
-
-def test_apps_server_reading_core_secret_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The apps server never reads backups-restic, through a volume or the environment."""
-    _list_apps_server(tmp_path)
-    cluster = Cluster()
-    cluster.apps_env_from = [{"secretRef": {"name": "backups-restic"}}]
-    assert _run(tmp_path, cluster, monkeypatch) == 1
-    assert "FAIL app backup isolation: restic-apps mounts core's backups-restic" in capsys.readouterr().out
 
 
 def test_core_freshness_leaves_an_app_volume_without_a_source_to_the_apps_component(

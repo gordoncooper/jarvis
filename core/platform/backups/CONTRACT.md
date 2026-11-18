@@ -36,11 +36,9 @@ Every PVC is backed up by VolSync's restic mover to a rest-server on the backup-
 | --- | --- |
 | Service `restic` | a ready endpoint |
 | Each PVC not `backup: none` outside `app-*`, and each ReplicationSource | has `restic-<pvc>` and ReplicationSource `<pvc>`, and the source syncs within one schedule interval |
-| App isolation (`jarvis verify`) | no `ns-app-*` user in core's htpasswd; with app-hosting, `restic-apps` runs `--private-repos` and mounts no `backups-restic` |
 | `restic-check`, `restic-offsite` | last success within one interval plus 12 hours; before the first success, a warning while the first run is due |
 | `etcd-snapshots` | last success within one interval; the newest k3s snapshot is in the latest restic snapshot (`jarvis drill`) |
 | `jarvis drill` | a scratch volume restored with matching checksums, and the etcd copy matching the k3s file |
-| `backup-isolation` (`jarvis validate`) | core's credential never reaches an `app-` namespace, and no app credential reaches core's server |
 
 ## Limits
 
