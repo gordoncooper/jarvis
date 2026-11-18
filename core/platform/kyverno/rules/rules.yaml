@@ -1,6 +1,7 @@
-# Core's rules for what an env deploys, as Kyverno policies. jarvis validate applies them with the
-# Kyverno CLI to Flux's build of every env path and to each HelmRelease's rendered chart
-# (jarvis/checks/rendered.py). They are not installed on the cluster.
+# Core's rules for what an env deploys, as Kyverno policies, in two places: jarvis validate applies
+# them with the Kyverno CLI to Flux's build of every env path and each HelmRelease's rendered chart
+# (jarvis/checks/rendered.py), and platform-configs installs them for admission, scoped by
+# kustomization.yaml beside this file.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -57,13 +58,21 @@ spec:
     - expression: size(variables.throttled) == 0
       messageExpression: "'long-running container has a cpu limit: ' + variables.throttled.join(', ')"
 ---
-# Jobs and CronJobs run to completion, so only long-running pods need probes.
+# Jobs and CronJobs run to completion, so only long-running pods need probes. The upstream charts
+# listed template no probe for these containers: cert-manager's controller (liveness only) and
+# cainjector, and Kyverno's background controller.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
   name: probes
 spec:
   validationActions: [Deny]
+  matchConditions:
+    - name: upstream-chart-without-probes
+      expression: >-
+        !(object.kind == 'Deployment' && object.metadata.namespace + '/' + object.metadata.name in [
+          'platform-cert-manager/cert-manager', 'platform-cert-manager/cert-manager-cainjector',
+          'kyverno/kyverno-background-controller'])
   matchConstraints:
     resourceRules:
       - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
@@ -117,23 +126,3 @@ spec:
         object.spec.?type.orValue('ClusterIP') != 'LoadBalancer' ||
         object.metadata.namespace + '/' + object.metadata.name == 'platform-app-dns/k8s-gateway'
       message: "only App DNS is a LoadBalancer Service"
----
-# The pvc-backup GeneratingPolicies enroll every PVC (core/platform/backups/enrollment.yaml).
-apiVersion: policies.kyverno.io/v1
-kind: ValidatingPolicy
-metadata:
-  name: backups
-spec:
-  validationActions: [Deny]
-  matchConstraints:
-    resourceRules:
-      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [persistentvolumeclaims]}
-      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [statefulsets]}
-      - {apiGroups: [volsync.backube], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [replicationsources, replicationdestinations]}
-  validations:
-    - expression: object.apiVersion.split('/')[0] != 'volsync.backube'
-      message: "Git carries no ReplicationSource or ReplicationDestination; the pvc-backup policies make them"
-    - expression: >-
-        (object.kind == 'StatefulSet' ? object.spec.?volumeClaimTemplates.orValue([]).map(t, t.metadata) : [object.metadata])
-        .all(m, m.?annotations['backup'].orValue('') != 'none')
-      message: "a PVC in Git does not opt out of backups (backup: none)"

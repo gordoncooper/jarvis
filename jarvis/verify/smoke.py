@@ -5,7 +5,9 @@ make objects work in namespace platform-smoke, which the run creates first and d
 (a namespace left by an interrupted run is deleted first); the admission probe is a server-side
 dry run, which leaves nothing.
 
-  platform     a Certificate from ClusterIssuer internal-ca becomes Ready
+  platform     a Certificate from ClusterIssuer internal-ca becomes Ready; a copy of testapp's running
+               pod is admitted, and refused by policy images-pinned once unpinned and by Pod
+               Security once privileged
   app-dns      a new Ingress name answers at App DNS's address, with Traefik's address
   app-hosting  a copy of a running pod of a listed app is admitted, and the same copy with one
                risky item the env does not grant that app is refused for that grant
@@ -31,6 +33,7 @@ OWNER_LABEL = "jarvis.io/owner"
 OWNER = "jarvis-verify-smoke"
 ISSUER = "internal-ca"
 APP_DNS_NAMESPACE = "platform-app-dns"
+TESTAPP_NAMESPACE = "platform-testapp"
 WAIT_SECONDS = 180
 POLL_SECONDS = 5
 
@@ -189,9 +192,8 @@ def _granted(data: dict, app: str) -> set[str]:
     return words
 
 
-def _running_pod(ctx: Context, app: str) -> dict | None:
+def _running_pod(ctx: Context, namespace: str) -> dict | None:
     """A Running pod a Deployment or StatefulSet made: no Job's, no backup mover's."""
-    namespace = f"app-{app}"
     for pod in items(ctx.kubectl(["get", "pods", "-n", namespace, "-o", "json"]), f"list {namespace} pods"):
         owners = {o.get("kind") for o in (pod.get("metadata") or {}).get("ownerReferences") or [] if isinstance(o, dict)}
         if (pod.get("status") or {}).get("phase") == "Running" and owners & {"ReplicaSet", "StatefulSet"}:
@@ -221,7 +223,7 @@ def probe_admission(ctx: Context) -> None:
     if errors:
         raise CheckError(f"values: {'; '.join(errors)}")
     for app in _apps.app_names(data):
-        pod = _running_pod(ctx, app)
+        pod = _running_pod(ctx, f"app-{app}")
         if pod is None:
             continue
         risky = next(((grant, change) for grant, change in RISKY if grant not in _granted(data, app)), None)
@@ -243,9 +245,39 @@ def probe_admission(ctx: Context) -> None:
     raise CheckWarning("no listed app has a running pod to copy")
 
 
+def _unpinned(spec: dict) -> None:
+    container = spec["containers"][0]
+    container["image"] = container["image"].split("@")[0]
+
+
+def probe_core_admission(ctx: Context) -> None:
+    pod = _running_pod(ctx, TESTAPP_NAMESPACE)
+    if pod is None:
+        raise CheckError(f"{TESTAPP_NAMESPACE} has no running pod to copy")
+    plain = _copy(pod, f"smoke-{_token()}")
+    proc = _dry_run(ctx, plain)
+    if proc.returncode:
+        raise CheckError(f"a copy of running pod {TESTAPP_NAMESPACE}/{pod['metadata'].get('name')} was refused: {reason(proc)}")
+    for what, change, because in (("unpinned", _unpinned, "images-pinned"), ("privileged", _privileged, "PodSecurity")):
+        bad = copy.deepcopy(plain)
+        change(bad["spec"])
+
+        def refused(bad: dict = bad, what: str = what, because: str = because) -> bool:
+            proc = _dry_run(ctx, bad)
+            if proc.returncode and because not in (proc.stderr or ""):
+                raise CheckError(f"{TESTAPP_NAMESPACE} refused the {what} copy, but not for it: {reason(proc)}")
+            return proc.returncode != 0
+
+        # Kyverno may still be loading a policy platform-configs has just applied.
+        _until(f"{TESTAPP_NAMESPACE} still admitted the {what} copy", refused)
+
+
 @register_smoke("platform")
 def platform_probes(ctx: Context) -> list[Check]:
-    return [(10, f"smoke: Certificate from {ISSUER} Ready", lambda: probe_certificate(ctx))]
+    return [
+        (10, f"smoke: Certificate from {ISSUER} Ready", lambda: probe_certificate(ctx)),
+        (15, "smoke: core admission admits testapp's copy and refuses it unpinned or privileged", lambda: probe_core_admission(ctx)),
+    ]
 
 
 @register_smoke("app-dns")

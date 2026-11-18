@@ -5,5 +5,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: platform-cert-manager
+  labels:
+    jarvis.io/layer: platform
+    pod-security.kubernetes.io/enforce: restricted
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled

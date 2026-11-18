@@ -1,0 +1,22 @@
+# Core's rules for what Git carries, which the cluster's own controllers may still write: the
+# pvc-backup GeneratingPolicies (core/platform/backups/enrollment.yaml) make every ReplicationSource,
+# and a PVC opts out of backups only by hand. jarvis validate applies them with the Kyverno CLI
+# beside core/platform/kyverno/rules/rules.yaml; they are not installed for admission.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: backups
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [persistentvolumeclaims]}
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [statefulsets]}
+      - {apiGroups: [volsync.backube], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [replicationsources, replicationdestinations]}
+  validations:
+    - expression: object.apiVersion.split('/')[0] != 'volsync.backube'
+      message: "Git carries no ReplicationSource or ReplicationDestination; the pvc-backup policies make them"
+    - expression: >-
+        (object.kind == 'StatefulSet' ? object.spec.?volumeClaimTemplates.orValue([]).map(t, t.metadata) : [object.metadata])
+        .all(m, m.?annotations['backup'].orValue('') != 'none')
+      message: "a PVC in Git does not opt out of backups (backup: none)"

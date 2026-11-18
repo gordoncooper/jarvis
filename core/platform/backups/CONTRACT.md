@@ -6,7 +6,7 @@ Every PVC is backed up by VolSync's restic mover to a rest-server on the backup-
 
 | What | Detail |
 | --- | --- |
-| Namespace `platform-backups` | Does not set `volsync.backube/privileged-movers`; no mover runs here. |
+| Namespace `platform-backups` | Layer `platform`, Pod Security `privileged` (its pods run as root on host paths). Does not set `volsync.backube/privileged-movers`; no mover runs here. |
 | Service `restic`, port 8000 | rest-server on hostPath `backup_path/restic`, htpasswd auth, no `--append-only`, no `--private-repos`. Its only user is core's. No Ingress. |
 | Secret `backups-restic` | `RESTIC_PASSWORD`, `RESTIC_REPOSITORY` (`rest:http://restic.platform-backups.svc.cluster.local:8000/`), `RESTIC_REST_USERNAME`, `RESTIC_REST_PASSWORD`, bcrypt `htpasswd`. Minted once by `jarvis secrets`. |
 | Enrollment: GeneratingPolicies `pvc-backup` and `pvc-backup-app` | For each bound PVC: Secret `restic-<pvc>` and ReplicationSource `<pvc>` in its namespace. Repository `ns-<namespace>/pvc-<pvc>`. `pvc-backup` skips `app-*` and reads `backups-restic`; `pvc-backup-app` matches only `app-*` and reads only `backups-restic-<namespace>`, so an app with no credential gets nothing. A StatefulSet volume gets one source per ordinal PVC. |

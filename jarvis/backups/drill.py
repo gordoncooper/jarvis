@@ -291,14 +291,17 @@ def _templates(kubectl: Kubectl) -> tuple[dict, dict]:
             raise DrillError("live backup workload has an unsupported pod template")
         if "nodeSelector" not in restic_place and "affinity" not in restic_place:
             raise DrillError("live backup workload has an unsupported pod template")
+        # The drill's pods in platform-backups are sized as the copy is, so core's rules admit them.
         etcd = {
             "image": container["image"],
+            "resources": container.get("resources", {}),
             "env": container["env"],
             "snapshotHostPath": snapshot_volume["hostPath"],
             **etcd_place,
         }
         cleanup = {
             "image": container["image"],
+            "resources": container.get("resources", {}),
             "dataHostPath": data_volume["hostPath"],
             **restic_place,
         }
@@ -353,6 +356,7 @@ printf 'ETCD %s %s %s\n' "$original" "$restored" "$name"
                 {
                     "name": "restore",
                     "image": template["image"],
+                    "resources": template["resources"],
                     "securityContext": {"runAsUser": 0},
                     "env": template["env"],
                     "command": ["/bin/sh", "-c", command, "etcd-check", NOT_COPIED, NO_SNAPSHOT],
@@ -387,6 +391,7 @@ def _cleanup_pod(template: dict) -> dict:
                 {
                     "name": "cleanup",
                     "image": template["image"],
+                    "resources": template["resources"],
                     "securityContext": {"runAsUser": 0},
                     "command": ["/bin/sh", "-c", command],
                     "volumeMounts": [{"name": "data", "mountPath": "/data"}],
@@ -421,6 +426,7 @@ def _probe_pod(template: dict) -> dict:
                 {
                     "name": "probe",
                     "image": template["image"],
+                    "resources": template["resources"],
                     "securityContext": {"runAsUser": 0},
                     "command": ["/bin/sh", "-c", command],
                     "volumeMounts": [
