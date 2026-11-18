@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # renovate: datasource=github-releases depName=jdx/mise
-MISE_VERSION=v2026.11.9
+MISE_VERSION=v2026.11.10
 curl -fsSL https://mise.run | MISE_VERSION="${MISE_VERSION}" sh
 export PATH="${HOME}/.local/bin:${PATH}"
 grep -q 'mise activate' "${HOME}/.bashrc" || echo 'eval "$(~/.local/bin/mise activate bash)"' >> "${HOME}/.bashrc"
