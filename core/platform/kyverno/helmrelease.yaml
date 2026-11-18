@@ -13,15 +13,9 @@ spec:
   releaseName: kyverno
   serviceAccountName: flux-platform
   targetNamespace: kyverno
-  chart:
-    spec:
-      chart: kyverno
-      # renovate: datasource=helm depName=kyverno registryUrl=https://kyverno.github.io/kyverno
-      version: "3.9.2"
-      sourceRef:
-        kind: HelmRepository
-        name: kyverno
-        namespace: flux-system
+  chartRef:
+    kind: OCIRepository
+    name: kyverno
   install:
     createNamespace: true
     remediation:
@@ -69,6 +63,21 @@ spec:
           repository: kyverno/kyvernopre
           # renovate: datasource=docker depName=ghcr.io/kyverno/kyvernopre
           tag: "v1.19.2@sha256:27f3cc52e628559b56d08363b85316819802086c9808606914f7805a244148f4"
+    # The post-upgrade hook that migrates stored policy versions.
+    crds:
+      migration:
+        image:
+          registry: ghcr.io
+          repository: kyverno/kyverno-cli
+          # renovate: datasource=docker depName=ghcr.io/kyverno/kyverno-cli
+          tag: "v1.19.2@sha256:322ec5044d600930cb3af0e56dc33154a2d1d1fba58f4cadad3f47be7e78b11c"
+    # The pre-delete hooks that remove the webhooks and scale the controllers to zero.
+    webhooksCleanup:
+      image:
+        registry: ghcr.io
+        repository: kyverno/readiness-checker
+        # renovate: datasource=docker depName=ghcr.io/kyverno/readiness-checker
+        tag: "v1.19.2@sha256:02600428e7c956e222f4376413525866ed9fec28e6bcb1222774ce6bf5fc904a"
     backgroundController:
       image:
         registry: ghcr.io

@@ -27,6 +27,7 @@ from jarvis.checks import (
     flux_prune,
     manifest_lint,
 )
+from jarvis.checks.rendered import scan_kubeconform, scan_policies
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.render import env as _render
@@ -85,6 +86,9 @@ def _scan(module) -> Callable[[Path], list[str]]:
 CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "env-schema": _env_schema,
     "render": _render_check,
+    # Flux's build and the rendered charts, read by kubeconform and the Kyverno CLI.
+    "kubeconform": scan_kubeconform,
+    "policies": scan_policies,
     "addons": lambda instance: addons.format_violations(addons.scan_addons(_paths.core_root(), instance)),
     "app-hosting": _scan(app_hosting),
     "backup-isolation": _scan(backup_isolation),

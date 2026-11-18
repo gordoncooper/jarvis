@@ -1,0 +1,139 @@
+# Core's rules for what an env deploys, as Kyverno policies. jarvis validate applies them with the
+# Kyverno CLI to Flux's build of every env path and to each HelmRelease's rendered chart
+# (jarvis/checks/rendered.py). They are not installed on the cluster.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: images-pinned
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [deployments, statefulsets, daemonsets, replicasets]}
+      - {apiGroups: [batch], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [jobs, cronjobs]}
+  variables:
+    - name: pod
+      expression: >-
+        object.kind == 'Pod' ? object.spec :
+        object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec : object.spec.template.spec
+    - name: containers
+      expression: variables.pod.containers + variables.pod.?initContainers.orValue([])
+  validations:
+    - expression: variables.containers.all(c, c.image.matches('@sha256:[a-f0-9]{64}$'))
+      messageExpression: >-
+        'image not pinned by digest: ' +
+        variables.containers.filter(c, !c.image.matches('@sha256:[a-f0-9]{64}$')).map(c, c.name).join(', ')
+---
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: resources
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [deployments, statefulsets, daemonsets, replicasets]}
+      - {apiGroups: [batch], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [jobs, cronjobs]}
+  variables:
+    - name: pod
+      expression: >-
+        object.kind == 'Pod' ? object.spec :
+        object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec : object.spec.template.spec
+    - name: unsized
+      expression: >-
+        (variables.pod.containers + variables.pod.?initContainers.orValue([])).filter(c,
+          c.?resources.?requests.?cpu.orValue('') == '' || c.?resources.?requests.?memory.orValue('') == '' ||
+          c.?resources.?limits.?memory.orValue('') == '').map(c, c.name)
+    # A long-running container is not throttled; a Job's or an init container's CPU limit may stay.
+    - name: throttled
+      expression: >-
+        object.kind in ['Job', 'CronJob'] ? [] :
+        variables.pod.containers.filter(c, c.?resources.?limits.?cpu.hasValue()).map(c, c.name)
+  validations:
+    - expression: size(variables.unsized) == 0
+      messageExpression: "'needs cpu and memory requests and a memory limit: ' + variables.unsized.join(', ')"
+    - expression: size(variables.throttled) == 0
+      messageExpression: "'long-running container has a cpu limit: ' + variables.throttled.join(', ')"
+---
+# Jobs and CronJobs run to completion, so only long-running pods need probes.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: probes
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [deployments, statefulsets, daemonsets, replicasets]}
+  variables:
+    - name: unprobed
+      expression: >-
+        (object.kind == 'Pod' ? object.spec : object.spec.template.spec).containers
+        .filter(c, !has(c.livenessProbe) || !has(c.readinessProbe)).map(c, c.name)
+  validations:
+    - expression: size(variables.unprobed) == 0
+      messageExpression: "'needs a liveness and a readiness probe: ' + variables.unprobed.join(', ')"
+---
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: stdout-logs
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [deployments, statefulsets, daemonsets, replicasets]}
+      - {apiGroups: [batch], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [jobs, cronjobs]}
+  variables:
+    - name: pod
+      expression: >-
+        object.kind == 'Pod' ? object.spec :
+        object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec : object.spec.template.spec
+    - name: toFile
+      expression: >-
+        (variables.pod.containers + variables.pod.?initContainers.orValue([])).filter(c,
+          (c.?command.orValue([]) + c.?args.orValue([])).exists(a,
+            a.matches('(^|[\\s"\'])(--log-file|--log_file|--log-dir|--log_dir|--log-output-file)($|=|[\\s"\'])'))).map(c, c.name)
+  validations:
+    - expression: size(variables.toFile) == 0
+      messageExpression: "'logs to a file, not stdout: ' + variables.toFile.join(', ')"
+---
+# App DNS's Service (core/feature/app-dns). Traefik's comes from k3s's own chart, which is not rendered.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: load-balancers
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [services]}
+  validations:
+    - expression: >-
+        object.spec.?type.orValue('ClusterIP') != 'LoadBalancer' ||
+        object.metadata.namespace + '/' + object.metadata.name == 'platform-app-dns/k8s-gateway'
+      message: "only App DNS is a LoadBalancer Service"
+---
+# The pvc-backup GeneratingPolicies enroll every PVC (core/platform/backups/enrollment.yaml).
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: backups
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [persistentvolumeclaims]}
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [statefulsets]}
+      - {apiGroups: [volsync.backube], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [replicationsources, replicationdestinations]}
+  validations:
+    - expression: object.apiVersion.split('/')[0] != 'volsync.backube'
+      message: "Git carries no ReplicationSource or ReplicationDestination; the pvc-backup policies make them"
+    - expression: >-
+        (object.kind == 'StatefulSet' ? object.spec.?volumeClaimTemplates.orValue([]).map(t, t.metadata) : [object.metadata])
+        .all(m, m.?annotations['backup'].orValue('') != 'none')
+      message: "a PVC in Git does not opt out of backups (backup: none)"
