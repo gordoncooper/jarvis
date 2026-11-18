@@ -8,11 +8,11 @@ from pathlib import Path
 
 import yaml
 
-from jarvis.checks.flux_build import is_flux_kustomization
-from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, ROOT_SOURCE
+from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR
 
 # The trees the root artifact takes from the core repository.
 _CORE_TREES = (CORE_SOURCE_DIR, ADDONS_DIR)
+
 
 def kustomize_build(core: Path, rel: str) -> tuple[list[dict], str | None]:
     """The documents `kustomize build` renders for one of core's own folders (core/... or
@@ -28,14 +28,6 @@ def kustomize_build(core: Path, rel: str) -> tuple[list[dict], str | None]:
     if proc.returncode != 0:
         return [], f"kustomize build {rel} failed: {(proc.stderr or proc.stdout).strip()}"
     return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)], None
-
-
-def is_root_kustomization(doc: dict) -> bool:
-    metadata = doc.get("metadata") or {}
-    return is_flux_kustomization(doc) and (metadata.get("namespace"), metadata.get("name")) == (
-        ROOT_SOURCE,
-        ROOT_SOURCE,
-    )
 
 
 def namespace_of(doc: dict) -> str:
