@@ -1,5 +1,5 @@
 apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
+kind: OCIRepository
 metadata:
   name: k8s-gateway
   namespace: flux-system
@@ -7,6 +7,8 @@ metadata:
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
-  type: oci
   interval: 30m
-  url: oci://codeberg.org/k8s-gateway/charts
+  url: oci://codeberg.org/k8s-gateway/charts/k8s-gateway
+  ref:
+    # renovate: datasource=docker depName=codeberg.org/k8s-gateway/charts/k8s-gateway versioning=semver
+    tag: "4.0.1"

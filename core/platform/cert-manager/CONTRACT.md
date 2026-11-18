@@ -10,7 +10,7 @@ cert-manager issues the wildcard for `<dns_suffix>` from the env's internal CA; 
 | Certificate `wildcard` | `*.<dns_suffix>`, Secret `wildcard-tls` |
 | TLSStore `default` (`platform-cert-manager`) | `wildcard-tls` as the default certificate; the only store Traefik reads |
 | Certificate `wildcard-apps` (app hosting on) | `*.apps.<dns_suffix>`, Secret `wildcard-apps-tls`, served by the same store; separate, so it never re-keys `wildcard` |
-| HelmRelease `cert-manager` | Chart `v1.21.3` from `https://charts.jetstack.io`, `crds.enabled`, images digest-pinned |
+| HelmRelease `cert-manager` | OCI chart `quay.io/jetstack/charts/cert-manager`, pinned in `oci-repository.yaml`; `crds.enabled`, images digest-pinned |
 
 ## Expects
 

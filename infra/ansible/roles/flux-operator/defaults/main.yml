@@ -14,8 +14,8 @@ helm_binary_group: root
 # Pinned Helm host CLI for the one-time bootstrap. The version and sha256 are bumped together by PR.
 # Before the bootstrap install, a binary at helm_binary_path that is missing or reports another version is replaced.
 # renovate: datasource=github-releases depName=helm/helm versioning=semver
-helm_version: 3.16.4
-helm_linux_amd64_tarball_sha256: fc307327959aa38ed8f9f7e66d45492bb022a66c3e5da6063958254b9767d179
+helm_version: 4.3.2
+helm_linux_amd64_tarball_sha256: d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983
 helm_archive_member_linux_amd64: linux-amd64/helm
 helm_download_url: "https://get.helm.sh/helm-v{{ helm_version }}-linux-amd64.tar.gz"
 # The instance checkout's SOPS config. Its creation rule for envs/<jarvis_env>/secrets/ names the env's age recipients.

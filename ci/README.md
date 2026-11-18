@@ -30,7 +30,7 @@ Tests that build a throwaway env copy refuse a tracked path in the repo. Where t
 
 These are gaps a maintainer should know about when a change looks green.
 
-- **Manifest schemas need the network.** `test_flux_entry.py` validates rendered manifests with kubeconform, which downloads the Kubernetes schemas, a public CRD catalog and the VolSync CRDs for the pinned chart version. A failed download fails the test. The rendered tree holds no ReplicationSource or ReplicationDestination, since the backup policy generates them, so only the seeded test exercises the VolSync schemas.
+- **The rendered checks need the network.** `kubeconform` and `policies` (`jarvis/checks/rendered.py`) pull each HelmRelease's chart and download the Kubernetes schemas and one pinned CRD catalog. A failed download fails the check. Helm renders each chart without the release's `postRenderers`, and k3s's own Traefik chart is not rendered.
 - **Flux's offline build is not the controller.** The env checks build each Kustomization with `flux build kustomization --dry-run`, which never reads the cluster: a `substituteFrom` source must be in the env's tree (a sealed Secret cannot be read offline and fails the check), and a Kustomization on another source (a hosted app's repository) is listed but not built.
 - **The manifest checks read raw files.** `digest-pin`, `loadbalancer`, `manifest-lint` and `pvc-backup` scan YAML as written. A value that only appears after `kustomize build` (a patch, a generator) or inside a rendered HelmRelease is not seen.
 - **`require_roots` is off by default in the library functions.** The four check scripts turn it on, and `test_manifest_roots.py` runs the scripts to prove it. A new caller of `load_documents` has to opt in.

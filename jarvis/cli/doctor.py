@@ -19,7 +19,7 @@ import yaml
 # The commands jarvis runs on the controller: mise.toml's CLIs, Ansible from the venv, and the
 # system's git and ssh.
 TOOLS = (
-    "sops", "age", "age-keygen", "kubectl", "flux", "kustomize", "kubeconform", "kyverno",
+    "sops", "age", "age-keygen", "kubectl", "flux", "kustomize", "helm", "kubeconform", "kyverno",
     "gitleaks", "restic", "ansible-playbook", "git", "ssh", "ssh-keygen",
 )  # fmt: skip
 

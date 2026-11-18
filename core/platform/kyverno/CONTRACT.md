@@ -6,7 +6,7 @@ Kyverno generates the backup objects and, with app hosting on, hosted apps' deri
 
 | What | Detail |
 | --- | --- |
-| HelmRelease `kyverno` in namespace `kyverno` | Chart 3.9.2 (v1.19.2), admission and background controllers only; reports and cleanup off; images digest-pinned |
+| HelmRelease `kyverno` in namespace `kyverno` | OCI chart `ghcr.io/kyverno/charts/kyverno` 3.9.2 (v1.19.2), pinned in `oci-repository.yaml`; admission and background controllers only; reports and cleanup off; images digest-pinned |
 | Aggregated ClusterRoles | `kyverno:backup-generate` manages Secrets and ReplicationSources and lists ConfigMaps cluster-wide (the hold and overrides); `kyverno:app-derive` (app hosting on) reads Apps and manages NetworkPolicies and ResourceQuotas. The chart's own roles are not edited, and no role updates Namespaces. |
 
 ## Expects

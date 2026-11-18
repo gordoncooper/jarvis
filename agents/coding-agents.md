@@ -10,7 +10,7 @@ How an agent works on core. The brief, and the charter when the session has one,
 
 ## Guards already in place
 
-The deny lists, `jarvis validate` (env schema, Flux identities, committed renders, secrets), and the scripts listed in `ci/rule-checks.txt`, each described by the first comment in `ci/checks/<name>`. Don't restate their rules in prose or tests.
+The deny lists, `jarvis validate` (env schema, Flux identities, committed renders, schemas and core's Kyverno rules on what an env deploys, secrets), and the scripts listed in `ci/rule-checks.txt`, each described by the first comment in `ci/checks/<name>`. Don't restate their rules in prose or tests.
 
 ## Subtract first
 

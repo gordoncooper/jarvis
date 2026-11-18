@@ -9,10 +9,10 @@ import pytest
 import yaml
 from ansible_role_proof import ANSIBLE_DIR, roles_inventory_path
 from conftest import require_cli
-from test_flux_entry import validate_env_flux
 from test_inventory_roles import _parse_graph
 from test_k3s import _agent_play_section, _hosts_outside_control_plane, _listed_play_hosts
 
+from jarvis.checks.flux_build import env_tree
 from jarvis.schema.env import validate_env_tree
 from support import ExampleCopy, bootstrap_example_copy
 
@@ -30,7 +30,8 @@ def test_env_shape_copy_bootstraps_builds_and_lists_hosts(tmp_path: Path, shape:
     copy = bootstrap_example_copy(tmp_path, hosts_text=hosts)
     _assert_shape(shape, yaml.safe_load(hosts))
     validate_env_tree(copy.root)
-    validate_env_flux(copy.root, copy.name)
+    tree = env_tree(copy.root, f"envs/{copy.name}/flux")
+    assert tree.error is None and not [path.error for path in tree.paths if path.error], tree
     _assert_inventory_graph(copy)
     assert _listed_play_hosts(_agent_play_section(copy.name, copy.root)) == (
         _hosts_outside_control_plane(copy.name, copy.root)
