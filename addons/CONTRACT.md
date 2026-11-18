@@ -28,7 +28,7 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | Slot | Label `addons.jarvis.io/slot: <slot>` on its Kustomizations; the slot exists |
 | Name | Not `apps` (hosted apps own `*.apps.<dns_suffix>`) |
 | Dependencies | Platform, feature and slot contracts only, never another add-on |
-| Workloads | `ci/checks/manifest-lint` and `ci/checks/digest-pin` |
+| Workloads | `policies` (`jarvis validate`) |
 
 ## Health
 

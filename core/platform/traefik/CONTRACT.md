@@ -16,7 +16,7 @@ A component is reachable at `<svc>.<dns_suffix>` by adding one Ingress.
 | What | From |
 | --- | --- |
 | `dns_suffix` | `values/cluster-vars.yaml` |
-| Exposed workloads set probes, log to stdout, set a memory request and limit and a CPU request without a limit | `ci/checks/manifest-lint` |
+| Exposed workloads set probes, log to stdout, set a memory request and limit and a CPU request without a limit | `policies` (`jarvis validate`) |
 
 ## Health
 

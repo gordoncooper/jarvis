@@ -1,9 +1,5 @@
 addons
 contract-md
-digest-pin
-loadbalancer
-manifest-lint
 product-ci
-pvc-backup
 sample-instance
 secret-scan

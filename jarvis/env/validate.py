@@ -25,7 +25,6 @@ from jarvis.checks import (
     backup_isolation,
     flux_identity,
     flux_prune,
-    manifest_lint,
 )
 from jarvis.checks.rendered import scan_kubeconform, scan_policies
 from jarvis.env.runtime import instance_root
@@ -52,12 +51,6 @@ def _render_check(instance: Path) -> list[str]:
             stale = [str(exc)]
         problems += [f"envs/{env_dir.name}/{line}" for line in stale]
     return problems
-
-
-def _manifest_lint(instance: Path) -> list[str]:
-    # An instance repo holds only envs/, so the core roots are required only in core itself.
-    found = manifest_lint.scan_manifest_lint(instance, require_roots=instance == PRODUCT_ROOT)
-    return manifest_lint.format_violations(found)
 
 
 def _secret_scan(instance: Path) -> list[str]:
@@ -94,7 +87,6 @@ CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "backup-isolation": _scan(backup_isolation),
     "flux-identity": _scan(flux_identity),
     "flux-prune": _scan(flux_prune),
-    "manifest-lint": _manifest_lint,
     "secret-scan": _secret_scan,
 }
 

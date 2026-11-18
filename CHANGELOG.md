@@ -53,6 +53,13 @@ the upgrade.
 ### Removed
 
 - The `flux-substitute` check: Flux's strict substitution in the build above does its job.
+- The `digest-pin`, `loadbalancer`, `manifest-lint` and `pvc-backup` checks, which read YAML as
+  written and missed what kustomize and Helm render. Their rules are Kyverno policies that
+  `jarvis validate` applies to what an env deploys (`policies`). Not carried over: the
+  observability exception to `backup: none` (no such add-on exists), the check that the
+  `pvc-backup` policy is listed (e2e's backup and restore proves it), the scan of `addons/`
+  for restic URLs, and the requests and memory limit in Traefik's HelmChartConfig (k3s ships
+  Traefik's chart, so the rendered checks do not see it).
 
 ### Fixed
 

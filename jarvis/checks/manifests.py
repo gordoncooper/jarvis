@@ -1,4 +1,4 @@
-"""YAML documents the repo deploys. Charts are not rendered."""
+"""Small readers for Kubernetes documents, and `kustomize build` of one of core's own folders."""
 
 from __future__ import annotations
 
@@ -8,59 +8,10 @@ from pathlib import Path
 
 import yaml
 
-from jarvis.checks.flux_build import is_flux_kustomization
-from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR, ROOT_SOURCE
+from jarvis.schema.env import ADDONS_DIR, CORE_SOURCE_DIR
 
 # The trees the root artifact takes from the core repository.
 _CORE_TREES = (CORE_SOURCE_DIR, ADDONS_DIR)
-
-SCAN_ROOTS = ("core/", "addons/", "envs/")
-# Core holds core/ and addons/ and no env; an instance repo holds envs/. require_roots requires these.
-REQUIRED_ROOTS = ("core/", "addons/")
-SKIP_ENV_PREFIXES = ("secrets/", "values/", "inventory/")
-
-
-def load_documents(
-    repo_root: Path | str, *, require_roots: bool = False
-) -> list[tuple[str, dict | None, str | None]]:
-    """Return (relative path, document, error). One of document or error is set.
-
-    The checks pass require_roots=True, so a missing core/ or addons/ is an error instead of an
-    empty scan; envs/ is scanned when present. Fixture trees in tests build only the roots they use.
-    """
-    root = Path(repo_root).resolve()
-    found: list[tuple[str, dict | None, str | None]] = []
-    for scan_root in SCAN_ROOTS:
-        base = root / scan_root.rstrip("/")
-        if not base.is_dir():
-            if require_roots and scan_root in REQUIRED_ROOTS:
-                found.append((scan_root.rstrip("/"), None, "manifest root is missing"))
-            continue
-        for path in sorted(item for item in base.rglob("*") if item.is_file()):
-            if path.suffix not in {".yaml", ".yml"}:
-                continue
-            rel = path.relative_to(root).as_posix()
-            if ".sops." in rel:
-                continue
-            if rel.startswith("envs/"):
-                parts = rel.split("/", 2)
-                if len(parts) == 3 and parts[2].startswith(SKIP_ENV_PREFIXES):
-                    continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                continue
-            try:
-                docs = list(yaml.safe_load_all(text))
-            except yaml.YAMLError as exc:
-                found.append((rel, None, f"YAML parse error: {exc}"))
-                continue
-            for doc in docs:
-                if isinstance(doc, dict):
-                    found.append((rel, doc, None))
-                elif doc is not None:
-                    found.append((rel, None, f"YAML document is a {type(doc).__name__}, not a mapping"))
-    return found
 
 
 def kustomize_build(core: Path, rel: str) -> tuple[list[dict], str | None]:
@@ -77,14 +28,6 @@ def kustomize_build(core: Path, rel: str) -> tuple[list[dict], str | None]:
     if proc.returncode != 0:
         return [], f"kustomize build {rel} failed: {(proc.stderr or proc.stdout).strip()}"
     return [doc for doc in yaml.safe_load_all(proc.stdout) if isinstance(doc, dict)], None
-
-
-def is_root_kustomization(doc: dict) -> bool:
-    metadata = doc.get("metadata") or {}
-    return is_flux_kustomization(doc) and (metadata.get("namespace"), metadata.get("name")) == (
-        ROOT_SOURCE,
-        ROOT_SOURCE,
-    )
 
 
 def namespace_of(doc: dict) -> str:
@@ -131,32 +74,3 @@ def pod_spec(doc: dict) -> dict | None:
     if kind == "Pod":
         return spec
     return None
-
-
-def helm_values(doc: dict) -> tuple[dict | None, str | None]:
-    """HelmRelease spec.values or HelmChartConfig valuesContent."""
-    kind = doc.get("kind")
-    spec = doc.get("spec")
-    if not isinstance(spec, dict):
-        return None, None
-    if kind == "HelmRelease":
-        values = spec.get("values")
-        if values is None:
-            return None, None
-        if not isinstance(values, dict):
-            return None, "spec.values is not a mapping"
-        return values, None
-    if kind == "HelmChartConfig":
-        raw = spec.get("valuesContent")
-        if not isinstance(raw, str) or not raw.strip():
-            return None, None
-        try:
-            loaded = yaml.safe_load(raw)
-        except yaml.YAMLError as exc:
-            return None, f"valuesContent YAML parse error: {exc}"
-        if loaded is None:
-            return None, None
-        if not isinstance(loaded, dict):
-            return None, "valuesContent is not a mapping"
-        return loaded, None
-    return None, None
