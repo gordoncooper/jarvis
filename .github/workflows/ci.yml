@@ -32,7 +32,7 @@ jobs:
       - name: Install mise
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: 2026.11.5
+          version: 2026.11.9
           install: false
           # The tools' own directories go on PATH (below), not shims: a shim picks its version
           # from the current directory's mise.toml, and tests run CLIs in temporary directories.

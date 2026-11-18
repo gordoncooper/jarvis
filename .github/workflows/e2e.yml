@@ -79,7 +79,7 @@ jobs:
       - name: Install the pinned CLIs (mise.lock), k3d included
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
-          version: 2026.11.5
+          version: 2026.11.9
           install_args: --locked
           # The tools' own directories on PATH, not shims, which resolve per directory.
           add_shims_to_path: false
