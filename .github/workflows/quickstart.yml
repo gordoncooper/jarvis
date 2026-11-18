@@ -24,8 +24,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The throwaway ref, as a branch (the instance repository) and a tag (the core release).
+  # The throwaway refs: a tag (the core release) and a branch (the instance repository). Their
+  # names differ, because git and uv take a branch first when one shares a tag's name.
   QS_REF: quickstart/${{ github.run_id }}-${{ github.run_attempt }}
+  QS_BRANCH: quickstart-env/${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   prepare:
@@ -137,11 +139,11 @@ jobs:
         run: |
           set -euo pipefail
           # The guard on pushing: the doc's push goes to the throwaway branch, never to main.
-          [[ "${QS_REF}" == quickstart/* ]]
+          [[ "${QS_BRANCH}" == quickstart-env/* ]]
           cat > choices.sh <<EOF
           JARVIS_VERSION=${VERSION}
           REPO_URL=https://github.com/${GITHUB_REPOSITORY}
-          BRANCH=${QS_REF}
+          BRANCH=${QS_BRANCH}
           NODE=node1.home.lan
           LOGIN=$(id -un)
           EOF
@@ -187,7 +189,7 @@ jobs:
           cat > choices.sh <<EOF
           JARVIS_VERSION=${VERSION}
           REPO_URL=https://github.com/${GITHUB_REPOSITORY}
-          BRANCH=${QS_REF}
+          BRANCH=${QS_BRANCH}
           NODE=node1.home.lan
           LOGIN=$(id -un)
           EOF
@@ -210,5 +212,5 @@ jobs:
 
       - name: Delete the throwaway branch and tag
         run: |
-          git push -q origin --delete "refs/heads/${QS_REF}" || true
+          git push -q origin --delete "refs/heads/${QS_BRANCH}" || true
           [[ "${GITHUB_REF}" == refs/tags/v* ]] || git push -q origin --delete "refs/tags/${QS_REF}" || true

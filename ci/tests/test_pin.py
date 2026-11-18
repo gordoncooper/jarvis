@@ -112,6 +112,20 @@ def test_a_tag_with_slashes_has_its_own_cached_checkout(tmp_path: Path, core: Pa
     assert sorted(path.name for path in first.parent.iterdir()) == ["1.0", "1.1"]
 
 
+def test_the_cached_checkout_is_the_tag_when_a_branch_shares_its_name(tmp_path: Path, core: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: the cached checkout is the pinned tag even when a branch of the same name exists (an
+    instance repository pushed to the core repository under that name)."""
+    _git(core, "tag", "release/2.0")
+    _git(core, "checkout", "-q", "-b", "release/2.0")
+    (core / "file").write_text("branch\n", encoding="utf-8")
+    _git(core, "commit", "-qam", "branch")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(cli_core, "setup", lambda checkout: (checkout / ".jarvis-ready").touch())
+    checkout = cli_core.checkout_tag(f"file://{core}", "release/2.0")
+    assert (checkout / "file").read_text(encoding="utf-8") == "one\n"
+    assert cli_core.at_tag(checkout, "release/2.0")
+
+
 def test_a_branch_pin_is_refused_before_anything_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     """Rule: an env that follows a branch is refused (exit 3): there is no release to run."""
     env = _env(tmp_path, "refs/heads/main")

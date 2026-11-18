@@ -81,7 +81,11 @@ def checkout_tag(url: str, tag: str) -> Path:
             partial = dest.parent / f".{dest.name}.partial"
             shutil.rmtree(partial, ignore_errors=True)
             partial.parent.mkdir(parents=True, exist_ok=True)
-            _run(["git", "clone", "--quiet", "--depth", "1", "--branch", tag, url, str(partial)])
+            # The tag itself: `git clone --branch` takes a branch of the same name first.
+            _run(["git", "init", "--quiet", str(partial)])
+            _run(["git", "-C", str(partial), "remote", "add", "origin", url])
+            _run(["git", "-C", str(partial), "fetch", "--quiet", "--depth", "1", "--no-tags", "origin", f"refs/tags/{tag}:refs/tags/{tag}"])
+            _run(["git", "-C", str(partial), "-c", "advice.detachedHead=false", "checkout", "--quiet", f"refs/tags/{tag}"])
             partial.rename(dest)
         setup(dest)
     return dest
