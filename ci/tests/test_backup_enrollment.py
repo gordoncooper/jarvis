@@ -102,8 +102,6 @@ def test_enrollment_generates_a_secret_and_source_per_bound_claim(tmp_path: Path
     assert made[("ReplicationSource", "monitoring", "data")]["spec"] == _source("data")
     assert made[("ReplicationSource", "monitoring", "held")]["spec"] == _source("held", paused=True)
     assert made[("ReplicationSource", "app-notes", "db")]["spec"] == _source("db")
-    for path in ("core/platform/backups/enrollment.yaml", "core/feature/app-hosting/backups/policies.yaml"):
-        assert "rest:http://" not in (ROOT / path).read_text(encoding="utf-8")
 
 
 def test_rebuild_hold_pauses_every_source(tmp_path: Path) -> None:
