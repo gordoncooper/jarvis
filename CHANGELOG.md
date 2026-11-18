@@ -9,6 +9,18 @@ the upgrade.
 
 ### Changed
 
+- `jarvis validate` checks what an env deploys with the upstream tools. Two new checks read
+  Flux's build of every env path plus each HelmRelease's chart, rendered with `helm template`
+  (Helm 4, pinned in `mise.toml`): `kubeconform` checks every object against its schema, and
+  `policies` applies core's rules (`jarvis/checks/rules.yaml`: images pinned by digest, requests
+  and a memory limit, probes, stdout logs, LoadBalancer Services, backups) with the Kyverno CLI.
+  Both need the network to pull charts and schemas. kubeconform reads custom kinds from the CRDs
+  the objects carry and those the pinned flux CLI installs.
+- cert-manager, Kyverno and k8s-gateway charts come from OCIRepositories (`chartRef`), like
+  flux-operator. VolSync publishes no OCI chart and keeps its HelmRepository.
+- The flux-operator image, Kyverno's hook images and cert-manager's startupapicheck resources are
+  now set, which the rendered charts showed were missing.
+- The node bootstrap installs Helm 4.3.2 (was 3.16.4).
 - Each values file is checked against its own JSON Schema (`schema/*.schema.json`), and the
   messages are the validator's own: `<file>: <key>: <message>`. `inventory/hosts.yml`,
   `values/switches.yaml` and `values/apps.yaml` were checked by hand-written Python that copied

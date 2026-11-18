@@ -14,15 +14,9 @@ spec:
   releaseName: k8s-gateway
   serviceAccountName: flux-platform
   targetNamespace: platform-app-dns
-  chart:
-    spec:
-      chart: k8s-gateway
-      # renovate: datasource=docker depName=codeberg.org/k8s-gateway/charts/k8s-gateway versioning=semver
-      version: "4.0.1"
-      sourceRef:
-        kind: HelmRepository
-        name: k8s-gateway
-        namespace: flux-system
+  chartRef:
+    kind: OCIRepository
+    name: k8s-gateway
   install:
     createNamespace: true
     remediation:

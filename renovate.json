@@ -48,7 +48,7 @@
       "description": "One PR updates the Kyverno chart, every Kyverno image digest pin and the matching CLI pin in mise.toml (rule below); Renovate updates mise.lock in the same PR.",
       "groupName": "kyverno",
       "matchManagers": ["custom.regex"],
-      "matchDepNames": ["kyverno", "ghcr.io/kyverno/kyverno", "ghcr.io/kyverno/kyvernopre", "ghcr.io/kyverno/background-controller"]
+      "matchDepNames": ["ghcr.io/kyverno/charts/kyverno", "ghcr.io/kyverno/kyverno", "ghcr.io/kyverno/kyvernopre", "ghcr.io/kyverno/background-controller", "ghcr.io/kyverno/kyverno-cli", "ghcr.io/kyverno/readiness-checker"]
     },
     {
       "description": "The kyverno CLI in mise.toml, grouped with the chart and images (rule above).",
@@ -61,13 +61,19 @@
       "groupName": "cert-manager",
       "matchManagers": ["custom.regex"],
       "matchDepNames": [
-        "cert-manager",
+        "quay.io/jetstack/charts/cert-manager",
         "quay.io/jetstack/cert-manager-controller",
         "quay.io/jetstack/cert-manager-webhook",
         "quay.io/jetstack/cert-manager-cainjector",
         "quay.io/jetstack/cert-manager-startupapicheck",
         "quay.io/jetstack/cert-manager-acmesolver"
       ]
+    },
+    {
+      "description": "The flux-operator chart and its image digest pin (the chart's appVersion) move in one PR.",
+      "groupName": "flux-operator",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator", "ghcr.io/controlplaneio-fluxcd/flux-operator"]
     },
     {
       "description": "Helm host CLI version and sha256 are bumped together by PR, opened after approval in the dependency dashboard.",
@@ -138,11 +144,11 @@
     },
     {
       "customType": "regex",
-      "description": "Datasource comments in Ansible defaults and Flux OCIRepository.",
-      "managerFilePatterns": ["/^infra\\/ansible\\/roles\\/flux-operator\\/defaults\\/main\\.yml$/", "/^core\\/platform\\/flux-operator\\/oci-repository\\.yaml$/"],
+      "description": "Datasource comments in Ansible defaults and in core's chart OCIRepositories.",
+      "managerFilePatterns": ["/^infra\\/ansible\\/roles\\/flux-operator\\/defaults\\/main\\.yml$/", "/^core\\/.+\\/oci-repository\\.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\nhelm_version: (?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*tag: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*tag: \"(?<currentValue>v?\\d+\\.\\d+\\.\\d+)\""
       ]
     },
     {
@@ -164,27 +170,11 @@
     },
     {
       "customType": "regex",
-      "description": "cert-manager Helm chart pin.",
-      "managerFilePatterns": ["/^core\\/platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>helm) depName=(?<depName>cert-manager) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\""
-      ]
-    },
-    {
-      "customType": "regex",
       "description": "cert-manager component image tag and digest.",
       "datasourceTemplate": "docker",
       "managerFilePatterns": ["/^core\\/platform\\/cert-manager\\/controller\\/helmrelease.yaml$/"],
       "matchStrings": [
         "# renovate: datasource=docker depName=(?<depName>quay\\.io/jetstack/cert-manager-\\S+)\\n\\s*tag: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"\\n\\s*digest: \"(?<currentDigest>sha256:[a-f0-9]+)\""
-      ]
-    },
-    {
-      "customType": "regex",
-      "description": "k8s-gateway OCI chart pin.",
-      "managerFilePatterns": ["/^core\\/feature\\/app-dns\\/helmrelease.yaml$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+?) depName=(?<depName>\\S+?)(?: versioning=(?<versioning>\\S+?))?\\s*\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ]
     },
     {
@@ -198,10 +188,11 @@
     },
     {
       "customType": "regex",
-      "description": "Kyverno Helm chart pin.",
-      "managerFilePatterns": ["/^core\\/platform\\/kyverno\\/helmrelease.yaml$/"],
+      "description": "flux-operator image tag and digest.",
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": ["/^core\\/platform\\/flux-operator\\/helmrelease\\.yaml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>helm) depName=(?<depName>kyverno) registryUrl=(?<registryUrl>\\S+)\\n\\s*version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+        "# renovate: datasource=docker depName=(?<depName>ghcr\\.io/controlplaneio-fluxcd/flux-operator)\\n\\s*tag: \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ]
     },
     {
