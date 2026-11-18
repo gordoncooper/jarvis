@@ -1064,8 +1064,12 @@ def test_known_hosts_is_a_github_published_host_key() -> None:
     import urllib.error
     import urllib.request
 
+    # Unauthenticated calls share the runner's address limit; CI passes the workflow's read-only token.
+    request = urllib.request.Request("https://api.github.com/meta")
+    if token := os.environ.get("GITHUB_TOKEN"):
+        request.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen("https://api.github.com/meta", timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             published = json.load(response)["ssh_keys"]
     except urllib.error.HTTPError as error:
         if error.code < 500:

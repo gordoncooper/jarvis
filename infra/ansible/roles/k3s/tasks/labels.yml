@@ -3,6 +3,7 @@
   ansible.builtin.apt:
     name: python3-kubernetes
     state: present
+    lock_timeout: "{{ apt_lock_timeout }}"
 
 - name: Wait until every inventory node exists
   kubernetes.core.k8s_info:
