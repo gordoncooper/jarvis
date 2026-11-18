@@ -3,9 +3,10 @@
 
 The env is written by jarvis init's own code (jarvis/env/scaffold.py) with its secrets sealed to
 --key-file, a throwaway age key that lives only on the runner, then edited as an owner would:
-the example apps (jarvis/kit/examples-apps.yaml) from --apps-url, and App DNS when asked. Its root source is
-this repository at --ref, the branch the job pushes with the env on it, and its core source the
-same repository at --core-ref (default --ref; a release tag on a tag run). Nothing here talks to
+the example apps (jarvis/kit/examples-apps.yaml) from --apps-url, alerts to the sample's target,
+and App DNS when asked. Its root source is this repository at --ref, the branch the job pushes
+with the env on it, and its core source the same repository at --core-ref (default --ref; a
+release tag on a tag run). Nothing here talks to
 a cluster. The render reads the app files from APPS_REPO, a checkout of --apps-url with its tags.
 
   ci/e2e/make-env --env e2e --repo-url https://github.com/<owner>/<repo> --ref refs/heads/<branch> \\
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         # The one k3d node, with the roles the job labels it with.
         nodes=[scaffold.Node.parse(f"{args.node}:control_plane,backup,edge", only=True)],
         ssh_user="e2e",
-        features=["app-dns", "app-hosting"] if args.app_dns else ["app-hosting"],
+        features=["alerts", "app-dns", "app-hosting"] if args.app_dns else ["alerts", "app-hosting"],
         apps_repo_url=args.apps_url,
         age_key_file=str(args.key_file),
     )
