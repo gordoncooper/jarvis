@@ -21,6 +21,9 @@ the upgrade.
 - The flux-operator image, Kyverno's hook images and cert-manager's startupapicheck resources are
   now set, which the rendered charts showed were missing.
 - The node bootstrap installs Helm 4.3.2 (was 3.16.4).
+- Core's Renovate reads chart and image pins with its own `flux` and `kubernetes` managers. Regex
+  managers stay only where no manager exists: k3s, Flux, the Helm host CLI, mise in the
+  devcontainers, the quickstart's release and the example apps.
 - Each values file is checked against its own JSON Schema (`schema/*.schema.json`), and the
   messages are the validator's own: `<file>: <key>: <message>`. `inventory/hosts.yml`,
   `values/switches.yaml` and `values/apps.yaml` were checked by hand-written Python that copied
