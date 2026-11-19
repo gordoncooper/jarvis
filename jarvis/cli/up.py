@@ -18,7 +18,7 @@ import yaml
 
 from jarvis.checks.flux_build import env_tree
 from jarvis.cli import doctor
-from jarvis.env import validate
+from jarvis.env import flux_state, validate
 from jarvis.env.runtime import kubeconfig_for, kubectl
 from jarvis.node import site
 from jarvis.paths import PRODUCT_ROOT
@@ -79,31 +79,28 @@ def pushed_revision(instance: Path, env: str) -> str | None:
     return line[0] if line else None
 
 
-def _waiting(items: list[dict], expected: dict[str, bool], revision: str) -> dict[str, str]:
-    """Each expected Kustomization that is not yet done, with why: not created, not Ready, Ready on
-    an older spec, or (reading the root source) not yet at the pushed commit."""
+def _waiting(items: list[dict], sources: list[dict], expected: dict[str, bool], revision: str) -> dict[str, str]:
+    """Each expected Kustomization that is not yet done, with why: not created, not current
+    (jarvis/env/flux_state.py), or (reading the root source) not yet at the pushed commit."""
     listed = {str(item["metadata"]["name"]): item for item in items}
+    index = flux_state.source_index(sources)
     waiting = {}
     for name, root_source in sorted(expected.items()):
         item = listed.get(name)
         if item is None:
             waiting[name] = "not created yet"
-            continue
-        status = item.get("status") or {}
-        ready = next((c for c in status.get("conditions") or [] if c.get("type") == "Ready"), {})
-        if ready.get("status") != "True":
-            waiting[name] = str(ready.get("message") or "no Ready condition yet")
-        elif status.get("observedGeneration") != (item.get("metadata") or {}).get("generation"):
-            waiting[name] = "Ready for an older spec; reconciling"
-        elif root_source and not str(status.get("lastAppliedRevision") or "").endswith(revision):
+        elif root_source and not str((item.get("status") or {}).get("lastAppliedRevision") or "").endswith(revision):
             waiting[name] = f"not yet at {revision[:12]}"
+        elif why := flux_state.lag(item, index):
+            waiting[name] = why
     return waiting
 
 
 def wait_for_flux(instance: Path, env: str) -> int:
-    """Until every Kustomization the env's tree applies exists, is Ready for its current spec, and,
-    if it reads the root source, has applied the pushed commit. The tree says what to wait for, so
-    a layer that applies its children only once it is Ready is waited for like any other."""
+    """Until every Kustomization the env's tree applies exists, is current (Ready for its spec, at
+    its source's latest artifact) and, if it reads the root source, has applied the pushed commit.
+    The tree says what to wait for, so a layer that applies its children only once it is Ready is
+    waited for like any other."""
     expected, error = expected_kustomizations(instance, env)
     revision = pushed_revision(instance, env)
     if error or revision is None:
@@ -112,13 +109,14 @@ def wait_for_flux(instance: Path, env: str) -> int:
     deadline = _clock() + FLUX_READY_TIMEOUT_SECONDS
     waiting = {name: "not created yet" for name in expected}
     while _clock() < deadline:
-        proc = kubectl(
-            ["get", "kustomizations.kustomize.toolkit.fluxcd.io", "-n", "flux-system", "-o", "json"],
-            repo_root=PRODUCT_ROOT,
-            kubeconfig=kubeconfig_for(env),
-        )
-        if proc.returncode == 0:
-            waiting = _waiting((json.loads(proc.stdout or "{}") or {}).get("items") or [], expected, revision)
+        listed = [
+            kubectl(["get", kinds, "-n", "flux-system", "-o", "json"], repo_root=PRODUCT_ROOT,
+                    kubeconfig=kubeconfig_for(env))  # fmt: skip
+            for kinds in ("kustomizations.kustomize.toolkit.fluxcd.io", flux_state.SOURCES)
+        ]
+        if all(proc.returncode == 0 for proc in listed):
+            kustomizations, sources = ((json.loads(proc.stdout or "{}") or {}).get("items") or [] for proc in listed)
+            waiting = _waiting(kustomizations, sources, expected, revision)
             if not waiting:
                 print(f"PASS up: every Flux Kustomization is Ready at {revision[:12]} ({len(expected)})", flush=True)
                 return 0

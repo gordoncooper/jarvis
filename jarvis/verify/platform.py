@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 
+from jarvis.env import flux_state
 from jarvis.env.runtime import json_object, reason, tool_env
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.verify.common import CheckError, Context, Fetch, Issuer, Kubectl, items
@@ -125,22 +126,22 @@ def _inventory(repo_root: Path, env: str) -> dict[str, set[str]]:
 
 
 def check_flux(kubectl: Kubectl) -> None:
+    """Every Flux object is Ready for its current spec, and each Kustomization has applied its
+    source's current artifact (jarvis/env/flux_state.py): a Ready left from before an upgrade fails."""
+    listed = kubectl(["get", flux_state.SOURCES, "-A", "-o", "json"])
+    sources = flux_state.source_index(items(listed, "list Flux sources"))
+    behind = []
     for resource in FLUX_RESOURCES:
         found = items(kubectl(["get", resource, "-A", "-o", "json"]), f"list {resource}")
         if not found:
             raise CheckError(f"{resource}: none found")
-        proc = kubectl(
-            [
-                "wait",
-                "--for=condition=Ready",
-                "--all",
-                "-A",
-                "--timeout=10s",
-                resource,
-            ]
-        )
-        if proc.returncode:
-            raise CheckError(f"{resource}: {reason(proc)}")
+        for item in found:
+            why = flux_state.lag(item, sources)
+            if why:
+                metadata = item.get("metadata") or {}
+                behind.append(f"{item.get('kind')} {metadata.get('namespace')}/{metadata.get('name')}: {why}")
+    if behind:
+        raise CheckError("; ".join(behind))
 
 
 def check_nodes(kubectl: Kubectl, roles: dict[str, set[str]]) -> None:
