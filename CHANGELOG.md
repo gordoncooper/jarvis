@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.7.0
+
 ### Changed
 
 - Routes are Gateway API. Core's Gateway `platform-gateway/jarvis` has a core door (listener
