@@ -1,10 +1,5 @@
 ---
-- name: Install the Kubernetes Python client
-  ansible.builtin.apt:
-    name: python3-kubernetes
-    state: present
-    lock_timeout: "{{ apt_lock_timeout }}"
-
+# kubernetes.core's client comes from base-os.
 - name: Wait until every inventory node exists
   kubernetes.core.k8s_info:
     api_version: v1

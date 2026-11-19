@@ -1,6 +1,8 @@
 ---
-# Imported only when the root GitRepository is absent (instance.yml). A later site.yml run
-# must not create this. The ConfigMap is cluster state, not Git.
+# The rebuild hold: on a new cluster over a backup host that already holds restic data, a
+# ConfigMap names each PVC repository so pvc-backup restores before it backs up
+# (core/platform/backups/CONTRACT.md). The flux-operator role imports this only while the root
+# GitRepository is absent, so a later site.yml run never creates it. Cluster state, not Git.
 - name: Require the backup host
   ansible.builtin.assert:
     that:
@@ -51,10 +53,6 @@
 
 - name: Apply the rebuild hold
   when: backup_hold_repos | length > 0
-  ansible.builtin.command:
-    cmd: "{{ k3s_binary_path }} kubectl apply -f -"
-    stdin: "{{ lookup('template', 'backup-rebuild-hold.yaml.j2') }}"
-  register: backup_hold_apply
-  changed_when: >-
-    'created' in backup_hold_apply.stdout
-    or 'configured' in backup_hold_apply.stdout
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'backup-rebuild-hold.yaml.j2') | from_yaml }}"

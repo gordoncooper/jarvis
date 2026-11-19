@@ -1,7 +1,8 @@
 ---
 # Chart pin is spec.ref.tag in core/platform/flux-operator/oci-repository.yaml (chart_pin.yml).
-flux_operator_crd_wait_timeout: 120s
-flux_operator_rollout_wait_timeout: 300s
+# Seconds.
+flux_operator_crd_wait_timeout: 120
+flux_operator_rollout_wait_timeout: 300
 flux_operator_helm_timeout: 5m
 flux_system_namespace: flux-system
 flux_operator_deployment_name: flux-operator
@@ -26,6 +27,5 @@ flux_deploy_key_file: "{{ jarvis_env_dir }}/secrets/flux-deploy-key.sops.yaml"
 flux_deploy_key_secret_name: flux-deploy-key
 # GitHub's published SSH host key (api.github.com/meta, ssh_keys). Public, not user-specific.
 flux_known_hosts: "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
-# The FluxInstance installs the source and kustomize CRDs before sync.yaml can apply.
-flux_crd_wait_retries: 30
-flux_crd_wait_delay: 10
+# The FluxInstance installs the source and kustomize CRDs before sync.yaml can apply. Seconds.
+flux_crd_wait_timeout: 300

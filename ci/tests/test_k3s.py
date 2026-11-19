@@ -38,7 +38,7 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     cluster = load_cluster_vars()
     defaults = load_role_defaults(K3S_ROLE_DIR)
-    expr = yaml.safe_load((ANSIBLE_DIR / "site.yml").read_text())[0]["vars"]["ansible_user"]
+    expr = yaml.safe_load((ANSIBLE_DIR / "group_vars" / "all.yml").read_text())["ansible_user"]
     hosts = tmp_path / "hosts.yml"
     # over: 250Mi is more than 10% of 2 GiB, so it stays; plain: 10% of 16 GiB beats 100Mi.
     hosts.write_text(
@@ -60,7 +60,7 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
         f"    k3s_etcd_snapshot_retention: {defaults['k3s_etcd_snapshot_retention']}\n"
         "    k3s_server_url: https://cp-1:6443\n    k3s_agent_token: fixture-agent\n"
         "    k3s_server_token: fixture-server\n"
-        f"  vars_files: [{cluster_vars}]\n  tasks:\n"
+        "  tasks:\n"
         f"    - ansible.builtin.template:\n        src: {K3S_ROLE_TEMPLATES / K3S_CONFIG_TEMPLATE}\n"
         f"        dest: {dest}/{{{{ inventory_hostname }}}}.yaml\n"
         f"    - ansible.builtin.template:\n        src: {K3S_ROLE_TEMPLATES / 'agent-config.yaml.j2'}\n"
@@ -71,7 +71,7 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     proc = subprocess.run(
-        ["ansible-playbook", str(play), "-i", str(hosts), "-i", str(roles_inventory_path())],
+        ["ansible-playbook", str(play), "-i", str(hosts), "-i", str(roles_inventory_path()), "-e", f"@{cluster_vars}"],
         cwd=ANSIBLE_DIR,
         capture_output=True,
         text=True,
@@ -156,7 +156,7 @@ def _agent_play_section(env: str, root: Path | None = None) -> str:
             "-i",
             str(roles_inventory_path()),
             "-e",
-            f"jarvis_cluster_vars={repo / 'envs' / env / 'values' / 'cluster-vars.yaml'}",
+            f"@{repo / 'envs' / env / 'values' / 'cluster-vars.yaml'}",
         ],
         cwd=ANSIBLE_DIR,
         capture_output=True,

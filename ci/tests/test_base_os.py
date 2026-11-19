@@ -158,7 +158,7 @@ def test_site_yml_syntax_check() -> None:
         "site.yml",
         *env_inventory_args(),
         "-e",
-        f"jarvis_cluster_vars={cluster_vars_playbook_path()}",
+        f"@{cluster_vars_playbook_path()}",
     ]
     proc = subprocess.run(
         cmd,

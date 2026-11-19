@@ -155,13 +155,11 @@ jobs:
           set -euo pipefail
           SOPS_AGE_KEY_FILE="${RUNNER_TEMP}/age.key" ../../.venv/bin/ansible-playbook ../../ci/e2e/flux.yml \
             -i ../../ci/e2e/hosts.yml \
-            -e jarvis_env="${E2E_ENV}" \
-            -e jarvis_cluster_vars="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/values/cluster-vars.yaml" \
+            -e @"${GITHUB_WORKSPACE}/envs/${E2E_ENV}/values/cluster-vars.yaml" \
             -e jarvis_instance_root="${GITHUB_WORKSPACE}" \
             -e jarvis_env_dir="${GITHUB_WORKSPACE}/envs/${E2E_ENV}" \
             -e flux_instance_file="${GITHUB_WORKSPACE}/core/flux/flux-instance.yaml" \
             -e flux_sync_file="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/flux/sync.yaml" \
-            -e k3s_binary_path="${GITHUB_WORKSPACE}/ci/e2e/k3s" \
             -e k3s_kubeconfig_path="${KUBECONFIG}" \
             -e helm_binary_path="${RUNNER_TEMP}/helm" \
             -e helm_binary_owner="$(id -un)" -e helm_binary_group="$(id -gn)"

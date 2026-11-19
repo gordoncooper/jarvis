@@ -21,18 +21,24 @@
       flux_git_repo_url is https://, or ssh:// with the sealed deploy key
       secrets/flux-deploy-key.sops.yaml in the env.
 
-- name: Check the age key and flux-system sops-age before any change
-  ansible.builtin.import_tasks: sops_age.yml
+# Every kubernetes.core task below reads the node's own kubeconfig.
+- name: Bootstrap Flux on the cluster
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ k3s_kubeconfig_path }}"
+  block:
+    - name: Check the age key and flux-system sops-age before any change
+      ansible.builtin.import_tasks: sops_age.yml
 
-- name: Install Flux Operator once
-  ansible.builtin.import_tasks: operator.yml
+    - name: Install Flux Operator once
+      ansible.builtin.import_tasks: operator.yml
 
-- name: Bootstrap flux-system sops-age secret once
-  ansible.builtin.import_tasks: sops_age_secret.yml
+    - name: Bootstrap flux-system sops-age secret once
+      ansible.builtin.import_tasks: sops_age_secret.yml
 
-- name: Bootstrap the flux-system deploy-key secret once
-  when: flux_git_repo_url is match('^ssh://')
-  ansible.builtin.import_tasks: deploy_key.yml
+    - name: Bootstrap the flux-system deploy-key secret once
+      when: flux_git_repo_url is match('^ssh://')
+      ansible.builtin.import_tasks: deploy_key.yml
 
-- name: Apply FluxInstance, the Flux sources, and the root Kustomization once
-  ansible.builtin.import_tasks: instance.yml
+    - name: Apply FluxInstance, the Flux sources, and the root Kustomization once
+      ansible.builtin.import_tasks: instance.yml

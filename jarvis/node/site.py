@@ -31,8 +31,9 @@ def playbook_command(instance: Path, env: str, *, tags: str | None, limit: str |
         "../inventory/roles",
         "-e",
         f"jarvis_instance_root={instance}",
+        # The env's cluster-vars, once for every play.
         "-e",
-        f"jarvis_cluster_vars={env_dir / 'values' / 'cluster-vars.yaml'}",
+        f"@{env_dir / 'values' / 'cluster-vars.yaml'}",
     ]
     if tags:
         command += ["--tags", tags]

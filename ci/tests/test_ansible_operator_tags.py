@@ -20,7 +20,7 @@ def list_tasks_for_tag(tag: str) -> str:
             "-i",
             str(LIST_TASKS_INVENTORY),
             "-e",
-            f"jarvis_cluster_vars={CLUSTER_VARS_REL}",
+            f"@{CLUSTER_VARS_REL}",
             "--list-tasks",
             "--tags",
             tag,

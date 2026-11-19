@@ -125,7 +125,7 @@ def _run_site(
         "-e",
         "ansible_become=false",
         "-e",
-        f"jarvis_cluster_vars={vars_path}",
+        f"@{vars_path}",
         # jarvis site passes the instance repository; here, one holding no env yet.
         *([] if instance is None else ["-e", f"jarvis_instance_root={instance}"]),
         *(extra or []),
@@ -371,7 +371,7 @@ def test_systemctl_probe_error_is_not_treated_as_inactive(tmp_path: Path) -> Non
     _assert_unchanged(output)
 
 
-def _write_opening_play(path: Path, *, bin_dir: Path, vars_file: str) -> None:
+def _write_opening_play(path: Path, *, bin_dir: Path) -> None:
     tasks = ANSIBLE_DIR / "tasks"
     path.write_text(
         textwrap.dedent(
@@ -382,8 +382,6 @@ def _write_opening_play(path: Path, *, bin_dir: Path, vars_file: str) -> None:
               gather_facts: false
               become: false
               any_errors_fatal: true
-              vars_files:
-                - {vars_file}
               environment:
                 PATH: "{bin_dir}:/usr/bin:/bin"
               tasks:
@@ -410,9 +408,11 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
     vars_path = tmp_path / "cluster-vars.yaml"
     _vars_file(vars_path)
     play = tmp_path / "play.yml"
-    _write_opening_play(play, bin_dir=bin_dir, vars_file=str(vars_path))
+    _write_opening_play(play, bin_dir=bin_dir)
     flux_instance = example_flux_entry(tmp_path).instance_file
     extra = [
+        "-e",
+        f"@{vars_path}",
         "-e",
         "ansible_connection=local",
         "-e",
@@ -468,9 +468,7 @@ def test_site_reads_the_flux_instance_from_core_and_sync_from_the_instance(tmp_p
     playbook = playbook_dir / "open.yml"
     bin_dir = tmp_path / "bin"
     _install_systemctl(bin_dir, active_rc=4)
-    _write_opening_play(
-        playbook, bin_dir=bin_dir, vars_file='"{{ jarvis_cluster_vars }}"'
-    )
+    _write_opening_play(playbook, bin_dir=bin_dir)
     env = os.environ.copy()
     env["ANSIBLE_BECOME"] = "false"
     env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
@@ -488,7 +486,7 @@ def test_site_reads_the_flux_instance_from_core_and_sync_from_the_instance(tmp_p
             "-e",
             "ansible_become=false",
             "-e",
-            f"jarvis_cluster_vars={copy.env_dir / 'values' / 'cluster-vars.yaml'}",
+            f"@{copy.env_dir / 'values' / 'cluster-vars.yaml'}",
             "-e",
             f"jarvis_instance_root={copy.root}",
             *_k3s_paths(tmp_path),

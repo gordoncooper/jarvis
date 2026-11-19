@@ -77,7 +77,7 @@ def test_env_hosts_file_alone_fails_before_any_change(example_copy: ExampleCopy)
                 "-i",
                 str(root / "envs" / env / "inventory" / "hosts.yml"),
                 "-e",
-                f"jarvis_cluster_vars={root / 'envs' / env / 'values' / 'cluster-vars.yaml'}",
+                f"@{root / 'envs' / env / 'values' / 'cluster-vars.yaml'}",
                 "-e",
                 "ansible_connection=local",
                 "-e",

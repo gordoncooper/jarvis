@@ -75,6 +75,12 @@ the upgrade.
   `jarvis site --env <env>` from the instance, instead of reading envs from the core checkout.
 - Core's Renovate moves the release `docs/quickstart.md` starts from (on each core tag) and the
   example apps `jarvis init --with-examples` pins (on each jarvis-apps release).
+- `site.yml` reads the env's cluster-vars once, as extra vars: `jarvis site` passes
+  `-e @envs/<env>/values/cluster-vars.yaml`, and a hand-run `ansible-playbook site.yml` needs
+  the same in place of `-e jarvis_cluster_vars=…`. The flux-operator role talks to the cluster
+  with `kubernetes.core` instead of `k3s kubectl`; base-os installs `python3-kubernetes` on every
+  node. The rebuild hold is its own `backups` role. `values/switches.yaml`'s old `optional`
+  key no longer turns App DNS on.
 
 ### Removed
 
