@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.6.0
+
 ### Added
 
 - The `alerts` feature: one Flux Alert posts every failed Kustomization or HelmRelease reconcile
@@ -111,12 +113,25 @@ the upgrade.
   `git checkout` by hand.
 - The package version is the release tag (hatch-vcs): `uv tool list` and pip show `0.5.2` for an
   install from `v0.5.2`, where they showed `0`. Nothing is bumped by hand at a release.
+- The etcd copy's restic commands wait for the repository lock instead of failing when another
+  restic run holds it. Two `restic init`s at once on a new repository can still delete its
+  config, so a first copy started by hand in a new cluster's first hour can race the schedule
+  (a Limit in `core/platform/backups/CONTRACT.md`).
+- `jarvis site`'s apt tasks wait up to 600 s for the dpkg lock (`apt_lock_timeout` in
+  `infra/ansible/group_vars/all.yml`) instead of failing on a node still running
+  unattended-upgrades.
 
 ### Upgrading
 
 - In each env that hosts apps: delete `backups:` from `values/apps.yaml` and `apps-backup-server`
-  from `features` in `values/switches.yaml`, then `jarvis render`. An app whose credential is
-  sealed keeps its backups; the old selection is not read.
+  from `features` in `values/switches.yaml`, then `jarvis render`. Make these edits on the core
+  release's Renovate PR, which stays red until they are there. An app whose credential is sealed
+  keeps its backups; the old selection is not read.
+- Every env's render gains `alerts_provider` in its cluster-vars ConfigMap; the instance workflow
+  commits it to the Renovate PR, so there is nothing to edit. To turn alerts on, see
+  [deploy.md](docs/deploy.md#alerts).
+- Hosts change: after the Renovate PR merges, run `jarvis site --env <env>` once. It installs
+  Helm 4.3.2 and `python3-kubernetes`, which the flux-operator role now uses.
 
 ## v0.5.2
 
