@@ -123,16 +123,15 @@ the upgrade.
 
 ### Upgrading
 
-- Hosts change: after merging the core release's Renovate PR, run `jarvis site --env <env>` once.
-  It installs Helm 4.3.2 and `python3-kubernetes`, which the flux-operator role now uses. A
-  hand-run `ansible-playbook site.yml` needs `-e @envs/<env>/values/cluster-vars.yaml` in place
-  of `-e jarvis_cluster_vars=…`.
+- In each env that hosts apps: delete `backups:` from `values/apps.yaml` and `apps-backup-server`
+  from `features` in `values/switches.yaml`, then `jarvis render`. Make these edits on the core
+  release's Renovate PR, which stays red until they are there. An app whose credential is sealed
+  keeps its backups; the old selection is not read.
 - Every env's render gains `alerts_provider` in its cluster-vars ConfigMap; the instance workflow
   commits it to the Renovate PR, so there is nothing to edit. To turn alerts on, see
   [deploy.md](docs/deploy.md#alerts).
-- In each env that hosts apps: delete `backups:` from `values/apps.yaml` and `apps-backup-server`
-  from `features` in `values/switches.yaml`, then `jarvis render`. An app whose credential is
-  sealed keeps its backups; the old selection is not read.
+- Hosts change: after the Renovate PR merges, run `jarvis site --env <env>` once. It installs
+  Helm 4.3.2 and `python3-kubernetes`, which the flux-operator role now uses.
 
 ## v0.5.2
 
