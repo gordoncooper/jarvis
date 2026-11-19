@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
-from ansible_role_proof import ANSIBLE_DIR
+from ansible_role_proof import playbook
 from conftest import require_cli
 
 _SOURCE = """\
@@ -78,42 +77,10 @@ def _run(
         encoding="utf-8",
     )
     play = tmp / "play.yml"
-    play.write_text(
-        "---\n"
-        "- name: Install kubeconfig\n"
-        "  hosts: all\n"
-        "  gather_facts: false\n"
-        "  become: false\n"
-        "  roles:\n"
-        "    - kubeconfig\n",
-        encoding="utf-8",
-    )
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["ANSIBLE_BECOME"] = "false"
-    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
-    cmd = [
-        "ansible-playbook",
-        str(play),
-        "-i",
-        str(inventory),
-        "-e",
-        env_extra,
-        "-e",
-        json.dumps({"k3s_kubeconfig_path": str(source)}),
-    ]
-    if check:
-        cmd.append("--check")
-    if diff:
-        cmd.append("--diff")
-    return subprocess.run(
-        cmd,
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
+    play.write_text("- hosts: all\n  gather_facts: false\n  become: false\n  roles: [kubeconfig]\n", encoding="utf-8")
+    flags = [*(["--check"] if check else []), *(["--diff"] if diff else [])]
+    source_var = json.dumps({"k3s_kubeconfig_path": str(source)})
+    return playbook(play, "-i", inventory, "-e", env_extra, "-e", source_var, *flags, env={"HOME": str(home)})
 
 
 def _dest(home: Path, jarvis_env: str) -> Path:
@@ -152,7 +119,7 @@ def test_kubeconfig_rewrites_server_and_hides_secrets(
         check=True,
         diff=True,
     )
-    preview_output = preview.stdout + preview.stderr
+    preview_output = preview.output
     assert preview.returncode == 0, preview_output
     assert _recap_total(preview_output, "failed") == 0, preview_output
     _assert_no_markers(preview_output)
@@ -167,7 +134,7 @@ def test_kubeconfig_rewrites_server_and_hides_secrets(
         source_text=_SOURCE,
         home=home,
     )
-    first_output = first.stdout + first.stderr
+    first_output = first.output
     assert first.returncode == 0, first_output
     _assert_no_markers(first_output)
     assert dest.read_text(encoding="utf-8") == expected
@@ -185,7 +152,7 @@ def test_kubeconfig_rewrites_server_and_hides_secrets(
         source_text=_SOURCE,
         home=home,
     )
-    second_output = second.stdout + second.stderr
+    second_output = second.output
     assert second.returncode == 0, second_output
     assert _recap_total(second_output, "changed") == 0, second_output
     assert _recap_total(second_output, "failed") == 0, second_output
@@ -216,7 +183,7 @@ def test_kubeconfig_fails_when_the_server_line_does_not_change(tmp_path: Path) -
         source_text=_MISSED,
         home=home,
     )
-    output = result.stdout + result.stderr
+    output = result.output
     assert result.returncode != 0, output
     _assert_no_markers(output)
     assert dest.read_text(encoding="utf-8") == "sentinel\n"

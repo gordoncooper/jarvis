@@ -49,58 +49,31 @@ def _load():
     return importlib.import_module("jarvis.node.prep")
 
 
-def test_env_update_renames_host_and_keeps_comments(tmp_path: Path) -> None:
-    module = _load()
-    env = tmp_path / "envs" / "env-test"
-    inventory = env / "inventory" / "hosts.yml"
-    cluster = env / "values" / "cluster-vars.yaml"
-    inventory.parent.mkdir(parents=True)
-    cluster.parent.mkdir(parents=True)
-    inventory.write_text(_HOSTS, encoding="utf-8")
-    cluster.write_text(_CLUSTER, encoding="utf-8")
-
-    module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
-
-    assert inventory.read_text(encoding="utf-8") == _HOSTS_RENAMED
-    assert cluster.read_text(encoding="utf-8") == _CLUSTER
-    inventory_mtime = inventory.stat().st_mtime_ns
-    cluster_mtime = cluster.stat().st_mtime_ns
-
-    module.apply_env_edits(tmp_path, "env-test", "node-a", "node-a", "example")
-
-    assert inventory.read_text(encoding="utf-8") == _HOSTS_RENAMED
-    assert cluster.read_text(encoding="utf-8") == _CLUSTER
-    assert inventory.stat().st_mtime_ns == inventory_mtime
-    assert cluster.stat().st_mtime_ns == cluster_mtime
-
-
-def test_env_edits_rerender_cluster_vars_configmap(tmp_path: Path) -> None:
+def test_env_update_renames_host_keeps_comments_and_rerenders_cluster_vars(tmp_path: Path) -> None:
+    """The rename keeps every comment and re-renders the ConfigMap; a second run writes nothing."""
     module = _load()
     env = tmp_path / "envs" / "env-test"
     inventory = env / "inventory" / "hosts.yml"
     cluster = env / "values" / "cluster-vars.yaml"
     generated = env / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    inventory.parent.mkdir(parents=True)
-    cluster.parent.mkdir(parents=True)
-    generated.parent.mkdir(parents=True)
-    inventory.write_text(_HOSTS, encoding="utf-8")
-    cluster.write_text(_CLUSTER, encoding="utf-8")
-    generated.write_text("stale\n", encoding="utf-8")
+    for path, text in ((inventory, _HOSTS), (cluster, _CLUSTER), (generated, "stale\n")):
+        path.parent.mkdir(parents=True)
+        path.write_text(text, encoding="utf-8")
 
     module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
 
     from jarvis.render.cluster_vars import render_document
 
     rendered = render_document(cluster)
-    assert "backup_path: /var/lib/jarvis/backup" in rendered
-    assert "ssh_user" not in rendered
-    assert generated.read_text(encoding="utf-8") == rendered
-    generated_mtime = generated.stat().st_mtime_ns
+    assert "backup_path: /var/lib/jarvis/backup" in rendered and "ssh_user" not in rendered
+    after = {inventory: _HOSTS_RENAMED, cluster: _CLUSTER, generated: rendered}
+    assert {path: path.read_text(encoding="utf-8") for path in after} == after
+    mtimes = {path: path.stat().st_mtime_ns for path in after}
 
     module.apply_env_edits(tmp_path, "env-test", "node-a", "node-a", "example")
 
-    assert generated.read_text(encoding="utf-8") == rendered
-    assert generated.stat().st_mtime_ns == generated_mtime
+    assert {path: path.read_text(encoding="utf-8") for path in after} == after
+    assert {path: path.stat().st_mtime_ns for path in after} == mtimes
 
 
 def _copy_example_env(root: Path, name: str = "env-new") -> Path:
@@ -111,75 +84,51 @@ def _copy_example_env(root: Path, name: str = "env-new") -> Path:
     return root / "envs" / name
 
 
-def _record_ssh_user(env_dir: Path, user: str) -> None:
-    """Set the env's recorded ssh_user, as jarvis init --ssh-user would have."""
-    cluster = env_dir / "values" / "cluster-vars.yaml"
-    cluster.write_text(cluster.read_text(encoding="utf-8").replace("ssh_user: example", f"ssh_user: {user}"), encoding="utf-8")
+def _ssh_user_env(tmp_path: Path, recorded: str | None, per_host: str | None = None) -> Path:
+    """The sample env with ssh_user recorded as given (None: the key is gone), and wk-1's own."""
+    dest = _copy_example_env(tmp_path)
+    cluster = dest / "values" / "cluster-vars.yaml"
+    line = "" if recorded is None else f"ssh_user: {recorded}\n"
+    cluster.write_text(cluster.read_text(encoding="utf-8").replace("ssh_user: example\n", line), encoding="utf-8")
+    if per_host:
+        hosts = dest / "inventory" / "hosts.yml"
+        text = hosts.read_text(encoding="utf-8").replace("    wk-1:\n", f"    wk-1:\n      ssh_user: {per_host}\n")
+        hosts.write_text(text, encoding="utf-8")
+    return cluster
 
 
 def test_the_recorded_ssh_user_is_kept_on_every_node(tmp_path: Path) -> None:
     """jarvis init records ssh_user; prep keeps it, on the first node and each later one."""
     module = _load()
-    dest = _copy_example_env(tmp_path)
-    cluster = dest / "values" / "cluster-vars.yaml"
+    cluster = _copy_example_env(tmp_path) / "values" / "cluster-vars.yaml"
     before = cluster.read_text(encoding="utf-8")
-    assert "ssh_user: example" in before
     module.apply_env_edits(tmp_path, "env-new", "cp-1", "cp-1", "example")
     module.apply_env_edits(tmp_path, "env-new", "wk-1", "wk-1", "example")
     assert cluster.read_text(encoding="utf-8") == before
 
 
-def test_apply_env_edits_refuses_a_different_recorded_ssh_user(tmp_path: Path) -> None:
-    """Write-time backstop: a recorded ssh_user cannot be overwritten."""
+@pytest.mark.parametrize(
+    ("per_host", "refusal"), [(None, "set ssh_user on that host"), ("alice", "change ssh_user on that host")],
+    ids=["env-record", "host-record"],
+)
+def test_apply_env_edits_refuses_a_different_ssh_user(tmp_path: Path, per_host, refusal: str) -> None:
+    """Write-time backstop: a recorded ssh_user, the env's or the host's, is not overwritten."""
     module = _load()
-    dest = _copy_example_env(tmp_path)
-    before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
-    with pytest.raises(module.PrepError, match="set ssh_user on that host"):
+    cluster = _ssh_user_env(tmp_path, "example", per_host)
+    hosts = cluster.parents[1] / "inventory" / "hosts.yml"
+    before = cluster.read_text(encoding="utf-8"), hosts.read_text(encoding="utf-8")
+    with pytest.raises(module.PrepError, match=refusal):
         module.apply_env_edits(tmp_path, "env-new", "wk-1", "wk-1", "other")
-    assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
+    assert (cluster.read_text(encoding="utf-8"), hosts.read_text(encoding="utf-8")) == before
 
 
-def test_apply_env_edits_refuses_a_different_per_host_ssh_user(tmp_path: Path) -> None:
-    """A per-host ssh_user is kept; a different user is refused and nothing is written."""
+@pytest.mark.parametrize(("written", "recorded"), [('"ops"', "ops"), ("", None)], ids=["quoted", "empty"])
+def test_recorded_ssh_user_is_the_scalar_or_none(tmp_path: Path, written: str, recorded) -> None:
+    """A quoted ssh_user is the user, not the quotes; an empty one is the schema default."""
     module = _load()
-    dest = _copy_example_env(tmp_path)
-    hosts = dest / "inventory" / "hosts.yml"
-    hosts.write_text(
-        hosts.read_text(encoding="utf-8").replace(
-            "    wk-1:\n", "    wk-1:\n      ssh_user: alice\n"
-        ),
-        encoding="utf-8",
-    )
-    before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
-    with pytest.raises(module.PrepError, match="change ssh_user on that host"):
-        module.apply_env_edits(tmp_path, "env-new", "wk-1", "wk-1", "other")
-    assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
-    assert "ssh_user: alice" in hosts.read_text(encoding="utf-8")
-
-
-def test_quoted_ssh_user_is_the_scalar(tmp_path: Path) -> None:
-    """A quoted ssh_user value is the user, not the quotes."""
-    module = _load()
-    dest = _copy_example_env(tmp_path)
-    cluster = dest / "values" / "cluster-vars.yaml"
-    cluster.write_text(
-        cluster.read_text(encoding="utf-8").replace("ssh_user: example", 'ssh_user: "ops"'),
-        encoding="utf-8",
-    )
-    assert module.recorded_ssh_user(tmp_path, "env-new") == "ops"
-
-
-def test_empty_ssh_user_is_the_schema_default(tmp_path: Path) -> None:
-    """An empty ssh_user key is the schema default, not the next line's key."""
-    module = _load()
-    dest = _copy_example_env(tmp_path)
-    cluster = dest / "values" / "cluster-vars.yaml"
-    cluster.write_text(
-        cluster.read_text(encoding="utf-8").replace("ssh_user: example", "ssh_user:"),
-        encoding="utf-8",
-    )
-    assert module.recorded_ssh_user(tmp_path, "env-new") is None
-    assert module.effective_ssh_user(tmp_path, "env-new") == module.DEFAULT_SSH_USER
+    _ssh_user_env(tmp_path, written)
+    assert module.recorded_ssh_user(tmp_path, "env-new") == recorded
+    assert module.effective_ssh_user(tmp_path, "env-new") == (recorded or module.DEFAULT_SSH_USER)
 
 
 def _ssh_snapshot() -> tuple[tuple[str, ...], bytes | None, int | None]:
@@ -193,58 +142,32 @@ def _ssh_snapshot() -> tuple[tuple[str, ...], bytes | None, int | None]:
     return names, known.read_bytes(), known.stat().st_mtime_ns
 
 
-def test_unresolvable_host_exits_before_any_change() -> None:
-    host = "prep-node-does-not-resolve.invalid"
+def _host_state() -> tuple:
     etc_hosts = Path("/etc/hosts")
-    before_hosts = etc_hosts.read_bytes()
-    before_hosts_mtime = etc_hosts.stat().st_mtime_ns
-    before_ssh = _ssh_snapshot()
-    before_git = subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO_ROOT, text=True)
-    before_env = {path: path.read_bytes() for path in (sample_root() / "envs").rglob("*") if path.is_file()}
+    envs = {path: path.read_bytes() for path in (sample_root() / "envs").rglob("*") if path.is_file()}
+    git = subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO_ROOT, text=True)
+    return etc_hosts.read_bytes(), etc_hosts.stat().st_mtime_ns, _ssh_snapshot(), git, envs
 
+
+@pytest.mark.parametrize(
+    ("host", "message"),
+    [
+        ("prep-node-does-not-resolve.invalid", "Add it on the router.\nNothing was changed."),
+        ("localhost", "not a host in the inventory"),
+    ],
+    ids=["does-not-resolve", "not-in-inventory"],
+)
+def test_a_host_that_does_not_resolve_or_is_not_listed_exits_before_any_change(host: str, message: str) -> None:
+    before = _host_state()
     result = subprocess.run(
         [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", "--host", host, "--login-user", "tester"],
         cwd=REPO_ROOT,
         env={**os.environ, "INSTANCE": str(sample_root()), "SOPS_AGE_KEY_FILE": str(sample_root() / ".age" / "keys.txt")},
-        input="\n",
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-
+        input="\n", capture_output=True, text=True, timeout=30, check=False,
+    )  # fmt: skip
     assert result.returncode != 0
-    assert "Add it on the router." in result.stderr
-    assert "Nothing was changed." in result.stderr
-    assert etc_hosts.read_bytes() == before_hosts
-    assert etc_hosts.stat().st_mtime_ns == before_hosts_mtime
-    assert _ssh_snapshot() == before_ssh
-    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO_ROOT, text=True) == before_git
-    assert {path: path.read_bytes() for path in (sample_root() / "envs").rglob("*") if path.is_file()} == before_env
-
-
-def test_resolved_host_missing_from_inventory_exits_before_ssh() -> None:
-    etc_hosts = Path("/etc/hosts")
-    before_hosts = etc_hosts.read_bytes()
-    before_hosts_mtime = etc_hosts.stat().st_mtime_ns
-    before_ssh = _ssh_snapshot()
-
-    result = subprocess.run(
-        [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", "--host", "localhost", "--login-user", "tester"],
-        cwd=REPO_ROOT,
-        env={**os.environ, "INSTANCE": str(sample_root()), "SOPS_AGE_KEY_FILE": str(sample_root() / ".age" / "keys.txt")},
-        input="\n",
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-
-    assert result.returncode != 0
-    assert "not a host in the inventory" in result.stderr
-    assert etc_hosts.read_bytes() == before_hosts
-    assert etc_hosts.stat().st_mtime_ns == before_hosts_mtime
-    assert _ssh_snapshot() == before_ssh
+    assert all(line in result.stderr for line in message.splitlines())
+    assert _host_state() == before
 
 
 def test_dhcp_warns_and_static_does_not_and_nothing_is_written(
@@ -303,10 +226,7 @@ def test_missing_primary_address_fails() -> None:
 
 
 def test_sshd_dropin_turns_off_password_login_only() -> None:
-    module = _load()
-    text = module.sshd_password_off()
-    assert text == "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
-    assert "PubkeyAuthentication" not in text
+    assert _load().sshd_password_off() == "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
 
 
 def test_clock_synced_is_yes_only() -> None:
@@ -571,145 +491,55 @@ def test_schema_error_makes_zero_host_calls(
     assert host_calls == []
 
 
-def test_run_first_node_keeps_the_ssh_user_init_recorded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("recorded", "per_host", "host", "login", "kept"),
+    [
+        ("example", None, "cp-1", "ubuntu", "example"),  # first node: init's record, whatever the login
+        ("ops", "alice", "wk-1", "ubuntu", "ops"),  # a per-host ssh_user is that host's user
+        ("ops", None, "wk-1", "ubuntu", "ops"),  # a later node keeps the record when the login differs
+        ("ops", None, "wk-1", "ops", "ops"),
+        (None, None, "cp-1", "ops", "ubuntu"),  # a missing key is the schema default, and is kept
+    ],
+    ids=["init-record", "per-host", "later-node", "same-login", "schema-default"],
+)
+def test_run_keeps_the_recorded_ansible_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded, per_host, host: str, login: str, kept: str
 ) -> None:
-    """First node: the ssh_user jarvis init recorded is the Ansible user, whatever the login."""
     module = _load()
-    dest = _copy_example_env(tmp_path)
-    before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
+    cluster = _ssh_user_env(tmp_path, recorded, per_host)
+    before = cluster.read_text(encoding="utf-8")
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     _accept_default_ansible_user(module, monkeypatch)
-    called = _stub_host_steps(module, monkeypatch, hostname="cp-1")
+    called = _stub_host_steps(module, monkeypatch, hostname=host)
 
-    module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ubuntu"])
+    module.run(["--env", "env-new", "--host", host, "--login-user", login])
 
-    assert module.recorded_ssh_user(tmp_path, "env-new") == "example"
-    assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
+    assert module.recorded_ssh_user(tmp_path, "env-new") == kept
+    assert module.host_ssh_user(tmp_path, "env-new", host) == per_host
+    if recorded is not None:
+        assert cluster.read_text(encoding="utf-8") == before
     assert "assert_host_resolves" in called
 
 
-def test_run_per_host_ssh_user_is_used(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("recorded", "host", "asked"), [("ops", "wk-1", "other"), (None, "cp-1", "ops")],
+    ids=["recorded", "schema-default"],
+)
+def test_run_refuses_a_different_ansible_user_before_any_host_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded, host: str, asked: str
 ) -> None:
-    """A per-host ssh_user is the Ansible user; cluster-vars is not written."""
     module = _load()
-    dest = _copy_example_env(tmp_path)
-    _record_ssh_user(dest, "ops")
-    hosts = dest / "inventory" / "hosts.yml"
-    hosts.write_text(
-        hosts.read_text(encoding="utf-8").replace(
-            "    wk-1:\n", "    wk-1:\n      ssh_user: alice\n"
-        ),
-        encoding="utf-8",
-    )
-    before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
-    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
-    _accept_default_ansible_user(module, monkeypatch)
-    called = _stub_host_steps(module, monkeypatch, hostname="wk-1")
-    module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ubuntu"])
-    assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
-    assert module.host_ssh_user(tmp_path, "env-new", "wk-1") == "alice"
-    assert "assert_host_resolves" in called
-
-
-def test_run_second_node_keeps_recorded_user_when_login_differs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Second node: recorded ops, login ubuntu, keeps ops."""
-    module = _load()
-    dest = _copy_example_env(tmp_path)
-    _record_ssh_user(dest, "ops")
-    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
-    _accept_default_ansible_user(module, monkeypatch)
-    called = _stub_host_steps(module, monkeypatch, hostname="wk-1")
-
-    module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ubuntu"])
-
-    assert module.recorded_ssh_user(tmp_path, "env-new") == "ops"
-    assert "ssh_user: ops" in dest.joinpath("values/cluster-vars.yaml").read_text(
-        encoding="utf-8"
-    )
-    assert "assert_host_resolves" in called
-
-
-def test_run_second_node_refuses_a_different_ansible_user(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A second node that asks for a different Ansible user makes zero host calls."""
-    module = _load()
-    dest = _copy_example_env(tmp_path)
-    _record_ssh_user(dest, "ops")
-    before = dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8")
+    cluster = _ssh_user_env(tmp_path, recorded)
+    before = cluster.read_text(encoding="utf-8")
     host_calls = _block_host_calls(module, monkeypatch)
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: "other")
+    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: asked)
 
     with pytest.raises(module.PrepError, match="set ssh_user on that host"):
-        module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-new", "--host", host, "--login-user", asked])
     assert host_calls == []
-    assert dest.joinpath("values/cluster-vars.yaml").read_text(encoding="utf-8") == before
-
-
-def test_run_same_ansible_user_passes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Recorded ops plus login ops keeps ops."""
-    module = _load()
-    _record_ssh_user(_copy_example_env(tmp_path), "ops")
-    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
-    _accept_default_ansible_user(module, monkeypatch)
-    called = _stub_host_steps(module, monkeypatch, hostname="wk-1")
-
-    module.run(["--env", "env-new", "--host", "wk-1", "--login-user", "ops"])
-
-    assert module.recorded_ssh_user(tmp_path, "env-new") == "ops"
-    assert "assert_host_resolves" in called
-
-
-def test_run_missing_ssh_user_keeps_the_schema_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A missing ssh_user is already ubuntu; login may differ and that default is kept."""
-    module = _load()
-    dest = _copy_example_env(tmp_path)
-    cluster = dest / "values" / "cluster-vars.yaml"
-    cluster.write_text(
-        cluster.read_text(encoding="utf-8").replace("ssh_user: example\n", ""),
-        encoding="utf-8",
-    )
-    assert module.recorded_ssh_user(tmp_path, "env-new") is None
-    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
-    _accept_default_ansible_user(module, monkeypatch)
-    _stub_host_steps(module, monkeypatch, hostname="cp-1")
-
-    module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ops"])
-
-    assert module.effective_ssh_user(tmp_path, "env-new") == module.DEFAULT_SSH_USER
-    assert module.recorded_ssh_user(tmp_path, "env-new") == module.DEFAULT_SSH_USER
-
-
-def test_run_missing_ssh_user_refuses_a_different_ansible_user(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Asking for a user other than the schema default is refused with zero host calls."""
-    module = _load()
-    dest = _copy_example_env(tmp_path)
-    cluster = dest / "values" / "cluster-vars.yaml"
-    cluster.write_text(
-        cluster.read_text(encoding="utf-8").replace("ssh_user: example\n", ""),
-        encoding="utf-8",
-    )
-    host_calls = _block_host_calls(module, monkeypatch)
-    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(module, "confirm", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: "ops")
-
-    with pytest.raises(module.PrepError, match="set ssh_user on that host"):
-        module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ops"])
-    assert host_calls == []
-    assert module.recorded_ssh_user(tmp_path, "env-new") is None
+    assert cluster.read_text(encoding="utf-8") == before
 
 
 def test_a_new_env_reaches_the_host_check(
@@ -762,6 +592,7 @@ def test_run_calls_full_schema_after_host_steps(
     _copy_example_env(tmp_path, "env-00")
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     _accept_default_ansible_user(module, monkeypatch)
+    _stub_host_steps(module, monkeypatch)
     schema_modes: list[bool] = []
 
     def track_schema(repo: Path, *, pre_host: bool = False) -> None:
@@ -771,28 +602,8 @@ def test_run_calls_full_schema_after_host_steps(
             return
         raise module.PrepError("full schema failed")
 
-    class _Session:
-        def close(self) -> None:
-            return None
-
     monkeypatch.setattr(module, "run_env_schema", track_schema)
-    monkeypatch.setattr(module, "assert_host_resolves", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "ensure_public_key", lambda: Path("/tmp/id.pub"))
-    monkeypatch.setattr(module, "public_key_text", lambda _p: "ssh-ed25519 AAAA")
-    monkeypatch.setattr(module, "ensure_host_key", lambda _h: None)
-    monkeypatch.setattr(module, "open_session", lambda *_a, **_k: _Session())
-    monkeypatch.setattr(module, "install_login_key", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "ensure_sudo", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "configure_hostname", lambda *_a, **_k: "cp-1")
-    monkeypatch.setattr(module, "ensure_ansible_user", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "install_minimum", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "report_address", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "proof", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "offer_ssh_passwords_off", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "check_clock", lambda *_a, **_k: None)
     monkeypatch.setattr(module, "apply_env_edits", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "check_age_key", lambda *_a, **_k: None)
-    monkeypatch.setattr(module, "show_git_diff", lambda *_a, **_k: None)
 
     with pytest.raises(module.PrepError, match="full schema failed"):
         module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])

@@ -280,6 +280,22 @@ def _boom(_seconds: float) -> None:
     raise AssertionError("slept")
 
 
+def _run(cluster: _Cluster, *, kubectl=None, **kwargs: object) -> int:
+    """restore on cluster, for app demo unless kwargs say otherwise, with a clock that never sleeps."""
+    args = {"env": "env-00", "app": "demo", "all_pvcs": False, "monotonic": lambda: 0.0, "sleep": _boom,
+            "now": lambda: 1000.0, **kwargs}  # fmt: skip
+    return restore_tool.run(kubectl or cluster.kubectl, **args)  # type: ignore[arg-type]
+
+
+def _index(calls: list[list[str]], pred) -> int:
+    """The first call pred holds for."""
+    return next(index for index, call in enumerate(calls) if pred(call))
+
+
+def _mutation_at(calls: list[list[str]]) -> int:
+    return _index(calls, lambda call: call and call[0] in {"annotate", "apply", "delete", "patch", "scale"})
+
+
 def test_kubectl_is_bound_to_the_environment_file(monkeypatch) -> None:
     seen: list[list[str]] = []
 
@@ -315,18 +331,7 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
         _pvc("demo", "mover", labels={"app.kubernetes.io/created-by": "volsync"}),
     ]
     cluster = _Cluster(items, will_pause=True)
-    assert (
-        restore_tool.run(
-            cluster.kubectl,
-            env="env-00",
-            app="demo",
-            all_pvcs=False,
-            monotonic=lambda: 0.0,
-            sleep=_boom,
-            now=lambda: 1000.0,
-        )
-        == 0
-    )
+    assert _run(cluster) == 0
     out = capsys.readouterr().out
     assert "PASS restore demo/drill" in out
     assert "other/keep" not in out
@@ -337,73 +342,26 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     assert restic["destinationPVC"] == "drill"
     assert restic["repository"] == "restic-drill"
     assert restic["restoreAsOf"] == "2026-10-29T00:00:09Z"
-    assert set(restic) == {
-        "destinationPVC",
-        "repository",
-        "copyMethod",
-        "enableFileDeletion",
-        "restoreAsOf",
-    }
+    assert set(restic) == {"destinationPVC", "repository", "copyMethod", "enableFileDeletion", "restoreAsOf"}
     assert cluster.applied[0]["spec"]["trigger"] == {"manual": "restore-1000"}
     assert "volumeSnapshotClassName" not in cluster.applied[0]["spec"]
 
-    def at(pred) -> int:
-        for index, call in enumerate(cluster.calls):
-            if pred(call):
-                return index
-        raise AssertionError("missing call")
-
-    pause_at = at(lambda call: "backup=paused" in call)
-    apply_at = at(lambda call: call[:2] == ["apply", "-f"])
-    delete_at = at(lambda call: call[:2] == ["delete", "replicationdestination"])
-    resume_at = at(lambda call: "backup-" in call)
-    assert pause_at < apply_at < delete_at < resume_at
+    order = [lambda call: "backup=paused" in call, lambda call: call[:2] == ["apply", "-f"],
+             lambda call: call[:2] == ["delete", "replicationdestination"], lambda call: "backup-" in call]  # fmt: skip
+    indexes = [_index(cluster.calls, pred) for pred in order]
+    assert indexes == sorted(indexes)
     assert any(call[2] == "volsync-src-drill" for call in cluster.calls if call[:2] == ["get", "job"])
 
     stuck = _Cluster(items, will_pause=False)
-    assert (
-        restore_tool.run(
-            stuck.kubectl,
-            env="env-00",
-            app="demo",
-            all_pvcs=False,
-            monotonic=lambda: 0.0,
-            sleep=_boom,
-            now=lambda: 1000.0,
-            pause_budget_s=0,
-        )
-        != 0
-    )
+    assert _run(stuck, pause_budget_s=0) != 0
     assert stuck.applied == []
     assert "backup-" not in [arg for call in stuck.calls for arg in call]
     assert "did not pause" in capsys.readouterr().out
 
     everyone = _Cluster(items, will_pause=True)
-    assert (
-        restore_tool.run(
-            everyone.kubectl,
-            env="env-00",
-            app=None,
-            all_pvcs=True,
-            monotonic=lambda: 0.0,
-            sleep=_boom,
-            now=lambda: 1000.0,
-        )
-        == 0
-    )
+    assert _run(everyone, app=None, all_pvcs=True) == 0
     restored = {doc["metadata"]["namespace"] + "/" + doc["spec"]["restic"]["destinationPVC"] for doc in everyone.applied}
     assert restored == {"demo/drill", "other/keep"}
-
-
-def _run(cluster: _Cluster, **kwargs: object) -> int:
-    args = {
-        "env": "env-00",
-        "monotonic": lambda: 0.0,
-        "sleep": _boom,
-        "now": lambda: 1000.0,
-    }
-    args.update(kwargs)
-    return restore_tool.run(cluster.kubectl, **args)  # type: ignore[arg-type]
 
 
 def _assert_no_mutation(cluster: _Cluster) -> None:
@@ -417,13 +375,13 @@ def test_pass_line_names_the_snapshot(capsys) -> None:
         "2026-10-29 00:00:00.000000000 +0000 UTC by root@volsync to .\n"
     )
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=logs)
-    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    assert _run(cluster) == 0
     assert "PASS restore demo/drill snapshot 3727b648" in capsys.readouterr().out
 
 
 def test_empty_mover_logs_fail(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs="")
-    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    assert _run(cluster) != 0
     out = capsys.readouterr().out
     assert "mover log has no restore result" in out
     assert "PASS restore" not in out
@@ -448,7 +406,7 @@ def test_named_restore_fails_when_nothing_matches(capsys) -> None:
 def test_no_snapshot_fails_and_rerun_can_resume(capsys) -> None:
     items = [_pvc("demo", "drill")]
     cluster = _Cluster(items, will_pause=True, logs=_NO_SNAPSHOT_LOG)
-    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    assert _run(cluster) != 0
     failed = capsys.readouterr().out
     assert "PASS restore" not in failed
     assert "no eligible snapshots" in failed
@@ -464,21 +422,13 @@ def test_no_snapshot_fails_and_rerun_can_resume(capsys) -> None:
     assert "backup-" not in [arg for call in cluster.calls for arg in call]
 
     cluster.logs = _SNAPSHOT_LOG
-    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    assert _run(cluster) == 0
     assert "PASS restore demo/drill" in capsys.readouterr().out
 
 
 def test_live_volume_uses_as_of(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True)
-    assert (
-        _run(
-            cluster,
-            app="demo",
-            all_pvcs=False,
-            as_of="2026-10-29T12:00:00Z",
-        )
-        == 0
-    )
+    assert _run(cluster, as_of="2026-10-29T12:00:00Z") == 0
     assert cluster.applied[0]["spec"]["restic"]["restoreAsOf"] == "2026-10-29T12:00:00Z"
     assert "as-of 2026-10-29T12:00:00Z" in capsys.readouterr().out
 
@@ -486,14 +436,14 @@ def test_live_volume_uses_as_of(capsys) -> None:
 def test_node_line_stays_silent_when_a_pvc_needs_the_node(capsys) -> None:
     """An unbound selected PVC still needs the node, so the unused line stays absent."""
     cluster = _Cluster([_pvc("demo", "one", volume="")], will_pause=True)
-    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
+    assert _run(cluster, node="node-a") == 0
     assert "no PVC needed it" not in capsys.readouterr().out
 
 
 def test_node_is_unused_when_every_selected_pvc_is_bound(capsys) -> None:
     """--node is validated, then one line says no PVC needed it."""
     cluster = _Cluster([_pvc("demo", "bound")], will_pause=True)
-    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
+    assert _run(cluster, node="node-a") == 0
     out = capsys.readouterr().out
     assert "node node-a: no PVC needed it" in out
     assert cluster.binders == []
@@ -529,31 +479,17 @@ def test_restore_all_node_pins_every_unbound_pvc(capsys) -> None:
 
 def test_unbound_pvc_is_paused_then_bound(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "pending", volume="")], will_pause=True)
-    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
+    assert _run(cluster, node="node-a") == 0
     assert "pending" in cluster.bound
     assert cluster.binders[0]["spec"]["affinity"] == (
         restore_tool._node_placement("node-a")["affinity"]
     )
 
-    def at(pred) -> int:
-        for index, call in enumerate(cluster.calls):
-            if pred(call):
-                return index
-        raise AssertionError("missing call")
-
-    pause_at = at(lambda call: "backup=paused" in call)
+    pause_at = _index(cluster.calls, lambda call: "backup=paused" in call)
     applies = [index for index, call in enumerate(cluster.calls) if call[:2] == ["apply", "-f"]]
     assert pause_at < applies[0] < applies[1]
     assert cluster.applied[0]["spec"]["restic"]["destinationPVC"] == "pending"
     assert "PASS restore demo/pending" in capsys.readouterr().out
-
-
-def _mutation_at(calls: list[list[str]]) -> int:
-    verbs = {"annotate", "apply", "delete", "patch", "scale"}
-    for index, call in enumerate(calls):
-        if call and call[0] in verbs:
-            return index
-    raise AssertionError("no mutation")
 
 
 def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
@@ -565,7 +501,7 @@ def test_bind_pod_uses_the_live_cronjob_image(capsys) -> None:
         will_pause=True,
         etcd_image=image,
     )
-    assert _run(cluster, app="demo", all_pvcs=False, node="node-a") == 0
+    assert _run(cluster, node="node-a") == 0
     reads = [
         index
         for index, call in enumerate(cluster.calls)
@@ -600,12 +536,12 @@ _PLACED = {
 }
 
 
-def _mounting(kind: str, placement: dict) -> dict:
-    claim = {"name": "data", "persistentVolumeClaim": {"claimName": "pending"}}
-    template = {"template": {"spec": {**placement, "volumes": [claim]}}}
+def _mounting(kind: str, placement: dict, *, name: str | None = None, claim="pending", replicas=1) -> dict:
+    volume = {"name": "data", "persistentVolumeClaim": {"claimName": claim}}
+    template = {"template": {"spec": {**placement, "volumes": [volume]}}}
     if kind == "cronjob":
-        return {"metadata": {"name": kind}, "spec": {"jobTemplate": {"spec": template}}}
-    return {"metadata": {"name": kind}, "spec": {"replicas": 1, **template}}
+        return {"metadata": {"name": name or kind}, "spec": {"jobTemplate": {"spec": template}}}
+    return {"metadata": {"name": name or kind}, "spec": {"replicas": replicas, **template}}
 
 
 @pytest.mark.parametrize("kind", ["deployment", "statefulset", "cronjob"])
@@ -634,7 +570,7 @@ def test_restore_binds_with_the_placement_checked_before_any_change(capsys) -> N
         will_pause=True,
         deployments=[_mounting("deployment", _PLACED)],
     )
-    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    assert _run(cluster) == 0
     reads = [index for index, call in enumerate(cluster.calls) if call[:2] == ["get", "deployment"]]
     assert reads[0] < _mutation_at(cluster.calls)
     assert {key: cluster.binders[0]["spec"][key] for key in _PLACED} == _PLACED
@@ -649,16 +585,7 @@ def test_pvc_unbound_after_selection_fails_without_a_binder(capsys) -> None:
             return _completed(list(args), json.dumps(_pvc("demo", "drill", volume="")))
         return cluster.kubectl(args, input)
 
-    code = restore_tool.run(
-        kubectl,
-        env="env-00",
-        app="demo",
-        all_pvcs=False,
-        monotonic=lambda: 0.0,
-        sleep=_boom,
-        now=lambda: 1000.0,
-    )
-    assert code != 0
+    assert _run(cluster, kubectl=kubectl) != 0
     assert "demo/drill: was bound when selected and is unbound now" in capsys.readouterr().out
     assert cluster.binders == []
 
@@ -695,19 +622,15 @@ def test_unplaceable_binder_refuses_before_any_change(
     workloads: dict, node: str | None, message: str, capsys
 ) -> None:
     """A PVC whose node cannot be decided stops the run before the first change."""
-    cluster = _Cluster(
-        [_pvc("demo", "bound"), _pvc("demo", "pending", volume="")],
-        will_pause=True,
-        **workloads,
-    )
-    assert _run(cluster, app="demo", all_pvcs=False, node=node) != 0
+    cluster = _Cluster([_pvc("demo", "bound"), _pvc("demo", "pending", volume="")], will_pause=True, **workloads)
+    assert _run(cluster, node=node) != 0
     assert message in capsys.readouterr().out
     _assert_no_mutation(cluster)
 
 
 def test_destination_that_never_finishes_fails_and_keeps_the_pause(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, destination_done=False)
-    assert _run(cluster, app="demo", all_pvcs=False, restore_budget_s=0) != 0
+    assert _run(cluster, restore_budget_s=0) != 0
     out = capsys.readouterr().out
     assert "demo/drill: ReplicationDestination did not finish" in out
     assert "PASS restore" not in out
@@ -736,13 +659,8 @@ def test_bad_etcd_image_fails_before_any_change(
     capsys,
 ) -> None:
     """A missing CronJob, missing image, or non-digest restic image changes nothing."""
-    cluster = _Cluster(
-        [_pvc("demo", "pending", volume="")],
-        will_pause=True,
-        etcd_present=present,
-        etcd_image=image,
-    )
-    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    cluster = _Cluster([_pvc("demo", "pending", volume="")], will_pause=True, etcd_present=present, etcd_image=image)
+    assert _run(cluster) != 0
     assert message in capsys.readouterr().out
     _assert_no_mutation(cluster)
 
@@ -768,28 +686,20 @@ def test_terminating_pod_blocks_the_volume(capsys) -> None:
     assert restore_tool.volume_holders(kubectl, "demo", "drill") == ["app"]
 
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, pods=[holder])
-    assert _run(cluster, app="demo", all_pvcs=False, pause_budget_s=0) != 0
+    assert _run(cluster, pause_budget_s=0) != 0
     assert "pods still mounted (app)" in capsys.readouterr().out
 
 
 def test_single_restore_does_not_lift_the_hold(capsys) -> None:
-    cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        hold=["ns-demo/pvc-drill"],
-    )
-    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill"])
+    assert _run(cluster) == 0
     assert cluster.hold_deleted is False
     assert "backup-" not in [arg for call in cluster.calls for arg in call]
     assert "HOLD still set" in capsys.readouterr().out
 
 
 def test_restore_all_keeps_hold_until_every_repo_has_a_pvc(capsys) -> None:
-    kept = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        hold=["ns-demo/pvc-drill", "ns-ghost/pvc-gone"],
-    )
+    kept = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill", "ns-ghost/pvc-gone"])
     assert _run(kept, app=None, all_pvcs=True) != 0
     kept_out = capsys.readouterr().out
     assert "HOLD kept: no PVC for ns-ghost/pvc-gone" in kept_out
@@ -797,49 +707,22 @@ def test_restore_all_keeps_hold_until_every_repo_has_a_pvc(capsys) -> None:
     assert kept.hold_deleted is False
     assert "backup-" not in [arg for call in kept.calls for arg in call]
 
-    lifted = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        hold=["ns-demo/pvc-drill"],
-    )
+    lifted = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill"])
     assert _run(lifted, app=None, all_pvcs=True) == 0
     assert lifted.hold_deleted is True
 
-    def at(calls: list[list[str]], pred) -> int:
-        for index, call in enumerate(calls):
-            if pred(call):
-                return index
-        raise AssertionError("missing call")
-
-    delete_at = at(
-        lifted.calls,
-        lambda call: call[:3] == ["delete", "configmap", restore_tool.HOLD_NAME],
-    )
-    resume_at = at(lifted.calls, lambda call: "backup-" in call)
-    assert delete_at < resume_at
+    delete_at = _index(lifted.calls, lambda call: call[:3] == ["delete", "configmap", restore_tool.HOLD_NAME])
+    assert delete_at < _index(lifted.calls, lambda call: "backup-" in call)
     assert "HOLD lifted" in capsys.readouterr().out
 
 
 def test_restore_all_retires_a_named_repo_with_no_pvc(capsys) -> None:
-    cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        hold=["ns-demo/pvc-drill", "ns-ghost/pvc-gone"],
-    )
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill", "ns-ghost/pvc-gone"])
     assert _run(cluster, app=None, all_pvcs=True, retire=["ns-ghost/pvc-gone"]) == 0
     assert cluster.hold_deleted is True
     out = capsys.readouterr().out
     assert "HOLD retired ns-ghost/pvc-gone" in out
     assert "HOLD kept" not in out
-
-
-def test_mover_job_already_gone_uses_destination_status(capsys) -> None:
-    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=_NO_SNAPSHOT_LOG)
-    assert _run(cluster, app="demo", all_pvcs=False) != 0
-    out = capsys.readouterr().out
-    assert "no eligible snapshots" in out
-    assert "mover logs unavailable" not in out
-    assert not any(call[0] == "logs" for call in cluster.calls)
 
 
 def test_lift_does_not_treat_a_missing_source_as_unpaused(capsys) -> None:
@@ -858,12 +741,7 @@ def test_lift_does_not_treat_a_missing_source_as_unpaused(capsys) -> None:
 
 def test_interrupt_during_hold_resume_restores_hold_and_reraises(capsys) -> None:
     hold = ["ns-demo/pvc-drill"]
-    cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        hold=hold.copy(),
-        interrupt_resume=True,
-    )
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=hold.copy(), interrupt_resume=True)
     with pytest.raises(KeyboardInterrupt):
         _run(cluster, app=None, all_pvcs=True)
     assert cluster.hold == hold
@@ -881,27 +759,15 @@ def test_printed_hold_recovery_preserves_repo_lines(capsys) -> None:
 
     def kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
         assert input is None
-        assert list(args) == [
-            "get",
-            "configmap",
-            restore_tool.HOLD_NAME,
-            "-n",
-            restore_tool.HOLD_NAMESPACE,
-            "-o",
-            "json",
-        ]
+        assert list(args) == ["get", "configmap", restore_tool.HOLD_NAME, "-n", restore_tool.HOLD_NAMESPACE,
+                              "-o", "json"]  # fmt: skip
         return _completed(list(args), json.dumps(configmap))
 
     assert restore_tool._hold_repos(kubectl) == hold
 
 
 def test_restore_all_fails_closed_on_no_snapshot(capsys) -> None:
-    cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        logs=_NO_SNAPSHOT_LOG,
-        hold=["ns-demo/pvc-drill"],
-    )
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=_NO_SNAPSHOT_LOG, hold=["ns-demo/pvc-drill"])
     assert _run(cluster, app=None, all_pvcs=True) != 0
     out = capsys.readouterr().out
     assert "no eligible snapshots" in out
@@ -912,21 +778,8 @@ def test_restore_all_fails_closed_on_no_snapshot(capsys) -> None:
 
 
 def test_restore_all_accepts_an_explicit_empty_volume(capsys) -> None:
-    cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        logs=_NO_SNAPSHOT_LOG,
-        hold=["ns-demo/pvc-drill"],
-    )
-    assert (
-        _run(
-            cluster,
-            app=None,
-            all_pvcs=True,
-            accept_empty=["demo/drill"],
-        )
-        == 0
-    )
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=_NO_SNAPSHOT_LOG, hold=["ns-demo/pvc-drill"])
+    assert _run(cluster, app=None, all_pvcs=True, accept_empty=["demo/drill"]) == 0
     out = capsys.readouterr().out
     assert "ACCEPT empty demo/drill" in out
     assert "SUMMARY restored=0 accepted=1 retired=0" in out
@@ -934,20 +787,8 @@ def test_restore_all_accepts_an_explicit_empty_volume(capsys) -> None:
 
 
 def test_accept_empty_refuses_an_unselected_pvc(capsys) -> None:
-    cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        hold=["ns-demo/pvc-drill"],
-    )
-    assert (
-        _run(
-            cluster,
-            app=None,
-            all_pvcs=True,
-            accept_empty=["other/missing"],
-        )
-        != 0
-    )
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill"])
+    assert _run(cluster, app=None, all_pvcs=True, accept_empty=["other/missing"]) != 0
     assert "accepted PVC is not selected: other/missing" in capsys.readouterr().out
     _assert_no_mutation(cluster)
 
@@ -979,35 +820,27 @@ def test_retire_refuses_nonmissing_hold_repositories(
 )
 def test_retire_and_accept_empty_require_all(guard: dict[str, list[str]], capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True)
-    assert _run(cluster, app="demo", all_pvcs=False, **guard) != 0
+    assert _run(cluster, **guard) != 0
     assert "--retire and --accept-empty are only valid with --all" in capsys.readouterr().out
     _assert_no_mutation(cluster)
 
 
-def test_repository_environment_marker_must_match(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
+def test_repository_environment_marker_must_match(tmp_path: Path, monkeypatch, capsys) -> None:
     values = tmp_path / "envs" / "env-00" / "values"
     values.mkdir(parents=True)
-    (values / "cluster-vars.yaml").write_text(
-        "jarvis_env: wrong-env\n",
-        encoding="utf-8",
-    )
+    (values / "cluster-vars.yaml").write_text("jarvis_env: wrong-env\n", encoding="utf-8")
     monkeypatch.setenv("INSTANCE", str(tmp_path))
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True)
-    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    assert _run(cluster) != 0
     assert "does not match its repository marker" in capsys.readouterr().out
     assert cluster.calls == []
 
 
 def test_wrong_cluster_marker_refuses_before_mutation(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, env="wrong-env")
-    assert _run(cluster, app="demo", all_pvcs=False) != 0
+    assert _run(cluster) != 0
     assert "environment marker is not ENV=env-00" in capsys.readouterr().out
-    mutating = {"annotate", "apply", "delete", "patch", "scale"}
-    assert not any(call[0] in mutating for call in cluster.calls)
+    _assert_no_mutation(cluster)
 
 
 def test_missing_environment_kubeconfig_refuses_before_kubectl(
@@ -1025,44 +858,23 @@ def test_missing_environment_kubeconfig_refuses_before_kubectl(
     assert "kubeconfig does not exist" in capsys.readouterr().out
 
 
+_WRITER = _mounting("deployment", {}, name="writer", claim="drill", replicas=2)
+
+
 def test_restore_suspends_and_restores_real_workloads(capsys) -> None:
-    pod_spec = {
-        "volumes": [
-            {"name": "data", "persistentVolumeClaim": {"claimName": "drill"}}
-        ]
-    }
-    deployment = {
-        "metadata": {"name": "writer"},
-        "spec": {"replicas": 2, "template": {"spec": pod_spec}},
-    }
-    cronjob = {
-        "metadata": {"name": "scheduled-writer"},
-        "spec": {
-            "suspend": False,
-            "jobTemplate": {"spec": {"template": {"spec": pod_spec}}},
-        },
-    }
+    cronjob = _mounting("cronjob", {}, name="scheduled-writer", claim="drill")
+    cronjob["spec"]["suspend"] = False
     unrelated = {
         "metadata": {
             "name": "other-schedule",
-            "labels": {
-                restore_tool._FLUX_NAME: "other",
-                restore_tool._FLUX_NS: "flux-system",
-            },
+            "labels": {restore_tool._FLUX_NAME: "other", restore_tool._FLUX_NS: "flux-system"},
         },
         "spec": {"jobTemplate": {"spec": {"template": {"spec": {"volumes": []}}}}},
     }
-    cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        deployments=[deployment],
-        cronjobs=[cronjob, unrelated],
-    )
-    assert _run(cluster, app="demo", all_pvcs=False) == 0
+    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, deployments=[_WRITER], cronjobs=[cronjob, unrelated])
+    assert _run(cluster) == 0
     assert cluster.suspended_cronjobs == set()
-    assert [
-        call for call in cluster.calls if call[:3] == ["scale", "deployment", "writer"]
-    ] == [
+    assert [call for call in cluster.calls if call[:3] == ["scale", "deployment", "writer"]] == [
         ["scale", "deployment", "writer", "-n", "demo", "--replicas=0"],
         ["scale", "deployment", "writer", "-n", "demo", "--replicas=2"],
     ]
@@ -1077,32 +889,12 @@ def test_restore_suspends_and_restores_real_workloads(capsys) -> None:
 
 
 def test_interrupt_prints_complete_undo_plan(capsys) -> None:
-    pod_spec = {
-        "volumes": [
-            {"name": "data", "persistentVolumeClaim": {"claimName": "drill"}}
-        ]
-    }
+    cronjob = _mounting("cronjob", {}, name="scheduled-writer", claim="drill")
     cluster = _Cluster(
-        [_pvc("demo", "drill")],
-        will_pause=True,
-        deployments=[
-            {
-                "metadata": {"name": "writer"},
-                "spec": {"replicas": 2, "template": {"spec": pod_spec}},
-            }
-        ],
-        cronjobs=[
-            {
-                "metadata": {"name": "scheduled-writer"},
-                "spec": {
-                    "jobTemplate": {"spec": {"template": {"spec": pod_spec}}},
-                },
-            }
-        ],
-        interrupt_destination=True,
+        [_pvc("demo", "drill")], will_pause=True, deployments=[_WRITER], cronjobs=[cronjob], interrupt_destination=True
     )
     with pytest.raises(KeyboardInterrupt):
-        _run(cluster, app="demo", all_pvcs=False)
+        _run(cluster)
     out = capsys.readouterr().out
     assert "kubectl annotate pvc drill -n demo backup-" in out
     assert "kubectl scale deployment writer -n demo --replicas=2" in out

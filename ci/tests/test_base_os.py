@@ -13,11 +13,15 @@ from pathlib import Path
 import yaml
 from ansible_role_proof import (
     ANSIBLE_DIR,
+    LOCALHOST,
     ansible_render_template,
     cluster_vars_playbook_path,
     env_inventory_args,
     load_cluster_vars,
+    local_play,
+    playbook,
     playbook_recap_field,
+    role_tasks,
 )
 from conftest import require_cli
 
@@ -93,26 +97,11 @@ def _run_file_module(params: dict[str, object], *, src: Path, dest: Path) -> dic
     args = dict(params)
     args["src"] = str(src)
     args["dest"] = str(dest)
-    env = os.environ.copy()
-    env["ANSIBLE_BECOME"] = "false"
-    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
     run = subprocess.run(
-        [
-            "ansible",
-            "localhost",
-            "-c",
-            "local",
-            "-m",
-            "ansible.builtin.file",
-            "-a",
-            json.dumps(args),
-        ],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
+        ["ansible", "localhost", "-c", "local", "-m", "ansible.builtin.file", "-a", json.dumps(args)],
+        cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False,
+        env={**os.environ, "ANSIBLE_BECOME": "false", "ANSIBLE_CONFIG": str(ANSIBLE_DIR / "ansible.cfg")},
+    )  # fmt: skip
     assert run.returncode == 0, run.stdout + run.stderr
     body = run.stdout.split("=>", 1)[1]
     result = json.loads(body)
@@ -152,22 +141,8 @@ def _block_text(task: dict[str, object], needle: str) -> bool:
 
 def test_site_yml_syntax_check() -> None:
     require_cli("ansible-playbook")
-    cmd = [
-        "ansible-playbook",
-        "--syntax-check",
-        "site.yml",
-        *env_inventory_args(),
-        "-e",
-        f"@{cluster_vars_playbook_path()}",
-    ]
-    proc = subprocess.run(
-        cmd,
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = playbook("--syntax-check", "site.yml", *env_inventory_args(), "-e", f"@{cluster_vars_playbook_path()}")
+    assert proc.returncode == 0, proc.output
 
 
 def _restarted_units(text: str) -> list[str]:
@@ -213,64 +188,13 @@ def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> N
         encoding="utf-8",
     )
     (bin_dir / "systemctl").chmod(0o755)
-    play = tmp_path / "play.yml"
-    play.write_text(
-        textwrap.dedent(
-            f"""\
-            ---
-            - name: Chrony config
-              hosts: localhost
-              gather_facts: false
-              become: false
-              environment:
-                PATH: "{bin_dir}:/usr/bin:/bin"
-              tasks:
-                - ansible.builtin.import_role:
-                    name: base-os
-                    tasks_from: chrony.yml
-            """
-        ),
-        encoding="utf-8",
-    )
+    play = local_play(tmp_path, role_tasks("base-os", "chrony.yml"), bin_dir=bin_dir)
     pools = load_cluster_vars()["ntp_pools"]
-    extra = json.dumps(
-        {
-            "chrony_config_dir": str(config_dir),
-            # Defaults are root:root. This play does not become root, and the
-            # template module chowns before the dest write.
-            "chrony_config_owner": getpass.getuser(),
-            "chrony_config_group": grp.getgrgid(os.getgid()).gr_name,
-            "ntp_pools": pools,
-        }
-    )
-    env = os.environ.copy()
-    env["ANSIBLE_BECOME"] = "false"
-    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
-
-    def run(*, check: bool = False) -> subprocess.CompletedProcess[str]:
-        cmd = [
-            "ansible-playbook",
-            str(play),
-            "-i",
-            "localhost,",
-            "-e",
-            "ansible_connection=local",
-            "-e",
-            extra,
-        ]
-        if check:
-            cmd.append("--check")
-        return subprocess.run(
-            cmd,
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-
-    first = run()
-    output = first.stdout + first.stderr
+    # Defaults are root:root. This play does not become root, and the template module chowns before the dest write.
+    extra = json.dumps({"chrony_config_dir": str(config_dir), "chrony_config_owner": getpass.getuser(),
+                        "chrony_config_group": grp.getgrgid(os.getgid()).gr_name, "ntp_pools": pools})  # fmt: skip
+    first = playbook(play, *LOCALHOST, "-e", extra)
+    output = first.output
     assert first.returncode == 0, output
     assert "RUNNING HANDLER" in output
     assert "Restart chrony" in output
@@ -280,19 +204,11 @@ def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> N
         assert f"pool {pool}" in written
     assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
 
-    second = run()
-    second_out = second.stdout + second.stderr
-    assert second.returncode == 0, second_out
-    assert playbook_recap_field(second_out, "changed") == 0
-    assert "RUNNING HANDLER" not in second_out
-    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
-
-    checked = run(check=True)
-    checked_out = checked.stdout + checked.stderr
-    assert checked.returncode == 0, checked_out
-    assert playbook_recap_field(checked_out, "changed") == 0
-    assert "RUNNING HANDLER" not in checked_out
-    assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
+    for again in (playbook(play, *LOCALHOST, "-e", extra), playbook(play, *LOCALHOST, "-e", extra, "--check")):
+        assert again.returncode == 0, again.output
+        assert playbook_recap_field(again.output, "changed") == 0
+        assert "RUNNING HANDLER" not in again.output
+        assert _restarted_units(log.read_text(encoding="utf-8")) == ["chrony"]
 
 
 def test_pending_reboot_warns_only_the_host_that_needs_one(tmp_path: Path) -> None:
@@ -300,56 +216,15 @@ def test_pending_reboot_warns_only_the_host_that_needs_one(tmp_path: Path) -> No
     require_cli("ansible-playbook")
     flagged = tmp_path / "reboot-required"
     flagged.write_text("", encoding="utf-8")
-    play = tmp_path / "play.yml"
-    play.write_text(
-        textwrap.dedent(
-            """\
-            ---
-            - name: Reboot signal
-              hosts: all
-              gather_facts: false
-              become: false
-              tasks:
-                - ansible.builtin.import_role:
-                    name: base-os
-                    tasks_from: reboot-required.yml
-            """
-        ),
-        encoding="utf-8",
-    )
+    play = local_play(tmp_path, role_tasks("base-os", "reboot-required.yml"), hosts="all")
     inventory = tmp_path / "hosts.yml"
-    inventory.write_text(
-        yaml.safe_dump(
-            {
-                "all": {
-                    "hosts": {
-                        "stale-node": {
-                            "ansible_connection": "local",
-                            "base_os_reboot_required_path": str(flagged),
-                        },
-                        "fresh-node": {
-                            "ansible_connection": "local",
-                            "base_os_reboot_required_path": str(tmp_path / "absent"),
-                        },
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    env = os.environ.copy()
-    env["ANSIBLE_BECOME"] = "false"
-    env["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+    hosts = {"stale-node": flagged, "fresh-node": tmp_path / "absent"}
+    inventory.write_text(yaml.safe_dump({"all": {"hosts": {
+        name: {"ansible_connection": "local", "base_os_reboot_required_path": str(path)} for name, path in hosts.items()
+    }}}), encoding="utf-8")  # fmt: skip
     for extra_args in ([], ["--check"]):
-        run = subprocess.run(
-            ["ansible-playbook", str(play), "-i", str(inventory), *extra_args],
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
-        output = run.stdout + run.stderr
+        run = playbook(play, "-i", inventory, *extra_args)
+        output = run.output
         assert run.returncode == 0, output
         assert "REBOOT PENDING on stale-node" in output
         assert "REBOOT PENDING on fresh-node" not in output
