@@ -25,6 +25,7 @@ from ansible_role_proof import (
     local_play,
     playbook,
     playbook_recap_field,
+    role_tasks,
     roles_inventory_path,
 )
 from conftest import require_cli
@@ -32,6 +33,10 @@ from conftest import require_cli
 from support import ExampleCopy, sample_root
 
 K3S_CONFIG_TEMPLATE = "config.yaml.j2"
+
+
+def _import_tasks(name: str) -> str:
+    return f"    - ansible.builtin.import_tasks: {K3S_ROLE_DIR / 'tasks' / name}\n"
 
 
 def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
@@ -106,7 +111,7 @@ def test_agent_fails_when_control_plane_name_does_not_resolve(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
-    play = local_play(tmp_path, f"    - ansible.builtin.import_tasks: {K3S_ROLE_DIR / 'tasks' / 'token.yml'}\n", hosts="wk-1")
+    play = local_play(tmp_path, _import_tasks("token.yml"), hosts="wk-1")
     proc = playbook(play, "-i", inventory, "-e", "k3s_mode=agent")
     assert proc.returncode != 0, proc.output
     assert "cp.invalid does not resolve on wk-1" in proc.output
@@ -313,7 +318,7 @@ def _run_guard(tmp_path: Path, *, marker_text: str | None) -> subprocess.Complet
     systemctl = fake_bin / "systemctl"
     systemctl.write_text("#!/bin/sh\necho active\nexit 0\n", encoding="utf-8")
     systemctl.chmod(0o755)
-    play = local_play(tmp_path, f"    - ansible.builtin.import_tasks: {K3S_ROLE_DIR / 'tasks' / 'refuse.yml'}\n", bin_dir=fake_bin)
+    play = local_play(tmp_path, _import_tasks("refuse.yml"), bin_dir=fake_bin)
     extra = {"k3s_service_name": "k3s", "jarvis_env": "fixture", "k3s_binary_path": str(tmp_path / "missing-k3s"),
              "k3s_data_dir": str(tmp_path / "missing-data"), "jarvis_marker_path": str(marker)}
     return playbook(play, *LOCALHOST, "-e", json.dumps(extra))
@@ -479,12 +484,13 @@ def _systemctl(bin_dir: Path, *, fail: str = "", state: str = "active enabled") 
 
 
 def _dropin_play(tmp_path: Path, bin_dir: Path) -> Path:
-    return local_play(tmp_path, "    - ansible.builtin.import_role:\n        name: k3s\n        tasks_from: service-unit.yml\n", bin_dir=bin_dir)
+    return local_play(tmp_path, role_tasks("k3s", "service-unit.yml"), bin_dir=bin_dir)
 
 
 def _run_dropin(play: Path, *, mode: str, unit_dir: Path, check: bool = False) -> subprocess.CompletedProcess[str]:
     cluster = load_cluster_vars()
-    extra = {"k3s_mode": mode, "k3s_service_name": "k3s" if mode == "server" else "k3s-agent", "k3s_unit_dir": str(unit_dir),
+    service = "k3s" if mode == "server" else "k3s-agent"
+    extra = {"k3s_mode": mode, "k3s_service_name": service, "k3s_unit_dir": str(unit_dir),
              "local_path_data": cluster["local_path_data"], "backup_path": cluster["backup_path"]}
     return playbook(play, *LOCALHOST, "-e", json.dumps(extra), *(["--check"] if check else []))
 
@@ -740,7 +746,8 @@ def _run_role(
         "local_path_data": str(tmp_path / "local"), "backup_path": str(tmp_path / "backup"),
         **{key: cluster[key] for key in _CONFIG_KEYS}, **_MEMORY_FACT,
     }
-    return playbook(_role_play(tmp_path, bin_dir), *LOCALHOST, "-e", json.dumps(extra), "--check", env=_play_env(keyfile))
+    play = _role_play(tmp_path, bin_dir)
+    return playbook(play, *LOCALHOST, "-e", json.dumps(extra), "--check", env=_play_env(keyfile))
 
 
 def test_a_token_mismatch_stops_the_role_before_its_config(tmp_path: Path) -> None:

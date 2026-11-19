@@ -20,6 +20,7 @@ from ansible_role_proof import (
     local_play,
     playbook,
     playbook_recap_field,
+    role_tasks,
     roles_inventory_path,
 )
 from conftest import require_cli
@@ -119,13 +120,15 @@ def _run_site(
     vars_path = tmp_path / "cluster-vars.yaml"
     _vars_file(vars_path, drop=drop, jarvis_env=jarvis_env, override=override)
     args = [
-        "site.yml", "-i", inventory, "-e", "ansible_connection=local", "-e", "ansible_become=false", "-e", f"@{vars_path}",
+        "site.yml", "-i", inventory, "-e", "ansible_connection=local", "-e", "ansible_become=false",
+        "-e", f"@{vars_path}",
         # jarvis site passes the instance repository; here, one holding no env yet.
         *([] if instance is None else ["-e", f"jarvis_instance_root={instance}"]),
         *(extra or []),
     ]  # fmt: skip
     if flux_instance:
-        args += ["-e", f"flux_instance_file={example_flux_entry(tmp_path).instance_file}", "-e", f"flux_sync_file={sync_file or _EXAMPLE_SYNC}"]
+        instance_file = example_flux_entry(tmp_path).instance_file
+        args += ["-e", f"flux_instance_file={instance_file}", "-e", f"flux_sync_file={sync_file or _EXAMPLE_SYNC}"]
     args += [*(["--check"] if check else []), *(["--tags", tags] if tags is not None else [])]
     return playbook(*args, env={"PATH": f"{path_prefix}:{os.environ.get('PATH', '')}"} if path_prefix else None)
 
@@ -285,7 +288,7 @@ def test_systemctl_inactive_rc_is_allowed(tmp_path: Path) -> None:
     """is-active exit 3 (inactive or failed) is success and is not 'k3s is present'."""
     bin_dir = tmp_path / "bin"
     _install_systemctl(bin_dir, active_rc=3)
-    play = local_play(tmp_path, "    - ansible.builtin.import_role:\n        name: k3s\n        tasks_from: refuse.yml\n", bin_dir=bin_dir)
+    play = local_play(tmp_path, role_tasks("k3s", "refuse.yml"), bin_dir=bin_dir)
     result = playbook(play, *LOCALHOST, "-e", "jarvis_env=fixture", *_k3s_paths(tmp_path))
     output = result.output
     assert result.returncode == 0, output
@@ -351,7 +354,8 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
     _write_opening_play(play, bin_dir=bin_dir)
     flux_instance = example_flux_entry(tmp_path).instance_file
     extra = ["-e", f"@{vars_path}", "-e", "ansible_connection=local", "-e", f"jarvis_instance_root={tmp_path}",
-             "-e", f"flux_instance_file={flux_instance}", "-e", f"flux_sync_file={_EXAMPLE_SYNC}", *_k3s_paths(tmp_path)]  # fmt: skip
+             "-e", f"flux_instance_file={flux_instance}", "-e", f"flux_sync_file={_EXAMPLE_SYNC}",
+             *_k3s_paths(tmp_path)]  # fmt: skip
     for check in ([], [], ["--check"]):
         result = playbook(play, "-i", inventory, *extra, *check)
         assert result.returncode == 0, result.output
@@ -379,8 +383,9 @@ def test_site_reads_the_flux_instance_from_core_and_sync_from_the_instance(tmp_p
     _install_systemctl(bin_dir, active_rc=4)
     _write_opening_play(opening, bin_dir=bin_dir)
     result = playbook(
-        opening, "-i", copy.env_dir / "inventory" / "hosts.yml", "-i", roles_inventory_path(), "-e", "ansible_connection=local",
-        "-e", "ansible_become=false", "-e", f"@{copy.env_dir / 'values' / 'cluster-vars.yaml'}",
+        opening, "-i", copy.env_dir / "inventory" / "hosts.yml", "-i", roles_inventory_path(),
+        "-e", "ansible_connection=local", "-e", "ansible_become=false",
+        "-e", f"@{copy.env_dir / 'values' / 'cluster-vars.yaml'}",
         "-e", f"jarvis_instance_root={copy.root}", *_k3s_paths(tmp_path),
         env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"},
     )  # fmt: skip

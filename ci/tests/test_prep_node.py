@@ -92,7 +92,8 @@ def _ssh_user_env(tmp_path: Path, recorded: str | None, per_host: str | None = N
     cluster.write_text(cluster.read_text(encoding="utf-8").replace("ssh_user: example\n", line), encoding="utf-8")
     if per_host:
         hosts = dest / "inventory" / "hosts.yml"
-        hosts.write_text(hosts.read_text(encoding="utf-8").replace("    wk-1:\n", f"    wk-1:\n      ssh_user: {per_host}\n"), encoding="utf-8")
+        text = hosts.read_text(encoding="utf-8").replace("    wk-1:\n", f"    wk-1:\n      ssh_user: {per_host}\n")
+        hosts.write_text(text, encoding="utf-8")
     return cluster
 
 
@@ -106,7 +107,10 @@ def test_the_recorded_ssh_user_is_kept_on_every_node(tmp_path: Path) -> None:
     assert cluster.read_text(encoding="utf-8") == before
 
 
-@pytest.mark.parametrize(("per_host", "refusal"), [(None, "set ssh_user on that host"), ("alice", "change ssh_user on that host")])
+@pytest.mark.parametrize(
+    ("per_host", "refusal"), [(None, "set ssh_user on that host"), ("alice", "change ssh_user on that host")],
+    ids=["env-record", "host-record"],
+)
 def test_apply_env_edits_refuses_a_different_ssh_user(tmp_path: Path, per_host, refusal: str) -> None:
     """Write-time backstop: a recorded ssh_user, the env's or the host's, is not overwritten."""
     module = _load()
@@ -118,7 +122,7 @@ def test_apply_env_edits_refuses_a_different_ssh_user(tmp_path: Path, per_host, 
     assert (cluster.read_text(encoding="utf-8"), hosts.read_text(encoding="utf-8")) == before
 
 
-@pytest.mark.parametrize(("written", "recorded"), [('"ops"', "ops"), ("", None)])
+@pytest.mark.parametrize(("written", "recorded"), [('"ops"', "ops"), ("", None)], ids=["quoted", "empty"])
 def test_recorded_ssh_user_is_the_scalar_or_none(tmp_path: Path, written: str, recorded) -> None:
     """A quoted ssh_user is the user, not the quotes; an empty one is the schema default."""
     module = _load()
@@ -147,7 +151,11 @@ def _host_state() -> tuple:
 
 @pytest.mark.parametrize(
     ("host", "message"),
-    [("prep-node-does-not-resolve.invalid", "Add it on the router.\nNothing was changed."), ("localhost", "not a host in the inventory")],
+    [
+        ("prep-node-does-not-resolve.invalid", "Add it on the router.\nNothing was changed."),
+        ("localhost", "not a host in the inventory"),
+    ],
+    ids=["does-not-resolve", "not-in-inventory"],
 )
 def test_a_host_that_does_not_resolve_or_is_not_listed_exits_before_any_change(host: str, message: str) -> None:
     before = _host_state()
@@ -492,6 +500,7 @@ def test_schema_error_makes_zero_host_calls(
         ("ops", None, "wk-1", "ops", "ops"),
         (None, None, "cp-1", "ops", "ubuntu"),  # a missing key is the schema default, and is kept
     ],
+    ids=["init-record", "per-host", "later-node", "same-login", "schema-default"],
 )
 def test_run_keeps_the_recorded_ansible_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded, per_host, host: str, login: str, kept: str
@@ -512,7 +521,10 @@ def test_run_keeps_the_recorded_ansible_user(
     assert "assert_host_resolves" in called
 
 
-@pytest.mark.parametrize(("recorded", "host", "asked"), [("ops", "wk-1", "other"), (None, "cp-1", "ops")])
+@pytest.mark.parametrize(
+    ("recorded", "host", "asked"), [("ops", "wk-1", "other"), (None, "cp-1", "ops")],
+    ids=["recorded", "schema-default"],
+)
 def test_run_refuses_a_different_ansible_user_before_any_host_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded, host: str, asked: str
 ) -> None:

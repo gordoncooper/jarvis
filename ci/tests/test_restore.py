@@ -282,7 +282,8 @@ def _boom(_seconds: float) -> None:
 
 def _run(cluster: _Cluster, *, kubectl=None, **kwargs: object) -> int:
     """restore on cluster, for app demo unless kwargs say otherwise, with a clock that never sleeps."""
-    args = {"env": "env-00", "app": "demo", "all_pvcs": False, "monotonic": lambda: 0.0, "sleep": _boom, "now": lambda: 1000.0, **kwargs}
+    args = {"env": "env-00", "app": "demo", "all_pvcs": False, "monotonic": lambda: 0.0, "sleep": _boom,
+            "now": lambda: 1000.0, **kwargs}  # fmt: skip
     return restore_tool.run(kubectl or cluster.kubectl, **args)  # type: ignore[arg-type]
 
 
@@ -535,7 +536,7 @@ _PLACED = {
 }
 
 
-def _mounting(kind: str, placement: dict, *, name: str | None = None, claim: str = "pending", replicas: int = 1) -> dict:
+def _mounting(kind: str, placement: dict, *, name: str | None = None, claim="pending", replicas=1) -> dict:
     volume = {"name": "data", "persistentVolumeClaim": {"claimName": claim}}
     template = {"template": {"spec": {**placement, "volumes": [volume]}}}
     if kind == "cronjob":
@@ -758,7 +759,8 @@ def test_printed_hold_recovery_preserves_repo_lines(capsys) -> None:
 
     def kubectl(args: Sequence[str], input: str | None = None) -> CompletedProcess[str]:
         assert input is None
-        assert list(args) == ["get", "configmap", restore_tool.HOLD_NAME, "-n", restore_tool.HOLD_NAMESPACE, "-o", "json"]
+        assert list(args) == ["get", "configmap", restore_tool.HOLD_NAME, "-n", restore_tool.HOLD_NAMESPACE,
+                              "-o", "json"]  # fmt: skip
         return _completed(list(args), json.dumps(configmap))
 
     assert restore_tool._hold_repos(kubectl) == hold
@@ -863,7 +865,10 @@ def test_restore_suspends_and_restores_real_workloads(capsys) -> None:
     cronjob = _mounting("cronjob", {}, name="scheduled-writer", claim="drill")
     cronjob["spec"]["suspend"] = False
     unrelated = {
-        "metadata": {"name": "other-schedule", "labels": {restore_tool._FLUX_NAME: "other", restore_tool._FLUX_NS: "flux-system"}},
+        "metadata": {
+            "name": "other-schedule",
+            "labels": {restore_tool._FLUX_NAME: "other", restore_tool._FLUX_NS: "flux-system"},
+        },
         "spec": {"jobTemplate": {"spec": {"template": {"spec": {"volumes": []}}}}},
     }
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, deployments=[_WRITER], cronjobs=[cronjob, unrelated])
@@ -885,7 +890,9 @@ def test_restore_suspends_and_restores_real_workloads(capsys) -> None:
 
 def test_interrupt_prints_complete_undo_plan(capsys) -> None:
     cronjob = _mounting("cronjob", {}, name="scheduled-writer", claim="drill")
-    cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, deployments=[_WRITER], cronjobs=[cronjob], interrupt_destination=True)
+    cluster = _Cluster(
+        [_pvc("demo", "drill")], will_pause=True, deployments=[_WRITER], cronjobs=[cronjob], interrupt_destination=True
+    )
     with pytest.raises(KeyboardInterrupt):
         _run(cluster)
     out = capsys.readouterr().out

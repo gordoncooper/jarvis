@@ -21,6 +21,7 @@ from ansible_role_proof import (
     local_play,
     playbook,
     playbook_recap_field,
+    role_tasks,
 )
 from conftest import require_cli
 
@@ -187,7 +188,7 @@ def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> N
         encoding="utf-8",
     )
     (bin_dir / "systemctl").chmod(0o755)
-    play = local_play(tmp_path, "    - ansible.builtin.import_role:\n        name: base-os\n        tasks_from: chrony.yml\n", bin_dir=bin_dir)
+    play = local_play(tmp_path, role_tasks("base-os", "chrony.yml"), bin_dir=bin_dir)
     pools = load_cluster_vars()["ntp_pools"]
     # Defaults are root:root. This play does not become root, and the template module chowns before the dest write.
     extra = json.dumps({"chrony_config_dir": str(config_dir), "chrony_config_owner": getpass.getuser(),
@@ -215,7 +216,7 @@ def test_pending_reboot_warns_only_the_host_that_needs_one(tmp_path: Path) -> No
     require_cli("ansible-playbook")
     flagged = tmp_path / "reboot-required"
     flagged.write_text("", encoding="utf-8")
-    play = local_play(tmp_path, "    - ansible.builtin.import_role:\n        name: base-os\n        tasks_from: reboot-required.yml\n", hosts="all")
+    play = local_play(tmp_path, role_tasks("base-os", "reboot-required.yml"), hosts="all")
     inventory = tmp_path / "hosts.yml"
     hosts = {"stale-node": flagged, "fresh-node": tmp_path / "absent"}
     inventory.write_text(yaml.safe_dump({"all": {"hosts": {

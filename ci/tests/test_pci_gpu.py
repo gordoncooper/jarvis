@@ -37,8 +37,9 @@ def _assert_gpu(devices: Path, hosts: str = "hosts.yml") -> subprocess.Completed
         (None, "hosts.yml", False),  # no PCI devices at all
         (OTHER, "hosts.yml", False),
     ],
+    ids=["nvidia-behind-link", "not-a-gpu-host", "no-pci-devices", "other-vendor"],
 )
-def test_a_gpu_host_needs_an_nvidia_device_behind_the_sysfs_links(tmp_path: Path, vendor, hosts: str, passes: bool) -> None:
+def test_a_gpu_host_needs_an_nvidia_device_behind_the_sysfs_links(tmp_path: Path, vendor, hosts, passes: bool) -> None:
     devices = _sysfs(tmp_path, vendor) if vendor else tmp_path / "devices"
     devices.mkdir(exist_ok=True)
     proc = _assert_gpu(devices, hosts)

@@ -29,21 +29,27 @@ LOCALHOST = ("-i", "localhost,", "-e", "ansible_connection=local")
 
 def playbook(*args: object, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """ansible-playbook from the Ansible directory, with become off. .output is stdout and stderr together."""
-    proc = subprocess.run(
-        ["ansible-playbook", *map(str, args)], cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False,
-        env={**os.environ, "ANSIBLE_BECOME": "false", "ANSIBLE_CONFIG": str(ANSIBLE_DIR / "ansible.cfg"), **(env or {})},
-    )  # fmt: skip
+    env = {**os.environ, "ANSIBLE_BECOME": "false", "ANSIBLE_CONFIG": str(ANSIBLE_DIR / "ansible.cfg"), **(env or {})}
+    command = ["ansible-playbook", *map(str, args)]
+    proc = subprocess.run(command, cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False, env=env)
     proc.output = proc.stdout + proc.stderr  # type: ignore[attr-defined]
     return proc
 
 
-def local_play(tmp_path: Path, tasks: str, *, bin_dir: Path | None = None, hosts: str = "localhost", name: str = "play.yml") -> Path:
+def local_play(tmp_path: Path, tasks: str, *, bin_dir: Path | None = None, hosts: str = "localhost") -> Path:
     """A play file with no facts or become: tasks is the YAML list under tasks:, indented four spaces.
     bin_dir puts fake host tools first on PATH."""
     environment = f'  environment:\n    PATH: "{bin_dir}:/usr/bin:/bin"\n' if bin_dir else ""
-    play = tmp_path / name
-    play.write_text(f"---\n- hosts: {hosts}\n  gather_facts: false\n  become: false\n{environment}  tasks:\n{tasks}", encoding="utf-8")
+    play = tmp_path / "play.yml"
+    head = f"---\n- hosts: {hosts}\n  gather_facts: false\n  become: false\n{environment}"
+    play.write_text(f"{head}  tasks:\n{tasks}", encoding="utf-8")
     return play
+
+
+def role_tasks(role: str, tasks_from: str | None = None) -> str:
+    """local_play's tasks: import role, or only its tasks_from file."""
+    only = f"        tasks_from: {tasks_from}\n" if tasks_from else ""
+    return f"    - ansible.builtin.import_role:\n        name: {role}\n{only}"
 
 
 def env_name() -> str:

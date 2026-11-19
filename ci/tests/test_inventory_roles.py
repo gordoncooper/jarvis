@@ -70,9 +70,11 @@ def test_env_hosts_file_alone_fails_before_any_change(example_copy: ExampleCopy)
     """Missing the roles inventory fails the opening assert, before any change."""
     require_cli("ansible-playbook")
     for root, env in real_and_copy_envs(example_copy):
+        env_dir = root / "envs" / env
         proc = playbook(
-            "--check", "site.yml", "-i", root / "envs" / env / "inventory" / "hosts.yml",
-            "-e", f"@{root / 'envs' / env / 'values' / 'cluster-vars.yaml'}", "-e", "ansible_connection=local", "-e", "ansible_become=false",
+            "--check", "site.yml", "-i", env_dir / "inventory" / "hosts.yml",
+            "-e", f"@{env_dir / 'values' / 'cluster-vars.yaml'}",
+            "-e", "ansible_connection=local", "-e", "ansible_become=false",
         )  # fmt: skip
         text = proc.output
         assert proc.returncode != 0, text
@@ -94,7 +96,7 @@ def test_data_disk_is_a_host_var_with_no_group(tmp_path: Path) -> None:
     )
     inventory = ["-i", str(hosts), "-i", str(roles_inventory_path())]
     graph, host = (
-        subprocess.run(["ansible-inventory", *args, *inventory], cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False)
+        subprocess.run(["ansible-inventory", *args, *inventory], cwd=ANSIBLE_DIR, capture_output=True, text=True)
         for args in (["--graph"], ["--host", "n1"])
     )
     assert graph.returncode == 0 and host.returncode == 0, graph.stderr + host.stderr

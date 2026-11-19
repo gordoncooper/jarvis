@@ -77,7 +77,7 @@ def _run(
         encoding="utf-8",
     )
     play = tmp / "play.yml"
-    play.write_text("---\n- hosts: all\n  gather_facts: false\n  become: false\n  roles:\n    - kubeconfig\n", encoding="utf-8")
+    play.write_text("- hosts: all\n  gather_facts: false\n  become: false\n  roles: [kubeconfig]\n", encoding="utf-8")
     flags = [*(["--check"] if check else []), *(["--diff"] if diff else [])]
     source_var = json.dumps({"k3s_kubeconfig_path": str(source)})
     return playbook(play, "-i", inventory, "-e", env_extra, "-e", source_var, *flags, env={"HOME": str(home)})

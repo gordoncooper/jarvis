@@ -26,7 +26,7 @@ NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 verify_tool = importlib.import_module("jarvis.verify.run")
 
 
-def _completed(args: Sequence[str], value: object = "", *, returncode: int = 0, stderr: str = "") -> CompletedProcess[str]:
+def _completed(args: Sequence[str], value: object = "", *, returncode=0, stderr="") -> CompletedProcess[str]:
     stdout = json.dumps(value) if not isinstance(value, str) else value
     return CompletedProcess(list(args), returncode, stdout, stderr)
 
@@ -43,7 +43,7 @@ def _write_env(root: Path, *, marker: str = "env-test", time_zone: str | None = 
     return env
 
 
-def _cronjob(created: str, schedule: str, zone: str | None, last: str | None, scheduled: str | None = None, active: str | None = None) -> dict:
+def _cronjob(created: str, schedule: str, zone, last, scheduled=None, active: str | None = None) -> dict:
     status: dict = {}
     if last is not None:
         status["lastSuccessfulTime"] = last
@@ -51,7 +51,8 @@ def _cronjob(created: str, schedule: str, zone: str | None, last: str | None, sc
         status["lastScheduleTime"] = scheduled
     if active:
         status["active"] = [{"kind": "Job", "name": f"{active}-1"}]
-    return {"metadata": {"creationTimestamp": created}, "spec": {"schedule": schedule, "timeZone": zone}, "status": status}
+    spec = {"schedule": schedule, "timeZone": zone}
+    return {"metadata": {"creationTimestamp": created}, "spec": spec, "status": status}
 
 
 class Cluster:
@@ -118,7 +119,8 @@ class Cluster:
                 return _completed(argv, {"items": []}, returncode=self.pods_rc, stderr="forbidden")
             return _completed(argv, {"items": self.pods})
         if argv[:2] == ["get", "pvc"]:
-            items = [{"metadata": {"namespace": ns, "name": name}, "spec": {"volumeName": f"pv-{name}"}} for ns, name in self.pvcs]
+            items = [{"metadata": {"namespace": ns, "name": name}, "spec": {"volumeName": f"pv-{name}"}}
+                     for ns, name in self.pvcs]  # fmt: skip
             return _completed(argv, {"items": items})
         if argv[:2] == ["get", "replicationsource"]:
             if self.bad_sources_json:
@@ -131,10 +133,13 @@ class Cluster:
             return _completed(argv, {"items": [source] if self.source else []})
         if argv[:3] == ["get", "cronjob", "etcd-snapshots"]:
             active = "etcd-snapshots" if self.etcd_active else None
-            return _completed(argv, _cronjob(self.etcd_created, self.etcd_schedule, self.etcd_zone, self.etcd_sync, self.etcd_scheduled, active))
+            job = _cronjob(self.etcd_created, self.etcd_schedule, self.etcd_zone, self.etcd_sync, self.etcd_scheduled,
+                           active)  # fmt: skip
+            return _completed(argv, job)
         if argv[:3] == ["get", "cronjob", "restic-check"]:
             active = "restic-check" if self.check_active else None
-            return _completed(argv, _cronjob(self.check_created, "30 6 * * 3", "Etc/UTC", self.check_sync, self.check_scheduled, active))
+            job = _cronjob(self.check_created, "30 6 * * 3", "Etc/UTC", self.check_sync, self.check_scheduled, active)
+            return _completed(argv, job)
         if argv[:3] == ["get", "cronjob", "restic-offsite"]:
             return _completed(argv, _cronjob("2026-01-01T00:00:00Z", "0 4 * * *", "Etc/UTC", self.offsite_sync))
         if self.hello and argv[:4] == ["get", "deployments", "-n", "hello"]:
@@ -209,7 +214,8 @@ def test_verify_passes_without_writes_or_secret_output(tmp_path: Path, monkeypat
     assert SECRET_VALUE not in output
     assert "owner" not in output.lower()
     for line in ("Flux Ready", "backups-restic present", "node roles and enablelb", "nodes Ready", "pod health",
-                 "backup freshness", "repository integrity check", "LAN HTTPS and certificate issuer=issuer=CN = fixture-ca"):
+                 "backup freshness", "repository integrity check",
+                 "LAN HTTPS and certificate issuer=issuer=CN = fixture-ca"):
         assert f"PASS {line}" in output  # fmt: skip
     _assert_read_only_calls(cluster.calls, [])
     secret_calls = [call for call in cluster.calls if call[:3] == ["get", "secret", "backups-restic"]]
@@ -261,35 +267,39 @@ def _pod(phase: str, created: str | None = "2026-10-31T11:59:50Z", waiting: str 
     return {"metadata": metadata, "status": status}
 
 
-@pytest.mark.parametrize(
-    ("change", "message"),
-    [
-        (lambda cluster: setattr(cluster, "flux_empty", True), "none found"),
-        (lambda cluster: setattr(cluster, "flux_ready", False), "not Ready"),
-        (lambda cluster: setattr(cluster, "secret_rc", 1), "forbidden"),
-        (lambda cluster: setattr(cluster, "node_roles", {"control_plane"}), "role labels"),
-        (lambda cluster: setattr(cluster, "enablelb", False), "enablelb nodes"),
-        (lambda cluster: setattr(cluster, "source", False), "app/data: no ReplicationSource"),
-        (lambda cluster: setattr(cluster, "source_sync", "2026-10-27T01:00:00Z"), "last successful sync is stale"),
-        (lambda cluster: setattr(cluster, "etcd_sync", "2026-10-29T05:00:00Z"), "etcd snapshot copy is stale"),
-        (lambda cluster: setattr(cluster, "hold", True), "rebuild hold is present"),
-        (lambda cluster: setattr(cluster, "bad_sources_json", True), "invalid items"),
-        (lambda cluster: setattr(cluster, "node_ready", False), "n1: not Ready"),
-        (lambda cluster: setattr(cluster, "nodes_rc", 1), "FAIL nodes Ready"),
-        (lambda cluster: setattr(cluster, "pods_rc", 1), "FAIL pod health"),
-        (lambda cluster: setattr(cluster, "pods", [_pod("Running", waiting="CrashLoopBackOff")]), "app/web: CrashLoopBackOff"),
-        (lambda cluster: setattr(cluster, "pods", [_pod("Pending", "2026-10-31T11:54:59Z")]), "app/web: Pending"),
-        (lambda cluster: setattr(cluster, "pods", [_pod("Pending", None)]), "app/web: Pending"),
-    ],
-)
-def test_each_bad_standing_state_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, change, message: str) -> None:
+# Each row: the Cluster field to set, its value, a line the output must hold, and one it must not.
+_BAD_STATES = {
+    "no-flux-objects": ("flux_empty", True, "none found", None),
+    "flux-not-ready": ("flux_ready", False, "not Ready", None),
+    "secret-forbidden": ("secret_rc", 1, "forbidden", None),
+    "role-labels": ("node_roles", {"control_plane"}, "role labels", None),
+    "no-enablelb": ("enablelb", False, "enablelb nodes", None),
+    "no-source": ("source", False, "app/data: no ReplicationSource", None),
+    "stale-source": ("source_sync", "2026-10-27T01:00:00Z", "last successful sync is stale", None),
+    "stale-etcd-copy": ("etcd_sync", "2026-10-29T05:00:00Z", "etcd snapshot copy is stale", None),
+    "rebuild-hold": ("hold", True, "rebuild hold is present", None),
+    "sources-not-json": ("bad_sources_json", True, "invalid items", None),
+    "node-not-ready": ("node_ready", False, "n1: not Ready", None),
+    "nodes-error": ("nodes_rc", 1, "FAIL nodes Ready", "PASS node roles and enablelb"),
+    "pods-error": ("pods_rc", 1, "FAIL pod health", None),
+    # A pod's spec is never printed.
+    "crashloop": ("pods", [_pod("Running", waiting="CrashLoopBackOff")], "app/web: CrashLoopBackOff", "spec"),
+    "pending-past-grace": ("pods", [_pod("Pending", "2026-10-31T11:54:59Z")], "app/web: Pending", None),
+    "pending-no-timestamp": ("pods", [_pod("Pending", None)], "app/web: Pending", None),
+}
+
+
+@pytest.mark.parametrize(("field", "value", "message", "absent"), _BAD_STATES.values(), ids=_BAD_STATES)
+def test_each_bad_standing_state_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, field: str, value, message: str, absent: str | None
+) -> None:
     cluster = Cluster()
-    change(cluster)
+    setattr(cluster, field, value)
     assert _run(tmp_path, cluster, monkeypatch) != 0
     output = capsys.readouterr().out
     assert message in output
-    check = message.removeprefix("FAIL ")
-    assert f"PASS {check}" not in output and SECRET_VALUE not in output
+    assert f"PASS {message.removeprefix('FAIL ')}" not in output and SECRET_VALUE not in output
+    assert absent is None or absent not in output
 
 
 def test_a_pending_pod_within_its_grace_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -306,8 +316,9 @@ def test_a_pending_pod_within_its_grace_passes(tmp_path: Path, monkeypatch: pyte
         (_canary, lambda host, ca, *address: (1, "verify error:num=19:self signed certificate"), "verify error"),
         (lambda host, ca, *address: (0, "not-the-canary\n"), _issued, "unexpected body"),
     ],
+    ids=["certificate-rejected", "chain-unverified", "wrong-canary"],
 )
-def test_https_fails_on_a_bad_certificate_or_canary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, fetch, issuer, message: str) -> None:
+def test_https_fails_on_a_bad_certificate_or_canary(tmp_path, monkeypatch, capsys, fetch, issuer, message) -> None:
     assert _run(tmp_path, Cluster(), monkeypatch, fetch=fetch, issuer=issuer) != 0
     assert message in capsys.readouterr().out
 
@@ -320,7 +331,7 @@ def test_wrong_cluster_marker_stops_after_marker_read(tmp_path: Path, monkeypatc
     assert "environment marker is not ENV=env-test" in capsys.readouterr().out
 
 
-def test_wrong_repository_marker_refuses_before_kubectl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_wrong_repository_marker_refuses_before_kubectl(tmp_path: Path, monkeypatch, capsys) -> None:
     cluster = Cluster()
     assert _run(tmp_path, cluster, monkeypatch, repo_marker="wrong") != 0
     assert cluster.calls == []
@@ -338,15 +349,19 @@ def test_wrong_repository_marker_refuses_before_kubectl(tmp_path: Path, monkeypa
         (lambda cluster: setattr(cluster, "etcd_zone", "Not/AZone"), "Etc/UTC", "time zone"),
         (lambda cluster: setattr(cluster, "etcd_zone", None), "Etc/UTC", "no successful scheduled run"),
     ],
+    ids=[
+        "source-not-cron", "etcd-not-cron", "cron-field-out-of-range", "bad-env-zone", "no-env-zone",
+        "bad-etcd-zone", "no-etcd-zone",
+    ],
 )
-def test_bad_schedule_or_timezone_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, change, time_zone, message: str) -> None:
+def test_bad_schedule_or_timezone_fails_closed(tmp_path: Path, monkeypatch, capsys, change, time_zone, message) -> None:
     cluster = Cluster()
     change(cluster)
     assert _run(tmp_path, cluster, monkeypatch, time_zone=time_zone) != 0
     assert message in capsys.readouterr().out
 
 
-def test_kubectl_uses_the_environment_kubeconfig_and_adds_timeouts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_kubectl_uses_the_environment_kubeconfig_and_adds_timeouts(monkeypatch, tmp_path: Path) -> None:
     seen: list[tuple[list[str], object]] = []
 
     def invoke(args: Sequence[str], **kwargs: object) -> CompletedProcess[str]:
@@ -391,7 +406,8 @@ def _switches(root: Path, key: str, name: str) -> None:
 
 
 def test_core_only_env_passes_and_a_disabled_addon_is_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Core's checks always run. An add-on's checks load only when the env lists it (the test core holds the fixture add-ons)."""
+    """Core's checks always run. An add-on's checks load only when the env lists it (the test core
+    holds the fixture add-ons)."""
     core_only = Cluster()
     assert _run(tmp_path, core_only, monkeypatch) == 0
     assert not any("hello" in call for call in core_only.calls)
@@ -438,6 +454,10 @@ _IN_PROGRESS = "WARN {label}: {what} first run in progress"
         ("2026-10-23T23:00:00Z", "2026-10-31T06:30:00Z", True, _NO_RUN),
         ("2026-10-30T23:30:00Z", "2026-10-31T05:05:00Z", True, {"check": _IN_PROGRESS, "etcd": _NO_RUN}),
     ],
+    ids=[
+        "pending", "running", "finished-unsuccessful", "running-past-interval", "never-ran",
+        "just-past-one-interval", "past-the-grace", "etcd-past-12h",
+    ],
 )
 def test_first_run_warns_only_while_pending_or_running_in_its_first_interval(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, check: str, created: str, scheduled, active: bool, line
@@ -466,8 +486,9 @@ def test_first_run_warns_only_while_pending_or_running_in_its_first_interval(
         ("offsite-backup-copy", "offsite_sync", "2026-10-31T04:20:00Z", "PASS off-host copy"),
         ("offsite-backup-copy", "offsite_sync", "2026-10-29T04:20:00Z", "FAIL off-host copy: off-host copy is stale"),
     ],
+    ids=["check-in-grace", "check-stale", "offsite-fresh", "offsite-stale"],
 )
-def test_copy_freshness_allows_one_interval_plus_grace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, feature, field: str, last: str, line: str) -> None:
+def test_copy_freshness_allows_one_interval_plus_grace(tmp_path, monkeypatch, capsys, feature, field, last, line):
     if feature:
         _switches(tmp_path, "features", feature)
     cluster = Cluster()
@@ -485,7 +506,7 @@ def test_unreadable_switches_fail_verify(tmp_path: Path, monkeypatch: pytest.Mon
     assert "FAIL verify components" in capsys.readouterr().out
 
 
-def test_core_freshness_leaves_an_app_volume_without_a_source_to_the_apps_component(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_core_freshness_leaves_an_app_volume_without_a_source_to_the_apps_component(tmp_path, monkeypatch, capsys):
     """An app- PVC is never backed up with core's credential; one with no source yet is the
     apps component's to report, so core's freshness check passes."""
     _switches(tmp_path, "features", "app-hosting")
