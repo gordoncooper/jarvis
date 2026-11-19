@@ -192,18 +192,44 @@ def test_up_stops_at_the_first_failing_step(tmp_path: Path, monkeypatch: pytest.
 _SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
-def _listing(*items: tuple[str, bool, int, str]) -> subprocess.CompletedProcess[str]:
-    """kubectl's list of Kustomizations: (name, Ready, observed generation, applied revision), each
-    at generation 2."""
+def _listing(*items: tuple[str, bool, int, str], archived: str = "2026-11-19T08:00:00Z"):
+    """up's two kubectl lists for one poll: Kustomizations (name, Ready, observed generation,
+    applied revision), each at generation 2 and last reconciled at 08:30 from the root source; and
+    that source, whose artifact is at the newest applied revision and was archived at archived."""
     import json
 
+    def revision(sha: str) -> str:
+        return f"refs/heads/main@sha1:{sha}"
+
     body = [
-        {"metadata": {"name": name, "generation": 2},
-         "status": {"observedGeneration": observed, "lastAppliedRevision": f"refs/heads/main@sha1:{revision}",
+        {"kind": "Kustomization", "metadata": {"name": name, "namespace": "flux-system", "generation": 2},
+         "spec": {"interval": "10m", "sourceRef": {"kind": "GitRepository", "name": "flux-system"}},
+         "status": {"observedGeneration": observed, "lastAppliedRevision": revision(sha),
+                    "history": [{"lastReconciled": "2026-11-19T08:30:00Z"}],
                     "conditions": [{"type": "Ready", "status": str(ok), "message": "working"}]}}
-        for name, ok, observed, revision in items
+        for name, ok, observed, sha in items
     ]  # fmt: skip
-    return subprocess.CompletedProcess([], 0, json.dumps({"items": body}), "")
+    newest = revision(_SHA if any(sha == _SHA for *_, sha in items) else items[-1][3])
+    source = {"kind": "GitRepository", "metadata": {"name": "flux-system", "namespace": "flux-system"},
+              "status": {"artifact": {"revision": newest, "lastUpdateTime": archived}}}  # fmt: skip
+    return [subprocess.CompletedProcess([], 0, json.dumps({"items": listed}), "") for listed in (body, [source])]
+
+
+def _polls(*listings, calls: list[str] | None = None):
+    """A kubectl for up that answers each poll from the next listing, the last one from then on."""
+    queue = list(listings)
+
+    def kubectl(args, **_kwargs):
+        if calls is not None:
+            calls.append(args[1])
+        kustomizations, sources = queue[0]
+        if args[1].startswith("kustomizations"):
+            return kustomizations
+        if len(queue) > 1:
+            queue.pop(0)
+        return sources
+
+    return kubectl
 
 
 def test_up_waits_for_everything_the_env_tree_applies() -> None:
@@ -226,24 +252,28 @@ def test_up_is_done_only_when_each_is_ready_for_its_spec_at_the_pushed_commit(mo
     monkeypatch.setattr(up, "expected_kustomizations", lambda instance, env: (expected, None))
     monkeypatch.setattr(up, "pushed_revision", lambda instance, env: _SHA)
     old = "f" * 40
-    polls = iter([
+    current = (("flux-system", True, 2, _SHA), ("services", True, 2, _SHA), ("app-x", True, 2, _SHA))
+    calls: list[str] = []
+    polls = _polls(
         _listing(("flux-system", True, 2, old)),
-        _listing(("flux-system", True, 2, _SHA), ("services", True, 1, _SHA), ("app-x", True, 2, old)),
-        _listing(("flux-system", True, 2, _SHA), ("services", False, 2, _SHA), ("app-x", True, 2, old)),
-        _listing(("flux-system", True, 2, _SHA), ("services", True, 2, _SHA), ("app-x", True, 2, old)),
-    ])  # fmt: skip
-    calls: list[int] = []
-    monkeypatch.setattr(up, "kubectl", lambda *a, **k: calls.append(1) or next(polls))
+        _listing(("flux-system", True, 2, _SHA), ("services", True, 1, _SHA), ("app-x", True, 2, _SHA)),
+        _listing(("flux-system", True, 2, _SHA), ("services", False, 2, _SHA), ("app-x", True, 2, _SHA)),
+        # A new core tag: the root source's new artifact keeps its revision, so each still reads Ready.
+        _listing(*current, archived="2026-11-19T08:45:00Z"),
+        _listing(*current),
+        calls=calls,
+    )
+    monkeypatch.setattr(up, "kubectl", polls)
     monkeypatch.setattr(up, "_sleep", lambda seconds: None)
     assert up.wait_for_flux(Path("."), "home") == 0
-    assert len(calls) == 4 and "Ready at 0123456789ab (3)" in capsys.readouterr().out
+    assert len(calls) == 10 and "Ready at 0123456789ab (3)" in capsys.readouterr().out
 
 
 def test_up_names_what_is_not_ready_when_the_wait_runs_out(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(up, "expected_kustomizations", lambda instance, env: ({"flux-system": True, "services": True}, None))
     monkeypatch.setattr(up, "pushed_revision", lambda instance, env: _SHA)
     now = [0.0]
-    monkeypatch.setattr(up, "kubectl", lambda *a, **k: _listing(("flux-system", True, 2, "f" * 40)))
+    monkeypatch.setattr(up, "kubectl", _polls(_listing(("flux-system", True, 2, "f" * 40))))
     monkeypatch.setattr(up, "_clock", lambda: now[0])
     monkeypatch.setattr(up, "_sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
     assert up.wait_for_flux(Path("."), "home") == 1
