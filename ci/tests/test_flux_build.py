@@ -64,8 +64,9 @@ def _layer(root: Path):
 
 def _digest(base: Path) -> str:
     digest = hashlib.sha256()
+    # __pycache__: another xdist worker importing a fixture's verify.py writes it mid-hash.
     for path in sorted(base.rglob("*")):
-        if path.is_file() and ".git" not in path.parts:
+        if path.is_file() and not {".git", "__pycache__"} & set(path.parts):
             digest.update(f"{path.relative_to(base)}\n".encode() + path.read_bytes())
     return digest.hexdigest()
 
