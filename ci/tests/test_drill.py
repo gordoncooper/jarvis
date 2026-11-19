@@ -354,15 +354,11 @@ def _run(
         restores.append(list(args))
         return _completed(args, "PASS restore platform-drill/drill\n", returncode=restore_rc)
 
-    return (
-        drill_tool.run(
-            cluster.kubectl,
-            env="env-test",
-            restore=restore,
-            payload=PAYLOAD,
-        ),
-        restores,
-    )
+    return drill_tool.run(cluster.kubectl, env="env-test", restore=restore, payload=PAYLOAD), restores
+
+
+def _applied_pod(cluster: Cluster, name: str) -> dict:
+    return next(body for body in cluster.applied if body.get("kind") == "Pod" and body["metadata"]["name"] == name)
 
 
 def _assert_cleanup(cluster: Cluster) -> None:
@@ -370,12 +366,7 @@ def _assert_cleanup(cluster: Cluster) -> None:
     assert ("namespace", drill_tool.NAMESPACE) in cluster.deleted
     assert ("pod", drill_tool.ETCD_POD) in cluster.deleted
     assert ("pod", drill_tool.PROBE_POD) in cluster.deleted
-    cleanup = next(
-        body
-        for body in cluster.applied
-        if body.get("kind") == "Pod"
-        and body["metadata"]["name"] == drill_tool.CLEANUP_POD
-    )
+    cleanup = _applied_pod(cluster, drill_tool.CLEANUP_POD)
     assert cleanup["metadata"]["namespace"] == drill_tool.BACKUP_NAMESPACE
     assert cleanup["spec"]["affinity"] == _role_affinity("backup")
     assert cleanup["spec"]["tolerations"] == [_DEDICATED_TOLERATION]
@@ -395,21 +386,12 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     assert restores == [
         [sys.executable, "-m", "jarvis.backups.restore", "--env", "env-test", "--app", "platform-drill", "--node", "node-a"]
     ]
-    etcd_pod = next(
-        body
-        for body in cluster.applied
-        if body.get("kind") == "Pod"
-        and body["metadata"]["name"] == drill_tool.ETCD_POD
-    )
+    etcd_pod = _applied_pod(cluster, drill_tool.ETCD_POD)
     assert etcd_pod["metadata"]["namespace"] == drill_tool.BACKUP_NAMESPACE
     assert etcd_pod["spec"]["affinity"] == _role_affinity("control_plane")
     assert etcd_pod["spec"]["tolerations"] == [_DEDICATED_TOLERATION]
     assert etcd_pod["spec"]["nodeSelector"] == {"role.test/control_plane": "true"}
-    probe = next(
-        body
-        for body in cluster.applied
-        if body.get("kind") == "Pod" and body["metadata"]["name"] == drill_tool.PROBE_POD
-    )
+    probe = _applied_pod(cluster, drill_tool.PROBE_POD)
     assert probe["spec"]["tolerations"] == [_DEDICATED_TOLERATION]
     assert probe["spec"]["affinity"] == _role_affinity("backup")
     assert not any(call[:2] == ["get", "secret"] for call in cluster.calls)
@@ -438,9 +420,7 @@ def test_failure_and_interrupt_cleanup(
     restore_rc: int,
     message: str,
 ) -> None:
-    code, _ = _run(
-        tmp_path, monkeypatch, cluster, restore_rc=restore_rc
-    )
+    code, _ = _run(tmp_path, monkeypatch, cluster, restore_rc=restore_rc)
     assert code != 0
     _assert_cleanup(cluster)
     assert message in capsys.readouterr().out
@@ -682,12 +662,7 @@ def test_cleanup_only_checks_markers_and_deletes_all_drill_state(
     assert ("pod", drill_tool.ETCD_POD) in cluster.deleted
     assert ("pod", drill_tool.CLEANUP_POD) in cluster.deleted
     assert ("pod", drill_tool.PROBE_POD) in cluster.deleted
-    cleanup = next(
-        body
-        for body in cluster.applied
-        if body.get("kind") == "Pod"
-        and body["metadata"]["name"] == drill_tool.CLEANUP_POD
-    )
+    cleanup = _applied_pod(cluster, drill_tool.CLEANUP_POD)
     assert "ns-platform-drill/pvc-drill" in cleanup["spec"]["containers"][0]["command"][2]
     marker_at = cluster.calls.index(
         ["get", "configmap", "cluster-vars", "-n", "flux-system", "-o", "json"]

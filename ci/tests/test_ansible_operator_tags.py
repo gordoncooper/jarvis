@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
-
-from ansible_role_proof import ANSIBLE_DIR, REPO_ROOT, env_name
+from ansible_role_proof import REPO_ROOT, env_name, playbook
 
 from support import sample_root
 
@@ -13,24 +11,8 @@ CLUSTER_VARS_REL = str(sample_root() / "envs" / env_name() / "values" / "cluster
 
 
 def list_tasks_for_tag(tag: str) -> str:
-    run = subprocess.run(
-        [
-            "ansible-playbook",
-            "site.yml",
-            "-i",
-            str(LIST_TASKS_INVENTORY),
-            "-e",
-            f"@{CLUSTER_VARS_REL}",
-            "--list-tasks",
-            "--tags",
-            tag,
-        ],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert run.returncode == 0, run.stderr or run.stdout
+    run = playbook("site.yml", "-i", LIST_TASKS_INVENTORY, "-e", f"@{CLUSTER_VARS_REL}", "--list-tasks", "--tags", tag)
+    assert run.returncode == 0, run.output
     return run.stdout
 
 
