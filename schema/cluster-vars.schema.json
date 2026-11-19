@@ -41,6 +41,12 @@
       "type": "string",
       "pattern": "\\S"
     },
+    "alerts_provider": {
+      "description": "The type of the Flux Provider the alerts feature posts to, such as discord, slack, msteams or googlechat; its whole target is the address in the sealed alerts-notify Secret. generic posts each event as JSON. Flux's Provider CRD lists the types.",
+      "default": "generic",
+      "type": "string",
+      "pattern": "\\S"
+    },
     "app_dns_cluster_ip": {
       "description": "ClusterIP of the App DNS Service, which cluster DNS forwards the zone to. A host address inside service_cidr, not its first address (the Kubernetes API) or its tenth (cluster DNS).",
       "x-required": "when switches.yaml lists app-dns",

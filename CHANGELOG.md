@@ -7,6 +7,14 @@ the upgrade.
 
 ## Unreleased
 
+### Added
+
+- The `alerts` feature: one Flux Alert posts every failed Kustomization or HelmRelease reconcile
+  to a target the env owner seals in `secrets/alerts-notify.sops.yaml` (key `address`), with
+  the Provider type from `alerts_provider` in `values/cluster-vars.yaml` (default `generic`)
+  ([deploy.md](docs/deploy.md#alerts)). Every env's cluster-vars ConfigMap now carries
+  `alerts_provider`.
+
 ### Changed
 
 - Hosted apps' backups belong to app-hosting. The apps rest-server (`restic-apps`) and the

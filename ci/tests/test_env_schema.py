@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 import jarvis.schema.env as env_schema
+from jarvis.env.switches import FEATURE_COMPONENTS
 from jarvis.schema.env import (
     DEFAULT_SSH_USER,
     ValidationError,
@@ -340,21 +341,23 @@ def _render_core_only(env: Path, *features: str) -> None:
     (flux / _switches.PLATFORM_CONFIGS_REL).write_text(_switches.platform_configs(data), encoding="utf-8")
 
 
-def test_env_that_lists_the_offsite_copy_requires_its_sealed_secret(tmp_path: Path) -> None:
-    """Once bootstrapped, an env listing core/feature/offsite-backup-copy requires backups-offsite.sops.yaml."""
+@pytest.mark.parametrize(
+    ("feature", "sealed"),
+    [(name, file) for name, adds in FEATURE_COMPONENTS.items() for file in adds.get("sealed", ())],
+)
+def test_env_that_lists_a_feature_requires_its_sealed_secret(tmp_path: Path, feature: str, sealed: str) -> None:
+    """Once bootstrapped, an env listing a feature requires each file the feature seals."""
     env = _write_env(tmp_path)
     _copy_flux_entry(env)
-    _render_core_only(env, "offsite-backup-copy")
+    _render_core_only(env, feature)
     validate_env_tree(tmp_path)
     (env / "secrets").mkdir(exist_ok=True)
     for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
         (env / "secrets" / f"{name}.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
-    assert "missing required file envs/env-test/secrets/backups-offsite.sops.yaml" in "\n".join(
-        excinfo.value.messages
-    )
-    (env / "secrets" / "backups-offsite.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
+    assert f"missing required file envs/env-test/secrets/{sealed}" in "\n".join(excinfo.value.messages)
+    (env / "secrets" / sealed).write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     validate_env_tree(tmp_path)
 
 
