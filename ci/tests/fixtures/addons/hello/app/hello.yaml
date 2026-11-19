@@ -1,4 +1,4 @@
-# Fixed body for GET /. The addon-hello postBuild fills ${dns_suffix} on the Ingress host.
+# Fixed body for GET /. The addon-hello postBuild fills ${dns_suffix} on the route's hostname.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -90,28 +90,22 @@ spec:
       port: 8080
       targetPort: http
 ---
-# The platform canary's pattern: websecure entrypoint, TLS from the wildcard in
-# TLSStore default, no secret in this namespace.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+# The platform canary's pattern: the core door, no certificate in this namespace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: hello
   namespace: hello
   labels:
     app.kubernetes.io/name: hello
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
-  ingressClassName: traefik
+  parentRefs:
+    - name: jarvis
+      namespace: platform-gateway
+      sectionName: core
+  hostnames:
+    - hello.${dns_suffix}
   rules:
-    - host: hello.${dns_suffix}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: hello
-                port:
-                  name: http
+    - backendRefs:
+        - name: hello
+          port: 8080

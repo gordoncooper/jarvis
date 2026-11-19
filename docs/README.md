@@ -43,7 +43,7 @@
 | [../core/platform/kyverno/CONTRACT.md](../core/platform/kyverno/CONTRACT.md) | Kyverno admission |
 | [../core/feature/CONTRACT.md](../core/feature/CONTRACT.md) | Optional core pieces and how an env enables them, observability included |
 | [../core/platform/testapp/CONTRACT.md](../core/platform/testapp/CONTRACT.md) | Platform canary |
-| [../core/platform/traefik/CONTRACT.md](../core/platform/traefik/CONTRACT.md) | Ingress exposure |
+| [../core/platform/traefik/CONTRACT.md](../core/platform/traefik/CONTRACT.md) | Exposure: the Gateway and its doors |
 | [../addons/CONTRACT.md](../addons/CONTRACT.md) | Add-ons: what every add-on meets |
 | [../ci/tests/fixtures/addons/hello/CONTRACT.md](../ci/tests/fixtures/addons/hello/CONTRACT.md) | Sample add-on (a test fixture) |
 

@@ -1,6 +1,6 @@
 # Jarvis
 
-A cluster foundation you clone and run on day 1: k3s and Flux with ingress, an internal CA, admission policies, backups with restore, and sealed secrets. Features, add-ons and hosted apps bolt on top. Each cluster lives in a git repository you own, pins one core release, and moves when you merge the pull request that bumps it.
+A cluster foundation you clone and run on day 1: k3s and Flux with a Gateway API front door, an internal CA, admission policies, backups with restore, and sealed secrets. Features, add-ons and hosted apps bolt on top. Each cluster lives in a git repository you own, pins one core release, and moves when you merge the pull request that bumps it.
 
 - **Start here:** [Quickstart](docs/quickstart.md), one node to a verified cluster.
 - **How it fits together:** [Concepts](docs/concepts.md).

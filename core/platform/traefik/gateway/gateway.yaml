@@ -1,0 +1,44 @@
+# The core door: HTTPS for *.${dns_suffix}, from any namespace that is not a hosted app's.
+# Only core's wiring creates namespaces and only it sets hosting.jarvis.io/app, so a tenant
+# can neither attach here nor shed the label. app-hosting adds the apps door beside it
+# (core/feature/app-hosting/kustomization.yaml). Both doors share Traefik's websecure
+# entrypoint (container port 8443, published on 443): shared-address mode.
+# platform-configs postBuild fills ${dns_suffix}.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: jarvis
+  namespace: platform-gateway
+spec:
+  gatewayClassName: traefik
+  listeners:
+    - name: core
+      protocol: HTTPS
+      port: 8443
+      hostname: "*.${dns_suffix}"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: wildcard-tls
+      allowedRoutes:
+        kinds:
+          - kind: HTTPRoute
+        namespaces:
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: hosting.jarvis.io/app
+                operator: DoesNotExist
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard
+  namespace: platform-gateway
+spec:
+  secretName: wildcard-tls
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.${dns_suffix}"

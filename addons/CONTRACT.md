@@ -11,7 +11,7 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | Slots | `addons/slots/<slot>/CONTRACT.md`. One add-on per slot per env. Core and other add-ons refer to the slot, never the add-on |
 | Values | The env's published `cluster-vars` keys, as inline `postBuild.substitute` entries on its Kustomizations |
 | Backups | Its PVCs are enrolled with core's credential ([backups](../core/platform/backups/CONTRACT.md)); it writes no VolSync object or restic URL |
-| TLS | The wildcard on TLSStore `default` serves `<name>.${dns_suffix}` |
+| Exposure | The core door ([traefik](../core/platform/traefik/CONTRACT.md)) and its wildcard serve `<name>.${dns_suffix}` |
 | Checks | Optional `addons/<name>/verify.py`, registered with `verify.registry.register`, loaded only when the env lists the add-on |
 
 ## Expects
@@ -24,7 +24,7 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | Flux Kustomizations | In `flux-system`, named `addon-<name>[-<part>]`, as the tenant, from root source `flux-system`, path under `./addons/<name>/` or `./envs/${jarvis_env}/secrets/<namespace>` for its own namespace. No `patches`, `images`, `components`, prefix, suffix, `kubeConfig` or `substituteFrom`; `dependsOn` only its own |
 | Applied objects | Namespaced, in its own namespaces, no RBAC or Flux objects. Nothing cluster-scoped but its Namespaces |
 | Secrets | Sealed under `envs/<env>/secrets/<namespace>/` with `jarvis encrypt --env <env> --namespace <namespace> --name <name>-<purpose>`, `prune: disabled`; decrypted only by its Kustomization in `flux-system` |
-| Ingress | Host `<name>.${dns_suffix}` or `<part>.<name>.${dns_suffix}`, class `traefik`, `router.entrypoints: websecure`, `router.tls: "true"`, no `spec.tls`. No LoadBalancer |
+| HTTPRoute | Hostname `<name>.${dns_suffix}` or `<part>.<name>.${dns_suffix}`, on Gateway `platform-gateway/jarvis` section `core`. No LoadBalancer |
 | Slot | Label `addons.jarvis.io/slot: <slot>` on its Kustomizations; the slot exists |
 | Name | Not `apps` (hosted apps own `*.apps.<dns_suffix>`) |
 | Dependencies | Platform, feature and slot contracts only, never another add-on |

@@ -8,7 +8,7 @@ A static page served by an unprivileged nginx (`nginxinc/nginx-unprivileged`, pi
 - **Internet egress.** `network.egress.internet: true`: `/internet/` fetches a public page. Never the LAN or the cluster.
 - **ConfigMap-driven config and an init container.** The nginx site is a ConfigMap template; the `render-config` init container writes it, with the cluster DNS address filled in, into a memory-backed emptyDir.
 - **Restricted pods.** Non-root, all capabilities dropped, `RuntimeDefault` seccomp, read-only root filesystem (emptyDir for `/tmp`), `priorityClassName: hosted-app`, startup, readiness and liveness probes on `/healthz`, memory request equal to limit (web 64Mi, init 16Mi).
-- **Ingress.** `ingressClassName: traefik`, `websecure` entrypoint and TLS annotation, host `${app_host}`.
+- **HTTPRoute** on the apps door (Gateway `platform-gateway/jarvis`, `sectionName: apps`), hostname `${app_host}`.
 
 - `app.yaml`: `network.web.port: 8080`, `egress.apps: [notes]`, `egress.internet: true`, `volumes: []`.
 - Address: `https://hello-web.apps.<dns suffix>`.

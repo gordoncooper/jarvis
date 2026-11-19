@@ -66,7 +66,7 @@ _KUSTOMIZATION_FIELDS = frozenset(
 # Role groups and resources an app may hold, from the kinds it ships.
 _PLURALS = {
     "ConfigMap": "configmaps", "Secret": "secrets", "Service": "services", "PersistentVolumeClaim": "persistentvolumeclaims",
-    "Deployment": "deployments", "StatefulSet": "statefulsets", "Job": "jobs", "CronJob": "cronjobs", "Ingress": "ingresses",
+    "Deployment": "deployments", "StatefulSet": "statefulsets", "Job": "jobs", "CronJob": "cronjobs", "HTTPRoute": "httproutes",
     "PodDisruptionBudget": "poddisruptionbudgets", "HorizontalPodAutoscaler": "horizontalpodautoscalers",
 }
 ROLE_RESOURCES = frozenset({(group, _PLURALS[kind]) for group, kind in SHIPPED_KINDS} | {("hosting.jarvis.io", "apps")})

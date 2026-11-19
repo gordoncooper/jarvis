@@ -7,6 +7,30 @@ the upgrade.
 
 ## Unreleased
 
+## v0.7.0
+
+### Changed
+
+- Routes are Gateway API. Core's Gateway `platform-gateway/jarvis` has a core door (listener
+  `core`, `*.<dns_suffix>`, for every namespace that is not a hosted app's), and app-hosting
+  adds the apps door (`apps`, `*.apps.<dns_suffix>`, and `apps-granted` for granted custom
+  hostnames) for app namespaces only. Both share Traefik's address on 443 (shared-address mode).
+  Traefik's Ingress and CRD providers are off, so an Ingress routes nothing; testapp, the smoke
+  probe and App DNS (`resources HTTPRoute`) use HTTPRoutes. The wildcard Certificates move to
+  `platform-gateway`, and TLSStore `default` is gone.
+- A hosted app ships an HTTPRoute instead of an Ingress: `hostnames` its own `${app_host}` (or a
+  granted custom hostname), `parentRefs` Gateway `platform-gateway/jarvis` section `apps`
+  ([add-a-hosted-app.md](docs/add-a-hosted-app.md)). Admission refuses a route with no
+  hostnames. The example apps are hello-web v0.2.0 and notes v0.2.0.
+
+### Upgrading
+
+- Move each hosted app to a release that ships an HTTPRoute, in the same commit as the core pin:
+  after the upgrade the cluster refuses an app's Ingress. For the example apps that is
+  `hello-web: v0.2.0` and `notes: v0.2.0` in `values/apps.yaml`; `lan-demo` has no web address
+  and stays.
+- An add-on's Ingress becomes an HTTPRoute on the core door, as `core/platform/testapp` shows.
+
 ## v0.6.1
 
 ### Fixed
