@@ -2,7 +2,8 @@ name: e2e
 
 # A real cluster from this commit: k3d (k3s in Docker), the env's FluxInstance and sync.yaml
 # applied by the flux-operator role, every Kustomization and HelmRelease Ready, the sample hosted
-# apps running at their pinned tags from the apps repository, then jarvis verify --smoke and jarvis drill.
+# apps running at their pinned tags from the apps repository, then jarvis verify --smoke, one alert
+# delivered, and jarvis drill.
 # The env is a throwaway one written by jarvis init's code (ci/e2e/make-env), whose root source is
 # a temporary branch of this repository; its core source is that branch too, or on a release tag
 # push the tag itself. The job deletes the branch.
@@ -44,7 +45,7 @@ jobs:
           run=true
           if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
             changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-            pattern='^(core/|addons/|envs/|infra/ansible/roles/flux-operator/|jarvis/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$|mise\.(toml|lock)$|uv\.lock$|pyproject\.toml$)'
+            pattern='^(core/|addons/|envs/|infra/ansible/roles/(flux-operator|backups)/|jarvis/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$|mise\.(toml|lock)$|uv\.lock$|pyproject\.toml$)'
             grep -Eq "${pattern}" <<<"${changed}" || run=false
           fi
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
@@ -223,6 +224,36 @@ jobs:
       # The standing checks, then each enabled capability's short-lived probe (jarvis/verify/smoke.py).
       - name: jarvis verify --smoke
         run: .venv/bin/jarvis --env "${E2E_ENV}" verify --smoke
+
+      # The env seals testapp as its alerts target (ci/tests/sample.py, ALERTS_TARGET): a Kustomization
+      # that cannot build raises an error event, and notification-controller POSTs it there.
+      - name: A failed reconcile reaches the alerts target
+        run: |
+          set -euo pipefail
+          posts() { kubectl -n platform-testapp logs deploy/testapp | grep -c '"POST /alerts-e2e ' || true; }
+          # Bring-up's own transient failures may have posted already: wait for one more than that.
+          before="$(posts)"
+          kubectl apply -f - <<'EOF'
+          apiVersion: kustomize.toolkit.fluxcd.io/v1
+          kind: Kustomization
+          metadata:
+            name: alerts-e2e
+            namespace: flux-system
+          spec:
+            interval: 10m
+            path: ./alerts-e2e-missing
+            prune: false
+            serviceAccountName: flux-platform
+            sourceRef:
+              kind: GitRepository
+              name: flux-system
+          EOF
+          for attempt in $(seq 1 30); do
+            (( $(posts) > before )) && break
+            [ "${attempt}" -lt 30 ] || { kubectl -n flux-system logs deploy/notification-controller --tail=40 || true; exit 1; }
+            sleep 10
+          done
+          kubectl -n flux-system delete kustomization alerts-e2e
 
       - name: Take an etcd snapshot and copy it, as the schedules would
         run: |
