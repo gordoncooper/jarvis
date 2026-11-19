@@ -1,0 +1,6 @@
+# Opt-in: an env lists alerts in envs/<env>/values/switches.yaml and seals its own
+# alerts-notify.sops.yaml (CONTRACT.md).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - alerts.yaml

@@ -24,6 +24,7 @@ REPO_ROOT = PRODUCT_ROOT
 CLUSTER_VARS_PUBLISHED = frozenset(
     {
         "jarvis_env",
+        "alerts_provider",
         "dns_suffix",
         "time_zone",
         "app_dns_cluster_ip",

@@ -97,6 +97,15 @@ jarvis verify --env <env> [--smoke]
 
 Each standing check prints `PASS`, `WARN` or `FAIL`; any `FAIL` exits 1. `WARN` is a scheduled job whose first run is still due. `--smoke` adds one short-lived probe per enabled capability in namespace `platform-smoke`: a Certificate from the internal CA, a new App DNS name (asked on port 53 from the controller), a hosted app's pod admitted and the same pod with an ungranted risk refused, and each add-on's own probe.
 
+## Alerts
+
+The `alerts` feature posts every failed Kustomization or HelmRelease reconcile to one target ([contract](../core/feature/alerts/CONTRACT.md)).
+
+1. Make the target: a Discord or Slack webhook, a Teams or Google Chat one, or any URL that takes a JSON POST (an ntfy topic, with `alerts_provider` left at `generic`). Set `alerts_provider` in `values/cluster-vars.yaml` to its Flux type.
+2. Write a mode `0600` manifest outside the repo: Secret `flux-system/alerts-notify`, annotation `kustomize.toolkit.fluxcd.io/prune: disabled`, `stringData` `address` set to the webhook URL.
+3. `jarvis encrypt --env <env> --name alerts-notify <manifest>`, then delete the manifest.
+4. List `alerts` under `features`, `jarvis render --env <env>`, commit and push.
+
 ## Drill and restore
 
 `jarvis drill --env <env>`, `jarvis restore --env <env> --app <namespace>` and `jarvis restore --all --env <env>`: [backups.md](backups.md).

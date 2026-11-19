@@ -11,6 +11,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | Key | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
 | `age_key_file` | no | string | `~/.config/sops/age/keys.txt` | The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. SOPS_AGE_KEY_FILE overrides it. |
+| `alerts_provider` | no | string | `generic` | The type of the Flux Provider the alerts feature posts to, such as discord, slack, msteams or googlechat; its whole target is the address in the sealed alerts-notify Secret. generic posts each event as JSON. Flux's Provider CRD lists the types. |
 | `app_dns_cluster_ip` | no; yes when switches.yaml lists app-dns | string |  | ClusterIP of the App DNS Service, which cluster DNS forwards the zone to. A host address inside service_cidr, not its first address (the Kubernetes API) or its tenth (cluster DNS). |
 | `apps_git_repo_url` | no; yes when switches.yaml lists an app | string |  | The hosted apps repository, https, read with no credential. Anyone's: the example apps beside core, or your own. |
 | `backup_check_schedule` | no | string | `30 6 * * 3` | Five-field cron for the weekly restic repository check (CronJob platform-backups/restic-check), in time_zone. The check takes no lock, so it never blocks a backup; a prune at the same time can fail one run, and the Job retries. |

@@ -29,6 +29,8 @@ from jarvis.env import scaffold  # noqa: E402
 FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 FIXTURE_ADDONS = REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"
 NAME = "env-00"
+# The alerts feature's sealed target: testapp in the cluster, at a path only alerts POST to.
+ALERTS_TARGET = "http://testapp.platform-testapp.svc.cluster.local:8080/alerts-e2e"
 # Every role, a host with a data disk and one without, in as few hosts as cover them: each
 # Ansible proof runs on every host, so each host here costs every proof time.
 HOSTS = """# Host names only; each must resolve from the controller and every node.
@@ -57,7 +59,7 @@ def spec(name: str = NAME, *, features: list[str] | None = None) -> scaffold.Env
         core_tag="v0.2.0",
         nodes=[scaffold.Node.parse("node1", only=True)],
         ssh_user="example",
-        features=["app-dns", "app-hosting", "offsite-backup-copy"] if features is None else features,
+        features=["alerts", "app-dns", "app-hosting", "offsite-backup-copy"] if features is None else features,
         apps_repo_url="https://github.com/example-owner/example-apps",
     )
 
@@ -187,6 +189,9 @@ def add_env_from_spec(
         # The owner seals the target's login by hand; a placeholder stands in.
         _seal(root, name, "backups-offsite", "platform-backups",
               {"RESTIC_REPOSITORY": "rest:https://offsite.example.invalid/", "RESTIC_PASSWORD": "placeholder"})  # fmt: skip
+    if "alerts" in sample.features:
+        # The owner seals the target's webhook; testapp stands in for it.
+        _seal(root, name, "alerts-notify", "flux-system", {"address": ALERTS_TARGET})
     previous = os.environ.get("APPS_REPO")
     os.environ.setdefault("APPS_REPO", str(FIXTURE_APPS_REPO))
     try:
