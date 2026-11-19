@@ -77,20 +77,20 @@ spec:
         (request.resource.group + '/' + request.resource.resource) in [
           '/configmaps', '/secrets', '/services', '/persistentvolumeclaims',
           'apps/deployments', 'apps/statefulsets', 'batch/jobs', 'batch/cronjobs',
-          'networking.k8s.io/ingresses', 'policy/poddisruptionbudgets',
+          'gateway.networking.k8s.io/httproutes', 'policy/poddisruptionbudgets',
           'autoscaling/horizontalpodautoscalers', 'hosting.jarvis.io/apps']
       message: >-
         an app ships only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs,
-        CronJobs, Ingresses, PodDisruptionBudgets, HorizontalPodAutoscalers and its App
+        CronJobs, HTTPRoutes, PodDisruptionBudgets, HorizontalPodAutoscalers and its App
     # The grant reconciler leaves VolSync's movers running, knowing them by their owner.
     - expression: "request.resource.resource != 'jobs' || request.operation == 'DELETE' || !has(object.metadata.ownerReferences)"
       message: "an app's Job names no owner"
     # Nor may a finalizer hold up what the reconciler deletes. Controllers set their own; a tenant adds none.
     - expression: >-
-        !(request.resource.resource in ['jobs', 'services', 'ingresses']) || request.operation == 'DELETE' ||
+        !(request.resource.resource in ['jobs', 'services', 'httproutes']) || request.operation == 'DELETE' ||
         (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
         (oldObject != null && has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : [])
-      message: "an app adds no finalizer to its Jobs, Services and Ingresses"
+      message: "an app adds no finalizer to its Jobs, Services and HTTPRoutes"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -142,10 +142,10 @@ spec:
         apiVersions: [v1]
         operations: [CREATE, UPDATE]
         resources: [jobs, cronjobs]
-      - apiGroups: [networking.k8s.io]
+      - apiGroups: [gateway.networking.k8s.io]
         apiVersions: [v1]
         operations: [CREATE, UPDATE]
-        resources: [ingresses]
+        resources: [httproutes]
   matchConditions:
     - name: not-the-volsync-controller
       expression: "request.userInfo.username != 'system:serviceaccount:volsync:volsync'"
@@ -240,7 +240,7 @@ spec:
           (has(c.securityContext) && has(c.securityContext.runAsNonRoot)) ? c.securityContext.runAsNonRoot :
           (has(variables.podSecurity.runAsNonRoot) && variables.podSecurity.runAsNonRoot))
     - name: hosts
-      expression: "object.kind == 'Ingress' && has(object.spec.rules) ? object.spec.rules.map(r, has(r.host) ? r.host : '') : []"
+      expression: "object.kind == 'HTTPRoute' && has(object.spec.hostnames) ? object.spec.hostnames : []"
     - name: lanPorts
       expression: >-
         object.kind == 'Service' && has(object.spec.type) && object.spec.type == 'LoadBalancer' ?
@@ -305,7 +305,7 @@ spec:
     - expression: >-
         variables.hosts.all(h, h.startsWith(params.metadata.name + '.apps.') ||
           (has(params.spec.risky) && has(params.spec.risky.hostnames) && h in params.spec.risky.hostnames))
-      message: "grant: an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the app file asks for"
+      message: "grant: an app's HTTPRoute hostname is <name>.apps.<dns suffix>, or a custom hostname the app file asks for"
     # A LoadBalancer port is a network.ports entry: listen as its port, the same protocol, and
     # target as its targetPort (a number; the API server defaults an unset one to the port).
     - expression: >-
@@ -336,22 +336,6 @@ spec:
           (has(c.resources.limits) && 'memory' in c.resources.limits &&
            quantity(string(c.resources.requests.memory)).compareTo(quantity(string(c.resources.limits.memory))) == 0))
       message: "a hosted app's container sets a memory limit equal to its memory request (or a limit alone)"
-    # Traefik reads its router settings from annotations; an app keeps only the two its web
-    # address needs, on Traefik's class. The entrypoint is required: without it Traefik serves
-    # the route on every entrypoint, plain HTTP included.
-    - expression: >-
-        object.kind != 'Ingress' ||
-        (has(object.spec.ingressClassName) && object.spec.ingressClassName == 'traefik' &&
-         has(object.metadata.annotations) &&
-         object.metadata.annotations[?'traefik.ingress.kubernetes.io/router.entrypoints'].orValue('') == 'websecure' &&
-         object.metadata.annotations.all(k,
-           !(k.startsWith('traefik.') || k.contains('traefik.io/') || k.contains('ingress.kubernetes.io/') ||
-             k == 'kubernetes.io/ingress.class') ||
-           (k == 'traefik.ingress.kubernetes.io/router.entrypoints' && object.metadata.annotations[k] == 'websecure') ||
-           (k == 'traefik.ingress.kubernetes.io/router.tls' && object.metadata.annotations[k] == 'true')))
-      message: >-
-        an app's Ingress sets ingressClassName: traefik and router.entrypoints: websecure, and of
-        Traefik's and other ingress controllers' annotations carries only that and router.tls: "true"
     - expression: >-
         object.kind != 'Service' || !has(object.metadata.annotations) ||
         object.metadata.annotations.all(k, !(k.startsWith('traefik.') || k.contains('traefik.io/')))
@@ -412,10 +396,10 @@ spec:
         apiVersions: [v1]
         operations: [CREATE, UPDATE]
         resources: [jobs, cronjobs]
-      - apiGroups: [networking.k8s.io]
+      - apiGroups: [gateway.networking.k8s.io]
         apiVersions: [v1]
         operations: [CREATE, UPDATE]
-        resources: [ingresses]
+        resources: [httproutes]
   matchConditions:
     - name: not-the-volsync-controller
       expression: "request.userInfo.username != 'system:serviceaccount:volsync:volsync'"
@@ -510,7 +494,7 @@ spec:
           (has(c.securityContext) && has(c.securityContext.runAsNonRoot)) ? c.securityContext.runAsNonRoot :
           (has(variables.podSecurity.runAsNonRoot) && variables.podSecurity.runAsNonRoot))
     - name: hosts
-      expression: "object.kind == 'Ingress' && has(object.spec.rules) ? object.spec.rules.map(r, has(r.host) ? r.host : '') : []"
+      expression: "object.kind == 'HTTPRoute' && has(object.spec.hostnames) ? object.spec.hostnames : []"
     - name: lanPorts
       expression: >-
         object.kind == 'Service' && has(object.spec.type) && object.spec.type == 'LoadBalancer' ?
@@ -547,14 +531,15 @@ spec:
       message: "grant: host network and host ports need the env's '<app>: host-network' exception"
     - expression: "!variables.usesHostPath || variables.grants[?'hosting.jarvis.io/host-path'].orValue('') == 'true'"
       message: "grant: hostPath volumes need the env's '<app>: host-path' exception"
+    # A route with no hostnames takes its listener's: every name on the apps door.
     - expression: >-
-        object.kind != 'Ingress' ||
-        (!has(object.spec.defaultBackend) && !has(object.spec.tls) && has(object.spec.rules) &&
+        object.kind != 'HTTPRoute' ||
+        (size(variables.hosts) > 0 &&
          variables.hosts.all(h, h == variables.grants[?'hosting.jarvis.io/host'].orValue('-') ||
            h in variables.grants[?'hosting.jarvis.io/hostnames'].orValue('').split(',')))
       message: >-
-        grant: an app's Ingress host is <name>.apps.<dns suffix>, or a custom hostname the env grants as
-        '<app>: hostname <name>'; no default backend and no spec.tls (the apps wildcard serves it)
+        grant: an app's HTTPRoute names its hostnames, each <name>.apps.<dns suffix> or a custom
+        hostname the env grants as '<app>: hostname <name>'
     - expression: >-
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type in ['ClusterIP', 'LoadBalancer']
       message: "an app's Services are ClusterIP, or LoadBalancer for its network.ports; no NodePort or ExternalName"

@@ -67,10 +67,11 @@ def test_committed_env_00_render_wires_the_examples_and_passes_env_schema() -> N
 
 def test_examples_pass_admission_with_the_env_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Rule: every example object is admitted with env-00's exception line, once app-priority
-    has set its class (the examples set none)."""
+    has set its class (the examples set none). Routes: test_app_admission_apiserver.py."""
     _instance, _env_dir, values = _env(tmp_path)
     _admission_env(monkeypatch, values)
-    cases = [(doc, admission.PASS) for app in APPS for doc in admission._mutated(tmp_path, admission._deploy(app))]
+    docs = [doc for app in APPS for doc in admission._deploy(app) if doc["kind"] != "HTTPRoute"]
+    cases = [(doc, admission.PASS) for doc in admission._mutated(tmp_path, docs)]
     admission._run(tmp_path, "granted", None, cases)
 
 

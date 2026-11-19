@@ -38,7 +38,7 @@ SHIPPED_KINDS = frozenset(
         ("apps", "StatefulSet"),
         ("batch", "Job"),
         ("batch", "CronJob"),
-        ("networking.k8s.io", "Ingress"),
+        ("gateway.networking.k8s.io", "HTTPRoute"),
         ("policy", "PodDisruptionBudget"),
         ("autoscaling", "HorizontalPodAutoscaler"),
     }
@@ -46,11 +46,6 @@ SHIPPED_KINDS = frozenset(
 _WORKLOADS = {"Deployment", "StatefulSet", "Job", "CronJob"}
 # MutatingPolicy app-priority sets it on every workload; app-file refuses another.
 PRIORITY_CLASS = "hosted-app"
-# The only router annotations an app's Ingress carries (app-file holds the same pairs).
-INGRESS_ANNOTATIONS = {
-    "traefik.ingress.kubernetes.io/router.entrypoints": "websecure",
-    "traefik.ingress.kubernetes.io/router.tls": "true",
-}
 # The CRD's CEL rules, by rule text. A rule added to the CRD fails here until it has its twin.
 _RULES = {
     "!('all' in self) || self.size() == 1": lambda value: "all" not in value or len(value) == 1,
@@ -213,7 +208,7 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
         if (group, kind) not in SHIPPED_KINDS:
             yield (
                 f"{ref}: an app ships only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, "
-                "Jobs, CronJobs, Ingresses, PodDisruptionBudgets and HorizontalPodAutoscalers"
+                "Jobs, CronJobs, HTTPRoutes, PodDisruptionBudgets and HorizontalPodAutoscalers"
             )
             continue
         if metadata.get("namespace") not in (None, f"app-{name}"):
@@ -230,9 +225,8 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
         for claim in _claims(doc):
             yield from _claim_problems(ref, claim, volumes)
         annotations = metadata.get("annotations") or {}
-        if kind == "Ingress":
-            yield from _ingress_problems(ref, doc.get("spec") or {}, hostnames)
-            yield from _router_problems(ref, doc.get("spec") or {}, annotations)
+        if kind == "HTTPRoute":
+            yield from _route_problems(ref, doc.get("spec") or {}, hostnames)
         if kind == "Service":
             yield from _service_problems(ref, doc.get("spec") or {}, lan)
             if any(_traefik_key(key) for key in annotations):
@@ -364,32 +358,16 @@ def _claim_problems(ref: str, claim: dict, volumes: dict[str, bool]) -> Iterator
         yield f"{ref}: claim {claim_name} is declared backup: {str(volumes[claim_name]).lower()}, so it {want}"
 
 
-def _ingress_problems(ref: str, spec: dict, hostnames: set[str]) -> Iterator[str]:
-    if "defaultBackend" in spec or "tls" in spec:
-        yield f"{ref}: sets no default backend and no tls; the apps wildcard serves {HOST_VARIABLE}"
-    rules = spec.get("rules") or []
-    if not rules:
-        yield f"{ref}: names its host in a rule"
-    for rule in rules:
-        host = rule.get("host")
+def _route_problems(ref: str, spec: dict, hostnames: set[str]) -> Iterator[str]:
+    if not spec.get("hostnames"):
+        yield f"{ref}: names its hostnames; one with none takes every name on the apps door"
+    for host in spec.get("hostnames") or []:
         if host != HOST_VARIABLE and host not in hostnames:
-            yield f"{ref}: host {host!r} is {HOST_VARIABLE} (<name>.apps.<dns suffix>) or one of risky.hostnames"
+            yield f"{ref}: hostname {host!r} is {HOST_VARIABLE} (<name>.apps.<dns suffix>) or one of risky.hostnames"
 
 
 def _traefik_key(key: str) -> bool:
     return key.startswith("traefik.") or "traefik.io/" in key
-
-
-def _router_problems(ref: str, spec: dict, annotations: dict) -> Iterator[str]:
-    if spec.get("ingressClassName") != "traefik":
-        yield f"{ref}: sets ingressClassName: traefik"
-    if annotations.get("traefik.ingress.kubernetes.io/router.entrypoints") != "websecure":
-        yield f"{ref}: sets annotation traefik.ingress.kubernetes.io/router.entrypoints: websecure (no plain-HTTP route)"
-    for key, value in annotations.items():
-        router = _traefik_key(key) or "ingress.kubernetes.io/" in key or key == "kubernetes.io/ingress.class"
-        if router and INGRESS_ANNOTATIONS.get(key) != str(value):
-            yield (f"{ref}: annotation {key} is not allowed; of router annotations an app's Ingress carries only "
-                   + " and ".join(f"{k}: {v!r}" for k, v in INGRESS_ANNOTATIONS.items()))
 
 
 def _service_problems(ref: str, spec: dict, lan: dict[tuple[int, str], int]) -> Iterator[str]:

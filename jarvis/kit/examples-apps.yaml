@@ -2,8 +2,8 @@
 # first-run tour, and what core's tests and e2e run. The apps live in the jarvis-apps repository
 # beside core (each pin is its tag <app>/<version> there); an env's Renovate moves them.
 versions:
-  hello-web: v0.1.0
-  notes: v0.1.1
+  hello-web: v0.2.0
+  notes: v0.2.0
   lan-demo: v0.1.0
 exceptions:
   - lan-demo: lan-port 8080/TCP

@@ -4,5 +4,6 @@ resources:
   # The platform-configs list. Each env's platform-configs path adds only its own secrets.
   - ../backups
   - ../cert-manager/config
+  - ../traefik/gateway
   - ../testapp
   - ../kyverno/rules

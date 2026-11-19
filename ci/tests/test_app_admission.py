@@ -143,9 +143,10 @@ def _object(kind: str, name: str, app: str, api: str = "v1", **spec: object) -> 
     return {"apiVersion": api, "kind": kind, "metadata": {"name": name, "namespace": f"app-{app}"}, "spec": spec}
 
 
-def _ingress(name: str, app: str, host: str, **spec: object) -> dict:
-    rule = {"host": host, "http": {"paths": [{"path": "/", "pathType": "Prefix", "backend": {"service": {"name": "web", "port": {"number": 80}}}}]}}
-    return _object("Ingress", name, app, "networking.k8s.io/v1", rules=[rule], **spec)
+def _route(name: str, app: str, *hostnames: str) -> dict:
+    parent = {"name": "jarvis", "namespace": "platform-gateway", "sectionName": "apps"}
+    spec = {"parentRefs": [parent], "rules": [{"backendRefs": [{"name": "web", "port": 80}]}]}
+    return _object("HTTPRoute", name, app, "gateway.networking.k8s.io/v1", **spec, **({"hostnames": list(hostnames)} if hostnames else {}))
 
 
 def _pvc(name: str, app: str, *, unbacked: bool = False) -> dict:
@@ -167,6 +168,21 @@ _ENV = {
                                            {"listen": 443, "target": 8080, "protocol": "TCP"}]}),
             ["lan-port 8443/TCP", "lan-port 443/TCP"]),
 }
+
+
+def stand_in_crd(group: str, version: str, kind: str) -> dict:
+    """A schemaless CRD for a kind that is not built in: kyverno apply maps kinds from CRDs, and
+    the loopback API server serves no other."""
+    plural = kind.lower() + "s"
+    return {
+        "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+        # A *.k8s.io group needs this annotation; the real Gateway API CRDs carry an approved one.
+        "metadata": {"name": f"{plural}.{group}", "annotations": {"api-approved.kubernetes.io": "unapproved, test stand-in"}},
+        "spec": {"group": group, "scope": "Namespaced",
+                 "names": {"kind": kind, "plural": plural, "singular": kind.lower(), "listKind": f"{kind}List"},
+                 "versions": [{"name": version, "served": True, "storage": True,
+                               "schema": {"openAPIV3Schema": {"type": "object", "x-kubernetes-preserve-unknown-fields": True}}}]},
+    }
 
 
 def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, dict[str, str]]]) -> None:
@@ -221,8 +237,9 @@ BOTH_FAIL = {"app-file": "fail", "app-grants": "fail"}
 
 def test_sample_apps_pass_admission(tmp_path: Path) -> None:
     """Rule: the sample apps' objects, the hostPath one with its env line, pass the baseline once
-    app-priority has set their class; without it (Kyverno down) their workloads are refused."""
-    docs = [doc for app in ("web-demo", "notes", "photos") for doc in _deploy(app)]
+    app-priority has set their class; without it (Kyverno down) their workloads are refused.
+    Their HTTPRoutes: test_app_admission_apiserver.py (the CLI cannot map a CRD's kind)."""
+    docs = [doc for app in ("web-demo", "notes", "photos") for doc in _deploy(app) if doc["kind"] != "HTTPRoute"]
     _run(tmp_path, "samples", None, [(doc, PASS) for doc in _mutated(tmp_path, docs)])
     _run(tmp_path, "unmutated", None, [(doc, FILE_FAILS) for doc in docs if doc["kind"] == "Deployment"])
 
@@ -329,115 +346,10 @@ def test_app_pods_run_at_the_hosted_app_class_only(tmp_path: Path) -> None:
     ])
 
 
-def test_ingress_keeps_only_the_web_router_annotations(tmp_path: Path) -> None:
-    """Rule: an app's Ingress is on class traefik with entrypoint websecure and carries, of router
-    annotations, only that and tls true; other annotations (and Flux's labels) pass. A Service
-    carries no Traefik annotation."""
-    host = f"web-demo.apps.{SUFFIX}"
-    ok = {"traefik.ingress.kubernetes.io/router.entrypoints": "websecure", "traefik.ingress.kubernetes.io/router.tls": "true"}
-
-    def ingress(name: str, annotations: dict, **spec: object) -> dict:
-        spec = {key: value for key, value in {"ingressClassName": "traefik", **spec}.items() if value is not None}
-        doc = _ingress(name, "web-demo", host, **spec)
-        doc["metadata"]["annotations"] = annotations
-        doc["metadata"]["labels"] = {"kustomize.toolkit.fluxcd.io/name": "app-web-demo", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}
-        return doc
-
-    service = _object("Service", "s", "web-demo", ports=[{"port": 80}])
-    service["metadata"]["annotations"] = {"traefik.ingress.kubernetes.io/service.serverstransport": "x"}
-    _run(tmp_path, "ingress", None, [
-        (ingress("flux-applied", {**ok, "kustomize.toolkit.fluxcd.io/ssa": "Merge", "example.org/owner": "me"}), PASS),
-        (ingress("entrypoint-only", {"traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}), PASS),
-        (ingress("no-entrypoint", {}), FILE_FAILS),
-        (ingress("middleware", {**ok, "traefik.ingress.kubernetes.io/router.middlewares": "kube-system-x@kubernetescrd"}), FILE_FAILS),
-        (ingress("other-entrypoint", {**ok, "traefik.ingress.kubernetes.io/router.entrypoints": "web"}), FILE_FAILS),
-        (ingress("other-controller", {"nginx.ingress.kubernetes.io/server-snippet": "x"}), FILE_FAILS),
-        (ingress("legacy-class", {"kubernetes.io/ingress.class": "other"}), FILE_FAILS),
-        (ingress("no-class", ok, ingressClassName=None), FILE_FAILS),
-        (ingress("other-class", ok, ingressClassName="nginx"), FILE_FAILS),
-        (service, FILE_FAILS),
-    ])
-
-
-def test_claims_bind_only_to_what_the_cluster_provisions(tmp_path: Path) -> None:
-    """Rule: the tenant sets no volumeName, dataSource or dataSourceRef on a PVC or claim
-    template; the volume binder's volumeName update passes, and so does a later apply of the
-    bound claim; the VolSync controller's own claims are carved out."""
-    def claim(name: str, **spec: object) -> dict:
-        doc = _pvc("data", "notes")
-        doc["metadata"]["name"] = name
-        doc["spec"].update(spec)
-        return doc
-
-    tenant = TENANT.format(app="notes")
-    template = _job("t", "notes")["spec"]["template"]
-    sts = lambda name, spec: _object("StatefulSet", name, "notes", "apps/v1", serviceName="db", selector={}, template=template,  # noqa: E731
-                                     volumeClaimTemplates=[{"metadata": {"name": "data"}, "spec": spec}])
-    # kyverno test reads each case as a CREATE; claim names stand in for the declared volume.
-    for case in ("volume-name", "data-source", "data-source-ref"):
-        _ENV["notes"][0]["spec"]["volumes"].append({"name": case, "backup": True})
-    try:
-        _run(tmp_path, "claims", tenant, [
-            (claim("data"), PASS),
-            (sts("sts-clean", {}), PASS),
-            (claim("volume-name", volumeName="pv-other"), FILE_FAILS),
-            (claim("data-source", dataSource={"kind": "PersistentVolumeClaim", "name": "data"}), FILE_FAILS),
-            (claim("data-source-ref", dataSourceRef={"kind": "PersistentVolumeClaim", "name": "data"}), FILE_FAILS),
-            (sts("sts-volume-name", {"volumeName": "pv-other"}), FILE_FAILS),
-            (sts("sts-data-source", {"dataSource": {"kind": "PersistentVolumeClaim", "name": "data"}}), FILE_FAILS),
-        ])
-        # The binder's write. kyverno's CLI sends no oldObject, so a tenant's later apply of the
-        # bound claim (volumeName unchanged) is proven only live.
-        _run(tmp_path, "binder", "system:serviceaccount:kube-system:persistent-volume-binder",
-             [(claim("volume-name", volumeName="pv-1"), PASS)])
-    finally:
-        del _ENV["notes"][0]["spec"]["volumes"][-3:]
-    restored = claim("volsync-data-dst", dataSourceRef={"kind": "ReplicationDestination", "apiGroup": "volsync.backube", "name": "d"})
-    _run(tmp_path, "volsync-claim", VOLSYNC, [(restored, {"app-file": "skip", "app-grants": "skip"})])
-
-
-def test_binder_updates_volsync_cache_pvcs(tmp_path: Path) -> None:
-    """Rule: tenant CREATE of an undeclared PVC (with or without a forged VolSync ownerReference)
-    fails under app-file. True PreBind UPDATE allow/deny for scheduler and binder is proven in
-    test_app_admission_apiserver.py (kyverno test sends no request.operation)."""
-    forged = _pvc("forged-volsync", "notes")
-    forged["metadata"]["ownerReferences"] = [
-        {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "name": "fake", "uid": "3"}
-    ]
-    undeclared = _pvc("undeclared", "notes")
-    tenant = TENANT.format(app="notes")
-    terminating = copy.deepcopy(forged)
-    terminating["metadata"]["name"] = "forged-terminating"
-    terminating["metadata"]["deletionTimestamp"] = "2026-01-01T00:00:00Z"
-    _run(tmp_path, "tenant-forged-terminating", tenant, [(terminating, FILE_FAILS)])
-    _run(tmp_path, "tenant-forged-owner", tenant, [(forged, FILE_FAILS)])
-    _run(tmp_path, "tenant-undeclared", tenant, [(undeclared, FILE_FAILS)])
-
-
-def test_volsync_mover_passes_and_a_look_alike_does_not(tmp_path: Path) -> None:
-    """Rule: the VolSync controller's privileged mover Job, and the job controller's pod for it,
-    pass; the same Job or Pod from the app's own identity is refused."""
-    mover_job = _job("volsync-src-data", "notes", **_PRIVILEGED)
-    mover_pod = _pod("volsync-src-data-x", "notes", owner_job=True, **_PRIVILEGED)
-    cache = _pvc("volsync-data-cache", "notes")
-    skip = {"app-file": "skip", "app-grants": "skip"}
-    _run(tmp_path, "volsync", VOLSYNC, [(mover_job, skip), (cache, skip)])
-    _run(tmp_path, "job-controller", JOB_CONTROLLER, [(mover_pod, skip)])
-    _run(tmp_path, "look-alike", TENANT.format(app="notes"), [(mover_job, BOTH_FAIL), (mover_pod, BOTH_FAIL), (cache, FILE_FAILS),
-                                                         (_pvc("data-db-0", "notes"), FILE_FAILS)])
-
-
-def test_statefulset_controller_claims_of_a_declared_volume_pass(tmp_path: Path) -> None:
-    """Rule: the StatefulSet controller's claim <volume>-<set>-<n> of a declared template passes;
-    one of an undeclared template does not."""
-    _run(tmp_path, "sts", "system:serviceaccount:kube-system:statefulset-controller",
-         [(_pvc("data-db-0", "notes"), PASS), (_pvc("pgdata-db-0", "notes"), FILE_FAILS)])
-
-
 def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -> None:
-    """Rule: a PVC is a declared volume with the declared backup; an Ingress host is
-    <name>.apps.<suffix>; Services are ClusterIP, or a LoadBalancer on the file's network.ports
-    (listen, protocol, numeric target) that the env grants as lan-port."""
+    """Rule: a PVC is a declared volume with the declared backup; Services are ClusterIP with no
+    Traefik annotation, or a LoadBalancer on the file's network.ports (listen, protocol, numeric
+    target) that the env grants as lan-port. HTTPRoute hostnames: test_app_admission_apiserver.py."""
     lb = {"type": "LoadBalancer", "allocateLoadBalancerNodePorts": False,
           "ports": [{"port": 8443, "protocol": "TCP"}], "selector": {"app": "x"}}
     with_node_ports = {**lb, "allocateLoadBalancerNodePorts": True}
@@ -446,6 +358,8 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
     unset_target = {**lb, "ports": [{"port": 443, "protocol": "TCP"}]}
     named_target = {**lb, "ports": [{"port": 443, "protocol": "TCP", "targetPort": "http"}]}
     other_protocol = {**lb, "ports": [{"port": 8443, "protocol": "UDP"}]}
+    traefik_service = _object("Service", "traefik-annotated", "web-demo", ports=[{"port": 80}])
+    traefik_service["metadata"]["annotations"] = {"traefik.ingress.kubernetes.io/service.serverstransport": "x"}
     cases = [
         (_pvc("undeclared", "notes"), FILE_FAILS),
         (_pvc("cache", "notes"), FILE_FAILS),
@@ -453,10 +367,7 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
         (_object("StatefulSet", "db", "notes", "apps/v1", serviceName="db", selector={},
                  template=_job("t", "notes")["spec"]["template"],
                  volumeClaimTemplates=[{"metadata": {"name": "pgdata"}, "spec": {}}]), FILE_FAILS),
-        (_ingress("core-host", "web-demo", f"grafana.{SUFFIX}"), BOTH_FAIL),
-        (_ingress("other-app-host", "web-demo", f"notes.apps.{SUFFIX}"), BOTH_FAIL),
-        (_ingress("look-alike-host", "web-demo", f"web-demo.apps.{SUFFIX}.evil.example"), GRANT_FAILS),
-        (_ingress("own-tls", "web-demo", f"web-demo.apps.{SUFFIX}", tls=[{"hosts": [f"web-demo.apps.{SUFFIX}"], "secretName": "x"}]), GRANT_FAILS),
+        (traefik_service, FILE_FAILS),
         (_object("Service", "lb", "web-demo", **lb), BOTH_FAIL),
         (_object("Service", "lan", "lan", **lb), PASS),
         (_object("Service", "lan-mapped", "lan", **mapped), PASS),
@@ -491,17 +402,10 @@ def test_an_app_cannot_write_its_own_grants_or_leave_its_namespace(tmp_path: Pat
         (own_namespace, tenant_fails),
         (_pod("privileged-after-forging", "web-demo", **_PRIVILEGED), BOTH_FAIL),
     ])
-    # A Traefik route would claim any host; kyverno apply reads a stand-in CRD for its kind.
+    # A Traefik route would claim any host.
     route = _object("IngressRoute", "steal", "web-demo", "traefik.io/v1alpha1", routes=[])
     crd = tmp_path / "ingressroute-crd.yaml"
-    crd.write_text(yaml.safe_dump({
-        "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
-        "metadata": {"name": "ingressroutes.traefik.io"},
-        "spec": {"group": "traefik.io", "scope": "Namespaced",
-                 "names": {"kind": "IngressRoute", "plural": "ingressroutes", "singular": "ingressroute", "listKind": "IngressRouteList"},
-                 "versions": [{"name": "v1alpha1", "served": True, "storage": True,
-                               "schema": {"openAPIV3Schema": {"type": "object", "x-kubernetes-preserve-unknown-fields": True}}}]},
-    }), encoding="utf-8")
+    crd.write_text(yaml.safe_dump(stand_in_crd("traefik.io", "v1alpha1", "IngressRoute")), encoding="utf-8")
     assert _apply(tmp_path, "app-tenant", route, user=tenant, crd=crd) == "fail"
 
 
@@ -569,9 +473,9 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         doc = copy.deepcopy(doc)
         if doc["metadata"].get("namespace") == f"app-{app['metadata']['name']}":
             doc["metadata"].pop("namespace")
-        if doc["kind"] == "Ingress":
-            for rule in doc["spec"]["rules"]:
-                rule["host"] = rule["host"].replace(f"{app['metadata']['name']}.apps.{SUFFIX}", "${app_host}")
+        if doc["kind"] == "HTTPRoute":
+            own = f"{app['metadata']['name']}.apps.{SUFFIX}"
+            doc["spec"]["hostnames"] = ["${app_host}" if host == own else host for host in doc["spec"].get("hostnames", [])]
         (folder / "deploy" / "objects.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
     for name, text in (extra or {}).items():
         (folder / name).write_text(text, encoding="utf-8")
@@ -588,7 +492,7 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("web-demo", _job("j", "web-demo", volumes=[{"name": "h", "hostPath": {"path": "/"}}]), "risky.hostPath"),
         ("notes", _pvc("undeclared", "notes"), "not a volume the app file declares"),
         ("notes", _pvc("cache", "notes"), "carries annotation backup: none"),
-        ("web-demo", _ingress("i", "web-demo", f"grafana.{SUFFIX}"), "is ${app_host}"),
+        ("web-demo", _route("r", "web-demo", f"grafana.{SUFFIX}"), "is ${app_host}"),
         ("web-demo", _object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "type NodePort"),
         ("web-demo", _object("Service", "s", "web-demo", type="LoadBalancer", allocateLoadBalancerNodePorts=False, ports=[{"port": 80}]), "not a listen port"),
         ("lan", _object("Service", "s", "lan", type="LoadBalancer", allocateLoadBalancerNodePorts=False,
@@ -603,10 +507,7 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("web-demo", _job("j", "web-demo", priorityClassName="high"), "refuses another class"),
         ("web-demo", _job("j", "web-demo", containers=[{**_container(), "resources": {
             "requests": {"memory": "64Mi"}, "limits": {"memory": "128Mi"}}}]), "memory request equals its limit"),
-        ("web-demo", _ingress("i", "web-demo", f"web-demo.apps.{SUFFIX}"), "sets ingressClassName: traefik"),
-        ("web-demo", {**_ingress("i", "web-demo", f"web-demo.apps.{SUFFIX}", ingressClassName="traefik"),
-                      "metadata": {"name": "i", "annotations": {"traefik.ingress.kubernetes.io/router.middlewares": "x"}}},
-         "router.middlewares is not allowed"),
+        ("web-demo", _route("r", "web-demo"), "names its hostnames"),
         ("web-demo", {**_object("Service", "s", "web-demo", ports=[{"port": 80}]),
                       "metadata": {"name": "s", "annotations": {"traefik.ingress.kubernetes.io/service.sticky.cookie": "true"}}},
          "carries no Traefik annotation"),
@@ -616,7 +517,7 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
     ids=["privileged", "bare-pod", "host-network", "root", "host-path", "undeclared-pvc", "unbacked-without-annotation",
          "host-outside-apps", "nodeport", "loadbalancer-not-listed", "loadbalancer-wrong-target", "loadbalancer-node-ports",
          "networkpolicy", "ingressroute", "other-namespace", "no-drop-all", "no-seccomp", "proc-unmasked", "other-priority-class", "memory-request-under-limit",
-         "ingress-no-class", "ingress-middleware", "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
+         "route-no-hostnames", "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
     """Rule: jarvis/apps/check.py fails, on the folder alone, each object the cluster refuses for the

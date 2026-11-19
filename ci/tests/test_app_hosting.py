@@ -207,21 +207,23 @@ def render_platform(tmp_path: Path, *, hosting: bool) -> dict[tuple[str, str], d
 
 
 def test_app_hosting_off_renders_none_of_it(tmp_path: Path) -> None:
-    """Rule: without the switch, an env gets no app-hosting object and no apps certificate in the
-    TLSStore."""
+    """Rule: without the switch, an env gets no app-hosting object and no apps door: the Gateway
+    has the core listener only."""
     off = render_platform(tmp_path, hosting=False)
     assert not _APP_PIECES & set(off)
-    assert "certificates" not in off[("TLSStore", "default")]["spec"]
+    assert [listener["name"] for listener in off[("Gateway", "jarvis")]["spec"]["listeners"]] == ["core"]
 
 
 def test_app_hosting_on_renders_all_of_it(tmp_path: Path) -> None:
-    """Rule: with the switch, the env gets every app-hosting object and the apps certificate in
-    the TLSStore; nothing else changes (pvc-backup's credential guard is core's, on or off)."""
+    """Rule: with the switch, the env gets every app-hosting object and the apps door beside the
+    core one; nothing else changes (pvc-backup's credential guard is core's, on or off)."""
     on, off = render_platform(tmp_path, hosting=True), render_platform(tmp_path, hosting=False)
     assert _APP_PIECES <= set(on)
     assert set(on) - _APP_PIECES == set(off)
-    assert on[("TLSStore", "default")]["spec"]["certificates"] == [{"secretName": "wildcard-apps-tls"}]
-    for key in set(off) - {("TLSStore", "default")}:
+    gateway = ("Gateway", "jarvis")
+    assert on[gateway]["spec"]["listeners"][0] == off[gateway]["spec"]["listeners"][0]
+    assert [listener["name"] for listener in on[gateway]["spec"]["listeners"]] == ["core", "apps", "apps-granted"]
+    for key in set(off) - {gateway}:
         assert on[key] == off[key], key
 
 

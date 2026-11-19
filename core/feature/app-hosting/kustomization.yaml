@@ -5,8 +5,8 @@
 #     - app-hosting
 #
 # and off by removing it (with its app list). It is a Component, not a directory under
-# resources, because it adds to an object platform-configs already has: TLSStore default
-# serves the apps wildcard. Without the name, the env renders none of this.
+# resources, because it adds to an object platform-configs already has: the apps door, two
+# listeners on core's Gateway. Without the name, the env renders none of this.
 # The per-app wiring (app/) is applied by each app's own wiring Kustomization, not here.
 # backups/ is hosted apps' backups: the apps rest-server and the policies that enroll app volumes.
 apiVersion: kustomize.config.k8s.io/v1alpha1
@@ -21,13 +21,51 @@ resources:
   - grant-revoke.yaml
   - certificate.yaml
 patches:
+  # The apps door: HTTPS for <name>.apps.${dns_suffix}, and apps-granted for a custom hostname
+  # the env grants (outside dns_suffix, so no core name falls to it), from app namespaces only.
+  # Its own listeners, so moving it to its own address later is a listener move, not a reroute.
   - target:
-      group: traefik.io
-      kind: TLSStore
-      name: default
-      namespace: platform-cert-manager
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: jarvis
+      namespace: platform-gateway
     patch: |-
       - op: add
-        path: /spec/certificates
+        path: /spec/listeners/-
         value:
-          - secretName: wildcard-apps-tls
+          name: apps
+          protocol: HTTPS
+          port: 8443
+          hostname: "*.apps.${dns_suffix}"
+          tls:
+            mode: Terminate
+            certificateRefs:
+              - name: wildcard-apps-tls
+          allowedRoutes:
+            kinds:
+              - kind: HTTPRoute
+            namespaces:
+              from: Selector
+              selector:
+                matchExpressions:
+                  - key: hosting.jarvis.io/app
+                    operator: Exists
+      - op: add
+        path: /spec/listeners/-
+        value:
+          name: apps-granted
+          protocol: HTTPS
+          port: 8443
+          tls:
+            mode: Terminate
+            certificateRefs:
+              - name: wildcard-apps-tls
+          allowedRoutes:
+            kinds:
+              - kind: HTTPRoute
+            namespaces:
+              from: Selector
+              selector:
+                matchExpressions:
+                  - key: hosting.jarvis.io/app
+                    operator: Exists
