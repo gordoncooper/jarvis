@@ -346,6 +346,81 @@ def test_app_pods_run_at_the_hosted_app_class_only(tmp_path: Path) -> None:
     ])
 
 
+def test_claims_bind_only_to_what_the_cluster_provisions(tmp_path: Path) -> None:
+    """Rule: the tenant sets no volumeName, dataSource or dataSourceRef on a PVC or claim
+    template; the volume binder's volumeName update passes, and so does a later apply of the
+    bound claim; the VolSync controller's own claims are carved out."""
+    def claim(name: str, **spec: object) -> dict:
+        doc = _pvc("data", "notes")
+        doc["metadata"]["name"] = name
+        doc["spec"].update(spec)
+        return doc
+
+    tenant = TENANT.format(app="notes")
+    template = _job("t", "notes")["spec"]["template"]
+    sts = lambda name, spec: _object("StatefulSet", name, "notes", "apps/v1", serviceName="db", selector={}, template=template,  # noqa: E731
+                                     volumeClaimTemplates=[{"metadata": {"name": "data"}, "spec": spec}])
+    # kyverno test reads each case as a CREATE; claim names stand in for the declared volume.
+    for case in ("volume-name", "data-source", "data-source-ref"):
+        _ENV["notes"][0]["spec"]["volumes"].append({"name": case, "backup": True})
+    try:
+        _run(tmp_path, "claims", tenant, [
+            (claim("data"), PASS),
+            (sts("sts-clean", {}), PASS),
+            (claim("volume-name", volumeName="pv-other"), FILE_FAILS),
+            (claim("data-source", dataSource={"kind": "PersistentVolumeClaim", "name": "data"}), FILE_FAILS),
+            (claim("data-source-ref", dataSourceRef={"kind": "PersistentVolumeClaim", "name": "data"}), FILE_FAILS),
+            (sts("sts-volume-name", {"volumeName": "pv-other"}), FILE_FAILS),
+            (sts("sts-data-source", {"dataSource": {"kind": "PersistentVolumeClaim", "name": "data"}}), FILE_FAILS),
+        ])
+        # The binder's write. kyverno's CLI sends no oldObject, so a tenant's later apply of the
+        # bound claim (volumeName unchanged) is proven only live.
+        _run(tmp_path, "binder", "system:serviceaccount:kube-system:persistent-volume-binder",
+             [(claim("volume-name", volumeName="pv-1"), PASS)])
+    finally:
+        del _ENV["notes"][0]["spec"]["volumes"][-3:]
+    restored = claim("volsync-data-dst", dataSourceRef={"kind": "ReplicationDestination", "apiGroup": "volsync.backube", "name": "d"})
+    _run(tmp_path, "volsync-claim", VOLSYNC, [(restored, {"app-file": "skip", "app-grants": "skip"})])
+
+
+def test_binder_updates_volsync_cache_pvcs(tmp_path: Path) -> None:
+    """Rule: tenant CREATE of an undeclared PVC (with or without a forged VolSync ownerReference)
+    fails under app-file. True PreBind UPDATE allow/deny for scheduler and binder is proven in
+    test_app_admission_apiserver.py (kyverno test sends no request.operation)."""
+    forged = _pvc("forged-volsync", "notes")
+    forged["metadata"]["ownerReferences"] = [
+        {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "name": "fake", "uid": "3"}
+    ]
+    undeclared = _pvc("undeclared", "notes")
+    tenant = TENANT.format(app="notes")
+    terminating = copy.deepcopy(forged)
+    terminating["metadata"]["name"] = "forged-terminating"
+    terminating["metadata"]["deletionTimestamp"] = "2026-01-01T00:00:00Z"
+    _run(tmp_path, "tenant-forged-terminating", tenant, [(terminating, FILE_FAILS)])
+    _run(tmp_path, "tenant-forged-owner", tenant, [(forged, FILE_FAILS)])
+    _run(tmp_path, "tenant-undeclared", tenant, [(undeclared, FILE_FAILS)])
+
+
+def test_volsync_mover_passes_and_a_look_alike_does_not(tmp_path: Path) -> None:
+    """Rule: the VolSync controller's privileged mover Job, and the job controller's pod for it,
+    pass; the same Job or Pod from the app's own identity is refused."""
+    mover_job = _job("volsync-src-data", "notes", **_PRIVILEGED)
+    mover_pod = _pod("volsync-src-data-x", "notes", owner_job=True, **_PRIVILEGED)
+    cache = _pvc("volsync-data-cache", "notes")
+    skip = {"app-file": "skip", "app-grants": "skip"}
+    _run(tmp_path, "volsync", VOLSYNC, [(mover_job, skip), (cache, skip)])
+    _run(tmp_path, "job-controller", JOB_CONTROLLER, [(mover_pod, skip)])
+    _run(tmp_path, "look-alike", TENANT.format(app="notes"), [(mover_job, BOTH_FAIL), (mover_pod, BOTH_FAIL), (cache, FILE_FAILS),
+                                                         (_pvc("data-db-0", "notes"), FILE_FAILS)])
+
+
+def test_statefulset_controller_claims_of_a_declared_volume_pass(tmp_path: Path) -> None:
+    """Rule: the StatefulSet controller's claim <volume>-<set>-<n> of a declared template passes;
+    one of an undeclared template does not."""
+    _run(tmp_path, "sts", "system:serviceaccount:kube-system:statefulset-controller",
+         [(_pvc("data-db-0", "notes"), PASS), (_pvc("pgdata-db-0", "notes"), FILE_FAILS)])
+
+
 def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -> None:
     """Rule: a PVC is a declared volume with the declared backup; Services are ClusterIP with no
     Traefik annotation, or a LoadBalancer on the file's network.ports (listen, protocol, numeric
