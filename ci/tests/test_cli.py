@@ -315,7 +315,7 @@ def test_doctor_finds_a_worktrees_hooks_where_git_runs_them(tmp_path: Path) -> N
     assert (tmp_path / "wt" / ".git").is_file()
     level, message = doctor.check_hook(tmp_path / "wt")[0]
     assert level == "PASS" and str(main / ".git" / "hooks" / "pre-commit") in message
-    assert doctor.check_hook(tmp_path / "wt")[0] == ("PASS", "the pre-commit hook runs jarvis validate")
+    assert doctor.check_hook(tmp_path / "wt")[0][0] == "PASS"
 
 
 def test_version_names_this_release_and_each_envs_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:

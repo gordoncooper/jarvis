@@ -574,8 +574,10 @@ done
 if [ "${#missing[@]}" -eq 0 ]; then
   exit 0
 fi
-# A new node may still be running unattended-upgrades after boot: wait for its lock.
-apt-get -o DPkg::Lock::Timeout=600 update
+# A new node may still be running apt-daily or unattended-upgrades after boot: wait up to 600 s,
+# as Ansible's apt_lock_timeout does. DPkg::Lock::Timeout covers install's dpkg lock only, so
+# update, which takes the lists lock, retries.
+timeout 600 sh -c 'until apt-get update; do sleep 10; done'
 apt-get -o DPkg::Lock::Timeout=600 install -y -- "${missing[@]}"
 """,
         [],
