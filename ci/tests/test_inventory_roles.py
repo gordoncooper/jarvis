@@ -12,6 +12,7 @@ from ansible_role_proof import (
     ANSIBLE_DIR,
     env_inventory_args,
     inventory_path,
+    playbook,
     playbook_recap_field,
     roles_inventory_path,
 )
@@ -69,26 +70,11 @@ def test_env_hosts_file_alone_fails_before_any_change(example_copy: ExampleCopy)
     """Missing the roles inventory fails the opening assert, before any change."""
     require_cli("ansible-playbook")
     for root, env in real_and_copy_envs(example_copy):
-        proc = subprocess.run(
-            [
-                "ansible-playbook",
-                "--check",
-                "site.yml",
-                "-i",
-                str(root / "envs" / env / "inventory" / "hosts.yml"),
-                "-e",
-                f"@{root / 'envs' / env / 'values' / 'cluster-vars.yaml'}",
-                "-e",
-                "ansible_connection=local",
-                "-e",
-                "ansible_become=false",
-            ],
-            cwd=ANSIBLE_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        text = proc.stdout + proc.stderr
+        proc = playbook(
+            "--check", "site.yml", "-i", root / "envs" / env / "inventory" / "hosts.yml",
+            "-e", f"@{root / 'envs' / env / 'values' / 'cluster-vars.yaml'}", "-e", "ansible_connection=local", "-e", "ansible_become=false",
+        )  # fmt: skip
+        text = proc.output
         assert proc.returncode != 0, text
         assert "Assert exactly one control_plane host" in text
         assert "jarvis site --env" in text
@@ -107,22 +93,10 @@ def test_data_disk_is_a_host_var_with_no_group(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     inventory = ["-i", str(hosts), "-i", str(roles_inventory_path())]
-    graph = subprocess.run(
-        ["ansible-inventory", "--graph", *inventory],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
+    graph, host = (
+        subprocess.run(["ansible-inventory", *args, *inventory], cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False)
+        for args in (["--graph"], ["--host", "n1"])
     )
-    assert graph.returncode == 0, graph.stdout + graph.stderr
+    assert graph.returncode == 0 and host.returncode == 0, graph.stderr + host.stderr
     assert "data_disk" not in _parse_graph(graph.stdout)
-
-    host = subprocess.run(
-        ["ansible-inventory", "--host", "n1", *inventory],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert host.returncode == 0, host.stdout + host.stderr
     assert json.loads(host.stdout)["data_disk"] is True

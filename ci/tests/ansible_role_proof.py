@@ -23,6 +23,29 @@ K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
 FLUX_INSTANCE_NAME = "flux"
 
 
+# A play's hosts and connection for a run on this machine.
+LOCALHOST = ("-i", "localhost,", "-e", "ansible_connection=local")
+
+
+def playbook(*args: object, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """ansible-playbook from the Ansible directory, with become off. .output is stdout and stderr together."""
+    proc = subprocess.run(
+        ["ansible-playbook", *map(str, args)], cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False,
+        env={**os.environ, "ANSIBLE_BECOME": "false", "ANSIBLE_CONFIG": str(ANSIBLE_DIR / "ansible.cfg"), **(env or {})},
+    )  # fmt: skip
+    proc.output = proc.stdout + proc.stderr  # type: ignore[attr-defined]
+    return proc
+
+
+def local_play(tmp_path: Path, tasks: str, *, bin_dir: Path | None = None, hosts: str = "localhost", name: str = "play.yml") -> Path:
+    """A play file with no facts or become: tasks is the YAML list under tasks:, indented four spaces.
+    bin_dir puts fake host tools first on PATH."""
+    environment = f'  environment:\n    PATH: "{bin_dir}:/usr/bin:/bin"\n' if bin_dir else ""
+    play = tmp_path / name
+    play.write_text(f"---\n- hosts: {hosts}\n  gather_facts: false\n  become: false\n{environment}  tasks:\n{tasks}", encoding="utf-8")
+    return play
+
+
 def env_name() -> str:
     """The sample instance's env (ci/tests/sample.py)."""
     return "env-00"
