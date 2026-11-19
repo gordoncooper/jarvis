@@ -7,6 +7,21 @@ the upgrade.
 
 ## Unreleased
 
+## v0.6.1
+
+### Fixed
+
+- `jarvis verify`'s Flux Ready, and the wait in `jarvis up`, no longer pass on a Ready left from
+  before a core upgrade. A new core tag reaches an env's root `GitRepository` as a new included
+  artifact under the same revision, and Flux reconciles at once only on a new revision. So each
+  Kustomization applies the new core on its next interval (10 minutes for core's layers) and reads
+  Ready until then. Both now need every Kustomization to have applied its source's current
+  artifact (`status.history`, Flux 2.7 and later), and every HelmRelease and source to be Ready
+  for its current spec. Right after a core pin moves, `verify` fails on Flux Ready, naming each
+  Kustomization that is behind, until Flux catches up; run it again then.
+
+## v0.6.0
+
 ### Added
 
 - The `alerts` feature: one Flux Alert posts every failed Kustomization or HelmRelease reconcile
@@ -111,12 +126,29 @@ the upgrade.
   `git checkout` by hand.
 - The package version is the release tag (hatch-vcs): `uv tool list` and pip show `0.5.2` for an
   install from `v0.5.2`, where they showed `0`. Nothing is bumped by hand at a release.
+- The etcd copy's restic commands wait for the repository lock instead of failing when another
+  restic run holds it. Two `restic init`s at once on a new repository can still delete its
+  config, so a first copy started by hand in a new cluster's first hour can race the schedule
+  (a Limit in `core/platform/backups/CONTRACT.md`).
+- `jarvis site`'s apt tasks wait up to 600 s for the dpkg lock (`apt_lock_timeout` in
+  `infra/ansible/group_vars/all.yml`) instead of failing on a node still running
+  unattended-upgrades.
 
 ### Upgrading
 
 - In each env that hosts apps: delete `backups:` from `values/apps.yaml` and `apps-backup-server`
-  from `features` in `values/switches.yaml`, then `jarvis render`. An app whose credential is
-  sealed keeps its backups; the old selection is not read.
+  from `features` in `values/switches.yaml`, then `jarvis render`. Make these edits on the core
+  release's Renovate PR, which stays red until they are there. An app whose credential is sealed
+  keeps its backups; the old selection is not read.
+- Every env's render gains `alerts_provider` in its cluster-vars ConfigMap; the instance workflow
+  commits it to the Renovate PR, so there is nothing to edit. To turn alerts on, see
+  [deploy.md](docs/deploy.md#alerts).
+- Hosts: nothing to run. (Corrected in v0.6.1; this said to run `jarvis site` for Helm 4.3.2
+  and `python3-kubernetes`.) On an existing cluster that run changes nothing: the flux-operator
+  role installs Helm only to bootstrap Flux Operator on a new cluster, and the k3s role already
+  installed `python3-kubernetes` on control-plane nodes.
+- Right after the pin moves, `jarvis verify` can pass on state from before the upgrade for up to
+  10 minutes; v0.6.1 fixes it. Wait 10 minutes after the Renovate PR merges before you verify.
 
 ## v0.5.2
 

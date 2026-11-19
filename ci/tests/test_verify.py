@@ -16,6 +16,7 @@ from subprocess import CompletedProcess
 import pytest
 import yaml
 
+from jarvis.env import flux_state
 from jarvis.verify.backups import HOLD_NAME, SECRET_KEYS_TEMPLATE
 from jarvis.verify.platform import ENABLELB, FLUX_RESOURCES
 from support import REPO_ROOT
@@ -55,12 +56,31 @@ def _cronjob(created: str, schedule: str, zone, last, scheduled=None, active: st
     return {"metadata": {"creationTimestamp": created}, "spec": spec, "status": status}
 
 
+_ROOT_REVISION = "refs/heads/main@sha1:0123456789abcdef0123456789abcdef01234567"
+
+
+def _flux(kind: str, ready: bool, *, artifact: dict | None = None) -> dict:
+    """One Flux object named flux-system at generation 1, as kubectl lists it."""
+    condition = {"type": "Ready", "status": str(ready), "message": "not Ready"}
+    status: dict = {"observedGeneration": 1, "conditions": [condition]}
+    spec: dict = {}
+    if artifact:
+        status["artifact"] = artifact
+    if kind == "Kustomization":
+        spec = {"interval": "10m", "sourceRef": {"kind": "GitRepository", "name": "flux-system"}}
+        status |= {"lastAppliedRevision": _ROOT_REVISION, "history": [{"lastReconciled": "2026-10-31T11:00:00Z"}]}
+    metadata = {"name": "flux-system", "namespace": "flux-system", "generation": 1}
+    return {"kind": kind, "metadata": metadata, "spec": spec, "status": status}
+
+
 class Cluster:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
         self.marker = "env-test"
         self.flux_empty = False
         self.flux_ready = True
+        # When the root source last archived an artifact; its Kustomization last reconciled at 11:00.
+        self.artifact_at = "2026-10-31T10:00:00Z"
         self.secret_rc = 0
         self.node_roles = {"control_plane", "edge"}
         self.enablelb = True
@@ -96,10 +116,13 @@ class Cluster:
         if argv[:5] == ["get", "service", "-n", "kube-system", "traefik"]:
             # An env with no App DNS: verify reaches Traefik's ServiceLB address.
             return _completed(argv, {"status": {"loadBalancer": {"ingress": [{"ip": "192.0.2.10"}]}}})
+        if argv[:2] == ["get", flux_state.SOURCES]:
+            artifact = {"revision": _ROOT_REVISION, "lastUpdateTime": self.artifact_at}
+            return _completed(argv, {"items": [_flux("GitRepository", self.flux_ready, artifact=artifact)]})
         if argv[0] == "get" and argv[1] in FLUX_RESOURCES:
-            return _completed(argv, {"items": [] if self.flux_empty else [{}]})
-        if argv[0] == "wait":
-            return _completed(argv, "", returncode=0 if self.flux_ready else 1, stderr="not Ready")
+            kinds = {"kustomizations": "Kustomization", "gitrepositories": "GitRepository"}
+            kind = kinds.get(argv[1].split(".")[0], "HelmRelease")
+            return _completed(argv, {"items": [] if self.flux_empty else [_flux(kind, self.flux_ready)]})
         if argv[:3] == ["get", "secret", "backups-restic"]:
             if self.secret_rc:
                 return _completed(argv, "", returncode=1, stderr="forbidden")
@@ -183,7 +206,7 @@ _DATA_FLAGS = {"-d", "--data", "--data-ascii", "--data-binary", "--data-raw", "-
 
 
 def _assert_read_only_calls(kubectl_calls: list[list[str]], external_calls: list[list[str]]) -> None:
-    assert all(call and call[0] in {"get", "wait"} for call in kubectl_calls)
+    assert all(call and call[0] == "get" for call in kubectl_calls)
     for call in external_calls:
         if not call or call[0] != "curl":
             continue
@@ -271,6 +294,9 @@ def _pod(phase: str, created: str | None = "2026-10-31T11:59:50Z", waiting: str 
 _BAD_STATES = {
     "no-flux-objects": ("flux_empty", True, "none found", None),
     "flux-not-ready": ("flux_ready", False, "not Ready", None),
+    # A core pin move: the root source's new artifact keeps its revision, and the Kustomization
+    # still reads Ready from before it.
+    "flux-behind-its-artifact": ("artifact_at", "2026-10-31T11:30:00Z", "has not applied flux-system's artifact", None),
     "secret-forbidden": ("secret_rc", 1, "forbidden", None),
     "role-labels": ("node_roles", {"control_plane"}, "role labels", None),
     "no-enablelb": ("enablelb", False, "enablelb nodes", None),
