@@ -336,33 +336,33 @@ url_api = "https://api.github.com/repos/kyverno/kyverno/releases/assets/73610428
 provenance = "cosign"
 
 [[tools.restic]]
-version = "0.19.1"
+version = "0.20.0"
 backend = "aqua:restic/restic"
-specifiers = ["0.19.1"]
+specifiers = ["0.20.0"]
 
 [tools.restic."platforms.linux-arm64"]
-checksum = "sha256:a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465"
+checksum = "sha256:1188daded239bccb5952a01d2ad33e77a0d3dc34f9d9fc1e7fdda618d44938ef"
 checksum_source = "mise-versions"
-url = "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_arm64.bz2"
-url_api = "https://api.github.com/repos/restic/restic/releases/assets/466999588"
+url = "https://github.com/restic/restic/releases/download/v0.20.0/restic_0.20.0_linux_arm64.bz2"
+url_api = "https://api.github.com/repos/restic/restic/releases/assets/767545384"
 
 [tools.restic."platforms.linux-x64"]
-checksum = "sha256:f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c"
+checksum = "sha256:0ccd9fa7885074a24603b051e01bf9bd8b5e45d6a1791e9d9887e9e9372107f7"
 checksum_source = "mise-versions"
-url = "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_amd64.bz2"
-url_api = "https://api.github.com/repos/restic/restic/releases/assets/466999719"
+url = "https://github.com/restic/restic/releases/download/v0.20.0/restic_0.20.0_linux_amd64.bz2"
+url_api = "https://api.github.com/repos/restic/restic/releases/assets/767546139"
 
 [tools.restic."platforms.macos-arm64"]
-checksum = "sha256:7be0a144ccc377880f294204aa271d76e4b79554b42a751151d425ce6ebac143"
+checksum = "sha256:0962c515acd9fb6937a658e9d8505200f72a6a0c6a2d334c0290b8002377dfb7"
 checksum_source = "mise-versions"
-url = "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_darwin_arm64.bz2"
-url_api = "https://api.github.com/repos/restic/restic/releases/assets/467000314"
+url = "https://github.com/restic/restic/releases/download/v0.20.0/restic_0.20.0_darwin_arm64.bz2"
+url_api = "https://api.github.com/repos/restic/restic/releases/assets/767548483"
 
 [tools.restic."platforms.macos-x64"]
-checksum = "sha256:c38d579622cf602f665234c5a8c315030b6cf70656028fe6dc29a786b60e5f35"
+checksum = "sha256:21f0070ef2bc6f3da2e33c070628e3e026e5237ba5fcddb1f9e0e8cabdd809d5"
 checksum_source = "mise-versions"
-url = "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_darwin_amd64.bz2"
-url_api = "https://api.github.com/repos/restic/restic/releases/assets/467000400"
+url = "https://github.com/restic/restic/releases/download/v0.20.0/restic_0.20.0_darwin_amd64.bz2"
+url_api = "https://api.github.com/repos/restic/restic/releases/assets/767548868"
 
 [[tools.sops]]
 version = "3.13.3"
