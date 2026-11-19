@@ -25,13 +25,13 @@ def _key(item: dict) -> tuple[str, str]:
 def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None:
     """The cluster-wide admission bindings exist. Every listed app's namespace carries its label,
     network baseline and LimitRange; its annotations hold exactly the env's exception lines;
-    every Ingress host in it is <name>.apps.<dns suffix> or a granted hostname. An app- namespace
+    every HTTPRoute hostname in it is <name>.apps.<dns suffix> or a granted hostname. An app- namespace
     the env no longer lists is reported."""
     namespaces = {_key(item)[1]: item for item in _list(kubectl, "namespaces", "list namespaces")}
     policies = {_key(item) for item in _list(kubectl, "networkpolicies", "list NetworkPolicies")}
     ranges = {_key(item) for item in _list(kubectl, "limitranges", "list LimitRanges")}
     bindings = {_key(item)[1] for item in _list(kubectl, "validatingadmissionpolicybindings", "list admission bindings")}
-    ingresses = _list(kubectl, "ingresses", "list Ingresses")
+    routes = _list(kubectl, "httproutes.gateway.networking.k8s.io", "list HTTPRoutes")
     problems = [f"no ValidatingAdmissionPolicyBinding {policy}" for policy in ("app-file", "app-grants") if policy not in bindings]
     listed = _apps.app_names(data)
     for app in listed:
@@ -52,12 +52,12 @@ def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None
                 problems.append(f"{namespace}: annotation {key} is {annotations.get(key)!r}, not the env's {value!r}")
         want = _apps.grant_data(data, app, dns_suffix)
         allowed = {want["host"], *filter(None, want["hostnames"].split(","))}
-        for ingress in ingresses:
-            if _key(ingress)[0] != namespace:
+        for route in routes:
+            if _key(route)[0] != namespace:
                 continue
-            for rule in (ingress.get("spec") or {}).get("rules") or []:
-                if rule.get("host") not in allowed:
-                    problems.append(f"{namespace}/{_key(ingress)[1]}: host {rule.get('host')!r} is not {want['host']} or granted")
+            for host in (route.get("spec") or {}).get("hostnames") or []:
+                if host not in allowed:
+                    problems.append(f"{namespace}/{_key(route)[1]}: hostname {host!r} is not {want['host']} or granted")
     if problems:
         raise CheckError("; ".join(problems))
     leftover = sorted(name for name in namespaces if name.startswith("app-") and name.removeprefix("app-") not in listed)

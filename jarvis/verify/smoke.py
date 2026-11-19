@@ -8,7 +8,7 @@ dry run, which leaves nothing.
   platform     a Certificate from ClusterIssuer internal-ca becomes Ready; a copy of testapp's running
                pod is admitted, and refused by policy images-pinned once unpinned and by Pod
                Security once privileged
-  app-dns      a new Ingress name answers at App DNS's address, with Traefik's address
+  app-dns      a new HTTPRoute name on the core door answers at App DNS's address, with Traefik's address
   app-hosting  a copy of a running pod of a listed app is admitted, and the same copy with one
                risky item the env does not grant that app is refused for that grant
   <add-on>     the probes an add-on's verify.py registers with registry.register_smoke
@@ -33,6 +33,7 @@ OWNER_LABEL = "jarvis.io/owner"
 OWNER = "jarvis-verify-smoke"
 ISSUER = "internal-ca"
 APP_DNS_NAMESPACE = "platform-app-dns"
+GATEWAY_NAMESPACE, GATEWAY_NAME = "platform-gateway", "jarvis"
 TESTAPP_NAMESPACE = "platform-testapp"
 WAIT_SECONDS = 180
 POLL_SECONDS = 5
@@ -153,15 +154,18 @@ def probe_app_dns(ctx: Context) -> None:
         "metadata": {"name": "smoke", "namespace": NAMESPACE},
         "spec": {"ports": [{"name": "http", "port": 80}]},
     }
-    route = {"pathType": "Prefix", "path": "/", "backend": {"service": {"name": "smoke", "port": {"number": 80}}}}
-    ingress = {
-        "apiVersion": "networking.k8s.io/v1",
-        "kind": "Ingress",
+    route = {
+        "apiVersion": "gateway.networking.k8s.io/v1",
+        "kind": "HTTPRoute",
         "metadata": {"name": "smoke", "namespace": NAMESPACE},
-        "spec": {"ingressClassName": "traefik", "rules": [{"host": host, "http": {"paths": [route]}}]},
+        "spec": {
+            "parentRefs": [{"name": GATEWAY_NAME, "namespace": GATEWAY_NAMESPACE, "sectionName": "core"}],
+            "hostnames": [host],
+            "rules": [{"backendRefs": [{"name": "smoke", "port": 80}]}],
+        },
     }
     _apply(ctx, service, "create Service smoke")
-    _apply(ctx, ingress, "create Ingress smoke")
+    _apply(ctx, route, "create HTTPRoute smoke")
     server, expected = _app_dns_address(ctx), traefik_address(ctx.kubectl)
     _until(f"App DNS ({server}) did not answer {host} with Traefik's address {expected}", lambda: expected in _resolve(server, host))
 
@@ -282,7 +286,7 @@ def platform_probes(ctx: Context) -> list[Check]:
 
 @register_smoke("app-dns")
 def app_dns_probes(ctx: Context) -> list[Check]:
-    return [(20, "smoke: a new Ingress name answers at App DNS", lambda: probe_app_dns(ctx))]
+    return [(20, "smoke: a new HTTPRoute name answers at App DNS", lambda: probe_app_dns(ctx))]
 
 
 @register_smoke("apps")

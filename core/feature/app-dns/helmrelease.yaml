@@ -1,6 +1,7 @@
 # Chart 4.0.1 (app 1.9.2). image.tag is that appVersion pinned by digest.
-# k8s_gateway reads Ingress status.loadBalancer.ingress. k3s ServiceLB
-# writes the edge node addresses there. Preference ip selects that address.
+# k8s_gateway answers each HTTPRoute hostname with its Gateway's status.addresses, which
+# Traefik copies from its LoadBalancer Service, where k3s ServiceLB writes the edge node
+# addresses. Preference ip selects an address over a hostname.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -59,7 +60,7 @@ spec:
           - name: k8s_gateway
             parameters: ${dns_suffix}
             configBlock: |-
-              resources Ingress
+              resources HTTPRoute
               loadBalancerAddressPreference ip
               ttl 30
           - name: cache

@@ -1,4 +1,4 @@
-# Fixed body for GET /. platform-configs postBuild fills ${dns_suffix} on the Ingress host.
+# Fixed body for GET /. platform-configs postBuild fills ${dns_suffix} on the route's hostname.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -91,29 +91,23 @@ spec:
       port: 8080
       targetPort: http
 ---
-# Traefik 3.7 skips a tls section with no secretName. The websecure entrypoint
-# already terminates TLS, and TLSStore default in platform-cert-manager is the
-# wildcard. A secret in this namespace would be a second certificate.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+# The core door's first user. The listener terminates TLS with the wildcard; nothing here
+# holds a certificate.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: testapp
   namespace: platform-testapp
   labels:
     app.kubernetes.io/name: testapp
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
-  ingressClassName: traefik
+  parentRefs:
+    - name: jarvis
+      namespace: platform-gateway
+      sectionName: core
+  hostnames:
+    - testapp.${dns_suffix}
   rules:
-    - host: testapp.${dns_suffix}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: testapp
-                port:
-                  name: http
+    - backendRefs:
+        - name: testapp
+          port: 8080

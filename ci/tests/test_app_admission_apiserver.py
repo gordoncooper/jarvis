@@ -18,7 +18,7 @@ import pytest
 from apiserver import Api as _Api
 from apiserver import eventually as _eventually
 from apiserver import serve, token
-from test_app_admission import POLICIES, _app, _docs, _job, _pod, _wiring
+from test_app_admission import POLICIES, SUFFIX, _app, _deploy, _docs, _job, _pod, _route, _wiring, stand_in_crd
 
 from support import REPO_ROOT
 
@@ -50,7 +50,7 @@ PATHS = {
     "Pod": "/api/v1/namespaces/{namespace}/pods",
     "Job": "/apis/batch/v1/namespaces/{namespace}/jobs",
     "Service": "/api/v1/namespaces/{namespace}/services",
-    "Ingress": "/apis/networking.k8s.io/v1/namespaces/{namespace}/ingresses",
+    "HTTPRoute": "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/httproutes",
     "NetworkPolicy": "/apis/networking.k8s.io/v1/namespaces/{namespace}/networkpolicies",
     "PersistentVolumeClaim": "/api/v1/namespaces/{namespace}/persistentvolumeclaims",
 }
@@ -188,6 +188,8 @@ def api():
         (server.account / "token").write_text(revoke_token, encoding="utf-8")
         server.certs = work / "certs"
         server.create(_docs(CRD)[0])
+        # k3s's Gateway API CRDs stand in schemaless: the policies read only the route's fields.
+        server.create(stand_in_crd("gateway.networking.k8s.io", "v1", "HTTPRoute"))
         server.create(_docs(CRD.parents[1] / "priority.yaml")[0])
         _ensure_pvc_rbac(server)
         # The old bindings go first: once the cases below see the new ones refuse, the server
@@ -207,9 +209,9 @@ def api():
                 _app("annotation-gone", risky={"privileged": True}), _app("upgraded"), _app("notes")]
 
         def served() -> bool:
-            return server.request("GET", PATHS["App"].format(namespace="app-wired"))[0] == 200
+            return all(server.request("GET", PATHS[kind].format(namespace="app-wired"))[0] == 200 for kind in ("App", "HTTPRoute"))
 
-        _eventually(served, "the App CRD to be served")
+        _eventually(served, "the App and HTTPRoute CRDs to be served")
         for app in apps:
             server.create(app)
         yield server
@@ -240,6 +242,20 @@ def test_a_risky_item_needs_the_namespace_annotation(api: Api) -> None:
     when it is missing, admitted when the wiring wrote the env's grant."""
     _refused(api, _deployment("annotation-gone", **PRIVILEGED), "'<app>: privileged' exception")
     _admitted(api, _deployment("granted", **PRIVILEGED))
+
+
+def test_an_apps_routes_name_only_its_own_or_granted_hostnames(api: Api) -> None:
+    """Rule: an app's HTTPRoute names its hostnames, each its own <name>.apps.<suffix> or one the
+    file asks for and the env grants (the revoke case below admits one); a route with none would
+    take every name on the apps door. The sample app's own route passes."""
+    (sample,) = [doc for doc in _deploy("notes") if doc["kind"] == "HTTPRoute"]
+    _admitted(api, sample)
+    for route in (_route("core-host", "notes", f"grafana.{SUFFIX}"),
+                  _route("other-app-host", "notes", f"wired.apps.{SUFFIX}"),
+                  _route("look-alike-host", "notes", f"notes.apps.{SUFFIX}.evil.example"),
+                  _route("second-host", "notes", f"notes.apps.{SUFFIX}", f"wired.apps.{SUFFIX}"),
+                  _route("no-hostnames", "notes")):
+        _refused(api, route, "an app's HTTPRoute")
 
 
 def test_old_per_app_bindings_a_live_env_keeps_change_nothing(api: Api) -> None:
@@ -455,15 +471,11 @@ def test_a_revoked_grant_stops_what_runs_on_it_and_keeps_the_data(api: Api) -> N
     service = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "lan", "namespace": ns},
                "spec": {"type": "LoadBalancer", "allocateLoadBalancerNodePorts": False, "selector": {"a": "b"},
                         "ports": [{"port": 8443, "targetPort": 8443, "protocol": "TCP"}]}}
-    backend = {"service": {"name": "lan", "port": {"number": 8443}}}
-    ingress = {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
-               "metadata": {"name": "custom", "namespace": ns, "annotations": {"traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}},
-               "spec": {"ingressClassName": "traefik", "rules": [{"host": "custom.example.test", "http": {
-                   "paths": [{"path": "/", "pathType": "Prefix", "backend": backend}]}}]}}
+    route = _route("custom", app, "custom.example.test")
     lan_range = [{"ipBlock": {"cidr": "10.200.0.0/24"}}]
     for doc in (_deployment(app, **PRIVILEGED), risky, _pod("clean", app), _pvc("data", ns, annotations={"backup": "none"}),
                 _job("task", app, restartPolicy="Never", **PRIVILEGED), mover,
-                _pod("mover-pod", app, owner_job=True, **PRIVILEGED), task_pod, service, ingress,
+                _pod("mover-pod", app, owner_job=True, **PRIVILEGED), task_pod, service, route,
                 _lan_policy(ns, "app-web", policyTypes=["Ingress"], ingress=[{"ports": [{"port": 8080, "protocol": "TCP"}]}]),
                 _lan_policy(ns, "app-lan-all", policyTypes=["Egress"], egress=[{"to": lan_range}]),
                 _lan_policy(ns, "app-lan", policyTypes=["Egress"], egress=[
@@ -480,7 +492,7 @@ def test_a_revoked_grant_stops_what_runs_on_it_and_keeps_the_data(api: Api) -> N
     _reconcile(api)
     assert api.names("Pod", ns) == {"clean", "mover-pod", "odd-memory"}
     assert api.names("Job", ns) == {"volsync-src-data"}
-    assert api.names("Service", ns) == api.names("Ingress", ns) == set()
+    assert api.names("Service", ns) == api.names("HTTPRoute", ns) == set()
     assert api.names("NetworkPolicy", ns) == {"app-web"}
     assert api.names("Deployment", ns) == {"web"}
     assert api.names("PersistentVolumeClaim", ns) == {"data"}
@@ -518,7 +530,7 @@ def test_a_tenant_job_cannot_pose_as_a_volsync_mover(api: Api) -> None:
 
 
 def test_a_tenant_adds_no_finalizer_to_what_the_reconciler_deletes(api: Api) -> None:
-    """Rule: a finalizer would leave a deleted Job or Ingress in place, so app-tenant refuses one."""
+    """Rule: a finalizer would leave a deleted Job or HTTPRoute in place, so app-tenant refuses one."""
     job = _job("held", "notes", restartPolicy="Never")
     job["metadata"]["finalizers"] = ["example.test/hold"]
     _eventually(lambda: "adds no finalizer" in api.refusal(job, as_user=TENANT_NOTES), "app-tenant to refuse the finalizer")

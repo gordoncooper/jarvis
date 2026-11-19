@@ -1,4 +1,4 @@
-"""Fixture: known file at testapp.${dns_suffix}, no per-Ingress TLS secret.
+"""Fixture: known file at testapp.${dns_suffix}.
 
 The pod uses RuntimeDefault seccomp and a read-only root. /tmp is the only emptyDir.
 """
@@ -12,7 +12,7 @@ from support import _kustomize_build
 _BODY = "testapp\n"
 
 
-def test_fixture_serves_known_file_on_the_default_certificate() -> None:
+def test_fixture_serves_known_file() -> None:
     docs = {
         (doc["kind"], doc["metadata"]["name"]): doc
         for doc in yaml.safe_load_all(_kustomize_build("core/platform/testapp"))
@@ -36,10 +36,4 @@ def test_fixture_serves_known_file_on_the_default_certificate() -> None:
     assert "emptyDir" in volumes[writable[0]["name"]]
     assert [name for name, volume in volumes.items() if "emptyDir" in volume] == [writable[0]["name"]]
 
-    ingress = docs[("Ingress", "testapp")]
-    assert ingress["spec"]["rules"][0]["host"] == "testapp.${dns_suffix}"
-    assert "tls" not in ingress["spec"]
-    annotations = ingress["metadata"]["annotations"]
-    assert annotations["traefik.ingress.kubernetes.io/router.entrypoints"] == "websecure"
-    assert annotations["traefik.ingress.kubernetes.io/router.tls"] == "true"
     assert docs[("Service", "testapp")]["spec"]["type"] == "ClusterIP"

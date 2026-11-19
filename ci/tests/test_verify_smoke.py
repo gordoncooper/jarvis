@@ -148,8 +148,8 @@ def test_the_app_dns_probe_wants_traefiks_address_for_the_new_name(tmp_path: Pat
     monkeypatch.setattr(smoke, "_resolve", lambda server, name: asked.append((server, name)) or answers.pop(0))
     cluster = Cluster()
     smoke.probe_app_dns(_ctx(tmp_path, cluster))
-    ingress = next(body for body in cluster.applied if body["kind"] == "Ingress")
-    host = ingress["spec"]["rules"][0]["host"]
+    route = next(body for body in cluster.applied if body["kind"] == "HTTPRoute")
+    (host,) = route["spec"]["hostnames"]
     assert host.endswith(".test.example") and asked == [(APP_DNS, host)] * 2
     monkeypatch.setattr(smoke, "_resolve", lambda server, name: ["192.0.2.1"])
     with pytest.raises(CheckError, match="did not answer"):

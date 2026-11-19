@@ -1,0 +1,11 @@
+# The Gateway and the certificates its listeners serve. No pods run here.
+# Prune stays off: it holds the wildcard keys.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-gateway
+  labels:
+    jarvis.io/layer: platform
+    pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

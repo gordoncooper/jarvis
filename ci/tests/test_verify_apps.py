@@ -41,7 +41,7 @@ class Cluster:
             "namespaces": self.namespaces, "networkpolicies": self.policies, "limitranges": self.ranges,
             "validatingadmissionpolicybindings": self.bindings, "apps.hosting.jarvis.io": self.apps, "pvc": self.pvcs,
             "replicationsource": self.sources,
-            "ingresses": [_item("Ingress", "app-notes", "web", spec={"rules": [{"host": host} for host in self.hosts]})],
+            "httproutes.gateway.networking.k8s.io": [_item("HTTPRoute", "app-notes", "web", spec={"hostnames": self.hosts})],
         }
         if argv[0] == "get" and argv[1] in lists:
             return CompletedProcess(argv, 0, json.dumps({"items": lists[argv[1]]}), "")
@@ -65,7 +65,7 @@ def test_listed_app_with_its_baseline_and_grants_passes() -> None:
         (lambda c: c.namespaces[0]["metadata"]["annotations"].update({"hosting.jarvis.io/privileged": "true"}), "annotation hosting.jarvis.io/privileged"),
         (lambda c: c.namespaces[0]["metadata"]["annotations"].update({"hosting.jarvis.io/lan-all": "true"}), "annotation hosting.jarvis.io/lan-all"),
         (lambda c: c.namespaces[0]["metadata"].pop("annotations"), "annotation hosting.jarvis.io/host "),
-        (lambda c: c.hosts.append(f"grafana.{SUFFIX}"), "host 'grafana.env-test.example' is not"),
+        (lambda c: c.hosts.append(f"grafana.{SUFFIX}"), "hostname 'grafana.env-test.example' is not"),
         (lambda c: c.ranges.clear(), "no LimitRange app"),
     ],
     ids=["no-default-deny", "unlabelled", "no-grants-binding", "grant-without-line", "lan-grant-without-line", "no-annotations",
