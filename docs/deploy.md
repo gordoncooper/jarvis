@@ -34,7 +34,7 @@ cd my-clusters
 
 `--node <host>` gives one node every role but `gpu`; `--node <host>:<role>,<role>` per node for more. `--feature <name>` turns a feature on, `--apps-repo-url` names the apps repository, `--with-examples` turns on the example apps, `--with-agents` adds the agent kit ([agents/README.md](../agents/README.md)), `--ssh-user` and `--time-zone` set those values. Anything left out is asked for. `jarvis init --help` lists every flag.
 
-`jarvis init` makes the git repository, creates the working age key if there is none, prints the **recovery key**'s private half once (store it offline now: [secrets.md](secrets.md#age-key-custody)), writes the env's values, inventory, `.sops.yaml` rule, README, devcontainer, Renovate config and CI caller (unless `--no-ci`), mints the secrets and `ca.crt`, seals a deploy key for an `ssh://` URL and prints its public half, renders `flux/`, and installs a pre-commit hook running `jarvis render --check` and `jarvis validate`. The env passes `jarvis validate` at once. Then:
+`jarvis init` makes the git repository, creates the working age key if there is none, prints the **recovery key**'s private half once (store it offline now: [secrets.md](secrets.md#age-key-custody)), writes the env's values, inventory, `.sops.yaml` rule, README, devcontainer, Renovate config and CI caller (unless `--no-ci`), mints the secrets and `ca.crt`, seals a deploy key for an `ssh://` URL and prints its public half, renders `flux/`, and installs a pre-commit hook running `jarvis validate`. The env passes `jarvis validate` at once. Then:
 
 1. Add the printed deploy key to the repository, read-only.
 2. Set up the render App ([Renovate and CI](#renovate-and-ci)).

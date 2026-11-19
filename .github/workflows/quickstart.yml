@@ -198,7 +198,6 @@ jobs:
             cat quickstart.sh
             # What the controller checks on its own, with no node: the env as init wrote it.
             echo 'jarvis validate'
-            echo 'jarvis render --check'
           } > controller.sh
           bash controller.sh
 

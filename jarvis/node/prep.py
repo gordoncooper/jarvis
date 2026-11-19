@@ -574,8 +574,9 @@ done
 if [ "${#missing[@]}" -eq 0 ]; then
   exit 0
 fi
-apt-get update
-apt-get install -y -- "${missing[@]}"
+# A new node may still be running unattended-upgrades after boot: wait for its lock.
+apt-get -o DPkg::Lock::Timeout=600 update
+apt-get -o DPkg::Lock::Timeout=600 install -y -- "${missing[@]}"
 """,
         [],
     )

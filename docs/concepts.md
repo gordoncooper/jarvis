@@ -33,7 +33,7 @@ Every `jarvis` command runs the core release the env pins. When the installed CL
 
 ## Checks run in three places
 
-1. **On commit:** the pre-commit hook `jarvis init` installs runs `jarvis render --check` and `jarvis validate`.
+1. **On commit:** the pre-commit hook `jarvis init` installs runs `jarvis validate`, render check included.
 2. **Before any change to a cluster:** `jarvis up` and `jarvis site` refuse an env that fails validation or whose render is stale, whatever CI said.
 3. **In the cluster:** a bad commit fails Flux's build, and Flux keeps the last good state applied.
 

@@ -1,6 +1,6 @@
 """jarvis up: bring an env from its committed files to verify PASS.
 
-doctor, validate, render --check, secrets (mints only what is missing), a refusal while the
+doctor, validate (render --check included), secrets (mints only what is missing), a refusal while the
 env's files differ from what Flux reads, site, a wait for every Flux Kustomization to be
 Ready, then verify. Each step must pass before the next starts; the first failure stops it with
 that step's exit code.
@@ -22,7 +22,6 @@ from jarvis.env import flux_state, validate
 from jarvis.env.runtime import kubeconfig_for, kubectl
 from jarvis.node import site
 from jarvis.paths import PRODUCT_ROOT
-from jarvis.render import env as render
 from jarvis.schema.env import ROOT_SOURCE
 from jarvis.secrets import mint
 from jarvis.verify import run as verify
@@ -131,7 +130,6 @@ def run(instance: Path, env: str) -> int:
     steps: list[tuple[str, Callable[[], int]]] = [
         ("doctor", lambda: doctor.run(instance, env_dir)),
         ("validate", lambda: validate.run(instance)),
-        ("render --check", lambda: render.main(["--env", env, "--check"])),
         ("secrets", lambda: mint.main(["--env", env])),
         ("pushed", lambda: _refuse_unpushed(instance, env)),
         ("site", lambda: site.main(["--env", env])),

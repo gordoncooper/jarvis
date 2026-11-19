@@ -194,6 +194,18 @@ jobs:
       - name: Install the pinned core's tools
         run: make -C .core deps
 
+      # The chart archives and kubeconform schemas jarvis validate downloads, as core's own CI keeps
+      # them: the newest cache restores and each leg saves its own, so a run reaches a chart host
+      # only for a version no earlier run pulled.
+      - name: Restore the chart and schema cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/jarvis/charts
+            ~/.cache/jarvis/kubeconform
+          key: jarvis-charts-${{ matrix.env }}-${{ github.run_id }}
+          restore-keys: jarvis-charts-
+
       # The same command an operator runs. It checks out the apps repository the env reads (the
       # default branch with every tag) and checks each app at its pin.
       - name: jarvis validate

@@ -33,5 +33,4 @@ A component is reachable at `<svc>.<dns_suffix>` by adding one HTTPRoute on the 
 
 ## Limits
 
-- Checked: bundled Traefik chart v40 on k3s v1.36.5+k3s1.
 - Both doors share one address and Traefik: a busy app can slow core, and an app cannot use a port core holds.

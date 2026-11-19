@@ -22,3 +22,4 @@ Flux's notification-controller posts each failed reconcile to one target the env
 | Check | Pass |
 | --- | --- |
 | Kustomization `platform-configs` | Ready: the Provider, the Alert and Secret `alerts-notify` are applied |
+| e2e | A failed reconcile reaches the alerts target |

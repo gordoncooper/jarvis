@@ -180,12 +180,11 @@ def test_up_stops_at_the_first_failing_step(tmp_path: Path, monkeypatch: pytest.
 
     monkeypatch.setattr(up.doctor, "run", step("doctor"))
     monkeypatch.setattr(up.validate, "run", step("validate"))
-    monkeypatch.setattr(up.render, "main", step("render"))
     monkeypatch.setattr(up.mint, "main", step("secrets"))
     monkeypatch.setattr(up, "_refuse_unpushed", step("pushed", 3))
     monkeypatch.setattr(up.site, "main", step("site"))
     assert up.run(tmp_path, "home") == 3
-    assert ran == ["doctor", "validate", "render", "secrets", "pushed"]
+    assert ran == ["doctor", "validate", "secrets", "pushed"]
     assert "stopped at pushed" in capsys.readouterr().out
 
 
@@ -316,7 +315,7 @@ def test_doctor_finds_a_worktrees_hooks_where_git_runs_them(tmp_path: Path) -> N
     assert (tmp_path / "wt" / ".git").is_file()
     level, message = doctor.check_hook(tmp_path / "wt")[0]
     assert level == "PASS" and str(main / ".git" / "hooks" / "pre-commit") in message
-    assert doctor.check_hook(tmp_path / "wt")[0] == ("PASS", "the pre-commit hook runs jarvis render --check and validate")
+    assert doctor.check_hook(tmp_path / "wt")[0] == ("PASS", "the pre-commit hook runs jarvis validate")
 
 
 def test_version_names_this_release_and_each_envs_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
