@@ -96,9 +96,12 @@ def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: s
 
 @pytest.mark.parametrize(
     ("name", "folder", "kind", "object_name"),
-    [(_switches.OFFSITE_COPY, _switches.OFFSITE_COPY_DIR, "CronJob", "restic-offsite")],
+    [
+        (_switches.OFFSITE_COPY, _switches.OFFSITE_COPY_DIR, "CronJob", "restic-offsite"),
+        (_switches.ALERTS, _switches.ALERTS_DIR, "Alert", "alerts"),
+    ],
 )
-def test_an_optional_backup_piece_renders_only_from_its_name(name: str, folder: str, kind: str, object_name: str) -> None:
+def test_an_optional_piece_renders_only_from_its_name(name: str, folder: str, kind: str, object_name: str) -> None:
     """Rule: always-on core carries no optional piece. Its folder sits under core/feature, the
     always-on list does not build it, and the env's wiring lists that folder only once the env names it."""
     def has_object(rel: str) -> bool:

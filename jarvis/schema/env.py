@@ -30,10 +30,6 @@ from jarvis.secrets import recipients as _recipients
 
 _DEFAULTS = _values.defaults(_values.CLUSTER_VARS)
 DEFAULT_SSH_USER = _DEFAULTS["ssh_user"]
-# An env turns the off-host copy and app hosting on by name in values/switches.yaml.
-OFFSITE_COPY_DIR = _switches.OFFSITE_COPY_DIR
-OFFSITE_SECRET_FILE = _switches.OFFSITE_SECRET_FILE
-APP_HOSTING_DIR = _switches.APP_HOSTING_DIR
 # The root GitRepository includes the core source at this directory, so env files
 # reach core as <root>/core/... . In the product checkout, core is the checkout itself.
 CORE_SOURCE_DIR = "core"
@@ -302,6 +298,12 @@ def _feature_listed(env_dir: Path, name: str) -> bool:
     return not errors and name in _switches.names(data, _switches.FEATURES)
 
 
+def _feature_sealed(env_dir: Path) -> list[tuple[str, str]]:
+    """(feature, file name) for each sealed file a listed feature applies."""
+    data, errors = _switches.load(env_dir)
+    return [] if errors else _switches.sealed_files(data)
+
+
 def offsite_copy_listed(env_dir: Path) -> bool:
     return _feature_listed(env_dir, _switches.OFFSITE_COPY)
 
@@ -445,14 +447,13 @@ def _apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any])
 
 def sealed_readers(env_dir: Path, repo_root: Path, cluster_vars_path: Path) -> set[Path]:
     """Every sealed file something reads: the bootstrap secrets, the deploy key of an ssh://
-    root, the off-host target when the copy is listed, the files in each folder an enabled
-    add-on decrypts, and each registered app credential."""
+    root, each listed feature's sealed files, the files in each folder an enabled add-on
+    decrypts, and each registered app credential."""
     secrets = env_dir / "secrets"
     read = {secrets / f"{name}.sops.yaml" for name in _BOOTSTRAP_SEALED}
     if _ssh_root(cluster_vars_path):
         read.add(secrets / DEPLOY_KEY_FILE)
-    if offsite_copy_listed(env_dir):
-        read.add(secrets / OFFSITE_SECRET_FILE)
+    read.update(secrets / file for _feature, file in _feature_sealed(env_dir))
     core = _paths.core_root()
     known = addon_names(core)
     for name in enabled_addons(env_dir):
@@ -465,15 +466,18 @@ def sealed_readers(env_dir: Path, repo_root: Path, cluster_vars_path: Path) -> s
 
 
 def _sealed_problems(env_dir: Path, repo_root: Path, bootstrapped: bool, cluster_path: Path) -> list[str]:
-    """Once bootstrapped, each thing that reads a sealed file has it: the off-host copy, an
+    """Once bootstrapped, each thing that reads a sealed file has it: a listed feature, an
     add-on's namespace folder. An app credential is sealed only in its own folder. A sealed file
     nothing reads is a credential with no owner, so it fails."""
     name = env_dir.name
     secrets = env_dir / "secrets"
     errors: list[str] = []
     if bootstrapped:
-        wanted = [(secrets / OFFSITE_SECRET_FILE, f"{_switches.SWITCHES_FILE} lists {_switches.OFFSITE_COPY}", "")] if offsite_copy_listed(env_dir) else []
-        errors.extend(f"{name}: {why}, missing required file {_rel(path, repo_root)}{hint}" for path, why, hint in wanted if not path.is_file())
+        errors.extend(
+            f"{name}: {_switches.SWITCHES_FILE} lists {feature}, missing required file {_rel(secrets / file, repo_root)}"
+            for feature, file in _feature_sealed(env_dir)
+            if not (secrets / file).is_file()
+        )
         core = _paths.core_root()
         for addon in set(enabled_addons(env_dir)) & set(addon_names(core)):
             for namespace in addon_secret_namespaces(addon_documents(core, addon)):

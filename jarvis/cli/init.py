@@ -29,10 +29,9 @@ from pathlib import Path
 import yaml
 
 from jarvis.env import scaffold
+from jarvis.env import switches as _switches
 from jarvis.secrets import age as _age
 from jarvis.secrets import recipients as _recipients
-
-_KNOWN_FEATURES = ("app-dns", "app-hosting", "offsite-backup-copy")
 
 
 def parser(command: str) -> argparse.ArgumentParser:
@@ -58,7 +57,7 @@ def parser(command: str) -> argparse.ArgumentParser:
     p.add_argument("--node", action="append", default=[], help="<host> or <host>:<role>,<role> (repeat per node)")
     p.add_argument("--ssh-user", help="The user Ansible logs in as on the nodes (default: you)")
     p.add_argument("--time-zone", default="Etc/UTC", help="The nodes' time zone (default: Etc/UTC)")
-    p.add_argument("--feature", action="append", default=[], choices=_KNOWN_FEATURES, help="Turn a feature on (repeat)")
+    p.add_argument("--feature", action="append", default=[], choices=tuple(_switches.FEATURE_COMPONENTS), help="Turn a feature on (repeat)")
     p.add_argument("--apps-repo-url", default="", help="The hosted apps repository, if the env will host apps")
     p.add_argument(
         "--with-examples",
