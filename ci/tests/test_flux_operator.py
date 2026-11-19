@@ -615,7 +615,9 @@ def test_missing_age_keygen_is_named_before_no_log(tmp_path: Path) -> None:
             continue
         for entry in directory.iterdir():
             dest = bindir / entry.name
-            if entry.name == "age-keygen" or dest.exists():
+            # /bin is often /usr/bin, so each entry comes twice; is_symlink, unlike exists, also
+            # sees a link already made to a dangling one (ubuntu-26.04's grub-ntldr-img).
+            if entry.name == "age-keygen" or dest.is_symlink():
                 continue
             dest.symlink_to(entry)
     if not (bindir / "ansible-playbook").exists():
