@@ -8,7 +8,7 @@ Start from one of the three examples in the `jarvis-apps` apps repository:
 - [notes](../ci/tests/fixtures/app-hosting/jarvis-apps/notes/): a stateful one, with a backed-up volume.
 - [lan-demo](../ci/tests/fixtures/app-hosting/jarvis-apps/lan-demo/): one that asks for a risky item, a LAN port (`network.ports`), and no web address, run from an image by a generic upstream chart.
 
-The links are to [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtures/app-hosting/jarvis-apps/), which holds exact copies of those three folders for this repository's tests; the apps repository's CI fails when a folder there differs from its copy at the jarvis commit it pins.
+The links are to [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtures/app-hosting/jarvis-apps/), which holds copies of those three folders for this repository's tests.
 
 ## Write it
 

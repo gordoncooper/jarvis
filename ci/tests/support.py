@@ -303,7 +303,7 @@ def _git_ignored(repo: Path, path: Path) -> bool:
 
 def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
     """Turn on backup for one listed app in the copy as an owner would: its backups on in
-    values/apps.yaml, jarvis secrets --app, then render."""
+    values/apps.yaml, its credential minted as jarvis secrets does, then render."""
     import yaml
 
     sops = shutil.which("sops")

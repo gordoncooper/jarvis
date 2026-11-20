@@ -56,6 +56,7 @@ the upgrade.
 - An app file's `network.web.healthPath` and `envs.<env>`, and the `no-uptime-check` grant: no
   uptime check read them. The namespace annotations `hosting.jarvis.io/host` and `env` go with
   them; `hosting.jarvis.io/apps-domain` names the apps domain.
+- `jarvis secrets --app`: `jarvis secrets` already mints each listed app's missing credential.
 
 ### Upgrading
 

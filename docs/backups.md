@@ -132,7 +132,7 @@ An app's backups are on unless its entry in `values/apps.yaml` sets `backups: fa
 
 **Add an app.**
 
-1. `jarvis secrets --env <env>` seals each credential an app needs and lacks (`--app app-<name>` seals only that one). A second run changes nothing; a recorded file that has gone missing is refused, since its repositories open only with the first password.
+1. `jarvis secrets --env <env>` seals each credential an app needs and lacks. A second run changes nothing; a recorded file that has gone missing is refused, since its repositories open only with the first password.
 2. `jarvis render --env <env>` registers it. Commit and push.
 3. `restic-apps` restarts with the new user. A PVC that existed before: `kubectl annotate pvc -n app-<name> <pvc> backup-credential=registered --overwrite`.
 4. `jarvis verify --env <env>` passes; the next `restic-check` prints `PASS ns-app-<name>/pvc-<pvc>`.
