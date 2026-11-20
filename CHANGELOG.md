@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.8.0
+
 ### Changed
 
 - Core makes each hosted app's web routes. An app file's `network.web` is a list of entries,
