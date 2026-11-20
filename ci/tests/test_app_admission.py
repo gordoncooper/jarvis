@@ -99,11 +99,15 @@ def _mutated(tmp_path: Path, docs: list[dict], user: str | None = None) -> list[
     user = user or TENANT.format(app=docs[0]["metadata"]["namespace"].removeprefix("app-"))
     (work / "resources.yaml").write_text(yaml.safe_dump_all(docs), encoding="utf-8")
     # kyverno apply loads no policy from a file that also holds the PriorityClass.
-    policies = [doc for path in MUTATING for doc in flux_envsubst(_docs(path), {"dns_suffix": SUFFIX})
-                if doc["kind"] == "MutatingPolicy"]
+    policies = [doc for path in MUTATING for doc in _docs(path) if doc["kind"] == "MutatingPolicy"]
     (work / "policy.yaml").write_text(yaml.safe_dump_all(policies), encoding="utf-8")
+    # What resource.get reads: each app's Namespace, as its wiring renders it.
+    namespaces = [doc for app, (_doc, grants) in _ENV.items() for doc in _wiring(app, grants) if doc["kind"] == "Namespace"]
+    context = {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Context", "metadata": {"name": "c"}, "spec": {"resources": namespaces}}
+    (work / "context.yaml").write_text(yaml.safe_dump(context), encoding="utf-8")
     command = [_kyverno(), "apply", str(work / "policy.yaml"), "--resource", str(work / "resources.yaml"),
-               "--remove-color", "-o", str(work / "out.yaml"), "--userinfo", str(_userinfo(work / "userinfo.yaml", user))]
+               "--remove-color", "-o", str(work / "out.yaml"), "--userinfo", str(_userinfo(work / "userinfo.yaml", user)),
+               "--context-file", str(work / "context.yaml")]
     proc = subprocess.run(command, capture_output=True, text=True, check=False)
     assert proc.returncode == 0 and ", error: 0," in proc.stdout, proc.stdout + proc.stderr
     out = work / "out.yaml"

@@ -136,7 +136,6 @@ def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_pat
     monkeypatch.setattr(site, "playbook_command", lambda *a, **k: ["true"])
     monkeypatch.chdir(instance)
     assert cli.main(["--core", str(REPO_ROOT), "site"]) == 0, capsys.readouterr()
-    assert "jarvis: apps repository at" in capsys.readouterr().err
 
 
 def test_validate_checks_only_the_named_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

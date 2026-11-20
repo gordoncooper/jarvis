@@ -1,7 +1,7 @@
 # A granted LAN port's name. App DNS answers a LoadBalancer Service at the name in its
 # coredns.io/hostname annotation, with the address the Service holds; this sets that name to
-# <app>.apps.${dns_suffix} on every LoadBalancer an app ships, from its namespace, as its web
-# names are. app-grants refuses an app LoadBalancer with any other name or none, so if Kyverno
+# <app>.<apps domain> on every LoadBalancer an app ships, from its namespace's apps-domain
+# annotation, as app-derive names its web routes. app-grants refuses an app LoadBalancer with any other name or none, so if Kyverno
 # is down (Ignore) the Service is refused rather than named by the app.
 apiVersion: policies.kyverno.io/v1
 kind: MutatingPolicy
@@ -22,9 +22,13 @@ spec:
       expression: request.namespace.startsWith('app-')
     - name: load-balancer
       expression: has(object.spec.type) && object.spec.type == 'LoadBalancer'
+  variables:
+    - name: appsDomain
+      expression: >-
+        resource.get("v1", "namespaces", "", request.namespace).metadata.?annotations[?"hosting.jarvis.io/apps-domain"].orValue("")
   mutations:
     - patchType: ApplyConfiguration
       applyConfiguration:
         expression: >-
           Object{metadata: Object.metadata{annotations: {
-            "coredns.io/hostname": request.namespace.substring(4) + ".apps.${dns_suffix}"}}}
+            "coredns.io/hostname": request.namespace.substring(4) + "." + variables.appsDomain}}}
