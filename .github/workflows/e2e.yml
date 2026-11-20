@@ -2,8 +2,8 @@ name: e2e
 
 # A real cluster from this commit: k3d (k3s in Docker), the env's FluxInstance and sync.yaml
 # applied by the flux-operator role, every Kustomization and HelmRelease Ready, the sample hosted
-# apps running at their pinned tags from the apps repository, then jarvis verify --smoke, one alert
-# delivered, and jarvis drill.
+# apps running at their pinned tags from the apps repository, one app's volume backed up and
+# restored, then jarvis verify --smoke, one alert delivered, and jarvis drill.
 # The env is a throwaway one written by jarvis init's code (ci/e2e/make-env), whose root source is
 # a temporary branch of this repository; its core source is that branch too, or on a release tag
 # push the tag itself. The job deletes the branch.
@@ -114,6 +114,9 @@ jobs:
             --ref "refs/heads/${E2E_BRANCH}" --core-ref "${core_ref}" \
             --apps-url "${APPS_URL}" --key-file "${RUNNER_TEMP}/age.key" \
             --node "k3d-${E2E_ENV}-server-0" ${APP_DNS_FLAG}
+          # notes keeps a backup: true volume: seal its own credential, as an owner does, so it backs up.
+          .venv/bin/jarvis --env "${E2E_ENV}" secrets --app app-notes
+          .venv/bin/jarvis --env "${E2E_ENV}" render
           git config user.name "e2e"
           git config user.email "e2e@users.noreply.github.com"
           [[ "${core_ref}" == refs/heads/* ]] && git push -q origin "HEAD:${core_ref}"
@@ -147,7 +150,7 @@ jobs:
             node-role.jarvis.io/edge=true svccontroller.k3s.cattle.io/enablelb=true --overwrite
           # The LAN's DNS stand-in: the canary host at the node, where ServiceLB serves Traefik.
           address="$(kubectl get node "${node}" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
-          echo "${address} testapp.$(read_var dns_suffix) hello-web.apps.$(read_var dns_suffix)" | sudo tee -a /etc/hosts
+          echo "${address} testapp.$(read_var dns_suffix) hello-web.apps.$(read_var dns_suffix) notes.apps.$(read_var dns_suffix)" | sudo tee -a /etc/hosts
 
       - name: Bootstrap Flux with the flux-operator role
         working-directory: infra/ansible
@@ -218,6 +221,43 @@ jobs:
           root="$(code /)"; notes="$(code /notes/)"; blocked="$(code /blocked/)"
           echo "${host}: / ${root}, /notes/ ${notes}, /blocked/ ${blocked}" | tee -a "${GITHUB_STEP_SUMMARY}"
           [[ "${root}" == 200 && "${notes}" == 200 && "${blocked}" =~ ^50[24]$ ]]
+
+      # A hosted app's backup and restore, with its own credential on the apps rest-server: a file
+      # written to notes reaches a fresh backup, is deleted, and jarvis restore puts it back.
+      - name: A hosted app's volume backs up and restores
+        run: |
+          set -euo pipefail
+          env_dir="envs/${E2E_ENV}"
+          url="https://notes.apps.$(sed -n 's/^dns_suffix:[[:space:]]*//p' "${env_dir}/values/cluster-vars.yaml")/e2e-restore.txt"
+          get() { curl -sS --cacert "${env_dir}/ca.crt" --max-time 20 "$@"; }
+          marker="run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}"
+          for attempt in $(seq 1 30); do
+            printf '%s' "${marker}" | get -f -T - "${url}" && break
+            [ "${attempt}" -lt 30 ] || exit 1
+            sleep 10
+          done
+          # A new source syncs at once, as jarvis drill's does: delete it, and Kyverno makes it again.
+          for attempt in $(seq 1 60); do
+            kubectl -n app-notes get replicationsource data >/dev/null 2>&1 && break
+            [ "${attempt}" -lt 60 ] || { echo "::error::no ReplicationSource app-notes/data"; exit 1; }
+            sleep 10
+          done
+          kubectl -n app-notes delete replicationsource data --wait
+          for attempt in $(seq 1 60); do
+            [[ -n "$(kubectl -n app-notes get replicationsource data -o jsonpath='{.status.lastSyncTime}' 2>/dev/null)" ]] && break
+            [ "${attempt}" -lt 60 ] || { kubectl -n app-notes describe replicationsource data || true; exit 1; }
+            sleep 10
+          done
+          get -f -X DELETE "${url}"
+          [[ "$(get -o /dev/null -w '%{http_code}' "${url}")" == 404 ]]
+          .venv/bin/jarvis --env "${E2E_ENV}" restore --app app-notes --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          kubectl -n app-notes wait --for=condition=Available deployment/notes --timeout=5m
+          for attempt in $(seq 1 30); do
+            [[ "$(get "${url}" || true)" == "${marker}" ]] && break
+            [ "${attempt}" -lt 30 ] || { echo "::error::${url} did not come back"; exit 1; }
+            sleep 5
+          done
+          echo "notes: ${url} backed up, deleted and restored" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # The standing checks, then each enabled capability's short-lived probe (jarvis/verify/smoke.py).
       - name: jarvis verify --smoke
