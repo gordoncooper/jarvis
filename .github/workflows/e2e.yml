@@ -229,6 +229,29 @@ jobs:
           echo "${host}: / ${root}, /notes/ ${notes}, /blocked/ ${blocked}" | tee -a "${GITHUB_STEP_SUMMARY}"
           [[ "${root}" == 200 && "${notes}" == 200 && "${blocked}" =~ ^50[24]$ ]]
 
+      # A granted LAN port by its app's name: App DNS answers lan-demo.apps.<dns suffix> with its
+      # LoadBalancer's address. With App DNS off the LAN's DNS names it; here the address stands in.
+      - name: lan-demo's LAN port answers at its name
+        env:
+          APP_DNS: ${{ matrix.app_dns }}
+        run: |
+          set -euo pipefail
+          host="lan-demo.apps.$(sed -n 's/^dns_suffix:[[:space:]]*//p' "envs/${E2E_ENV}/values/cluster-vars.yaml")"
+          lb_address() { kubectl -n "$1" get services -o jsonpath='{.items[?(@.spec.type=="LoadBalancer")].status.loadBalancer.ingress[0].ip}'; }
+          lb="$(lb_address app-lan-demo)"
+          address="${lb}"
+          if [[ "${APP_DNS}" == on ]]; then
+            server="$(lb_address platform-app-dns)"
+            for attempt in $(seq 1 30); do
+              address="$(dig +short "@${server}" "${host}" A | head -1)"
+              [[ -n "${address}" ]] && break
+              sleep 5
+            done
+            [[ "${address}" == "${lb}" ]] || { echo "::error::App DNS answered ${host} with '${address}', not ${lb}"; exit 1; }
+          fi
+          curl -sS -f -o /dev/null --max-time 20 --resolve "${host}:8080:${address}" "http://${host}:8080/health"
+          echo "${host}:8080 answers at ${address}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
       # A hosted app's backup and restore, with its own credential on the apps rest-server: a file
       # written to notes reaches a fresh backup, is deleted, and jarvis restore puts it back.
       - name: A hosted app's volume backs up and restores

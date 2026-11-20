@@ -514,6 +514,11 @@ spec:
         object.spec.ports.map(p, string(p.port) + '/' + (has(p.protocol) ? p.protocol : 'TCP')) : []
     - name: grants
       expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: serviceNotes
+      expression: "object.kind == 'Service' && has(object.metadata.annotations) ? object.metadata.annotations : {}"
+    - name: lanName
+      expression: >-
+        namespaceObject.metadata.name.substring(4) + '.' + variables.grants[?'hosting.jarvis.io/apps-domain'].orValue('-')
     - name: volsyncOwned
       expression: >-
         object.kind == 'PersistentVolumeClaim' && has(object.metadata.ownerReferences) &&
@@ -563,6 +568,14 @@ spec:
       message: "an app's Service sets no externalIPs"
     - expression: "variables.lanPorts.all(p, p in variables.grants[?'hosting.jarvis.io/lan-ports'].orValue('').split(','))"
       message: "grant: a LoadBalancer exposes only ports the env grants as lan-port <port>/<protocol>"
+    # App DNS names a LoadBalancer by its coredns.io/hostname, else external-dns's hostname
+    # annotations. Each app LoadBalancer is named <app>.apps.<dns suffix> (MutatingPolicy
+    # app-lan-name sets it), and no app Service names itself anything else.
+    - expression: >-
+        variables.serviceNotes[?'coredns.io/hostname'].orValue(size(variables.lanPorts) > 0 ? '' : variables.lanName) == variables.lanName &&
+        !('external-dns.kubernetes.io/hostname' in variables.serviceNotes) &&
+        !('external-dns.alpha.kubernetes.io/hostname' in variables.serviceNotes)
+      message: "an app's LoadBalancer is named <app>.apps.<dns suffix>, which core sets; an app Service names no other hostname"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

@@ -28,7 +28,8 @@ from support import REPO_ROOT, flux_envsubst, kyverno_generated
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
 POLICIES = REPO_ROOT / "core" / "feature" / "app-hosting" / "policies"
-PRIORITY = REPO_ROOT / "core" / "feature" / "app-hosting" / "priority.yaml"
+# The MutatingPolicies, app-priority and app-lan-name.
+MUTATING = [REPO_ROOT / "core" / "feature" / "app-hosting" / name for name in ("priority.yaml", "lan-name.yaml")]
 WIRING = REPO_ROOT / "core" / "feature" / "app-hosting" / "app"
 SUFFIX = "env-00.example"
 TENANT = "system:serviceaccount:flux-system:app-{app}"
@@ -91,17 +92,22 @@ _RESTRICTED = {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL
 
 
 def _mutated(tmp_path: Path, docs: list[dict], user: str | None = None) -> list[dict]:
-    """docs as MutatingPolicy app-priority leaves them at admission (kyverno apply), written by
-    user (default: the tenant of the first doc's namespace)."""
+    """docs as the MutatingPolicies leave them at admission (kyverno apply), written by user
+    (default: the tenant of the first doc's namespace)."""
     work = tmp_path / f"mutate-{len(list(tmp_path.glob('mutate-*')))}"
     work.mkdir()
     user = user or TENANT.format(app=docs[0]["metadata"]["namespace"].removeprefix("app-"))
     (work / "resources.yaml").write_text(yaml.safe_dump_all(docs), encoding="utf-8")
     # kyverno apply loads no policy from a file that also holds the PriorityClass.
-    policy = next(doc for doc in _docs(PRIORITY) if doc["kind"] == "MutatingPolicy")
-    (work / "policy.yaml").write_text(yaml.safe_dump(policy), encoding="utf-8")
+    policies = [doc for path in MUTATING for doc in _docs(path) if doc["kind"] == "MutatingPolicy"]
+    (work / "policy.yaml").write_text(yaml.safe_dump_all(policies), encoding="utf-8")
+    # What resource.get reads: each app's Namespace, as its wiring renders it.
+    namespaces = [doc for app, (_doc, grants) in _ENV.items() for doc in _wiring(app, grants) if doc["kind"] == "Namespace"]
+    context = {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Context", "metadata": {"name": "c"}, "spec": {"resources": namespaces}}
+    (work / "context.yaml").write_text(yaml.safe_dump(context), encoding="utf-8")
     command = [_kyverno(), "apply", str(work / "policy.yaml"), "--resource", str(work / "resources.yaml"),
-               "--remove-color", "-o", str(work / "out.yaml"), "--userinfo", str(_userinfo(work / "userinfo.yaml", user))]
+               "--remove-color", "-o", str(work / "out.yaml"), "--userinfo", str(_userinfo(work / "userinfo.yaml", user)),
+               "--context-file", str(work / "context.yaml")]
     proc = subprocess.run(command, capture_output=True, text=True, check=False)
     assert proc.returncode == 0 and ", error: 0," in proc.stdout, proc.stdout + proc.stderr
     out = work / "out.yaml"
@@ -148,6 +154,11 @@ def _route(name: str, app: str, *hostnames: str) -> dict:
     parent = {"name": "jarvis", "namespace": "platform-gateway", "sectionName": "apps"}
     spec = {"parentRefs": [parent], "rules": [{"backendRefs": [{"name": "web", "port": 80}]}]}
     return _object("HTTPRoute", name, app, "gateway.networking.k8s.io/v1", **spec, **({"hostnames": list(hostnames)} if hostnames else {}))
+
+
+def _named(doc: dict, key: str, hostname: str) -> dict:
+    doc["metadata"]["annotations"] = {key: hostname}
+    return doc
 
 
 def _pvc(name: str, app: str, *, unbacked: bool = False) -> dict:
@@ -427,7 +438,8 @@ def test_statefulset_controller_claims_of_a_declared_volume_pass(tmp_path: Path)
 def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -> None:
     """Rule: a PVC is a declared volume with the declared backup; Services are ClusterIP with no
     Traefik annotation, or a LoadBalancer on the file's network.ports (listen, protocol, numeric
-    target) that the env grants as lan-port. HTTPRoute hostnames: test_app_admission_apiserver.py."""
+    target) that the env grants as lan-port, named <app>.apps.<dns suffix> once app-lan-name has
+    run; no app Service names another hostname. HTTPRoute hostnames: test_app_admission_apiserver.py."""
     lb = {"type": "LoadBalancer", "allocateLoadBalancerNodePorts": False,
           "ports": [{"port": 8443, "protocol": "TCP"}], "selector": {"app": "x"}}
     with_node_ports = {**lb, "allocateLoadBalancerNodePorts": True}
@@ -447,8 +459,14 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
                  volumeClaimTemplates=[{"metadata": {"name": "pgdata"}, "spec": {}}]), FILE_FAILS),
         (traefik_service, FILE_FAILS),
         (_object("Service", "lb", "web-demo", **lb), BOTH_FAIL),
-        (_object("Service", "lan", "lan", **lb), PASS),
-        (_object("Service", "lan-mapped", "lan", **mapped), PASS),
+        *((doc, PASS) for doc in _mutated(tmp_path, [_object("Service", "lan", "lan", **lb),
+                                                     _object("Service", "lan-mapped", "lan", **mapped)])),
+        # Unnamed (Kyverno down), or named another app's or core's name: App DNS would answer it.
+        (_object("Service", "lan-unnamed", "lan", **lb), GRANT_FAILS),
+        (_named(_object("Service", "lan-other-name", "lan", **lb), "coredns.io/hostname", f"testapp.{SUFFIX}"), GRANT_FAILS),
+        (_named(_object("Service", "web-own-name", "web-demo", ports=[{"port": 80}]), "coredns.io/hostname", f"notes.apps.{SUFFIX}"), GRANT_FAILS),
+        (_named(_object("Service", "web-external-dns", "web-demo", ports=[{"port": 80}]),
+                "external-dns.alpha.kubernetes.io/hostname", f"testapp.{SUFFIX}"), GRANT_FAILS),
         (_object("Service", "lan-wrong-target", "lan", **wrong_target), FILE_FAILS),
         (_object("Service", "lan-unset-target", "lan", **unset_target), FILE_FAILS),
         (_object("Service", "lan-named-target", "lan", **named_target), FILE_FAILS),

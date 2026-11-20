@@ -7,6 +7,22 @@ the upgrade.
 
 ## Unreleased
 
+### Fixed
+
+- `jarvis site` and `jarvis node prep` work on an env that lists hosted apps. The CLI fetched the
+  apps repository only for a fixed list of commands, and their validation reads the app files;
+  now the first read of an app file fetches it, whichever command makes it.
+- A granted LAN port has a name: App DNS answers `<app>.apps.<dns_suffix>` with the address of
+  the app's LoadBalancer Service. Core names each app LoadBalancer (MutatingPolicy
+  `app-lan-name`), and admission refuses an app Service that is unnamed or names any other
+  hostname. An app LoadBalancer made before this release gets its name the next time it is
+  written; for a chart app, `flux reconcile helmrelease app-<name> -n flux-system --force`.
+- `jarvis verify` warns, instead of failing, while a restored volume's backup waits for its
+  first scheduled sync.
+- `jarvis verify` right after a boot: while a node's kubelet has not renewed its Lease, it prints
+  `FAIL too freshly started to judge` and runs no check, instead of passing them on status left
+  from before the boot.
+
 ## v0.8.0
 
 ### Changed

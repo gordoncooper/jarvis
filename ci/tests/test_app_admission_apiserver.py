@@ -481,7 +481,9 @@ def test_a_revoked_grant_stops_what_runs_on_it_and_keeps_the_data(api: Api) -> N
     api.create_as(odd, VOLSYNC)
     task_pod = _pod("task-pod", app, owner_job=True, **PRIVILEGED)
     task_pod["metadata"]["ownerReferences"][0]["name"] = "task"
-    service = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "lan", "namespace": ns},
+    # Named as MutatingPolicy app-lan-name leaves it; this API server runs no Kyverno.
+    service = {"apiVersion": "v1", "kind": "Service",
+               "metadata": {"name": "lan", "namespace": ns, "annotations": {"coredns.io/hostname": f"{app}.apps.{SUFFIX}"}},
                "spec": {"type": "LoadBalancer", "allocateLoadBalancerNodePorts": False, "selector": {"a": "b"},
                         "ports": [{"port": 8443, "targetPort": 8443, "protocol": "TCP"}]}}
     route = _route("custom", app, "custom.example.test")

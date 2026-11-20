@@ -35,7 +35,7 @@ Every PVC is backed up by VolSync's restic mover to a rest-server on the backup-
 | Check | Pass |
 | --- | --- |
 | Service `restic` | a ready endpoint |
-| Each PVC not `backup: none` outside `app-*`, and each ReplicationSource | has `restic-<pvc>` and ReplicationSource `<pvc>`, and the source syncs within one schedule interval |
+| Each PVC not `backup: none` outside `app-*`, and each ReplicationSource | has `restic-<pvc>` and ReplicationSource `<pvc>`, and the source syncs within one schedule interval; a source made inside its first interval (a restored volume) warns until its first sync |
 | `restic-check`, `restic-offsite` | last success within one interval plus 12 hours; before the first success, a warning while the first run is due |
 | `etcd-snapshots` | last success within one interval; the newest k3s snapshot is in the latest restic snapshot (`jarvis drill`) |
 | `jarvis drill` | a scratch volume restored with matching checksums, and the etcd copy matching the k3s file |

@@ -87,6 +87,7 @@ class Cluster:
         self.source = True
         self.source_schedule = "0 1 * * *"
         self.source_sync = "2026-10-31T01:01:00Z"
+        self.source_created = "2026-01-01T00:00:00Z"
         self.etcd_schedule = "5 */12 * * *"
         self.etcd_zone: str | None = "Etc/UTC"
         self.etcd_sync: str | None = "2026-10-31T05:10:00Z"
@@ -101,6 +102,9 @@ class Cluster:
         self.hold = False
         self.bad_sources_json = False
         self.node_ready = True
+        # The kubelet's last Lease renewal, and the API server's identity Lease's: the cluster's now.
+        self.lease_renewed: str | None = "2026-10-31T11:59:50.000000Z"
+        self.control_plane_renewed = "2026-10-31T11:59:58.000000Z"
         self.nodes_rc = 0
         self.pods_rc = 0
         self.pods: list[dict] = []
@@ -137,6 +141,13 @@ class Cluster:
             ready = {"type": "Ready", "status": "True" if self.node_ready else "False"}
             body = {"items": [{"metadata": {"name": "n1", "labels": labels}, "status": {"conditions": [ready]}}]}
             return _completed(argv, body, returncode=self.nodes_rc, stderr="forbidden" if self.nodes_rc else "")
+        if argv[:4] == ["get", "leases", "-n", "kube-system"]:
+            spec = {"leaseDurationSeconds": 3600, "renewTime": self.control_plane_renewed}
+            return _completed(argv, {"items": [{"metadata": {"name": "apiserver-a1"}, "spec": spec}]})
+        if argv[:2] == ["get", "leases"]:
+            spec = {"holderIdentity": "n1", "leaseDurationSeconds": 40, "renewTime": self.lease_renewed}
+            leases = [{"metadata": {"name": "n1"}, "spec": spec}] if self.lease_renewed else []
+            return _completed(argv, {"items": leases})
         if argv[:2] == ["get", "pods"]:
             if self.pods_rc:
                 return _completed(argv, {"items": []}, returncode=self.pods_rc, stderr="forbidden")
@@ -149,7 +160,7 @@ class Cluster:
             if self.bad_sources_json:
                 return _completed(argv, {"items": "unreadable"})
             source = {
-                "metadata": {"namespace": "app", "name": "data"},
+                "metadata": {"namespace": "app", "name": "data", "creationTimestamp": self.source_created},
                 "spec": {"trigger": {"schedule": self.source_schedule}},
                 "status": {"lastSyncTime": self.source_sync},
             }
@@ -312,6 +323,9 @@ _BAD_STATES = {
     "crashloop": ("pods", [_pod("Running", waiting="CrashLoopBackOff")], "app/web: CrashLoopBackOff", "spec"),
     "pending-past-grace": ("pods", [_pod("Pending", "2026-10-31T11:54:59Z")], "app/web: Pending", None),
     "pending-no-timestamp": ("pods", [_pod("Pending", None)], "app/web: Pending", None),
+    # Right after a boot: the kubelet has not renewed its Lease, so no check runs on older status.
+    "kubelet-not-reported": ("lease_renewed", "2026-10-31T11:59:00Z", "judge: n1: its kubelet last reported at", "PASS"),
+    "no-node-lease": ("lease_renewed", None, "judge: n1: its kubelet has not reported", "PASS"),
 }
 
 
@@ -326,6 +340,14 @@ def test_each_bad_standing_state_fails(
     assert message in output
     assert f"PASS {message.removeprefix('FAIL ')}" not in output and SECRET_VALUE not in output
     assert absent is None or absent not in output
+
+
+def test_a_kubelet_is_judged_by_the_cluster_clock_not_this_machine(tmp_path, monkeypatch, capsys) -> None:
+    """Rule: a node's Lease is compared with the control plane's, so a machine whose clock is a
+    day ahead of the cluster still judges a kubelet that renewed 10 s before the API server."""
+    cluster = Cluster()
+    cluster.lease_renewed, cluster.control_plane_renewed = "2026-10-30T11:59:50Z", "2026-10-30T12:00:00Z"
+    assert _run(tmp_path, cluster, monkeypatch) == 0, capsys.readouterr().out
 
 
 def test_a_pending_pod_within_its_grace_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -500,6 +522,25 @@ def test_first_run_warns_only_while_pending_or_running_in_its_first_interval(
     output = capsys.readouterr().out
     assert expected in output
     assert f"FAIL {label}" not in output or expected.startswith("FAIL")
+
+
+@pytest.mark.parametrize(
+    ("created", "hold", "line"),
+    [
+        # The volume's source syncs daily at 01:00; NOW is 12:00.
+        ("2026-10-31T09:00:00Z", False, "WARN backup freshness: app/data pending first scheduled sync"),
+        ("2026-10-29T09:00:00Z", False, "FAIL backup freshness: app/data: no completed scheduled sync"),
+        ("2026-10-31T09:00:00Z", True, "FAIL backup freshness: backup rebuild hold is present"),
+    ],
+    ids=["restored", "never-synced", "restored-under-hold"],
+)
+def test_a_restored_volume_warns_until_its_first_scheduled_sync(tmp_path, monkeypatch, capsys, created, hold, line):
+    """Rule: a volume's source made inside its first interval, as a restore leaves it, warns until
+    it syncs, as the other first runs do; past that interval it fails, and a hold still fails."""
+    cluster = Cluster()
+    cluster.source_sync, cluster.source_created, cluster.hold = None, created, hold
+    assert _run(tmp_path, cluster, monkeypatch) == (0 if line.startswith("WARN") else 1)
+    assert line in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

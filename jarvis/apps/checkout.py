@@ -5,7 +5,8 @@ empty or absent. An env that lists one needs the real repository: jarvis validat
 verify read each app's file at its pinned tag <app>/v<version>.
 
 fetch() keeps one checkout per apps repository in the user's cache: the default branch and every
-tag. The jarvis CLI points APPS_REPO at it before a command that reads app files.
+tag. Under the jarvis CLI (fetch_on_first_read), the first read of an app file fetches it and
+points APPS_REPO at it, so whichever command reads app files gets them.
 
   python -m jarvis.apps.checkout require   fails unless core-only, or APPS_REPO is a real checkout
 """
@@ -46,6 +47,34 @@ def _looks_like_apps_repo(path: Path) -> bool:
     if not path.is_dir():
         return False
     return any((path / child / "app.yaml").is_file() for child in path.iterdir() if child.is_dir())
+
+
+# The instance whose apps repository the first app read fetches; set by the jarvis CLI.
+_fetch_for: Path | None = None
+
+
+def fetch_on_first_read(instance: Path) -> None:
+    """Have the first apps_repo_root() call with no APPS_REPO fetch the instance's apps repository."""
+    global _fetch_for
+    _fetch_for = instance
+
+
+def _fetch_now() -> str | None:
+    """APPS_REPO from a fetch for the instance fetch_on_first_read named, once per run."""
+    global _fetch_for
+    instance, _fetch_for = _fetch_for, None
+    if instance is None:
+        return None
+    try:
+        checkout = fetch(instance)
+    except AppsCheckoutError as exc:
+        raise AppsRepoError(str(exc)) from exc
+    if checkout is None:
+        return None
+    head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True)
+    print(f"jarvis: apps repository at {head.stdout.strip()}", file=sys.stderr)
+    os.environ[_APPS_REPO_ENV] = str(checkout)
+    return str(checkout)
 
 
 _PINNED_VIEWS: dict[tuple[Path, tuple[tuple[str, str], ...]], Path] = {}
@@ -93,11 +122,11 @@ def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
     """Directory of app folders (<name>/app.yaml), each app as the env pins it: APPS_REPO, the
     checkout the jarvis CLI fetches (fetch) or a test's tree, read at each app's pinned tag
     when it is a git repository (_pinned_view)."""
-    override = os.environ.get(_APPS_REPO_ENV)
+    override = os.environ.get(_APPS_REPO_ENV) or _fetch_now()
     if not override:
         raise AppsRepoError(
             f"set {_APPS_REPO_ENV} to a checkout of the env's apps_git_repo_url with its tags; "
-            "the jarvis CLI fetches one for the commands that read app files"
+            "the jarvis CLI fetches one when a command reads app files"
         )
     path = Path(override).expanduser().resolve()
     if not _looks_like_apps_repo(path):

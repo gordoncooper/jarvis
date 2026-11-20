@@ -186,23 +186,6 @@ COMMANDS: dict[str, Command] = {
     "drill": _module_main("jarvis.backups.drill"),
     "restore": _module_main("jarvis.backups.restore"),
 }
-# Commands that read hosted apps' files, so they need the apps checkout.
-_READS_APPS = {"validate", "render", "secrets", "up", "verify", "drill", "restore"}
-
-
-def _apps_checkout(instance: Path) -> None:
-    """Point APPS_REPO at a fresh checkout of the instance's apps repository, unless it is set."""
-    if os.environ.get("APPS_REPO") or instance == PRODUCT_ROOT:
-        return
-    from jarvis.apps.checkout import fetch
-
-    checkout = fetch(instance)
-    if checkout is not None:
-        os.environ["APPS_REPO"] = str(checkout)
-        head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True)
-        print(f"jarvis: apps repository at {head.stdout.strip()}", file=sys.stderr)
-
-
 def _help(name: str, command: Command) -> int:
     """A command's own help: its options, or its docstring when it takes none."""
     try:
@@ -355,14 +338,10 @@ def _main(argv: list[str]) -> int:
     activate_toolchain(PRODUCT_ROOT)
     if instance != PRODUCT_ROOT:
         os.environ[INSTANCE_VAR] = str(instance)
-    if command in _READS_APPS:
-        from jarvis.apps.checkout import AppsCheckoutError
+    if instance != PRODUCT_ROOT and not os.environ.get("APPS_REPO"):
+        from jarvis.apps.checkout import fetch_on_first_read
 
-        try:
-            _apps_checkout(instance)
-        except AppsCheckoutError as exc:
-            print(f"FAIL jarvis: {exc}", file=sys.stderr)
-            return ENVIRONMENT
+        fetch_on_first_read(instance)
     return COMMANDS[command].run(instance, env, args)
 
 

@@ -178,6 +178,7 @@ _APP_PIECES = {
     ("Deployment", "restic-apps"),
     ("Service", "restic-apps"),
     ("MutatingPolicy", "app-priority"),
+    ("MutatingPolicy", "app-lan-name"),
     ("PriorityClass", "hosted-app"),
     ("Certificate", "wildcard-apps"),
     ("Namespace", "platform-app-hosting"),
