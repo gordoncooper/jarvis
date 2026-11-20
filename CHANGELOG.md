@@ -9,6 +9,29 @@ the upgrade.
 
 ### Changed
 
+- Core makes each hosted app's web routes. An app file's `network.web` is a list of entries,
+  each a Service and its port: HTTPRoute `app-web` serves `<app>.apps.<dns_suffix>`, and a
+  named entry's `app-web-<entry>` serves `<app>-<entry>.apps.<dns_suffix>`. An entry's custom
+  `hostnames` (in place of `risky.hostnames`) get route `app-hostnames[-<entry>]` once the env
+  grants them. An app ships no route; one whose routing a Service and port cannot express marks
+  its entry `ownRoute: true` and ships that entry's route, and admission refuses any other route
+  an app ships. The example apps are hello-web v0.3.0, notes v0.3.0 and lan-demo v0.1.1.
+- `values/apps.yaml` holds one entry per app the env runs, keyed by its name: `version`, its
+  `grants`, and `backups` (default on). It replaces `apps:` in `values/switches.yaml` and the
+  `versions:` and `exceptions:` lists.
+- `jarvis validate` and `jarvis render` read each app at its pinned tag and hold it to the app
+  rules of the core the env pins, so a core pin move past an app fails the instance's CI. They
+  also refuse a web name two apps would both make, a `lan-port` grant on a port core or the node
+  holds (22, 53, 80, 443, 2379-2380, 5001, 6443, 8472/UDP, 10250, 51820-51821/UDP), and one
+  port granted to two apps.
+- An app with `backups` on and a `backup: true` volume needs its own credential: `jarvis secrets
+  --env <env>` mints it, `jarvis validate` requires it once the env is bootstrapped, and `jarvis
+  verify` fails a volume of it with no ReplicationSource. With `backups: false` nothing is sealed
+  or reported.
+- The env checks read the apps repository only from `APPS_REPO`, which the jarvis CLI sets; they
+  no longer look for a checkout beside the instance.
+- `jarvis restore`'s binder pod meets core's rules and an app namespace's baseline (sized, Pod
+  Security restricted, PriorityClass `hosted-app`), so it can bind a hosted app's claim.
 - `jarvis up` and the pre-commit hook `jarvis init` installs no longer run `jarvis render --check`
   beside `jarvis validate`, which already runs it. A hook installed before keeps working as it is.
 - The instance workflow restores the chart and schema cache, as core's CI does, so an instance's
@@ -19,6 +42,29 @@ the upgrade.
 - `jarvis node prep` waits up to 10 minutes for apt's lock, so it no longer fails on a new node
   still running unattended-upgrades after boot.
 - The flux-operator role's first API call reads no secret, so a wrong kubeconfig shows its error.
+
+### Removed
+
+- An app file's `network.web.healthPath` and `envs.<env>`, and the `no-uptime-check` grant: no
+  uptime check read them. The namespace annotations `hosting.jarvis.io/host` and `env` go with
+  them; `hosting.jarvis.io/apps-domain` names the apps domain.
+
+### Upgrading
+
+In each env that hosts apps, in one commit:
+
+- Move the core pin and each app's pin together: this core refuses an app file whose `web` is
+  not a list of entries. For the example apps that is hello-web v0.3.0, notes v0.3.0 and
+  lan-demo v0.1.1. Their own routes `hello-web` and `notes` are pruned by each app's
+  Kustomization, and core's `app-web` serves the same names.
+- Rewrite `values/apps.yaml` as one entry per app: its `versions:` pin as `version`, and its
+  `exceptions:` lines as `grants` without the `<app>:` prefix. Delete `apps:` from
+  `values/switches.yaml`, and any `no-uptime-check` grant.
+- For each app with a `backup: true` volume, run `jarvis secrets --env <env>` to seal its
+  credential, or set its `backups: false`.
+
+Then `jarvis render` and `jarvis validate`. An env that moved the core pin alone fails its app
+Kustomizations on the new App schema; move the app pins, or rebuild it.
 
 ## v0.7.0
 
@@ -38,10 +84,15 @@ the upgrade.
 
 ### Upgrading
 
-- Move each hosted app to a release that ships an HTTPRoute, in the same commit as the core pin:
-  after the upgrade the cluster refuses an app's Ingress. For the example apps that is
-  `hello-web: v0.2.0` and `notes: v0.2.0` in `values/apps.yaml`; `lan-demo` has no web address
-  and stays.
+- Move each hosted app to a release that ships an HTTPRoute in the same commit as the core pin,
+  never after it: once the core pin moves, the app's account can no longer touch Ingresses, so
+  the app's Kustomization fails. For the example apps that is `hello-web: v0.2.0` and
+  `notes: v0.2.0` in `values/apps.yaml`; `lan-demo` has no web address and stays.
+- An env whose apps shipped an Ingress then sticks: each app Kustomization fails `PruneFailed`,
+  because Flux reads each stale Ingress in its inventory as the app's account, which can no
+  longer read Ingresses. Rebuild the env, or for each app set `deletionPolicy: Orphan` on
+  Kustomization `flux-system/app-<name>` and delete it; its wiring `app-<name>-wiring` makes it
+  again with a fresh inventory, which adopts the app's objects.
 - An add-on's Ingress becomes an HTTPRoute on the core door, as `core/platform/testapp` shows.
 
 ## v0.6.1

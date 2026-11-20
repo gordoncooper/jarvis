@@ -23,6 +23,7 @@ from jarvis import paths as _paths
 from jarvis.apps import backups as _app_backups
 from jarvis.apps import checkout as _apps_checkout
 from jarvis.apps import values as _apps
+from jarvis.apps.app_file import check_folder, web_labels
 from jarvis.env import switches as _switches
 from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE resolver)
 from jarvis.schema import values as _values
@@ -52,7 +53,6 @@ ADDON_SECRETS_PATH = "./envs/${jarvis_env}/secrets/"
 _FILES = {
     "values/cluster-vars.yaml": _values.CLUSTER_VARS,
     "inventory/hosts.yml": "hosts",
-    _apps.APPS_VALUES: "apps",
 }
 
 # ENVS="<env> [<env>...]" limits validate_env_tree and the env-level checks to those envs, so an
@@ -211,7 +211,7 @@ def _validate_env(env_dir: Path, repo_root: Path, *, pre_host: bool = False) -> 
     errors.extend(switches_problems(env_dir, repo_root))
     if app_dns_listed(env_dir) and not cluster_vars.get("app_dns_cluster_ip"):
         errors.append(f"{cluster_rel}: app_dns_cluster_ip is required while {_switches.SWITCHES_FILE} lists {_switches.APP_DNS}")
-    errors.extend(_apps_problems(env_dir, repo_root, cluster_vars))
+    errors.extend(_apps_problems(env_dir, repo_root, cluster_vars, bootstrapped))
     errors.extend(_sealed_problems(env_dir, repo_root, bootstrapped, cluster_path))
     if not pre_host:
         # Every sealed file opens for exactly the env's recipients: the working and recovery keys.
@@ -317,10 +317,10 @@ def app_dns_listed(env_dir: Path) -> bool:
 
 
 def app_registrations(env_dir: Path) -> list[str]:
-    """The app namespaces an env registers a backup credential for: each listed app whose
-    credential is sealed."""
+    """The app namespaces an env registers a backup credential for: each app with backups on
+    whose credential is sealed."""
     data, errors = _apps.load_values(env_dir)
-    return [] if errors else _app_backups.registered(env_dir, _apps.app_names(data))
+    return [] if errors else _app_backups.registered(env_dir, data)
 
 
 def addon_names(core: Path) -> tuple[str, ...]:
@@ -384,8 +384,7 @@ def addon_secret_namespaces(docs: list[dict]) -> list[str]:
 
 def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
     """Why the env's switches cannot render: a shape its schema refuses, a feature or add-on core
-    does not ship, two add-ons for one slot, or an app the apps repository does not hold. A listed
-    app must exist; a missing checkout fails, like backup eligibility."""
+    does not ship, or two add-ons for one slot."""
     rel = _rel(env_dir / _switches.SWITCHES_FILE, repo_root)
     data, errors = _switches.load(env_dir)
     errors = [f"{rel}: {problem}" for problem in errors] or _values.problems("switches", data, rel)
@@ -411,38 +410,62 @@ def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
         for slot, names in sorted(by_slot.items())
         if len(names) > 1
     )
-    apps = _switches.names(data, _switches.APPS)
+    return errors
+
+
+def apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) -> list[str]:
+    """Why the env's apps cannot render: its grants (values.validate); an env that lists apps
+    turns app hosting on and names the apps repository; and each app, read at its pinned tag,
+    passes core's app rules and makes web names no other app makes."""
+    rel = _rel(env_dir / _apps.APPS_VALUES, repo_root)
+    data, errors = _apps.load_values(env_dir)
+    errors = [f"{rel}: {problem}" for problem in errors] or _values.problems("apps", data, rel)
+    if errors:
+        return errors
+    errors = [f"{rel}: {p}" for p in _apps.validate(data, cluster_vars.get("dns_suffix"), _apps.lan_networks(cluster_vars))]
+    apps = _apps.app_names(data)
     if not apps:
         return errors
+    if not app_hosting_listed(env_dir):
+        errors.append(f"{rel}: lists apps, but app hosting is off; list {_switches.APP_HOSTING} under {_switches.FEATURES} in {_switches.SWITCHES_FILE}")
+    if not cluster_vars.get("apps_git_repo_url"):
+        errors.append(f"{rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
     try:
         apps_root = _apps_checkout.apps_repo_root(repo_root, env_dir)
     except _apps_checkout.AppsRepoError as exc:
         return [*errors, f"{rel}: {exc}"]
-    errors.extend(
-        f"{rel}: {_switches.APPS}: unknown name {name!r}, no {name}/app.yaml in the apps repository{_apps_checkout.STALE_HINT}"
-        for name in apps
-        if not (apps_root / name / "app.yaml").is_file()
-    )
+    makers: dict[str, str] = {}
+    for app in apps:
+        where = f"{rel}: {app} {data[app]['version']}"
+        if not (apps_root / app / "app.yaml").is_file():
+            errors.append(f"{where}: no {app}/app.yaml in the apps repository{_apps_checkout.STALE_HINT}")
+            continue
+        problems = check_folder(apps_root / app)
+        errors.extend(f"{where}: {problem}" for problem in problems)
+        if problems:
+            continue
+        for label in web_labels(apps_root / app):
+            if label in makers:
+                errors.append(f"{where}: web name {label}.apps.<dns suffix> is also app {makers[label]}'s; rename a web entry")
+            makers.setdefault(label, app)
     return errors
 
 
-def _apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) -> list[str]:
-    """Each exception line is one known grant for a listed app, each listed app has a pin, and an
-    env that lists apps turns app hosting on and names the apps repository."""
+def _apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any], bootstrapped: bool) -> list[str]:
+    """apps_problems, and once the env is bootstrapped, each app that needs a backup credential
+    (backups on, a backup: true volume) has it sealed."""
+    errors = apps_problems(env_dir, repo_root, cluster_vars)
+    data, _ = _apps.load_values(env_dir)
+    if errors or not bootstrapped or not _apps.app_names(data):
+        return errors
     rel = _rel(env_dir / _apps.APPS_VALUES, repo_root)
-    switches_rel = _rel(env_dir / _switches.SWITCHES_FILE, repo_root)
-    data, errors = _apps.load_values(env_dir)
-    if errors:
-        return [f"{rel}: {problem}" for problem in errors]
-    problems = _apps.validate(data, cluster_vars["dns_suffix"], _apps.lan_networks(cluster_vars))
-    errors = [f"{switches_rel if p.startswith(_switches.APPS) else rel}: {p}" for p in problems]
-    errors.extend(f"{rel}: {problem}" for problem in _apps.version_problems(data))
-    if _apps.app_names(data):
-        if not app_hosting_listed(env_dir):
-            errors.append(f"{switches_rel}: lists apps, but app hosting is off; list {_switches.APP_HOSTING} under {_switches.FEATURES}, or remove the list")
-        if not cluster_vars.get("apps_git_repo_url"):
-            errors.append(f"{switches_rel}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
-    return errors
+    needing = _app_backups.needing_credentials(data, _apps_checkout.apps_repo_root(repo_root, env_dir))
+    return [
+        f"{rel}: {app}: backups are on and it keeps a backup: true volume, so its credential is sealed: "
+        f"jarvis secrets --env {env_dir.name} (or set backups: false)"
+        for app in needing
+        if not (repo_root / _app_backups.sealed_rel(env_dir.name, f"app-{app}")).is_file()
+    ]
 
 
 def sealed_readers(env_dir: Path, repo_root: Path, cluster_vars_path: Path) -> set[Path]:

@@ -331,12 +331,11 @@ def _render_core_only(env: Path, *features: str) -> None:
     from jarvis.apps import values as _apps
     from jarvis.env import switches as _switches
 
-    data = {"features": list(features), "addons": [], "apps": []}
+    data = {"features": list(features), "addons": []}
     (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    (env / _apps.APPS_VALUES).unlink(missing_ok=True)
     flux = env / "flux"
-    (flux / _switches.ROOT_REL).write_text(
-        _switches.root_kustomization(data, apps_generated=_apps.GENERATED_REL), encoding="utf-8"
-    )
+    (flux / _switches.ROOT_REL).write_text(_switches.root_kustomization(apps_generated=None), encoding="utf-8")
     (flux / _switches.SERVICES_REL).write_text(_switches.services(data), encoding="utf-8")
     (flux / _switches.PLATFORM_CONFIGS_REL).write_text(_switches.platform_configs(data), encoding="utf-8")
 

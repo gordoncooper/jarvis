@@ -3,11 +3,10 @@
 For each env with a flux/ tree, on each app wiring Kustomization (app-<name>-wiring), this
 builds its path with its postBuild values and checks what the cluster gets:
 
-- The wiring is for a hosted app on the apps list in values/switches.yaml, and the env lists no app
-  without one.
+- The wiring is for a hosted app values/apps.yaml lists, and the env lists no app without one.
 - Namespace app-<name>, labelled hosting.jarvis.io/app: <name>, kept by prune: disabled, its
-  grant annotations equal to the env's exception lines for the app, and its host annotation
-  <name>.apps.<dns suffix>.
+  grant annotations equal to the env's grants for the app, and its apps-domain annotation
+  apps.<dns suffix>.
 - The network baseline: default-deny (both directions, no allow), cluster-dns and
   same-namespace, and LimitRange app, all in app-<name>.
 - The tenant flux-system/app-<name> holds one Role in app-<name>, on the kinds an app ships
@@ -121,7 +120,7 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         app = name.removeprefix("app-").removesuffix("-wiring")
         wired.add(app)
         if app not in listed:
-            yield f"{ref_of(path.kustomization)}: wires app {app}, which the apps list in values/switches.yaml does not hold"
+            yield f"{ref_of(path.kustomization)}: wires app {app}, which values/apps.yaml does not list"
         if path.error:
             yield f"{ref_of(path.kustomization)}: {path.error}"
             continue
@@ -130,7 +129,7 @@ def _env_problems(root: Path, env_rel: str) -> Iterator[str]:
         yield from (f"app {app}: {problem}" for problem in wiring_problems(app, docs, grants))
     for app in listed:
         if app not in wired:
-            yield f"the apps list in values/switches.yaml holds {app}, and the flux tree has no {_apps.wiring_name(app)}"
+            yield f"values/apps.yaml lists {app}, and the flux tree has no {_apps.wiring_name(app)}"
 
 
 def binding_problems(docs: list[dict]) -> Iterator[str]:

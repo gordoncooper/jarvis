@@ -4,8 +4,10 @@ metadata:
   name: hello-web
 spec:
   network:
+    # https://hello-web.apps.<dns suffix>: core routes it to Service hello-web, port 80.
     web:
-      port: 8080
+      - service: hello-web
+        port: 80
     egress:
       # Granted pair: hello-web calls notes (notes lists hello-web under callers).
       apps: [notes]

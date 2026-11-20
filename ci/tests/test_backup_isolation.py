@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.schema.env import ValidationError, validate_one_env
-from support import ExampleCopy, bootstrap_example_copy, flux_built, register_copy_app
+from support import ExampleCopy, bootstrap_example_copy, flux_built, register_copy_app, render_switches
 
 APP = "app-notes"
 
@@ -69,9 +69,14 @@ def test_registered_app_renders_its_credential_only_where_needed(app_copy: Examp
     validate_one_env(app_copy.root, app_copy.name)
 
 
-def test_core_only_env_renders_no_app_workload(example_copy: ExampleCopy) -> None:
-    """With no app credential sealed, no app credential renders or is mounted anywhere."""
-    docs = _platform_configs(example_copy)
+def test_core_only_env_renders_no_app_workload(tmp_path: Path) -> None:
+    """With no app credential sealed (notes' backups off), no app credential renders or is mounted anywhere."""
+    copy = bootstrap_example_copy(tmp_path)
+    shutil.rmtree(copy.env_dir / "secrets" / APP)
+    values = copy.env_dir / "values" / "apps.yaml"
+    values.write_text(values.read_text(encoding="utf-8").replace("notes:\n", "notes:\n  backups: false\n"), encoding="utf-8")
+    render_switches(copy.env_dir, copy.root)
+    docs = _platform_configs(copy)
     assert not any(doc["metadata"]["name"].startswith("backups-restic-app-") for doc in docs)
     assert not any(volume["name"].startswith("app-") for volume in _pod(_find(docs, "Deployment", "restic-apps"))["volumes"])
     for name in ("restic-check", "restic-offsite"):

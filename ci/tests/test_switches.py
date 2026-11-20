@@ -14,7 +14,6 @@ from support import (
     _kustomize_build,
     bootstrap_example_copy,
     flux_built,
-    register_copy_app,
     render_switches,
     set_switches,
 )
@@ -40,39 +39,32 @@ def _objects(copy: ExampleCopy, rel: str) -> set[tuple[str, str]]:
     return {(doc["kind"], doc["metadata"]["name"]) for doc in flux_built(copy.root, copy.name, rel)}
 
 
-def _set_pin(env_dir: Path, app: str, version: str | None) -> None:
+def _set_app(env_dir: Path, app: str, entry: dict | None) -> None:
     path = env_dir / "values" / "apps.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    versions = data.setdefault("versions", {})
-    if version is None:
-        versions.pop(app, None)
+    if entry is None:
+        data.pop(app, None)
     else:
-        versions[app] = version
+        data[app] = entry
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def test_a_listed_app_takes_its_name_and_its_pin(tmp_path: Path) -> None:
-    """Rule: an app's name under apps and its pinned version enable it: only those two files and its
-    wiring change, and a second render changes nothing."""
+    """Rule: an app's entry in values/apps.yaml, its name and pinned version, enables it: only that
+    file and its wiring change, and a second render changes nothing."""
     copy = bootstrap_example_copy(tmp_path)
-    set_switches(copy.env_dir, apps=["notes", "lan-demo"])
-    _set_pin(copy.env_dir, "hello-web", None)
+    _set_app(copy.env_dir, "hello-web", None)
     render_switches(copy.env_dir, copy.root)
     validate_one_env(copy.root, copy.name)
     before = _tree(copy)
     assert "app-hello-web-wiring" not in before["flux/generated/apps.yaml"]
 
-    set_switches(copy.env_dir, apps=["notes", "lan-demo", "hello-web"])
-    _set_pin(copy.env_dir, "hello-web", "v0.1.0")
+    _set_app(copy.env_dir, "hello-web", {"version": "v0.1.0"})
     render_switches(copy.env_dir, copy.root)
     after = _tree(copy)
     assert "app-hello-web-wiring" in after["flux/generated/apps.yaml"]
     assert "refs/tags/hello-web/v0.1.0" in after["flux/generated/apps.yaml"]
-    assert {path for path in after if after[path] != before.get(path)} == {
-        "values/switches.yaml",
-        "values/apps.yaml",
-        "flux/generated/apps.yaml",
-    }
+    assert {path for path in after if after[path] != before.get(path)} == {"values/apps.yaml", "flux/generated/apps.yaml"}
     validate_one_env(copy.root, copy.name)
     render_switches(copy.env_dir, copy.root)
     assert _tree(copy) == after
@@ -80,10 +72,10 @@ def test_a_listed_app_takes_its_name_and_its_pin(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("section", "bad"),
-    [("features", "observability"), ("addons", "nope"), ("apps", "not-in-the-apps-repo")],
+    [("features", "observability"), ("addons", "nope")],
 )
 def test_an_unknown_name_fails_and_refuses_the_render(tmp_path: Path, section: str, bad: str) -> None:
-    """Rule: a name core or the apps repository does not hold fails, before the render writes anything."""
+    """Rule: a name core does not hold fails, before the render writes anything."""
     copy = bootstrap_example_copy(tmp_path)
     data = yaml.safe_load((copy.env_dir / _switches.SWITCHES_FILE).read_text(encoding="utf-8"))
     set_switches(copy.env_dir, **{section: [*data[section], bad]})
@@ -121,7 +113,7 @@ def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:
     copy = bootstrap_example_copy(tmp_path)
     assert ("CronJob", "restic-offsite") in _objects(copy, "platform-configs")
     (copy.env_dir / "values" / "apps.yaml").unlink()
-    set_switches(copy.env_dir, features=[], apps=[])
+    set_switches(copy.env_dir, features=[])
     render_switches(copy.env_dir, copy.root)
     off = _objects(copy, "platform-configs")
     assert ("CronJob", "restic-offsite") not in off
@@ -131,12 +123,10 @@ def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:
 
 
 def test_a_sealed_app_credential_registers_on_the_apps_server(tmp_path: Path) -> None:
-    """Rule: env-01's shape renders: app-hosting brings the apps server, and each listed app whose
-    credential is sealed registers on it; a listed app without one registers nothing."""
+    """Rule: app-hosting brings the apps server, and each app with backups on whose credential is
+    sealed registers on it: notes, whose volume jarvis secrets minted one for. An app without
+    one registers nothing."""
     copy = bootstrap_example_copy(tmp_path)
-    assert ("Deployment", "restic-apps") in _objects(copy, "platform-configs")
-    assert not any(name.startswith("backups-restic-app-") for _kind, name in _objects(copy, "platform-configs"))
-    register_copy_app(copy, "app-notes")
     validate_one_env(copy.root, copy.name)
     objects = _objects(copy, "platform-configs")
     assert {("Deployment", "restic-apps"), ("Secret", "backups-restic-app-notes")} <= objects
@@ -150,21 +140,18 @@ def test_an_env_with_a_flux_tree_needs_the_file(tmp_path: Path) -> None:
     assert "missing required file" in _errors(copy) and _switches.SWITCHES_FILE in _errors(copy)
 
 
-def test_app_names_are_refused_in_the_app_file(tmp_path: Path) -> None:
-    """Rule: one source of truth: app names live only in the switches file."""
+def test_app_names_are_refused_in_the_switches_file(tmp_path: Path) -> None:
+    """Rule: one source of truth: the apps an env runs are values/apps.yaml's entries only."""
     copy = bootstrap_example_copy(tmp_path)
-    path = copy.env_dir / "values" / "apps.yaml"
-    path.write_text("apps:\n  - notes\n" + path.read_text(encoding="utf-8"), encoding="utf-8")
+    set_switches(copy.env_dir, apps=["notes"])
     assert "('apps' was unexpected)" in _errors(copy)
 
 
-def test_an_exception_line_for_an_unlisted_app_refuses_the_render(tmp_path: Path) -> None:
-    """Rule: the render checks exception lines before it writes, even with no app left to wire."""
+def test_a_bad_grant_refuses_the_render(tmp_path: Path) -> None:
+    """Rule: the render checks the env's grants before it writes."""
     copy = bootstrap_example_copy(tmp_path)
-    set_switches(copy.env_dir, apps=[])
+    _set_app(copy.env_dir, "hello-web", {"version": "v0.3.0", "grants": ["trust"]})
     before = _tree(copy)
-    with pytest.raises(SystemExit, match="not on this env's app list"):
+    with pytest.raises(SystemExit, match="unknown grant"):
         render_switches(copy.env_dir, copy.root)
     assert _tree(copy) == before
-
-

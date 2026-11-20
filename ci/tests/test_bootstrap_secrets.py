@@ -479,7 +479,7 @@ def test_app_credential_is_its_own_and_never_minted_twice(tmp_path, monkeypatch)
     with pytest.raises(SystemExit, match="does not list shop"):
         mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin)
     assert not (tmp_path / rel).exists()
-    (tmp_path / "envs/env-test/values/switches.yaml").write_text("apps: [shop]\n", encoding="utf-8")
+    (tmp_path / "envs/env-test/values/apps.yaml").write_text("shop:\n  version: v0.1.0\n", encoding="utf-8")
     assert mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin) == [rel]
     assert mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin) == []
     child = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}

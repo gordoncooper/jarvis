@@ -94,11 +94,11 @@ def _ctx(tmp_path: Path, cluster: Cluster, apps_text: str | None = None) -> Cont
     values.mkdir(parents=True)
     if apps_text is not None:
         (values / "apps.yaml").write_text(apps_text, encoding="utf-8")
-        (values / "switches.yaml").write_text("features: [app-hosting]\napps:\n  - hello-web\n", encoding="utf-8")
+        (values / "switches.yaml").write_text("features: [app-hosting]\n", encoding="utf-8")
     return Context(tmp_path, "env-test", cluster, {"dns_suffix": "test.example"}, datetime(2026, 11, 9, tzinfo=UTC), {})
 
 
-APPS = "versions:\n  hello-web: v0.1.0\n"
+APPS = "hello-web:\n  version: v0.1.0\n"
 
 
 def test_the_scratch_namespace_is_made_and_removed(tmp_path: Path) -> None:
@@ -193,9 +193,9 @@ def test_admission_fails_when_the_policies_do_not_hold(tmp_path: Path, change: d
 
 def test_admission_picks_a_risk_the_env_does_not_grant(tmp_path: Path) -> None:
     cluster = Cluster()
-    smoke.probe_admission(_ctx(tmp_path, cluster, APPS + "exceptions:\n  - hello-web: privileged\n"))
+    smoke.probe_admission(_ctx(tmp_path, cluster, APPS + "  grants:\n    - privileged\n"))
     assert cluster.dry_runs[1]["spec"].get("hostNetwork") is True
-    every = APPS + "exceptions:\n" + "".join(f"  - hello-web: {grant}\n" for grant, _ in smoke.RISKY)
+    every = APPS + "  grants:\n" + "".join(f"    - {grant}\n" for grant, _ in smoke.RISKY)
     with pytest.raises(CheckWarning, match="every risky grant"):
         smoke.probe_admission(_ctx(tmp_path / "all", Cluster(), every))
 

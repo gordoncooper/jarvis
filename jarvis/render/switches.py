@@ -2,8 +2,8 @@
 
 Writes flux/kustomization.yaml, flux/kustomizations/services.yaml,
 flux/platform-configs/kustomization.yaml with a registration under platform-configs/backups/ for
-each listed app whose backup credential is sealed, and flux/generated/apps.yaml. Names, slots and
-app lines are checked before the first write; env-schema then checks what needs the whole env,
+each app with backups on whose credential is sealed, and flux/generated/apps.yaml from
+values/apps.yaml. Names, slots and grants are checked before the first write; env-schema then checks what needs the whole env,
 such as sealed files. A second run changes nothing.
 """
 
@@ -33,13 +33,12 @@ def render_env(env_dir: Path, repo_root: Path) -> None:
     apps = render_apps.render_env(env_dir)
     data, _ = _switches.load(env_dir)
     flux = env_dir / "flux"
-    registrations = _app_backups.write_registrations(
-        env_dir, _app_backups.registered(env_dir, _switches.names(data, _switches.APPS))
-    )
+    app_data, _ = _apps.load_values(env_dir)
+    registrations = _app_backups.write_registrations(env_dir, _app_backups.registered(env_dir, app_data))
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
     for rel, text in (
         (_switches.SYNC_REL, _switches.sync(cluster_vars, env_dir.name)),
-        (_switches.ROOT_REL, _switches.root_kustomization(data, apps_generated=_apps.GENERATED_REL)),
+        (_switches.ROOT_REL, _switches.root_kustomization(apps_generated=_apps.GENERATED_REL if apps else None)),
         (_switches.SERVICES_REL, _switches.services(data)),
         (_switches.PLATFORM_CONFIGS_REL, _switches.platform_configs(data, extra_components=registrations)),
     ):

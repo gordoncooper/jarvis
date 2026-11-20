@@ -103,6 +103,10 @@ def run(
         roles=roles,
     )
     try:
+        # A file verify cannot read fails; it never reads as an env that enables nothing.
+        switches, switches_errors = _switches.load(repo_root / "envs" / env)
+        if switches_errors:
+            raise CheckError(f"{_switches.SWITCHES_FILE}: {'; '.join(switches_errors)}")
         if enabled is None:
             # The env's add-on list; checks for an add-on it does not enable never load.
             enabled = load_addons(_paths.core_root(), enabled_addons(repo_root / "envs" / env))
@@ -119,7 +123,6 @@ def run(
         return 1
 
     failed = _report(checks)
-    switches, _ = _switches.load(repo_root / "envs" / env)
     app_dns = _switches.APP_DNS in _switches.names(switches, _switches.FEATURES)
     try:
         # With App DNS off, the LAN's own DNS names apps; verify reaches Traefik's address directly.

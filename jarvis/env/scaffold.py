@@ -108,7 +108,7 @@ class EnvSpec:
 
 
 def example_apps() -> dict:
-    """The example apps' values/apps.yaml: their pins and grants."""
+    """The example apps' values/apps.yaml: each one's version and grants."""
     return yaml.safe_load(EXAMPLE_APPS.read_text(encoding="utf-8"))
 
 
@@ -177,15 +177,12 @@ def _schema_line(spec: EnvSpec, name: str) -> list[str]:
 
 def switches(spec: EnvSpec) -> str:
     features = "".join(f"  - {name}\n" for name in spec.features)
-    names = list(example_apps()["versions"]) if spec.examples else []
-    apps = "apps:\n" + "".join(f"  - {name}\n" for name in names) if names else "apps: []\n"
     return (
         "".join(line + "\n" for line in _schema_line(spec, "switches"))
         + "# What this env turns on, by name. Core is always on. jarvis render writes the Flux wiring\n"
         "# from this file; an unknown name fails.\n"
         + ("features:\n" + features if features else "features: []\n")
         + "addons: []\n"
-        + apps
     )
 
 
@@ -307,11 +304,11 @@ def write_env(instance: Path, spec: EnvSpec) -> Path:
     (env_dir / "values" / "switches.yaml").write_text(switches(spec), encoding="utf-8")
     (env_dir / "inventory" / "hosts.yml").write_text(hosts(spec), encoding="utf-8")
     if spec.examples:
-        text = EXAMPLE_APPS.read_text(encoding="utf-8")
-        body = text[text.index("versions:") :]
+        lines = EXAMPLE_APPS.read_text(encoding="utf-8").splitlines(keepends=True)
+        body = "".join(lines[next(i for i, line in enumerate(lines) if not line.startswith("#")) :])
         header = "".join(line + "\n" for line in _schema_line(spec, "apps"))
-        header += "# The example apps jarvis init --with-examples turned on. Remove them from switches.yaml's apps\n"
-        header += "# and from here once the tour is done; their volumes stay until you delete them.\n"
+        header += "# The example apps jarvis init --with-examples turned on. Remove them from here once the\n"
+        header += "# tour is done; their volumes stay until you delete them.\n"
         (env_dir / "values" / "apps.yaml").write_text(header + body, encoding="utf-8")
     return env_dir
 

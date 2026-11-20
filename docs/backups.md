@@ -128,18 +128,18 @@ Core repositories only: skip every `ns-app-*` directory and every PVC in an `app
 
 ## App credentials
 
-An app's backups are on once its own credential is sealed: the render registers the credential of each listed app that has one, and app-hosting's apps server (`restic-apps`) serves it ([app-hosting](../core/feature/app-hosting/CONTRACT.md)). Schedule and retention are the env's. Until then `jarvis verify` reports the app's volumes as not backed up (WARN).
+An app's backups are on unless its entry in `values/apps.yaml` sets `backups: false`. With them on, an app whose file keeps a `backup: true` volume has its own credential: `jarvis validate` requires it once the env is bootstrapped, the render registers it, and app-hosting's apps server (`restic-apps`) serves it ([app-hosting](../core/feature/app-hosting/CONTRACT.md)). Schedule and retention are the env's. With them off, nothing is sealed and `jarvis verify` does not check the app's volumes.
 
 **Add an app.**
 
-1. `jarvis secrets --env <env> --app app-<name>`: seals its credential. The app must be listed in `values/switches.yaml`. A second run changes nothing; a recorded file that has gone missing is refused, since its repositories open only with the first password.
+1. `jarvis secrets --env <env>` seals each credential an app needs and lacks (`--app app-<name>` seals only that one). A second run changes nothing; a recorded file that has gone missing is refused, since its repositories open only with the first password.
 2. `jarvis render --env <env>` registers it. Commit and push.
 3. `restic-apps` restarts with the new user. A PVC that existed before: `kubectl annotate pvc -n app-<name> <pvc> backup-credential=registered --overwrite`.
 4. `jarvis verify --env <env>` passes; the next `restic-check` prints `PASS ns-app-<name>/pvc-<pvc>`.
 
 **Retire an app.**
 
-1. Take it off the app list and delete `secrets/app-<name>/` (`jarvis validate` fails a sealed file nothing reads), re-render, commit and push. Then `kubectl -n platform-backups delete secret backups-restic-app-<name>` (Flux does not prune it). Git history keeps the credential: restore the file before listing the name again, and its repositories open again.
+1. Take it out of `values/apps.yaml` (or set its `backups: false`) and delete `secrets/app-<name>/` (`jarvis validate` fails a sealed file nothing reads), re-render, commit and push. Then `kubectl -n platform-backups delete secret backups-restic-app-<name>` (Flux does not prune it). Git history keeps the credential: restore the file before listing the name again, and its repositories open again.
 2. Once the data is not needed, remove `<backup_path>/restic/ns-app-<name>` as root on the backup node; until then `restic-check` and `restic-offsite` print `FAIL … no backup credential registered for its app`.
 
 ## Off-host copy

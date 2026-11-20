@@ -1,12 +1,12 @@
 """Hosted-app standing checks (core/feature/app-hosting/CONTRACT.md, Health). Read-only.
 
-jarvis verify runs this component only for an env whose values/switches.yaml lists an app.
+jarvis verify runs this component only for an env whose values/apps.yaml lists an app.
 """
 
 from __future__ import annotations
 
-from jarvis.apps import backups as _app_backups
 from jarvis.apps import values as _apps
+from jarvis.verify.backups import backed_up
 from jarvis.verify.common import CheckError, CheckWarning, Context, Kubectl, items
 from jarvis.verify.registry import Check, register
 
@@ -24,14 +24,17 @@ def _key(item: dict) -> tuple[str, str]:
 
 def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None:
     """The cluster-wide admission bindings exist. Every listed app's namespace carries its label,
-    network baseline and LimitRange; its annotations hold exactly the env's exception lines;
-    every HTTPRoute hostname in it is <name>.apps.<dns suffix> or a granted hostname. An app- namespace
-    the env no longer lists is reported."""
+    network baseline and LimitRange; its annotations hold exactly the env's grants; each web
+    entry its App does not route itself has core's route; every HTTPRoute hostname in it is a web
+    entry's <name>[-<entry>].apps.<dns suffix> or a granted hostname. An app- namespace the env no
+    longer lists is reported."""
     namespaces = {_key(item)[1]: item for item in _list(kubectl, "namespaces", "list namespaces")}
     policies = {_key(item) for item in _list(kubectl, "networkpolicies", "list NetworkPolicies")}
     ranges = {_key(item) for item in _list(kubectl, "limitranges", "list LimitRanges")}
     bindings = {_key(item)[1] for item in _list(kubectl, "validatingadmissionpolicybindings", "list admission bindings")}
     routes = _list(kubectl, "httproutes.gateway.networking.k8s.io", "list HTTPRoutes")
+    web = {_key(app)[0]: ((app.get("spec") or {}).get("network") or {}).get("web") or []
+           for app in _list(kubectl, "apps.hosting.jarvis.io", "list Apps")}
     problems = [f"no ValidatingAdmissionPolicyBinding {policy}" for policy in ("app-file", "app-grants") if policy not in bindings]
     listed = _apps.app_names(data)
     for app in listed:
@@ -50,14 +53,19 @@ def check_app_baseline(kubectl: Kubectl, *, data: dict, dns_suffix: str) -> None
         for key, value in _apps.grant_annotations(data, app, dns_suffix).items():
             if annotations.get(key) != value:
                 problems.append(f"{namespace}: annotation {key} is {annotations.get(key)!r}, not the env's {value!r}")
-        want = _apps.grant_data(data, app, dns_suffix)
-        allowed = {want["host"], *filter(None, want["hostnames"].split(","))}
+        entries = web.get(namespace, [])
+        suffixes = [f"-{entry['name']}" if entry.get("name") else "" for entry in entries]
+        allowed = {f"{app}{suffix}.apps.{dns_suffix}" for suffix in suffixes}
+        allowed |= set(filter(None, _apps.grant_data(data, app, dns_suffix)["hostnames"].split(",")))
+        names = {_key(route)[1] for route in routes if _key(route)[0] == namespace}
+        problems.extend(f"{namespace}: no HTTPRoute app-web{suffix}" for entry, suffix in zip(entries, suffixes, strict=True)
+                        if not entry.get("ownRoute") and f"app-web{suffix}" not in names)
         for route in routes:
             if _key(route)[0] != namespace:
                 continue
             for host in (route.get("spec") or {}).get("hostnames") or []:
                 if host not in allowed:
-                    problems.append(f"{namespace}/{_key(route)[1]}: hostname {host!r} is not {want['host']} or granted")
+                    problems.append(f"{namespace}/{_key(route)[1]}: hostname {host!r} is not a web entry's or granted")
     if problems:
         raise CheckError("; ".join(problems))
     leftover = sorted(name for name in namespaces if name.startswith("app-") and name.removeprefix("app-") not in listed)
@@ -93,27 +101,18 @@ def check_declared_unbacked(kubectl: Kubectl) -> None:
         raise CheckWarning(f"declared not backed up by the app file: {', '.join(reported)}")
 
 
-def check_app_backups(kubectl: Kubectl, *, registered: list[str]) -> None:
-    """Each bound app volume not annotated backup: none has a ReplicationSource once its app's
-    credential is registered; until then it is reported as not backed up. The backups
-    component checks every source's freshness."""
+def check_app_backups(kubectl: Kubectl, *, on: list[str]) -> None:
+    """Each volume backups cover in the namespace of an app whose backups are on has a
+    ReplicationSource. An app with them off is not checked. The backups component checks every
+    source's freshness."""
     sources = {_key(item) for item in _list(kubectl, "replicationsource", "list ReplicationSources")}
-    off, problems = [], []
-    for pvc in _list(kubectl, "pvc", "list PVCs"):
-        namespace, name = _key(pvc)
-        meta, spec = pvc.get("metadata") or {}, pvc.get("spec") or {}
-        if not namespace.startswith("app-") or not spec.get("volumeName") or (namespace, name) in sources:
-            continue
-        if (meta.get("annotations") or {}).get("backup") == "none":
-            continue
-        if (meta.get("labels") or {}).get("app.kubernetes.io/created-by") == "volsync":
-            continue
-        (problems if namespace in registered else off).append(f"{namespace}/{name}")
+    problems = [
+        f"{namespace}/{name}"
+        for namespace, name in map(_key, backed_up(_list(kubectl, "pvc", "list PVCs")))
+        if namespace in on and (namespace, name) not in sources
+    ]
     if problems:
-        raise CheckError(f"{', '.join(problems)}: the app's credential is registered, and no ReplicationSource")
-    if off:
-        commands = "; ".join(f"jarvis secrets --app {ns}" for ns in sorted({item.split("/", 1)[0] for item in off}))
-        raise CheckWarning(f"not backed up: {', '.join(off)}; to turn on: {commands}")
+        raise CheckError(f"{', '.join(problems)}: the app's backups are on, and no ReplicationSource")
 
 
 @register("apps")
@@ -122,9 +121,9 @@ def apps_checks(ctx: Context) -> list[Check]:
     data, errors = _apps.load_values(env_dir)
     if errors:
         raise CheckError(f"values/apps.yaml: {'; '.join(errors)}")
-    registered = _app_backups.registered(env_dir, _apps.app_names(data))
+    on = [f"app-{app}" for app in _apps.app_names(data) if _apps.backups_on(data, app)]
     return [
         (70, "hosted app baseline", lambda: check_app_baseline(ctx.kubectl, data=data, dns_suffix=str(ctx.values["dns_suffix"]))),
         (71, "hosted app volumes", lambda: check_declared_unbacked(ctx.kubectl)),
-        (72, "hosted app backups", lambda: check_app_backups(ctx.kubectl, registered=registered)),
+        (72, "hosted app backups", lambda: check_app_backups(ctx.kubectl, on=on)),
     ]

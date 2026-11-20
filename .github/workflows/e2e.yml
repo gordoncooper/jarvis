@@ -192,7 +192,7 @@ jobs:
         run: |
           set -euo pipefail
           env_dir="envs/${E2E_ENV}"
-          pins="$(.venv/bin/python -c 'import sys, yaml; [print(a, v) for a, v in yaml.safe_load(open(sys.argv[1]))["versions"].items()]' "${env_dir}/values/apps.yaml")"
+          pins="$(.venv/bin/python -c 'import sys, yaml; [print(a, e["version"]) for a, e in yaml.safe_load(open(sys.argv[1])).items()]' "${env_dir}/values/apps.yaml")"
           [[ -n "${pins}" ]] || { echo "no app pins"; exit 1; }
           while read -r app version; do
             # The env's wiring makes the app's Kustomizations; wait for them to exist, then apply.

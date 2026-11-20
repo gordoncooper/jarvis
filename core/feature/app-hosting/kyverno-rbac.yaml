@@ -1,5 +1,5 @@
-# GeneratingPolicy app-derive reads each hosted app's App and writes that app's quota and
-# NetworkPolicies in its own namespace. Kyverno's chart roles aggregate this.
+# GeneratingPolicy app-derive reads each hosted app's App and writes that app's quota,
+# NetworkPolicies and HTTPRoutes in its own namespace. Kyverno's chart roles aggregate this.
 # Prune stays off so a path move cannot drop the permissions under live policies.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -16,6 +16,9 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["resourcequotas"]
