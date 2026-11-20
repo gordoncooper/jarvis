@@ -524,12 +524,15 @@ def test_copy_freshness_allows_one_interval_plus_grace(tmp_path, monkeypatch, ca
 
 
 def test_unreadable_switches_fail_verify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    """Rule: a switches file verify cannot read fails; it never reads as an env with no app."""
+    """Rule: a switches or apps file verify cannot read fails; it never reads as an env that
+    enables nothing."""
     values = tmp_path / "envs" / "env-test" / "values"
     values.mkdir(parents=True)
-    (values / "switches.yaml").write_text("apps: [\n", encoding="utf-8")
-    assert _run(tmp_path, Cluster(), monkeypatch) == 1
-    assert "FAIL verify components" in capsys.readouterr().out
+    for name in ("switches.yaml", "apps.yaml"):
+        (values / name).write_text("features: [\n", encoding="utf-8")
+        assert _run(tmp_path, Cluster(), monkeypatch) == 1
+        assert "FAIL verify components" in capsys.readouterr().out
+        (values / name).unlink()
 
 
 def test_core_freshness_leaves_an_app_volume_without_a_source_to_the_apps_component(tmp_path, monkeypatch, capsys):

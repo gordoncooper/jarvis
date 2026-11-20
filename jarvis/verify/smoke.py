@@ -189,11 +189,7 @@ RISKY = (("privileged", _privileged), ("host-network", _host_network), ("host-pa
 
 
 def _granted(data: dict, app: str) -> set[str]:
-    words = set()
-    for line in data.get("exceptions") or []:
-        if isinstance(line, dict) and isinstance(line.get(app), str):
-            words.add(line[app].split()[0])
-    return words
+    return {grant.split()[0] for grant in _apps.grants_for(data, app)}
 
 
 def _running_pod(ctx: Context, namespace: str) -> dict | None:

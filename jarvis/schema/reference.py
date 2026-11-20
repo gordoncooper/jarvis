@@ -21,7 +21,7 @@ PAGE = PRODUCT_ROOT / "docs" / "reference.md"
 FILES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("cluster-vars", "values/cluster-vars.yaml", ()),
     ("switches", "values/switches.yaml", ()),
-    ("apps", "values/apps.yaml", ()),
+    ("apps", "values/apps.yaml: each app, under its name", ("additionalProperties",)),
     ("hosts", "inventory/hosts.yml: each host under all.hosts", ("properties", "all", "properties", "hosts", "additionalProperties")),
 )
 
@@ -81,11 +81,12 @@ def render() -> str:
     ]
     for name, title, path in FILES:
         node: Any = _values.schema(name)
+        description = node.get("description")
         for key in path:
             node = node[key]
         lines += ["", f"## `{title}`", ""]
-        if not path and node.get("description"):
-            lines += [str(node["description"]), ""]
+        if description:
+            lines += [str(description), ""]
         lines += _table(node)
     return "\n".join(lines) + "\n"
 

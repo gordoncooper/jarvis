@@ -4,7 +4,8 @@ CONTRACT: core/feature/app-hosting/CONTRACT.md. The schema is the App CRD's
 (core/feature/app-hosting/crd/app-crd.yaml), read here, with unknown keys refused; the API
 server prunes them unread. The deploy/ rules are ValidatingAdmissionPolicies app-tenant and
 app-file as far as the folder alone decides them: a risky item the file does not ask for
-fails here, and one it asks for still needs the env's exception line in the cluster.
+fails here, and one it asks for still needs the env's grant in the cluster. An HTTPRoute's
+hostnames are admission's alone to check: here an app may ship one only for an ownRoute entry.
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ APP_FILE = "app.yaml"
 DEPLOY_DIR = "deploy"
 API_VERSION = "hosting.jarvis.io/v1alpha1"
 KIND = "App"
-HOST_VARIABLE = "${app_host}"
 APP_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?$")
 # What an app ships, by (API group, kind); ValidatingAdmissionPolicy app-tenant holds the same list.
 SHIPPED_KINDS = frozenset(
@@ -49,6 +49,8 @@ PRIORITY_CLASS = "hosted-app"
 # The CRD's CEL rules, by rule text. A rule added to the CRD fails here until it has its twin.
 _RULES = {
     "!('all' in self) || self.size() == 1": lambda value: "all" not in value or len(value) == 1,
+    "has(self.ownRoute) && self.ownRoute ? !has(self.service) && !has(self.port) : has(self.service) && has(self.port)":
+        lambda value: (not {"service", "port"} & set(value)) if value.get("ownRoute") else {"service", "port"} <= set(value),
 }
 
 
@@ -83,6 +85,15 @@ def check_folder(folder: Path | str) -> list[str]:
     return errors
 
 
+def web_labels(folder: Path) -> list[str]:
+    """The host label of each web entry of the app in folder, which check_folder passes: <name>
+    for the entry with no name and <name>-<entry> for a named one, each one label under the env's
+    apps domain (core's routes, app-derive, take the same names)."""
+    spec = yaml.safe_load((folder / APP_FILE).read_text(encoding="utf-8"))["spec"]
+    return [folder.name + (f"-{entry['name']}" if entry.get("name") else "")
+            for entry in (spec.get("network") or {}).get("web") or []]
+
+
 def app_problems(app: dict, name: str) -> list[str]:
     errors: list[str] = []
     if app.get("apiVersion") != API_VERSION or app.get("kind") != KIND:
@@ -97,6 +108,10 @@ def app_problems(app: dict, name: str) -> list[str]:
         errors.append(f"unknown key(s) {', '.join(extra)}")
     schema = _crd_schema()["properties"]["spec"]
     errors.extend(_schema_problems(app.get("spec"), schema, "spec"))
+    if not errors:
+        for entry in ((app["spec"].get("network") or {}).get("web") or []):
+            if entry.get("name") and len(name) + 1 + len(entry["name"]) > 63:
+                errors.append(f"spec.network.web: entry {entry['name']!r} makes host label {name}-{entry['name']}, longer than 63")
     return errors
 
 
@@ -198,8 +213,9 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
     spec = app.get("spec") or {}
     risky = spec.get("risky") or {}
     volumes = {volume["name"]: volume["backup"] for volume in spec.get("volumes") or []}
-    lan = {(port["listen"], port["protocol"]): port["target"] for port in (spec.get("network") or {}).get("ports") or []}
-    hostnames = set(risky.get("hostnames") or [])
+    network = spec.get("network") or {}
+    lan = {(port["listen"], port["protocol"]): port["target"] for port in network.get("ports") or []}
+    own_route = any(entry.get("ownRoute") for entry in network.get("web") or [])
     for doc in objects:
         kind = str(doc.get("kind"))
         group = str(doc.get("apiVersion", "")).rpartition("/")[0]
@@ -218,15 +234,15 @@ def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
             annotations = (_template(doc).get("metadata") or {}).get("annotations") or {}
             for item, field in _risky_uses(_pod_spec(doc), annotations):
                 if not risky.get(field):
-                    yield f"{ref}: uses {item}, which needs the app file's risky.{field} and the env's exception line"
+                    yield f"{ref}: uses {item}, which needs the app file's risky.{field} and the env's grant"
             yield from _memory_problems(ref, _pod_spec(doc))
             if _pod_spec(doc).get("priorityClassName") not in (None, PRIORITY_CLASS):
                 yield f"{ref}: sets priorityClassName; core runs every app pod at {PRIORITY_CLASS} and refuses another class"
         for claim in _claims(doc):
             yield from _claim_problems(ref, claim, volumes)
         annotations = metadata.get("annotations") or {}
-        if kind == "HTTPRoute":
-            yield from _route_problems(ref, doc.get("spec") or {}, hostnames)
+        if kind == "HTTPRoute" and not own_route:
+            yield f"{ref}: an app ships an HTTPRoute only for a web entry marked ownRoute; core makes every other entry's route"
         if kind == "Service":
             yield from _service_problems(ref, doc.get("spec") or {}, lan)
             if any(_traefik_key(key) for key in annotations):
@@ -356,14 +372,6 @@ def _claim_problems(ref: str, claim: dict, volumes: dict[str, bool]) -> Iterator
     if volumes[claim_name] == unbacked:
         want = "carries no backup: none annotation" if volumes[claim_name] else "carries annotation backup: none"
         yield f"{ref}: claim {claim_name} is declared backup: {str(volumes[claim_name]).lower()}, so it {want}"
-
-
-def _route_problems(ref: str, spec: dict, hostnames: set[str]) -> Iterator[str]:
-    if not spec.get("hostnames"):
-        yield f"{ref}: names its hostnames; one with none takes every name on the apps door"
-    for host in spec.get("hostnames") or []:
-        if host != HOST_VARIABLE and host not in hostnames:
-            yield f"{ref}: hostname {host!r} is {HOST_VARIABLE} (<name>.apps.<dns suffix>) or one of risky.hostnames"
 
 
 def _traefik_key(key: str) -> bool:

@@ -107,7 +107,7 @@ spec:
 # holds these whatever becomes of its wiring. app-file reads the App in the object's own
 # namespace: an object matches what the file declares, and a risky item is one the file asks
 # for. A labelled namespace with no App refuses everything the policy matches. app-grants reads
-# the namespace's annotations, which only the wiring writes from the env's exception lines: a
+# the namespace's annotations, which only the wiring writes from the env's grants: a
 # risky item is one the env grants, and a missing annotation grants nothing. A risky item
 # passes only both.
 # Carve-outs, keyed on identities a tenant cannot take: the VolSync controller's own Jobs
@@ -302,10 +302,23 @@ spec:
         every PVC (and StatefulSet claim template, whose claims the StatefulSet controller names
         <volume>-<set>-<n>) is a volume the app file declares; one declared
         backup: false carries annotation backup: none, one declared backup: true does not
+    # A route's hostnames are its web entries': <name>.apps. or <name>-<entry>.apps. (app-grants
+    # holds the rest to the env's apps domain), or a custom hostname an entry asks for.
     - expression: >-
-        variables.hosts.all(h, h.startsWith(params.metadata.name + '.apps.') ||
-          (has(params.spec.risky) && has(params.spec.risky.hostnames) && h in params.spec.risky.hostnames))
-      message: "grant: an app's HTTPRoute hostname is <name>.apps.<dns suffix>, or a custom hostname the app file asks for"
+        variables.hosts.all(h, params.spec.?network.?web.orValue([]).exists(e,
+          h.startsWith(params.metadata.name + (e.?name.orValue('') == '' ? '' : '-' + e.name) + '.apps.') ||
+          h in e.?hostnames.orValue([])))
+      message: >-
+        grant: an app's HTTPRoute hostname is one of its web entries': <name>[-<entry>].apps.<dns suffix>,
+        or a custom hostname the entry asks for
+    # Core makes the route of every web entry but those marked ownRoute. A route the app ships for
+    # another entry, or for none, is a stray, such as a chart's own route left on.
+    - expression: >-
+        object.kind != 'HTTPRoute' || !request.userInfo.username.startsWith('system:serviceaccount:flux-system:app-') ||
+        variables.hosts.all(h, params.spec.?network.?web.orValue([]).exists(e, e.?ownRoute.orValue(false) &&
+          (h.startsWith(params.metadata.name + (e.?name.orValue('') == '' ? '' : '-' + e.name) + '.apps.') ||
+           h in e.?hostnames.orValue([]))))
+      message: "an app ships an HTTPRoute only for a web entry marked ownRoute; core makes every other entry's route"
     # A LoadBalancer port is a network.ports entry: listen as its port, the same protocol, and
     # target as its targetPort (a number; the API server defaults an unset one to the port).
     - expression: >-
@@ -524,29 +537,32 @@ spec:
           (has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {})
   validations:
     - expression: "!variables.usesPrivileged || variables.grants[?'hosting.jarvis.io/privileged'].orValue('') == 'true'"
-      message: "grant: anything beyond Pod Security restricted (see app-file) needs the env's '<app>: privileged' exception"
+      message: "grant: anything beyond Pod Security restricted (see app-file) needs the env's grant privileged"
     - expression: "!variables.usesRoot || variables.grants[?'hosting.jarvis.io/root'].orValue('') == 'true'"
-      message: "grant: every container runs with runAsNonRoot: true and no runAsUser 0, unless the env has '<app>: root'"
+      message: "grant: every container runs with runAsNonRoot: true and no runAsUser 0, unless the env grants root"
     - expression: "!variables.usesHostNetwork || variables.grants[?'hosting.jarvis.io/host-network'].orValue('') == 'true'"
-      message: "grant: host network and host ports need the env's '<app>: host-network' exception"
+      message: "grant: host network and host ports need the env's grant host-network"
     - expression: "!variables.usesHostPath || variables.grants[?'hosting.jarvis.io/host-path'].orValue('') == 'true'"
-      message: "grant: hostPath volumes need the env's '<app>: host-path' exception"
-    # A route with no hostnames takes its listener's: every name on the apps door.
+      message: "grant: hostPath volumes need the env's grant host-path"
+    # A route with no hostnames takes its listener's: every name on the apps door. A name in the
+    # apps domain is one label under it; app-file holds that label to the app's web entries.
     - expression: >-
         object.kind != 'HTTPRoute' ||
         (size(variables.hosts) > 0 &&
-         variables.hosts.all(h, h == variables.grants[?'hosting.jarvis.io/host'].orValue('-') ||
+         variables.hosts.all(h,
+           (h.endsWith('.' + variables.grants[?'hosting.jarvis.io/apps-domain'].orValue('-')) &&
+            !h.substring(0, size(h) - size(variables.grants[?'hosting.jarvis.io/apps-domain'].orValue('-')) - 1).contains('.')) ||
            h in variables.grants[?'hosting.jarvis.io/hostnames'].orValue('').split(',')))
       message: >-
-        grant: an app's HTTPRoute names its hostnames, each <name>.apps.<dns suffix> or a custom
-        hostname the env grants as '<app>: hostname <name>'
+        grant: an app's HTTPRoute names its hostnames, each one label under apps.<dns suffix> or a
+        custom hostname the env grants as 'hostname <name>'
     - expression: >-
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type in ['ClusterIP', 'LoadBalancer']
       message: "an app's Services are ClusterIP, or LoadBalancer for its network.ports; no NodePort or ExternalName"
     - expression: "object.kind != 'Service' || !has(object.spec.externalIPs)"
       message: "an app's Service sets no externalIPs"
     - expression: "variables.lanPorts.all(p, p in variables.grants[?'hosting.jarvis.io/lan-ports'].orValue('').split(','))"
-      message: "grant: a LoadBalancer exposes only ports the env grants as '<app>: lan-port <port>/<protocol>'"
+      message: "grant: a LoadBalancer exposes only ports the env grants as lan-port <port>/<protocol>"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

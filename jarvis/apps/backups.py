@@ -1,14 +1,20 @@
 """Hosted apps' backups: each app's own credential, and the registration the render writes for it.
 
-An app's backups are on once its credential is sealed in the env (jarvis secrets --app
-app-<name>): jarvis render registers the sealed credential of each listed app, and nothing else
-says which apps back up (core/feature/app-hosting/CONTRACT.md).
+values/apps.yaml says whether an app's backups are on (backups, default on). An app with them on
+whose file keeps a backup: true volume needs its credential: jarvis secrets mints it, and
+validate requires it once the env is bootstrapped. jarvis render registers the sealed credential
+of each app with backups on (core/feature/app-hosting/CONTRACT.md).
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
+
+import yaml
+
+from jarvis.apps import values as _apps
 
 # A hosted app's namespace: app-<name>, one DNS label.
 APP_NAMESPACE = re.compile(r"^app-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?$")
@@ -43,14 +49,30 @@ def sealed_rel(env: str, namespace: str) -> str:
     return f"envs/{env}/secrets/{namespace}/{secret_name(namespace)}.sops.yaml"
 
 
-def registered(env_dir: Path, apps: list[str]) -> list[str]:
-    """The namespaces of the listed apps whose credential is sealed, in list order."""
+def registered(env_dir: Path, data: dict[str, Any]) -> list[str]:
+    """The namespaces of the apps with backups on whose credential is sealed, in list order."""
     secrets = env_dir / "secrets"
     return [
         f"app-{app}"
-        for app in apps
-        if (secrets / f"app-{app}" / f"{secret_name(f'app-{app}')}.sops.yaml").is_file()
+        for app in _apps.app_names(data)
+        if _apps.backups_on(data, app) and (secrets / f"app-{app}" / f"{secret_name(f'app-{app}')}.sops.yaml").is_file()
     ]
+
+
+def needing_credentials(data: dict[str, Any], apps_root: Path) -> list[str]:
+    """The apps with backups on whose app file (in apps_root, each at its pinned tag) keeps a
+    backup: true volume, in list order. An unreadable file needs nothing here: the app check
+    reports it."""
+    needing = []
+    for app in _apps.app_names(data):
+        try:
+            spec = (yaml.safe_load((apps_root / app / "app.yaml").read_text(encoding="utf-8")) or {}).get("spec") or {}
+        except (OSError, yaml.YAMLError, AttributeError):
+            continue
+        volumes = spec.get("volumes") if isinstance(spec, dict) else None
+        if _apps.backups_on(data, app) and any(isinstance(v, dict) and v.get("backup") is True for v in volumes or []):
+            needing.append(app)
+    return needing
 
 
 def registration_entry(namespace: str) -> str:

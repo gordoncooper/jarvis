@@ -1,8 +1,8 @@
-"""An env's hosted apps: its app list and exception lines, and the wiring core renders from them.
+"""An env's hosted apps: its values/apps.yaml, and the wiring core renders from it.
 
-CONTRACT: core/feature/app-hosting/CONTRACT.md. env-schema validates the env file and compares
-the committed render; render_apps.py writes it. The render reads only the env (names,
-exception lines, the apps repository URL and the CIDRs), never an app's own folder.
+CONTRACT: core/feature/app-hosting/CONTRACT.md. The file's shape is schema/apps.schema.json's;
+what spans entries or needs the env's ranges is here. env-schema also checks each app at its
+pinned tag; render_apps.py writes the wiring, which reads only the env.
 """
 
 from __future__ import annotations
@@ -15,9 +15,7 @@ from typing import Any
 
 import yaml
 
-from jarvis.env import switches as _switches
-
-# envs/<env>/values/apps.yaml: exception lines and pins. The names are in values/switches.yaml.
+# envs/<env>/values/apps.yaml: one entry per app the env runs, keyed by its name.
 APPS_VALUES = "values/apps.yaml"
 # The render, under envs/<env>/flux/, which the env's flux/kustomization.yaml lists.
 GENERATED_REL = "generated/apps.yaml"
@@ -30,19 +28,22 @@ _LAN_PORT = re.compile(r"^([0-9]{1,5})/(TCP|UDP)$")
 # A LAN target's name, as an App's network.egress.lan lists it. "all" is reserved: [all] asks
 # for the whole LAN, which lan-all grants.
 _TARGET = re.compile(r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")
-# Exception lines: <app>: <grant>. A grant names exactly one item.
-FLAG_GRANTS = ("privileged", "root", "host-network", "host-path", "lan-all", "no-uptime-check")
+# Grants: each names exactly one item.
+FLAG_GRANTS = ("privileged", "root", "host-network", "host-path", "lan-all")
 VALUE_GRANTS = ("hostname", "lan-port", "lan-target")
 # Grants that open the LAN, so need the env's lan_cidrs.
 LAN_GRANTS = ("lan-all", "lan-target")
 # values/cluster-vars.yaml: the env's LAN ranges.
 LAN_CIDRS = "lan_cidrs"
 _PRIVATE = tuple(ipaddress.IPv4Network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
-_KEYS = frozenset({"apps", "exceptions", "versions"})
-# values/apps.yaml versions: each listed app's pinned release, <app>: v<major>.<minor>.<patch>.
-# Flux reads the app at the apps repository's tag <app>/v<version>; nothing follows a branch.
-VERSIONS = "versions"
-_VERSION = re.compile(r"^v\d+\.\d+\.\d+$")
+# Ports no lan-port grant takes. In shared-address mode an app's LAN port listens on each edge
+# node's own address, beside core's doors and the node's own services (k3s's inbound ports).
+RESERVED_PORTS = {
+    "53/TCP": "App DNS", "53/UDP": "App DNS", "80/TCP": "core's web door", "443/TCP": "core's web door",
+    "22/TCP": "SSH", "6443/TCP": "the Kubernetes API", "10250/TCP": "the kubelet",
+    "2379/TCP": "etcd", "2380/TCP": "etcd", "5001/TCP": "k3s's embedded registry",
+    "8472/UDP": "flannel's VXLAN", "51820/UDP": "flannel's WireGuard", "51821/UDP": "flannel's WireGuard",
+}
 
 
 def wiring_name(app: str) -> str:
@@ -50,26 +51,19 @@ def wiring_name(app: str) -> str:
 
 
 def load_values(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
-    """The env's app names from its switches, with the exception lines and pins from its app
-    file, as one mapping, or errors. A missing file holds nothing, so no name is no apps."""
-    switches, errors = _switches.load(env_dir)
-    if errors:
-        return {}, [f"{_switches.SWITCHES_FILE}: {problem}" for problem in errors]
+    """The env's apps file as {app: entry}, or errors. A missing or empty file lists no app; its
+    shape is the schema's to check (env-schema)."""
     path = env_dir / APPS_VALUES
-    data: Any = None
-    if path.is_file():
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            return {}, [f"invalid YAML: {exc}"]
+    if not path.is_file():
+        return {}, []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        return {}, [f"invalid YAML: {exc}"]
     if data is None:
-        data = {}
-    if not isinstance(data, dict):
-        return {}, ["expected a mapping with exceptions and versions"]
-    if _switches.APPS in data:
-        return {}, [f"apps: app names live in {_switches.SWITCHES_FILE}, not here"]
-    if _switches.APPS in switches:
-        data[_switches.APPS] = switches[_switches.APPS]
+        return {}, []
+    if not isinstance(data, dict) or not all(isinstance(entry, dict) for entry in data.values()):
+        return {}, ["expected one entry per app, <app>: {version: v<x.y.z>}"]
     return data, []
 
 
@@ -112,48 +106,26 @@ def lan_networks(cluster_vars: dict[str, Any]) -> list[str]:
 
 
 def validate(data: dict[str, Any], dns_suffix: str | None, lan_cidrs: list[str] | None = None) -> list[str]:
-    """The app list holds names only, each once; each exception line names a listed app and
-    one known grant, once. A custom hostname stays outside the env's own zone; a LAN grant
-    needs the env's lan_cidrs, and a lan-target's range sits inside them."""
-    errors = [f"unknown key {key!r} (allowed: exceptions, versions)" for key in sorted(set(data) - _KEYS)]
-    apps = data.get("apps")
-    if apps is None:
-        apps = []
-    if not isinstance(apps, list):
-        return [*errors, "apps must be a list of app names"]
-    seen: set[str] = set()
-    for item in apps:
-        if not isinstance(item, str) or not APP_NAME.fullmatch(item):
-            errors.append(
-                f"apps: {item!r} is not an app name (a DNS label of at most 59 characters, so app-<name> fits)"
-            )
-        elif item in seen:
-            errors.append(f"apps: {item} is listed twice")
-        else:
-            seen.add(item)
-    lines = data.get("exceptions")
-    if lines is None:
-        return errors
-    if not isinstance(lines, list):
-        return [*errors, "exceptions must be a list of '<app>: <grant>' lines"]
-    granted: set[tuple[str, str]] = set()
-    for line in lines:
-        if not isinstance(line, dict) or len(line) != 1:
-            errors.append(f"exceptions: {line!r} is not one '<app>: <grant>' line")
-            continue
-        ((app, grant),) = line.items()
-        where = f"exceptions: {app}: {grant}"
-        if not isinstance(app, str) or not APP_NAME.fullmatch(app):
-            errors.append(f"{where}: {app!r} is not an app name")
-            continue
-        if app not in seen:
-            errors.append(f"{where}: {app} is not on this env's app list")
-        problem = grant_problem(grant, dns_suffix, lan_cidrs or [])
-        if problem:
-            errors.append(f"{where}: {problem}")
-        elif (app, grant) in granted:
-            errors.append(f"{where}: listed twice")
-        granted.add((app, str(grant)))
+    """Each grant is one known item, once per app. A custom hostname stays outside the env's own
+    zone; a LAN grant needs the env's lan_cidrs, and a lan-target's range sits inside them. A
+    LAN port is no port core or the node holds, and no two apps hold the same one."""
+    errors: list[str] = []
+    ports: dict[str, str] = {}
+    for app in app_names(data):
+        for grant in grants_for(data, app):
+            problem = grant_problem(grant, dns_suffix, lan_cidrs or [])
+            if problem:
+                errors.append(f"{app}: grants: {grant}: {problem}")
+                continue
+            kind, _, port = grant.partition(" ")
+            if kind != "lan-port":
+                continue
+            if port in RESERVED_PORTS:
+                errors.append(f"{app}: grants: {grant}: {port} is {RESERVED_PORTS[port]}'s; remap the app's listen port")
+            elif port in ports:
+                errors.append(f"{app}: grants: {grant}: app {ports[port]} already holds {port}; remap one listen port")
+            else:
+                ports[port] = app
     return errors
 
 
@@ -216,41 +188,21 @@ def _networks(cidrs: Sequence[str]) -> list[ipaddress.IPv4Network]:
 
 
 def app_names(data: dict[str, Any]) -> list[str]:
-    apps = data.get("apps")
-    return [item for item in apps if isinstance(item, str)] if isinstance(apps, list) else []
+    return [str(app) for app in data]
 
 
 def grants_for(data: dict[str, Any], app: str) -> list[str]:
-    return [
-        str(grant)
-        for line in data.get("exceptions") or []
-        if isinstance(line, dict)
-        for name, grant in line.items()
-        if name == app
-    ]
+    return [str(grant) for grant in (data.get(app) or {}).get("grants") or []]
 
 
-def version_problems(data: dict[str, Any]) -> list[str]:
-    """Every listed app has a pinned version, and no version names an app the env does not list."""
-    versions = data.get(VERSIONS)
-    if versions is None:
-        versions = {}
-    if not isinstance(versions, dict):
-        return [f"{VERSIONS} must map each listed app to v<major>.<minor>.<patch>"]
-    apps = [item for item in data.get("apps") or [] if isinstance(item, str)]
-    errors = [f"{VERSIONS}: {app} is listed but has no pinned version (its apps-repository tag {app}/v<version>)"
-              for app in apps if app not in versions]
-    for app, version in versions.items():
-        if app not in apps:
-            errors.append(f"{VERSIONS}: {app} is not a listed app")
-        elif not isinstance(version, str) or not _VERSION.fullmatch(version):
-            errors.append(f"{VERSIONS}: {app}: {version!r} is not v<major>.<minor>.<patch>")
-    return errors
+def backups_on(data: dict[str, Any], app: str) -> bool:
+    """Whether the env backs up the app's backup: true volumes (schema default: on)."""
+    return (data.get(app) or {}).get("backups", True) is not False
 
 
 def app_ref(data: dict[str, Any], app: str) -> str:
     """The apps-repository ref Flux reads the app at: its pinned tag."""
-    return f"refs/tags/{app}/{data[VERSIONS][app]}"
+    return f"refs/tags/{app}/{data[app]['version']}"
 
 
 def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) -> dict[str, str]:
@@ -265,7 +217,7 @@ def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) ->
     return {
         "app_name": app,
         "quote": '"',
-        **{f"app_grant_{key.replace('-', '_')}": value for key, value in grants.items() if key != "host"},
+        **{f"app_grant_{key.replace('-', '_')}": value for key, value in grants.items() if key != "apps-domain"},
         "app_pod_cidr": str(cluster_vars["pod_cidr"]),
         "app_service_cidr": str(cluster_vars["service_cidr"]),
         "app_lan_cidrs": ",".join(lan),
@@ -275,19 +227,19 @@ def substitutes(data: dict[str, Any], app: str, cluster_vars: dict[str, Any]) ->
 
 
 def grant_annotations(data: dict[str, Any], app: str, dns_suffix: str) -> dict[str, str]:
-    """The annotations the app's wiring writes on its namespace from the env's exception lines."""
+    """The annotations the app's wiring writes on its namespace from the env's grants."""
     return {f"hosting.jarvis.io/{key}": value for key, value in grant_data(data, app, dns_suffix).items()}
 
 
 def grant_data(data: dict[str, Any], app: str, dns_suffix: str) -> dict[str, str]:
-    """The app's host and the env's exception lines for it, by grant."""
+    """The env's apps domain and its grants for the app, by grant."""
     grants = grants_for(data, app)
 
     def values(kind: str) -> str:
         return ",".join(sorted(grant.partition(" ")[2] for grant in grants if grant.startswith(kind + " ")))
 
     return {
-        "host": f"{app}.apps.{dns_suffix}",
+        "apps-domain": f"apps.{dns_suffix}",
         "privileged": _flag("privileged" in grants),
         "root": _flag("root" in grants),
         "host-network": _flag("host-network" in grants),
@@ -296,7 +248,6 @@ def grant_data(data: dict[str, Any], app: str, dns_suffix: str) -> dict[str, str
         "lan-ports": values("lan-port"),
         "lan-all": _flag("lan-all" in grants),
         "lan-targets": values("lan-target"),
-        "no-uptime-check": _flag("no-uptime-check" in grants),
     }
 
 
@@ -331,7 +282,7 @@ def wiring_documents(data: dict[str, Any], cluster_vars: dict[str, Any]) -> list
 
 def render(data: dict[str, Any], cluster_vars: dict[str, Any]) -> str:
     header = (
-        "# Generated by jarvis render from values/switches.yaml and values/apps.yaml — do not edit.\n"
+        "# Generated by jarvis render from values/apps.yaml — do not edit.\n"
         "# One trusted wiring per listed app (core/feature/app-hosting/CONTRACT.md).\n"
     )
     docs = wiring_documents(data, cluster_vars)

@@ -4,8 +4,8 @@ A hosted app lives in the apps repository, one folder per app, and is untrusted:
 
 Start from one of the three examples in the `jarvis-apps` apps repository:
 
-- [hello-web](../ci/tests/fixtures/app-hosting/jarvis-apps/hello-web/): a plain web app on defaults (`network.web.port`, health path `/`).
-- [notes](../ci/tests/fixtures/app-hosting/jarvis-apps/notes/): a stateful one, with a backed-up volume and its own `network.web.healthPath`.
+- [hello-web](../ci/tests/fixtures/app-hosting/jarvis-apps/hello-web/): a plain web app on defaults, one web entry.
+- [notes](../ci/tests/fixtures/app-hosting/jarvis-apps/notes/): a stateful one, with a backed-up volume.
 - [lan-demo](../ci/tests/fixtures/app-hosting/jarvis-apps/lan-demo/): one that asks for a risky item, a LAN port (`network.ports`), and no web address.
 
 The links are to [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtures/app-hosting/jarvis-apps/), which holds exact copies of those three folders for this repository's tests; the apps repository's CI fails when a folder there differs from its copy at the jarvis commit it pins.
@@ -14,7 +14,7 @@ The links are to [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtur
 
 In the apps repository:
 
-1. Make `<name>/`. The folder name is the app's name: a lowercase DNS label of at most 59 characters. Its namespace is `app-<name>` and its address is `https://<name>.apps.<dns suffix>`.
+1. Make `<name>/`. The folder name is the app's name: a lowercase DNS label of at most 59 characters. Its namespace is `app-<name>`.
 2. Write `<name>/app.yaml`:
 
    ```yaml
@@ -24,9 +24,13 @@ In the apps repository:
      name: <name>
    spec:
      network:
-       web:                 # absent = no web address
-         port: 8080         # plain-HTTP container port; served at https://<name>.apps.<dns suffix>
-         healthPath: /      # optional, default /; the uptime check counts any answer but a 5xx
+       web:                 # absent = no web address; core makes each entry's HTTPRoute
+         - service: web     # a Service of the app's, served at https://<name>.apps.<dns suffix>
+           port: 80         # its port, plain HTTP
+         - name: admin      # optional: https://<name>-admin.apps.<dns suffix>
+           service: admin
+           port: 8080
+           hostnames: [wiki.example.org]   # optional custom hostnames; each needs the env's hostname grant
      volumes:               # every PVC the app keeps; [] for none
        - name: data
          backup: true
@@ -47,8 +51,10 @@ In the apps repository:
      callers: [web-ui]      # apps that may call this one; both sides list each other
    ```
 
-   Also optional: `resources` (500m CPU, 512Mi memory for the whole app), `risky` (nothing), and `envs.<env>` to change `network.egress.internet` or `resources` in one env. Probes stay in `deploy/`.
-3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, HTTPRoutes, PodDisruptionBudgets and HorizontalPodAutoscalers. Pods meet Pod Security `restricted`: each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` (adding back only `NET_BIND_SERVICE`), a `seccompProfile` of `RuntimeDefault` (or `Localhost`) is set on the pod or every container, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. Each container's memory request equals its memory limit (or set the limit alone): the app reserves all the memory it may use, and a container past its limit is OOM-killed and restarted. Set no `priorityClassName`: core runs every app pod at `hosted-app`, below everything else, so core preempts it when space runs out. A PVC is named like a declared volume, carries annotation `backup: none` exactly when declared `backup: false`, and sets no `volumeName`, `dataSource` or `dataSourceRef`. The web address is an HTTPRoute with `hostnames: [${app_host}]` and `parentRefs: [{name: jarvis, namespace: platform-gateway, sectionName: apps}]` (a granted custom hostname also lists `sectionName: apps-granted`); the Gateway serves its TLS, and a Service carries no Traefik annotation. A LAN port is a `LoadBalancer` Service with `allocateLoadBalancerNodePorts: false`, each port a `network.ports` entry: `port` its `listen`, `targetPort` its `target` as a number.
+   Also optional: `resources` (500m CPU, 512Mi memory for the whole app) and `risky` (nothing). Probes stay in `deploy/`.
+
+   An app whose routing one Service and port cannot express (several paths or backends) marks its entry `ownRoute: true`, with no `service` or `port`, and ships that entry's HTTPRoute in `deploy/`: `hostnames: [${app_host}]` (or a granted custom hostname) and `parentRefs: [{name: jarvis, namespace: platform-gateway, sectionName: apps}]` (`apps-granted` for a custom hostname). The cluster refuses any other route an app ships, such as a chart's own route left on.
+3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, HTTPRoutes (an `ownRoute` entry's only), PodDisruptionBudgets and HorizontalPodAutoscalers. Pods meet Pod Security `restricted`: each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` (adding back only `NET_BIND_SERVICE`), a `seccompProfile` of `RuntimeDefault` (or `Localhost`) is set on the pod or every container, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. Each container's memory request equals its memory limit (or set the limit alone): the app reserves all the memory it may use, and a container past its limit is OOM-killed and restarted. Set no `priorityClassName`: core runs every app pod at `hosted-app`, below everything else, so core preempts it when space runs out. A PVC is named like a declared volume, carries annotation `backup: none` exactly when declared `backup: false`, and sets no `volumeName`, `dataSource` or `dataSourceRef`. The Gateway serves each web address's TLS, and a Service carries no Traefik annotation. A LAN port is a `LoadBalancer` Service with `allocateLoadBalancerNodePorts: false`, each port a `network.ports` entry: `port` its `listen`, `targetPort` its `target` as a number.
 4. Run `<core checkout>/.venv/bin/python -m jarvis.apps.check <name>`. It reports every rule the folder breaks; the apps repository's CI runs the same tool through the app-check Action at a core tag (`uses: <owner>/jarvis/.github/actions/app-check@<tag>`).
 
 ## Turn it on in an env
@@ -63,29 +69,22 @@ In the env's repository:
    ```
 
    Without it, env-schema refuses an app list. The first time, `platform-configs` may fail one apply while the new App CRD becomes known to the API server and Kyverno; its next retry, about a minute later, passes on its own.
-2. Add the name to `envs/<env>/values/switches.yaml` (names only, one line), and `apps_git_repo_url` to `values/cluster-vars.yaml` if it is not there yet:
+2. Add the app's entry to `envs/<env>/values/apps.yaml`, pinned to a released tag, and `apps_git_repo_url` to `values/cluster-vars.yaml` if it is not there yet. The apps repository tags `<name>/v<VERSION>` from the app's `VERSION` file when a change merges, and the env runs that tag until `version` moves; the instance's Renovate preset opens a PR for each new tag:
 
    ```yaml
-   apps:
-     - <name>
+   <name>:
+     version: v0.1.0
    ```
 
-   Pin it to a released tag under `versions:` in `envs/<env>/values/apps.yaml`. The apps repository tags `<name>/v<VERSION>` from the app's `VERSION` file when a change merges, and the env runs that tag until the pin moves; the instance's Renovate preset opens a PR for each new tag:
-
-   ```yaml
-   versions:
-     <name>: v0.1.0
-   ```
-
-3. If the app asks for a risky item in `spec.risky`, a LAN port or LAN egress, add the matching exception line under `exceptions:` in `envs/<env>/values/apps.yaml`, one grant each: `- <name>: privileged`, `root`, `host-network`, `host-path`, `hostname <host>`, `lan-port <listen>/<TCP|UDP>`, `lan-all` (for `lan: [all]`) or `lan-target <target> <cidr> <port>/<TCP|UDP>` (one line per port of a named target). Without it the cluster refuses the objects that use that item, or opens no LAN path. A LAN grant needs the env's ranges, `lan_cidrs` in `values/cluster-vars.yaml`, and a `lan-target` range inside them. To keep a web app out of the uptime check, add `- <name>: no-uptime-check`. Removing a line stops what runs on it within minutes (pods, Jobs, Services and HTTPRoutes that need it, and its LAN allows), and keeps the app's volumes; adding it back restores them.
-4. If a volume is `backup: true`, seal the app's own backup credential with `jarvis secrets --env <env> --app app-<name>`; the render in the next step turns its backups on ([backups.md](backups.md#app-credentials)). Until then that volume gets no backup, and `jarvis verify` reports it.
+3. If the app asks for a risky item in `spec.risky`, a custom hostname, a LAN port or LAN egress, add the matching grant under its entry's `grants:`, one item each: `privileged`, `root`, `host-network`, `host-path`, `hostname <host>`, `lan-port <listen>/<TCP|UDP>`, `lan-all` (for `lan: [all]`) or `lan-target <target> <cidr> <port>/<TCP|UDP>` (one line per port of a named target). Without it the cluster refuses the objects that use that item, or opens no LAN path. A LAN grant needs the env's ranges, `lan_cidrs` in `values/cluster-vars.yaml`, and a `lan-target` range inside them. A LAN port is refused when core or the node holds it, or another app already does. Removing a grant stops what runs on it within minutes (pods, Jobs, Services and HTTPRoutes that need it, and its LAN allows), and keeps the app's volumes; adding it back restores them.
+4. A `backup: true` volume is backed up with the app's own credential while the entry's `backups` is on (the default): `jarvis secrets --env <env>` mints it, and `jarvis validate` fails until it is sealed ([backups.md](backups.md#app-credentials)). To keep the app's volumes out of backups, set `backups: false`.
 5. Render the wiring: `jarvis render --env <env>`.
 6. Run `jarvis validate`, then commit and push. `jarvis verify --env <env>` then checks the app's namespace, network baseline, grants and hosts.
 
-Changing the app later needs nothing in the env: its file and `deploy/` reach the cluster from the apps repository.
+Changing the app later is a new tag in the apps repository; the env runs it once the app's `version` moves, and `jarvis validate` checks it at that tag against the core the env pins.
 
 ## Turn it off
 
-1. Remove its name from `values/switches.yaml` (and its exception lines from `values/apps.yaml`) and render again. Commit and push. Flux prunes the app's Kustomizations, which prune its objects.
+1. Remove its entry from `values/apps.yaml` and render again. Commit and push. Flux prunes the app's Kustomizations, which prune its objects.
 2. Delete what `prune: disabled` kept, as the cluster admin: namespace `app-<name>` (its volumes go with it), ServiceAccount `flux-system/app-<name>` and GitRepositories `flux-system/app-<name>` and `app-<name>-file`. Retire its backup credential as the backups contract says.
 3. With no app left, the env may turn app hosting off: remove `app-hosting` from `values/switches.yaml` and render again. The CRD keeps `prune: disabled`; delete it by hand once no App is left.

@@ -13,8 +13,8 @@ under flux/ that is missing, extra or different from a fresh render (exit 1). IN
 (set by the jarvis CLI) points it at an instance repository.
 
 Why a render and not a Flux ResourceSet: the app wiring's values are computed, not copied. Each
-exception line becomes a grant annotation, a LAN grant is checked against lan_cidrs, a pin becomes a
-tag ref, and an app that asks for something the env does not grant is refused. That logic is Python
+grant becomes an annotation, a LAN grant is checked against lan_cidrs and the ports core holds, a
+pin becomes a tag ref, and each app is checked at that tag against core's app rules. That logic is Python
 (jarvis.apps.values) and runs before anything reaches the cluster, where a bad value fails a PR instead
 of a reconcile. A ResourceSet would still need those values handed to it from a generated file, so it
 would remove no file and move checks from CI to the cluster. One render with a --check keeps the

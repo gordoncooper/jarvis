@@ -48,7 +48,7 @@ Everything under `flux/` is render output, replaced whole by `jarvis render`; a 
 
 ### Renovate and CI
 
-`renovate.json` extends core's instance preset at the env's core tag: one PR per pin (the core tag, k3s, each app's tag under `versions:`), never merged on its own. `.github/workflows/ci.yml` calls core's instance workflow, which validates each env with its pinned core and, on a Renovate PR, renders and pushes the result. For that push, create a GitHub App once: no webhook, Contents read and write, installed on the instance repository only. Set repository variable `RENDER_CLIENT_ID` to its client ID and secret `RENDER_PRIVATE_KEY` to a private key it generates. Without it, the check names the stale files and the render command.
+`renovate.json` extends core's instance preset at the env's core tag: one PR per pin (the core tag, k3s, each app's `version` in `values/apps.yaml`), never merged on its own. `.github/workflows/ci.yml` calls core's instance workflow, which validates each env with its pinned core and, on a Renovate PR, renders and pushes the result. For that push, create a GitHub App once: no webhook, Contents read and write, installed on the instance repository only. Set repository variable `RENDER_CLIENT_ID` to its client ID and secret `RENDER_PRIVATE_KEY` to a private key it generates. Without it, the check names the stale files and the render command.
 
 ### Deploy key
 

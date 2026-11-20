@@ -4,11 +4,8 @@ metadata:
   name: web-demo
 spec:
   network:
+    # Routed by its own HTTPRoute (deploy/web.yaml), as an app whose routing one service and
+    # port cannot express does; core makes no route for it.
     web:
-      port: 8080
+      - ownRoute: true
   volumes: []
-  envs:
-    env-00:
-      network:
-        egress:
-          internet: false

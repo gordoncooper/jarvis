@@ -1,9 +1,9 @@
-# What core derives from an app's App, in that app's namespace only: its quota and the network
-# allows the file's network section asks for. The namespace's default-deny, DNS and
-# same-namespace allows come from the trusted wiring (core/feature/app-hosting/app), so if this
-# policy has not run, the app gets no traffic rather than open traffic. The env name, the env's
-# pod, service and LAN ranges, and the env's LAN grants for the app are read from annotations
-# the wiring sets on the namespace, which no tenant can edit.
+# What core derives from an app's App, in that app's namespace only: its quota, its web routes
+# and the network allows the file's network section asks for. The namespace's default-deny, DNS
+# and same-namespace allows come from the trusted wiring (core/feature/app-hosting/app), so if
+# this policy has not run, the app gets no traffic rather than open traffic. The env's apps
+# domain, its pod, service and LAN ranges, and the env's grants for the app are read from
+# annotations the wiring sets on the namespace, which no tenant can edit.
 # One policy makes every object for an App: an allow the file stops asking for is deleted on the
 # App's next update (synchronize), and so is everything once the App is gone.
 # Prune stays off: deleting a policy deletes every object it generated.
@@ -33,21 +33,15 @@ spec:
       expression: object.metadata.namespace
     - name: notes
       expression: resource.get("v1", "namespaces", "", object.metadata.namespace).metadata.?annotations.orValue({})
-    - name: override
-      expression: >-
-        object.spec.?envs.orValue({})[?variables.notes[?"hosting.jarvis.io/env"].orValue("")].orValue({})
     - name: network
       expression: object.spec.?network.orValue({})
-    # Small: 500m CPU and 512Mi memory unless the file (or its env override) says otherwise.
+    # Small: 500m CPU and 512Mi memory unless the file says otherwise.
     - name: cpu
-      expression: >-
-        string(variables.override.?resources.?cpu.orValue(object.spec.?resources.?cpu.orValue("500m")))
+      expression: string(object.spec.?resources.?cpu.orValue("500m"))
     - name: memory
-      expression: >-
-        string(variables.override.?resources.?memory.orValue(object.spec.?resources.?memory.orValue("512Mi")))
+      expression: string(object.spec.?resources.?memory.orValue("512Mi"))
     - name: internet
-      expression: >-
-        variables.override.?network.?egress.?internet.orValue(variables.network.?egress.?internet.orValue(false)) == true
+      expression: variables.network.?egress.?internet.orValue(false) == true
     - name: lanRanges
       expression: >-
         variables.notes[?"hosting.jarvis.io/lan-cidrs"].orValue("").split(",").filter(c, c != "")
@@ -91,17 +85,47 @@ spec:
                 "limits.cpu": variables.cpu, "limits.memory": variables.memory,
                 "requests.cpu": variables.cpu, "requests.memory": variables.memory,
                 "services.loadbalancers": string(size(variables.ports)), "services.nodeports": "0"}}})]
-    # The web address: Traefik to network.web.port.
+    # The web entries. Traefik reaches the app's pods on any port: a route names a Service port,
+    # not a pod's, and only core's routes and the ones admission holds pick what Traefik sends.
+    - name: webEntries
+      expression: variables.network.?web.orValue([])
     - name: web
       expression: >-
-        int(variables.network.?web.?port.orValue(0)) > 0
+        size(variables.webEntries) > 0
         ? [dyn({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
                 "metadata": {"name": "app-web", "namespace": variables.ns},
                 "spec": {"podSelector": {}, "policyTypes": ["Ingress"], "ingress": [{
                   "from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
-                            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}],
-                  "ports": [{"port": int(variables.network.web.port), "protocol": "TCP"}]}]}})]
+                            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}]}]}})]
         : []
+    # One HTTPRoute per entry the app does not route itself, on the apps door: app-web for the
+    # entry with no name, at <name>.<apps domain>, and app-web-<entry> at <name>-<entry>.<apps
+    # domain>. Its custom hostnames the env grants get their own route, app-hostnames[-<entry>],
+    # on apps-granted, so a revoked hostname stops that route only.
+    - name: appsDomain
+      expression: variables.notes[?"hosting.jarvis.io/apps-domain"].orValue("")
+    - name: grantedHostnames
+      expression: >-
+        variables.notes[?"hosting.jarvis.io/hostnames"].orValue("").split(",").filter(h, h != "")
+    - name: routed
+      expression: >-
+        variables.appsDomain == "" ? [] :
+        variables.webEntries.filter(e, !e.?ownRoute.orValue(false))
+        .map(e, dyn({"suffix": e.?name.orValue("") == "" ? "" : "-" + e.name, "service": e.service, "port": int(e.port),
+                     "hostnames": e.?hostnames.orValue([]).filter(h, h in variables.grantedHostnames)}))
+    - name: routes
+      expression: >-
+        variables.routed.map(r, dyn({"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
+          "metadata": {"name": "app-web" + r.suffix, "namespace": variables.ns},
+          "spec": {"parentRefs": [{"name": "jarvis", "namespace": "platform-gateway", "sectionName": "apps"}],
+                   "hostnames": [object.metadata.name + r.suffix + "." + variables.appsDomain],
+                   "rules": [{"backendRefs": [{"name": r.service, "port": r.port}]}]}}))
+        + variables.routed.filter(r, size(r.hostnames) > 0).map(r, dyn({
+          "apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
+          "metadata": {"name": "app-hostnames" + r.suffix, "namespace": variables.ns},
+          "spec": {"parentRefs": [{"name": "jarvis", "namespace": "platform-gateway", "sectionName": "apps-granted"}],
+                   "hostnames": r.hostnames,
+                   "rules": [{"backendRefs": [{"name": r.service, "port": r.port}]}]}}))
     # Internet: DNS (from the wiring) plus any port and protocol to 0.0.0.0/0, except private,
     # shared, link-local, the env's pod and service ranges and its LAN ranges. Internet never
     # opens the LAN or the cluster.
@@ -125,7 +149,7 @@ spec:
                   "to": variables.lanRanges.map(c, {"ipBlock": {"cidr": c}})}]}})]
         : []
     # Named LAN targets: each target the App lists under egress.lan that the env grants as
-    # '<app>: lan-target <name> <cidr> <port>/<protocol>', on that port only. A target the env
+    # lan-target <name> <cidr> <port>/<protocol>, on that port only. A target the env
     # does not grant, or a grant the App does not ask for, opens nothing.
     - name: lan
       expression: >-
@@ -154,7 +178,7 @@ spec:
                   "matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In",
                                         "values": variables.callers.map(a, "app-" + a)}]}}]}]}})]
         : []
-    # LAN ports: each network.ports entry the env grants as '<app>: lan-port <listen>/<protocol>',
+    # LAN ports: each network.ports entry the env grants as lan-port <listen>/<protocol>,
     # from any address to its target port; an entry the env does not grant opens nothing. The
     # source stays any address because ServiceLB's path rewrites it: the hostPort path arrives
     # from its own pod in kube-system, and kube-proxy's path is masqueraded, on a multi-node
@@ -172,5 +196,5 @@ spec:
         : []
   generate:
     - expression: >-
-        generator.apply(variables.ns, variables.quota + variables.web + variables.internetAllow
+        generator.apply(variables.ns, variables.quota + variables.web + variables.routes + variables.internetAllow
           + variables.lanAll + variables.lan + variables.apps + variables.callersAllow + variables.portsAllow)

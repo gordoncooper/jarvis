@@ -2,41 +2,43 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/gordoncooper/jarvis/schema/apps.schema.json",
   "title": "values/apps.yaml",
-  "description": "What an env decides for its hosted apps. jarvis validate also checks each grant and pin against the app list and the apps repository.",
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "exceptions": {
-      "description": "Grants, one per line as <app>: <grant>, for a listed app whose app file asks for the same item: privileged, root, host-network, host-path, hostname <name>, lan-port <port>/<TCP|UDP>, lan-all, lan-target <name> <cidr> <port>/<TCP|UDP>, no-uptime-check.",
-      "type": [
-        "array",
-        "null"
-      ],
-      "items": {
-        "type": "object",
-        "minProperties": 1,
-        "maxProperties": 1,
-        "propertyNames": {
-          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
-        },
-        "additionalProperties": {
+  "description": "The hosted apps an env runs, one entry each, keyed by the app's folder name in the apps repository. Listing an app turns it on and grants it nothing; it needs the app-hosting feature. jarvis validate also checks each app at its pinned tag against core's app rules, and each grant against the app list.",
+  "type": [
+    "object",
+    "null"
+  ],
+  "propertyNames": {
+    "pattern": "^[a-z0-9]([a-z0-9-]{0,57}[a-z0-9])?$",
+    "description": "A DNS label of at most 59 characters, so app-<name> fits one."
+  },
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "version"
+    ],
+    "properties": {
+      "version": {
+        "description": "The app's release: v<x.y.z>, the apps repository's tag <app>/v<x.y.z>. The env runs that tag until this moves.",
+        "type": "string",
+        "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+      },
+      "grants": {
+        "description": "What the env allows the app, one item per line, each taking effect only where the app file asks for the same item: privileged, root, host-network, host-path, hostname <name>, lan-port <port>/<TCP|UDP>, lan-all, lan-target <name> <cidr> <port>/<TCP|UDP>.",
+        "type": [
+          "array",
+          "null"
+        ],
+        "uniqueItems": true,
+        "items": {
           "type": "string",
           "minLength": 1
         }
-      }
-    },
-    "versions": {
-      "description": "Each listed app's release: <app>: v<x.y.z>, the apps repository's tag <app>/v<x.y.z>. Every listed app needs one.",
-      "type": [
-        "object",
-        "null"
-      ],
-      "propertyNames": {
-        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
       },
-      "additionalProperties": {
-        "type": "string",
-        "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+      "backups": {
+        "description": "Whether the app's backup: true volumes are backed up. On, jarvis secrets mints the app's own credential and validate requires it, once the app keeps such a volume. Off, none is sealed and nothing reports the volumes.",
+        "type": "boolean",
+        "default": true
       }
     }
   }

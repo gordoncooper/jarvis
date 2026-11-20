@@ -23,6 +23,7 @@ import yaml
 
 from jarvis.apps import values as _apps
 from jarvis.apps.app_file import check_folder
+from jarvis.backups.restore import _binder_body
 from support import REPO_ROOT, flux_envsubst, kyverno_generated
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
@@ -53,7 +54,7 @@ def _app(name: str, **spec: object) -> dict:
     path = APPS / name / "app.yaml"
     app = _docs(path)[0] if path.is_file() else {
         "apiVersion": "hosting.jarvis.io/v1alpha1", "kind": "App", "metadata": {"name": name},
-        "spec": {"network": {"web": {"port": 8080}}, "volumes": []},
+        "spec": {"network": {"web": [{"service": "web", "port": 80}]}, "volumes": []},
     }
     app = copy.deepcopy(app)
     app["spec"].update(spec)
@@ -62,9 +63,9 @@ def _app(name: str, **spec: object) -> dict:
 
 
 def _wiring(app: str, grants: list[str]) -> list[dict]:
-    """What the app's wiring applies, rendered with the env's exception lines for it."""
-    data = {"apps": [app], "exceptions": [{app: grant} for grant in grants], "versions": {app: "v0.1.0"}}
-    values = {**_apps.substitutes(data, app, CLUSTER_VARS), "dns_suffix": SUFFIX, "jarvis_env": "env-00"}
+    """What the app's wiring applies, rendered with the env's grants for it."""
+    data = {app: {"version": "v0.1.0", "grants": grants}}
+    values = {**_apps.substitutes(data, app, CLUSTER_VARS), "dns_suffix": SUFFIX}
     return flux_envsubst(_docs(WIRING / "namespace.yaml"), values)
 
 
@@ -250,6 +251,8 @@ def test_pod_baseline_refuses_risky_items_without_a_grant(tmp_path: Path) -> Non
     host_path = {"volumes": [{"name": "h", "hostPath": {"path": "/srv"}}]}
     cases = [
         (_pod("restricted", "web-demo"), PASS),
+        # jarvis restore's binder, which mounts an unbound claim so it binds on the right node.
+        (_binder_body("app-web-demo", "data", "registry.example/x@sha256:" + "0" * 64, {}), PASS),
         (_pod("privileged", "web-demo", **_PRIVILEGED), BOTH_FAIL),
         (_pod("root", "web-demo", securityContext={}), BOTH_FAIL),
         (_pod("uid-zero", "web-demo", securityContext={"runAsNonRoot": True, "runAsUser": 0}), BOTH_FAIL),
@@ -567,7 +570,7 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("web-demo", _job("j", "web-demo", volumes=[{"name": "h", "hostPath": {"path": "/"}}]), "risky.hostPath"),
         ("notes", _pvc("undeclared", "notes"), "not a volume the app file declares"),
         ("notes", _pvc("cache", "notes"), "carries annotation backup: none"),
-        ("web-demo", _route("r", "web-demo", f"grafana.{SUFFIX}"), "is ${app_host}"),
+        ("notes", _route("r", "notes", f"notes.apps.{SUFFIX}"), "only for a web entry marked ownRoute"),
         ("web-demo", _object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "type NodePort"),
         ("web-demo", _object("Service", "s", "web-demo", type="LoadBalancer", allocateLoadBalancerNodePorts=False, ports=[{"port": 80}]), "not a listen port"),
         ("lan", _object("Service", "s", "lan", type="LoadBalancer", allocateLoadBalancerNodePorts=False,
@@ -582,7 +585,6 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("web-demo", _job("j", "web-demo", priorityClassName="high"), "refuses another class"),
         ("web-demo", _job("j", "web-demo", containers=[{**_container(), "resources": {
             "requests": {"memory": "64Mi"}, "limits": {"memory": "128Mi"}}}]), "memory request equals its limit"),
-        ("web-demo", _route("r", "web-demo"), "names its hostnames"),
         ("web-demo", {**_object("Service", "s", "web-demo", ports=[{"port": 80}]),
                       "metadata": {"name": "s", "annotations": {"traefik.ingress.kubernetes.io/service.sticky.cookie": "true"}}},
          "carries no Traefik annotation"),
@@ -590,9 +592,9 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("notes", {**_pvc("data", "notes"), "spec": {"dataSourceRef": {"kind": "PersistentVolumeClaim", "name": "x"}}}, "sets dataSourceRef"),
     ],
     ids=["privileged", "bare-pod", "host-network", "root", "host-path", "undeclared-pvc", "unbacked-without-annotation",
-         "host-outside-apps", "nodeport", "loadbalancer-not-listed", "loadbalancer-wrong-target", "loadbalancer-node-ports",
+         "stray-route", "nodeport", "loadbalancer-not-listed", "loadbalancer-wrong-target", "loadbalancer-node-ports",
          "networkpolicy", "ingressroute", "other-namespace", "no-drop-all", "no-seccomp", "proc-unmasked", "other-priority-class", "memory-request-under-limit",
-         "route-no-hostnames", "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
+         "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
     """Rule: jarvis/apps/check.py fails, on the folder alone, each object the cluster refuses for the
@@ -609,14 +611,18 @@ def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj:
         (lambda folder: folder.rename(folder.parent / "renamed") and None, "folder name"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"].update(colour="blue")), "unknown key 'colour'"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"].pop("volumes")), "spec.volumes: is required"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"].update(port="eighty")), "spec.network.web.port: is a integer"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"].update(healthPath="health")), "does not match"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(web=[{"service": "web", "port": "eighty"}])),
+         "spec.network.web[0].port: is a integer"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"][0].update(service="web")),
+         "names a service and its port, or sets ownRoute"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(web=[{"name": "a" * 60, "service": "web", "port": 80}])),
+         "longer than 63"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"].update(webPort=8080)), "unknown key 'webPort'"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(egress={"lan": ["all", "nas"]})), "lan is [all] or a list"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(ports=[{"listen": 80, "protocol": "TCP"}])), "target: is required"),
         (lambda folder: _edit_app(folder, lambda app: app["metadata"].update(namespace="kube-system")), "metadata holds the name only"),
     ],
-    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "health-path-not-a-path",
+    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "own-route-and-service", "web-name-too-long",
          "old-web-port-key", "lan-all-and-names", "port-without-target", "namespace-set"],
 )
 def test_app_check_refuses_a_missing_invalid_or_misnamed_file(tmp_path: Path, change, expected: str) -> None:
@@ -655,7 +661,8 @@ def _namespaces(apps: dict[str, list[str]]) -> list[dict]:
 
 
 _DERIVED = {"quota": "app", "web": "app-web", "internet": "app-internet", "lan-all": "app-lan-all", "lan": "app-lan",
-            "apps": "app-apps", "callers": "app-callers", "ports": "app-ports", "backups": "app-backups"}
+            "apps": "app-apps", "callers": "app-callers", "ports": "app-ports", "backups": "app-backups",
+            "route": "app-web", "route-admin": "app-web-admin", "hostnames": "app-hostnames"}
 
 
 def _derive_policies() -> list[dict]:
@@ -673,7 +680,7 @@ def _derive_test(tmp_path: Path, triggers: list[dict], apps: dict[str, list[str]
     for item, (trigger, expected) in results:
         name = trigger["metadata"]["name"]
         namespace = name.removeprefix("backups-restic-") if trigger["kind"] == "Secret" else trigger["metadata"]["namespace"]
-        kind = "ResourceQuota" if item == "quota" else "NetworkPolicy"
+        kind = "ResourceQuota" if item == "quota" else "HTTPRoute" if item.startswith(("route", "hostnames")) else "NetworkPolicy"
         found = made.get((namespace, kind, _DERIVED[item]))
         if expected is None:
             assert found is None, (item, name, found)
@@ -687,20 +694,27 @@ def _quota(app: str, cpu: str, memory: str, lbs: str = "0") -> dict:
                               "services.loadbalancers": lbs, "services.nodeports": "0"}}}
 
 
+def _derived_route(app: str, name: str, hosts: list[str], service: str, port: int, section: str = "apps") -> dict:
+    return {"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": {"name": name, "namespace": f"app-{app}"},
+            "spec": {"parentRefs": [{"name": "jarvis", "namespace": "platform-gateway", "sectionName": section}],
+                     "hostnames": hosts, "rules": [{"backendRefs": [{"name": service, "port": port}]}]}}
+
+
 def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
-    """Rule: the quota and each allow come from the App's network section (with its env
-    override); an allow the file does not ask for is not made; app-to-app opens one side per
-    file, so traffic flows only when both list each other; a LAN port opens only when the env
-    grants it as lan-port; the backups allow follows the registered credential."""
+    """Rule: the quota, the web routes and each allow come from the App's network section; an
+    allow the file does not ask for is not made; app-to-app opens one side per file, so traffic
+    flows only when both list each other; a LAN port opens only when the env grants it as
+    lan-port; the backups allow follows the registered credential. Each web entry but an
+    ownRoute one gets core's route at its derived name, and its custom hostnames the env grants
+    get a route of their own on apps-granted."""
     notes, photos, web, lan = _app("notes"), _app("photos"), _app("web-demo"), _ENV["lan"][0]
-    offline = _app("offline", network={"egress": {"internet": True}},
-                   envs={"env-00": {"network": {"egress": {"internet": False}}, "resources": {"memory": "256Mi"}}})
+    wiki = _app("wiki", network={"web": [{"service": "wiki", "port": 80, "hostnames": ["wiki.example.org", "old.example.org"]},
+                                         {"name": "admin", "service": "wiki-admin", "port": 8080}]})
     credential = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "backups-restic-app-notes", "namespace": "platform-backups"}}
     peers = lambda names: {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "In", "values": [f"app-{n}" for n in names]}]}  # noqa: E731
     web_allow = _network_policy("web-demo", "app-web", {"policyTypes": ["Ingress"], "ingress": [{
         "from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
-                  "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}],
-        "ports": [{"port": 8080, "protocol": "TCP"}]}]})
+                  "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}]}]})
     ports = _network_policy("lan", "app-ports", {"policyTypes": ["Ingress"], "ingress": [{
         "from": [{"ipBlock": {"cidr": "0.0.0.0/0"}}],
         "ports": [{"port": 8443, "protocol": "TCP"}, {"port": 8080, "protocol": "TCP"}]}]})
@@ -712,8 +726,8 @@ def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
     partial, ungranted = (_app(name, network=lan["spec"]["network"]) for name in ("lan-partial", "lan-ungranted"))
     partial_ports = _network_policy("lan-partial", "app-ports", {"policyTypes": ["Ingress"], "ingress": [{
         "from": [{"ipBlock": {"cidr": "0.0.0.0/0"}}], "ports": [{"port": 8080, "protocol": "TCP"}]}]})
-    _derive_test(tmp_path, [notes, photos, web, lan, offline, credential, partial, ungranted],
-                 {"notes": [], "photos": [], "web-demo": [], "lan": _ENV["lan"][1], "offline": [],
+    _derive_test(tmp_path, [notes, photos, web, lan, wiki, credential, partial, ungranted],
+                 {"notes": [], "photos": [], "web-demo": [], "lan": _ENV["lan"][1], "wiki": ["hostname wiki.example.org"],
                   "lan-partial": ["lan-port 443/TCP"], "lan-ungranted": []}, [
         ("quota", (notes, _quota("notes", "1", "1Gi"))),
         ("quota", (lan, _quota("lan", "500m", "512Mi", "2"))),
@@ -728,9 +742,13 @@ def test_derive_makes_what_the_app_file_asks_for(tmp_path: Path) -> None:
         ("ports", (ungranted, None)),
         ("ports", (web, None)),
         ("internet", (web, None)),
-        # The env override: no internet on env-00 for an app that asks for it elsewhere.
-        ("quota", (offline, _quota("offline", "500m", "256Mi"))),
-        ("internet", (offline, None)),
+        ("route", (notes, _derived_route("notes", "app-web", [f"notes.apps.{SUFFIX}"], "notes", 80))),
+        ("hostnames", (notes, None)),
+        ("route", (web, None)),
+        ("route", (lan, None)),
+        ("route", (wiki, _derived_route("wiki", "app-web", [f"wiki.apps.{SUFFIX}"], "wiki", 80))),
+        ("route-admin", (wiki, _derived_route("wiki", "app-web-admin", [f"wiki-admin.apps.{SUFFIX}"], "wiki-admin", 8080))),
+        ("hostnames", (wiki, _derived_route("wiki", "app-hostnames", ["wiki.example.org"], "wiki", 80, "apps-granted"))),
         ("backups", (credential, backups)),
     ])
 
@@ -794,16 +812,6 @@ def test_derive_opens_internet_and_lan_only_as_asked_and_granted(tmp_path: Path)
     # app's LAN port, open to any address, is not open to other apps' pods.
     for allow in (internet, lan_all, nas):
         assert not _allows(allow, "10.80.3.4", 8443, "TCP")
-
-
-def test_uptime_opt_out_reaches_the_namespace_the_uptime_check_reads() -> None:
-    """Rule: the uptime check is on unless the env has '<app>: no-uptime-check'; the line reaches
-    the app's namespace, where the uptime check reads it."""
-    def opt_out(lines: list[str]) -> str:
-        return _wiring("notes", lines)[0]["metadata"]["annotations"]["hosting.jarvis.io/no-uptime-check"]
-
-    assert opt_out([]) == "false"
-    assert opt_out(["no-uptime-check"]) == "true"
 
 
 def test_app_namespace_lets_backup_movers_run_privileged() -> None:

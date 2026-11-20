@@ -43,22 +43,52 @@ spec:
                   properties:
                     web:
                       description: >-
-                        The web address https://<name>.apps.<dns suffix> on 443, TLS from core.
-                        Absent: no web address.
-                      type: object
-                      required: [port]
-                      properties:
-                        port:
-                          description: The plain-HTTP container port Traefik reaches.
-                          type: integer
-                          minimum: 1
-                          maximum: 65535
-                        healthPath:
-                          description: The path the uptime check requests; healthy is any answer but a 5xx.
-                          type: string
-                          default: /
-                          maxLength: 1024
-                          pattern: "^/[!-~]*$"
+                        Web addresses, each an HTTPRoute core makes on the apps door, TLS from
+                        core: https://<name>.apps.<dns suffix> for the entry with no name, and
+                        https://<name>-<entry>.apps.<dns suffix> for a named one. Absent or
+                        empty: no web address.
+                      type: array
+                      maxItems: 8
+                      x-kubernetes-list-type: map
+                      x-kubernetes-list-map-keys: [name]
+                      items:
+                        type: object
+                        x-kubernetes-validations:
+                          - rule: "has(self.ownRoute) && self.ownRoute ? !has(self.service) && !has(self.port) : has(self.service) && has(self.port)"
+                            message: a web entry names a service and its port, or sets ownRoute and names neither
+                        properties:
+                          name:
+                            description: Empty for the app's own address; otherwise a DNS label added to it.
+                            type: string
+                            default: ""
+                            maxLength: 61
+                            pattern: "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"
+                          service:
+                            description: The Service in the app's namespace the route sends to.
+                            type: string
+                            maxLength: 63
+                            pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                          port:
+                            description: That Service's port, plain HTTP.
+                            type: integer
+                            minimum: 1
+                            maximum: 65535
+                          hostnames:
+                            description: >-
+                              Custom hostnames the entry also answers on, outside the env's zone.
+                              Each needs the env's grant hostname <name>.
+                            type: array
+                            maxItems: 8
+                            x-kubernetes-list-type: set
+                            items:
+                              type: string
+                              maxLength: 253
+                              pattern: "^([a-z0-9]([-a-z0-9]*[a-z0-9])?\\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                          ownRoute:
+                            description: >-
+                              The app ships this entry's HTTPRoute itself, for routing one service
+                              and port cannot express. Core makes none for it.
+                            type: boolean
                     ports:
                       description: >-
                         LAN ports, each a LoadBalancer port listen forwarding to container
@@ -86,7 +116,7 @@ spec:
                       description: What the app reaches beyond cluster DNS. Default nothing.
                       type: object
                       properties:
-                        internet: &internet
+                        internet:
                           description: >-
                             Any port and protocol to the internet, never the LAN or the cluster.
                             Default false.
@@ -133,7 +163,7 @@ spec:
                         pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
                       backup:
                         type: boolean
-                resources: &resources
+                resources:
                   description: The namespace's total limits. Default 500m CPU and 512Mi memory.
                   type: object
                   properties:
@@ -144,7 +174,7 @@ spec:
                       type: string
                       pattern: "^[0-9]+(Ki|Mi|Gi)$"
                 risky:
-                  description: Items the app asks for. Each needs the env's matching exception line.
+                  description: Items the app asks for. Each needs the env's matching grant.
                   type: object
                   properties:
                     privileged:
@@ -155,26 +185,3 @@ spec:
                       type: boolean
                     hostPath:
                       type: boolean
-                    hostnames:
-                      type: array
-                      maxItems: 8
-                      x-kubernetes-list-type: set
-                      items:
-                        type: string
-                        maxLength: 253
-                        pattern: "^([a-z0-9]([-a-z0-9]*[a-z0-9])?\\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-                envs:
-                  description: Per-env overrides of network.egress.internet and resources, keyed by env name.
-                  type: object
-                  maxProperties: 16
-                  additionalProperties:
-                    type: object
-                    properties:
-                      network:
-                        type: object
-                        properties:
-                          egress:
-                            type: object
-                            properties:
-                              internet: *internet
-                      resources: *resources

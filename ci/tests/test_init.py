@@ -188,7 +188,6 @@ def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_p
     assert code == 0
     switches = yaml.safe_load((dest / "envs/home/values/switches.yaml").read_text())
     assert "app-hosting" in switches["features"]
-    assert switches["apps"] == list(scaffold.example_apps()["versions"])
     apps = yaml.safe_load((dest / "envs/home/values/apps.yaml").read_text())
     assert apps == scaffold.example_apps()
     cluster_vars = yaml.safe_load((dest / "envs/home/values/cluster-vars.yaml").read_text())

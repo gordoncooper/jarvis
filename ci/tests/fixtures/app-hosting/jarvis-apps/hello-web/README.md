@@ -8,9 +8,9 @@ A static page served by an unprivileged nginx (`nginxinc/nginx-unprivileged`, pi
 - **Internet egress.** `network.egress.internet: true`: `/internet/` fetches a public page. Never the LAN or the cluster.
 - **ConfigMap-driven config and an init container.** The nginx site is a ConfigMap template; the `render-config` init container writes it, with the cluster DNS address filled in, into a memory-backed emptyDir.
 - **Restricted pods.** Non-root, all capabilities dropped, `RuntimeDefault` seccomp, read-only root filesystem (emptyDir for `/tmp`), `priorityClassName: hosted-app`, startup, readiness and liveness probes on `/healthz`, memory request equal to limit (web 64Mi, init 16Mi).
-- **HTTPRoute** on the apps door (Gateway `platform-gateway/jarvis`, `sectionName: apps`), hostname `${app_host}`.
+- **A web entry.** `network.web: [{service: hello-web, port: 80}]`: core makes the HTTPRoute on the apps door to that Service and port. The app ships no route.
 
-- `app.yaml`: `network.web.port: 8080`, `egress.apps: [notes]`, `egress.internet: true`, `volumes: []`.
+- `app.yaml`: one web entry, `egress.apps: [notes]`, `egress.internet: true`, `volumes: []`.
 - Address: `https://hello-web.apps.<dns suffix>`.
 
-**Env exception lines needed:** none. List `hello-web` (and `notes`, for `/notes/` to answer; `lan-demo` too if you want the refused call to fail at the network policy rather than on a missing service; both answer 502).
+**Env grants needed:** none. List `hello-web` (and `notes`, for `/notes/` to answer; `lan-demo` too if you want the refused call to fail at the network policy rather than on a missing service; both answer 502).

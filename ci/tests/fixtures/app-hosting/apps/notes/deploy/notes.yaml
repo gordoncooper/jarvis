@@ -81,20 +81,3 @@ spec:
   ports:
     - port: 80
       targetPort: http
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: notes
-spec:
-  # The apps door on core's Gateway, which terminates TLS with the apps wildcard.
-  parentRefs:
-    - name: jarvis
-      namespace: platform-gateway
-      sectionName: apps
-  hostnames:
-    - ${app_host}
-  rules:
-    - backendRefs:
-        - name: notes
-          port: 80

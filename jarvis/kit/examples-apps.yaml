@@ -1,9 +1,13 @@
 # The example hosted apps, as values/apps.yaml: what jarvis init --with-examples writes for a
 # first-run tour, and what core's tests and e2e run. The apps live in the jarvis-apps repository
-# beside core (each pin is its tag <app>/<version> there); an env's Renovate moves them.
-versions:
-  hello-web: v0.2.0
-  notes: v0.2.0
-  lan-demo: v0.1.0
-exceptions:
-  - lan-demo: lan-port 8080/TCP
+# beside core (each version is its tag <app>/<version> there); an env's Renovate moves them.
+hello-web:
+  version: v0.3.0
+notes:
+  version: v0.3.0
+  # Its volume is not backed up on the tour; drop this line to back it up (jarvis secrets mints its login).
+  backups: false
+lan-demo:
+  version: v0.1.1
+  grants:
+    - lan-port 8080/TCP
