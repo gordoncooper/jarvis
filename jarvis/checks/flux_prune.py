@@ -8,7 +8,8 @@ requires every object of a protected kind, and the root Kustomization, to
 carry prune: disabled. The layer Kustomizations keep prune on.
 
 An exception needs a reason. Objects already guarded that are not one of
-those kinds stay guarded.
+those kinds stay guarded. A hosted app's HelmRelease keeps prune on, as an app's
+deploy/ Kustomization does: the env dropping the app from its list uninstalls it.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.apps.values import app_release
 from jarvis.checks.flux_build import env_tree
 from jarvis.checks.manifests import kind_of
 from jarvis.schema.env import ROOT_SOURCE, env_flux_dirs
@@ -114,6 +116,7 @@ def unguarded_objects(
         for key, doc in applied.items()
         if key not in exceptions
         and (key[0] in PROTECTED_KINDS or key in KEPT)
+        and not app_release(doc)
         and not prune_disabled(doc)
     ]
     absent = sorted(key for key in KEPT - FEATURE_KEPT if key not in applied)

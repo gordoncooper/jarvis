@@ -58,6 +58,16 @@ def wiring_name(app: str) -> str:
     return f"app-{app}-wiring"
 
 
+def app_release(doc: dict[str, Any]) -> bool:
+    """A hosted app's chart release: HelmRelease flux-system/app-<name>, run as the app's tenant
+    app-<name> into app-<name>. The app checks hold its chart to the app rules."""
+    metadata, spec = doc.get("metadata") or {}, doc.get("spec") or {}
+    name = metadata.get("name")
+    return (doc.get("kind") == "HelmRelease" and metadata.get("namespace") == "flux-system"
+            and str(name).startswith("app-") and bool(APP_NAME.fullmatch(str(name)[4:]))
+            and spec.get("serviceAccountName") == spec.get("targetNamespace") == name)
+
+
 def load_values(env_dir: Path) -> tuple[dict[str, Any], list[str]]:
     """The env's apps file as {app: entry}, or errors. A missing or empty file lists no app; its
     shape is the schema's to check (env-schema)."""

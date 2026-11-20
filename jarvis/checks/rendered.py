@@ -5,10 +5,11 @@ read without their namespace scope) and those only Git keeps (git-rules.yaml bes
 The objects are Flux's build of every path on the root artifact (flux_build.env_tree) and each
 HelmRelease's chart, rendered by `helm template` from the source the build names, with the
 release's values, at the env's Kubernetes version. Each chart version is pulled once into the
-jarvis cache and rendered from there, so a run with the cache reaches no chart host. helm-controller renders the same way; its
-postRenderers are not applied here. A hosted app's paths read the apps repository, so the app
-checks read those. k3s's own charts (Traefik, configured by a HelmChartConfig) ship inside k3s and
-are not rendered.
+jarvis cache and rendered from there, so a run with the cache reaches no chart host.
+helm-controller renders the same way; its postRenderers are not applied here. A hosted app's
+objects are the app checks' to read: its deploy/ paths read the apps repository, and its chart's
+release is left out here. k3s's own charts (Traefik, configured by a HelmChartConfig) ship inside
+k3s and are not rendered.
 
 kubeconform reads Kubernetes' schemas, then the CRDs these objects carry themselves and the ones
 the pinned flux CLI installs, then one pinned public catalog for the rest (k3s's Traefik and
@@ -31,6 +32,7 @@ from pathlib import Path
 import yaml
 
 from jarvis import paths as _paths
+from jarvis.apps.values import app_release
 from jarvis.checks.flux_build import env_tree
 from jarvis.env.k3s import release
 from jarvis.schema.env import env_dirs, kubernetes_version_from_k3s
@@ -135,7 +137,7 @@ def env_objects(root: Path, env: str) -> tuple[list[dict], list[str], str]:
     sources = {_key(doc): doc for doc in docs if doc.get("kind") in ("OCIRepository", "HelmRepository")}
     rendered: list[dict] = []
     for doc in docs:
-        if doc.get("kind") != "HelmRelease":
+        if doc.get("kind") != "HelmRelease" or app_release(doc):
             continue
         _, namespace, name = _key(doc)
         spec = doc.get("spec") or {}
