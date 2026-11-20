@@ -70,8 +70,13 @@ In each env that hosts apps, in one commit:
 - Rewrite `values/apps.yaml` as one entry per app: its `versions:` pin as `version`, and its
   `exceptions:` lines as `grants` without the `<app>:` prefix. Delete `apps:` from
   `values/switches.yaml`, and any `no-uptime-check` grant.
-- For each app with a `backup: true` volume, run `jarvis secrets --env <env>` to seal its
-  credential, or set its `backups: false`.
+- For each app with a `backup: true` volume and no sealed credential (its backups were off),
+  run `jarvis secrets --env <env>` to seal one, or set its `backups: false`. A credential sealed
+  under an earlier release stays as it is.
+- Move the instance's Renovate preset (`renovate/instance.json#<tag>` in `renovate.json`) with
+  the core pin, as Renovate's "jarvis core" PR does. The earlier preset reads app pins from
+  `versions:`, and in the new `values/apps.yaml` it reads each `version:` line as an app named
+  `version`.
 - An app that moves from `deploy/` to a chart, as lan-demo v0.2.0 does, moves in its own pair of
   commits: drop it from `values/apps.yaml`, and list it at the new tag once its objects are gone.
   In one commit, its old Kustomization's prune and the chart's install act on the same objects.
