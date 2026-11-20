@@ -15,7 +15,7 @@ Commands:
   doctor                 Check this controller: CLIs, the age key, the remote, host names
   validate               Every env check: schema, wiring, committed files, secret scan
   render [--check]       Write the env's flux/ from its values; --check lists stale files
-  secrets [--app <ns>]   Mint the env's missing secrets (--rotate-restic: a new restic password)
+  secrets                Mint the env's missing secrets (--rotate-restic: a new restic password)
   encrypt --name <n>     Encrypt a Secret manifest (a file or stdin) into the env's secrets/
   age-key-check --key-file <file>
                          Prove an age key copy decrypts one of the env's secrets

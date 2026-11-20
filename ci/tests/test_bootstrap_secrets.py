@@ -466,7 +466,7 @@ def test_tracked_restic_is_not_recreated_without_rotate(tmp_path, monkeypatch):
 
 
 def test_app_credential_is_its_own_and_never_minted_twice(tmp_path, monkeypatch):
-    """--app seals the app's own password and an apps-server login named for its namespace in
+    """An app's run seals its own password and an apps-server login named for its namespace in
     its own folder; an app the env does not list, or a recorded credential, refuses before any write."""
     mod = _load_module()
     public, keyfile = _generate_throwaway_age_keypair(tmp_path)
@@ -498,11 +498,6 @@ def test_app_credential_is_its_own_and_never_minted_twice(tmp_path, monkeypatch)
     with pytest.raises(SystemExit, match="refusing to recreate .*app-shop.* because git already records it"):
         mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin)
     assert not (tmp_path / rel).exists()
-    # An app run never also mints core's restic password.
-    with pytest.raises(SystemExit) as caught:
-        mod.main(["--env", "env-test", "--app", "app-blog", "--rotate-restic"])
-    assert caught.value.code == 2
-    assert not (tmp_path / "envs/env-test/secrets/app-blog").exists()
 
 
 def _record_restic(tmp_path, monkeypatch):

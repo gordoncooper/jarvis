@@ -7,8 +7,8 @@ only for a new env; an env with other secrets gets its cluster's token sealed.
 
 It also mints each hosted app's own backup credential where the app needs one (backups on in
 values/apps.yaml, and a backup: true volume in its app file at its pinned tag), sealed under
-envs/<env>/secrets/app-<name>/; jarvis render registers it. --app app-<name> mints only that
-app's. A credential git already records is never minted again.
+envs/<env>/secrets/app-<name>/; jarvis render registers it. A credential git already records
+is never minted again.
 """
 
 from __future__ import annotations
@@ -522,14 +522,14 @@ def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> l
     minted again: its repositories only open with the password it holds.
     """
     if not _app_backups.APP_NAMESPACE.fullmatch(namespace):
-        raise SystemExit("refusing --app: it must be a hosted app namespace, app-<name>")
+        raise SystemExit(f"refusing {namespace}: it must be a hosted app namespace, app-<name>")
     repo = _repo_root()
     env_dir = repo / "envs" / env
     data, errors = _apps.load_values(env_dir)
     if errors or namespace.removeprefix("app-") not in _apps.app_names(data):
-        raise SystemExit(f"refusing --app: the env does not list {namespace.removeprefix('app-')} in {_apps.APPS_VALUES}")
+        raise SystemExit(f"refusing {namespace}: the env does not list {namespace.removeprefix('app-')} in {_apps.APPS_VALUES}")
     if not _apps.backups_on(data, namespace.removeprefix("app-")):
-        raise SystemExit(f"refusing --app: {_apps.APPS_VALUES} turns {namespace.removeprefix('app-')}'s backups off")
+        raise SystemExit(f"refusing {namespace}: {_apps.APPS_VALUES} turns {namespace.removeprefix('app-')}'s backups off")
     missing = []
     for spec in _app_specs(namespace):
         path = _sops.secret_path(repo, env, _secret_name(spec.filename), spec.folder)
@@ -681,11 +681,6 @@ def main(argv: list[str] | None = None) -> int:
             "Mints a new password. This is not the restic rotation."
         ),
     )
-    parser.add_argument(
-        "--app",
-        metavar="NAMESPACE",
-        help="Mint only this hosted app's own backup credential (app-<name>); jarvis render then turns its backups on.",
-    )
     which = parser.add_mutually_exclusive_group()
     which.add_argument(
         "--update-recipients",
@@ -703,18 +698,11 @@ def main(argv: list[str] | None = None) -> int:
         help="age: a new working key, every file re-encrypted to it; deploy-key: a new Flux deploy key",
     )
     args = parser.parse_args(argv)
-    if args.app is not None and args.rotate_restic:
-        parser.error("--app and --rotate-restic are separate runs")
     if args.update_recipients or args.add_recovery_key or args.rotate:
-        if args.app is not None or args.rotate_restic:
+        if args.rotate_restic:
             parser.error("--update-recipients, --add-recovery-key and --rotate are runs of their own")
         return _lifecycle(args)
-    if args.app is not None:
-        created = bootstrap_app(args.env, args.app)
-        if created:
-            print(f"Next: jarvis render --env {args.env} registers it; then commit and push.")
-    else:
-        created = bootstrap(args.env, rotate_restic=args.rotate_restic)
+    created = bootstrap(args.env, rotate_restic=args.rotate_restic)
     if created:
         for rel in created:
             print(f"created {rel}")
