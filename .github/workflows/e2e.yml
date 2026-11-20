@@ -114,8 +114,6 @@ jobs:
             --ref "refs/heads/${E2E_BRANCH}" --core-ref "${core_ref}" \
             --apps-url "${APPS_URL}" --key-file "${RUNNER_TEMP}/age.key" \
             --node "k3d-${E2E_ENV}-server-0" ${APP_DNS_FLAG}
-          # notes keeps a backup: true volume: seal its own credential, as an owner does, so it backs up.
-          .venv/bin/jarvis --env "${E2E_ENV}" secrets --app app-notes
           .venv/bin/jarvis --env "${E2E_ENV}" render
           git config user.name "e2e"
           git config user.email "e2e@users.noreply.github.com"
