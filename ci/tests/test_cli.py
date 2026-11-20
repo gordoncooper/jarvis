@@ -105,6 +105,49 @@ def test_core_runs_this_checkout_unpinned_and_says_so(tmp_path: Path, monkeypatc
     assert os.environ["INSTANCE"] == str(instance)
 
 
+def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """Rule: every command whose run reads app files gets the apps checkout, with no APPS_REPO set:
+    jarvis site validates an env that lists apps, at their pinned tags, then runs the playbook."""
+    import shutil
+    import types
+
+    import yaml
+
+    from jarvis.apps import checkout
+    from jarvis.cli import core as cli_core
+    from jarvis.node import site
+    from support import copy_sample
+
+    instance = copy_sample(tmp_path / "instance")
+    env_dir = instance / "envs" / "env-00"
+    remote = tmp_path / "apps-remote"
+    shutil.copytree(REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps", remote)
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "apps"]):
+        subprocess.run([*_GIT, *args], cwd=remote, check=True, capture_output=True)
+    for app, entry in yaml.safe_load((env_dir / "values" / "apps.yaml").read_text(encoding="utf-8")).items():
+        subprocess.run([*_GIT, "tag", f"{app}/{entry['version']}"], cwd=remote, check=True)
+    # The env's https URL, served from the local repository.
+    url = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))["apps_git_repo_url"]
+    count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+    monkeypatch.setenv(f"GIT_CONFIG_KEY_{count}", f"url.file://{remote}.insteadOf")
+    monkeypatch.setenv(f"GIT_CONFIG_VALUE_{count}", url)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", str(count + 1))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    for name in ("PATH", "INSTANCE", cli_core.UNPINNED_VAR):
+        monkeypatch.setenv(name, os.environ.get(name, ""))
+    monkeypatch.delenv("APPS_REPO", raising=False)
+    monkeypatch.setattr(checkout, "_fetch_for", None)
+    ran: list[str] = []
+    monkeypatch.setattr(site, "shutil", types.SimpleNamespace(which=lambda name: name))
+    monkeypatch.setattr(site, "playbook_command", lambda *a, **k: ran.append("site.yml") or ["true"])
+    monkeypatch.chdir(instance)
+    assert cli.main(["--core", str(REPO_ROOT), "site"]) == 0, capsys.readouterr()
+    assert ran == ["site.yml"]
+    assert "jarvis: apps repository at" in capsys.readouterr().err
+
+
 def test_validate_checks_only_the_named_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Rule: jarvis validate limits the schema to its env, so each env is checked by the core it pins."""
     from jarvis.env import validate
