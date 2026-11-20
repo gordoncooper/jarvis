@@ -14,7 +14,7 @@ Kustomization in it, then checks:
   flux-system/flux-system names kustomize-controller, and its path (the tree
   itself) is not checked as a tenant path.
 - Only PLATFORM_KUSTOMIZATIONS, and each hosted app's wiring (app-<name>-wiring
-  applying APP_WIRING_PATH from the root source, nothing more), run as
+  applying one of APP_WIRING_PATHS from the root source, nothing more), run as
   PLATFORM_SERVICE_ACCOUNT, and of the objects on their paths only those on
   PLATFORM_PATHS. A Kustomization named like a wiring that is not one fails. No other account a Flux
   object runs as is bound by a ClusterRoleBinding, by a RoleBinding in the
@@ -39,6 +39,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.apps.values import DEPLOY_WIRING_PATH, WIRING_PATH
 from jarvis.checks.flux_build import FluxPath, env_tree
 from jarvis.checks.manifests import (
     namespace_of,
@@ -59,8 +60,8 @@ PLATFORM_KUSTOMIZATIONS = frozenset(
 PLATFORM_PATHS = frozenset({(FLUX_NAMESPACE, "platform-controllers"), (FLUX_NAMESPACE, "platform-configs")})
 # A hosted app's wiring, app-<name>-wiring, applies core's app template as the platform
 # account and nothing else: it creates the app's namespace and tenant identity. The app's own
-# Kustomizations on that path run as the tenant.
-APP_WIRING_PATH = "./core/feature/app-hosting/app"
+# Kustomizations on that path, and its chart's HelmRelease, run as the tenant.
+APP_WIRING_PATHS = (WIRING_PATH, DEPLOY_WIRING_PATH)
 _APP_WIRING_NAME = re.compile(r"^app-[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?-wiring$")
 # The root Kustomization applies the env's flux tree, which declares every other
 # account, so it runs as the controller's own identity, which the FluxInstance creates.
@@ -162,7 +163,7 @@ def _env_problems(env_docs: list[dict], paths: list[FluxPath]) -> Iterator[str]:
         if _APP_WIRING_NAME.fullmatch(_name(doc)) and not _wires_app(doc):
             yield (
                 f"{ref_of(doc)}: an app's wiring runs as {PLATFORM_SERVICE_ACCOUNT} in {FLUX_NAMESPACE} "
-                f"and applies {APP_WIRING_PATH} from the root source, with no components or patches"
+                f"and applies {' or '.join(APP_WIRING_PATHS)} from the root source, with no components or patches"
             )
     for path in paths:
         yield from _path_problems(path, accounts, stage_docs.get(id(path), path.docs))
@@ -290,7 +291,7 @@ def _wires_app(doc: dict) -> bool:
         and namespace_of(doc) == FLUX_NAMESPACE
         and bool(_APP_WIRING_NAME.fullmatch(_name(doc)))
         and spec.get("serviceAccountName") == PLATFORM_SERVICE_ACCOUNT
-        and spec.get("path") == APP_WIRING_PATH
+        and spec.get("path") in APP_WIRING_PATHS
         and spec.get("sourceRef") == {"kind": "GitRepository", "name": FLUX_NAMESPACE}
         and not {"components", "patches", "images", "namePrefix", "nameSuffix", "kubeConfig", "targetNamespace"} & set(spec)
     )

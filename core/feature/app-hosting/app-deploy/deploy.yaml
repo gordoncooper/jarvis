@@ -1,0 +1,41 @@
+# The app's deploy/ objects, as its tenant identity, from a source holding only that folder at
+# the same pinned tag as the app file. They wait on the app file, which admission reads.
+# No substitution source and no decryption: the one value an app reads is ${app_host}.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: app-${app_name}
+  namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  interval: 5m
+  url: ${apps_git_repo_url}
+  ref:
+    name: ${app_ref}
+  ignore: |
+    /*
+    !/${app_name}/
+    /${app_name}/*
+    !/${app_name}/deploy/
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app-${app_name}
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  path: ./${app_name}/deploy
+  prune: true
+  serviceAccountName: app-${app_name}
+  targetNamespace: app-${app_name}
+  sourceRef:
+    kind: GitRepository
+    name: app-${app_name}
+  dependsOn:
+    - name: app-${app_name}-file
+  postBuild:
+    substitute:
+      app_host: ${app_name}.apps.${dns_suffix}

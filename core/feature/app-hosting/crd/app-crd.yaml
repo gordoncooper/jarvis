@@ -183,3 +183,33 @@ spec:
                       type: boolean
                     hostPath:
                       type: boolean
+                chart:
+                  description: >-
+                    The upstream Helm chart the app runs, in place of deploy/: core renders it
+                    as the app's tenant with these values, and the env's on top. An app that
+                    ships only an image runs a generic chart such as bjw-s app-template.
+                  type: object
+                  required: [url, version]
+                  x-kubernetes-validations:
+                    - rule: "self.url.startsWith('oci://') != has(self.name)"
+                      message: an https:// repository names its chart; an oci:// url is the chart itself
+                  properties:
+                    url:
+                      description: An https:// chart repository, or the chart's own oci:// address.
+                      type: string
+                      maxLength: 512
+                      pattern: "^(https|oci)://[^\\s]+$"
+                    name:
+                      description: The chart's name in an https:// repository.
+                      type: string
+                      maxLength: 253
+                      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                    version:
+                      description: The chart version, exactly.
+                      type: string
+                      maxLength: 128
+                      pattern: "^[0-9A-Za-z][0-9A-Za-z.+_-]*$"
+                    values:
+                      description: The chart's values.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true

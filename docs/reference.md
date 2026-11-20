@@ -59,6 +59,7 @@ The hosted apps an env runs, one entry each, keyed by the app's folder name in t
 | --- | --- | --- | --- | --- |
 | `backups` | no | boolean | `true` | Whether the app's backup: true volumes are backed up. On, jarvis secrets mints the app's own credential and validate requires it, once the app keeps such a volume. Off, none is sealed and nothing reports the volumes. |
 | `grants` | no | array |  | What the env allows the app, one item per line, each taking effect only where the app file asks for the same item: privileged, root, host-network, host-path, hostname &lt;name&gt;, lan-port &lt;port&gt;/&lt;TCP\|UDP&gt;, lan-all, lan-target &lt;name&gt; &lt;cidr&gt; &lt;port&gt;/&lt;TCP\|UDP&gt;. |
+| `values` | no | object |  | Values for the app's chart, laid over the app file's own; only for an app whose file names a chart. jarvis validate renders the chart with them against core's app rules. |
 | `version` | yes | string |  | The app's release: v&lt;x.y.z&gt;, the apps repository's tag &lt;app&gt;/v&lt;x.y.z&gt;. The env runs that tag until this moves. |
 
 ## `inventory/hosts.yml: each host under all.hosts`

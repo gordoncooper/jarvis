@@ -416,7 +416,8 @@ def switches_problems(env_dir: Path, repo_root: Path) -> list[str]:
 def apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) -> list[str]:
     """Why the env's apps cannot render: its grants (values.validate); an env that lists apps
     turns app hosting on and names the apps repository; and each app, read at its pinned tag,
-    passes core's app rules and makes web names no other app makes."""
+    passes core's app rules (a chart rendered with the env's values) and makes web names no other
+    app makes."""
     rel = _rel(env_dir / _apps.APPS_VALUES, repo_root)
     data, errors = _apps.load_values(env_dir)
     errors = [f"{rel}: {problem}" for problem in errors] or _values.problems("apps", data, rel)
@@ -440,10 +441,13 @@ def apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) 
         if not (apps_root / app / "app.yaml").is_file():
             errors.append(f"{where}: no {app}/app.yaml in the apps repository{_apps_checkout.STALE_HINT}")
             continue
-        problems = check_folder(apps_root / app)
+        env_values = data[app].get("values")
+        problems = check_folder(apps_root / app, env_values)
         errors.extend(f"{where}: {problem}" for problem in problems)
         if problems:
             continue
+        if env_values and app not in _apps.charts({app: data[app]}, apps_root):
+            errors.append(f"{where}: sets values, and the app runs no chart to take them")
         for label in web_labels(apps_root / app):
             if label in makers:
                 errors.append(f"{where}: web name {label}.apps.<dns suffix> is also app {makers[label]}'s; rename a web entry")

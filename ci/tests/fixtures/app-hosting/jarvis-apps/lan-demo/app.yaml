@@ -13,3 +13,67 @@ spec:
         target: 8080
         protocol: TCP
   volumes: []
+  # An image with no chart of its own, run by a generic upstream chart: no deploy/ folder.
+  chart:
+    url: oci://ghcr.io/bjw-s-labs/helm/app-template
+    version: 5.3.0
+    values:
+      global:
+        # The app's pods run as the namespace's default account; a hosted app ships no ServiceAccount.
+        createDefaultServiceAccount: false
+      defaultPodOptions:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10001
+          runAsGroup: 10001
+          seccompProfile:
+            type: RuntimeDefault
+      controllers:
+        lan-demo:
+          containers:
+            whoami:
+              # traefik/whoami v1.12.0: echoes the request back.
+              image:
+                repository: docker.io/traefik/whoami
+                tag: v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
+              args: ["--port", "8080"]
+              probes:
+                startup:
+                  enabled: true
+                  custom: true
+                  spec:
+                    httpGet: {path: /health, port: 8080}
+                    periodSeconds: 2
+                    failureThreshold: 15
+                readiness:
+                  enabled: true
+                  custom: true
+                  spec:
+                    httpGet: {path: /health, port: 8080}
+                    periodSeconds: 10
+                liveness:
+                  enabled: true
+                  custom: true
+                  spec:
+                    httpGet: {path: /health, port: 8080}
+                    periodSeconds: 30
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 32Mi}
+      service:
+        # The LAN port from network.ports: port is its listen, targetPort its target (a number,
+        # which the cluster checks). ServiceLB needs no node port, and the cluster refuses one.
+        lan-demo:
+          controller: lan-demo
+          type: LoadBalancer
+          allocateLoadBalancerNodePorts: false
+          ports:
+            lan:
+              port: 8080
+              targetPort: 8080
+              protocol: TCP

@@ -1,0 +1,6 @@
+# The wiring of an app that ships deploy/: the base beside it, and its deploy/ objects.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../app
+  - deploy.yaml

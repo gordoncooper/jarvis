@@ -2,7 +2,8 @@
 
 CONTRACT: core/feature/app-hosting/CONTRACT.md. The file's shape is schema/apps.schema.json's;
 what spans entries or needs the env's ranges is here. env-schema also checks each app at its
-pinned tag; render_apps.py writes the wiring, which reads only the env.
+pinned tag; render_apps.py writes the wiring, and for an app with a chart its release, from the
+env and each app file at its pinned tag.
 """
 
 from __future__ import annotations
@@ -19,8 +20,15 @@ import yaml
 APPS_VALUES = "values/apps.yaml"
 # The render, under envs/<env>/flux/, which the env's flux/kustomization.yaml lists.
 GENERATED_REL = "generated/apps.yaml"
-# The core directory each app's wiring Kustomization applies.
+# The core directory each app's wiring Kustomization applies: an app with a chart gets the base,
+# and one with deploy/ the base and its deploy/ Kustomization, beside it.
 WIRING_PATH = "./core/feature/app-hosting/app"
+DEPLOY_WIRING_PATH = "./core/feature/app-hosting/app-deploy"
+# Flux's annotations: keep a chart source when the app leaves the list, as every Flux source is
+# kept; and apply the app's and the env's chart values as written, with no substitution.
+_KEEP = {"kustomize.toolkit.fluxcd.io/prune": "disabled"}
+_VERBATIM = {"kustomize.toolkit.fluxcd.io/substitute": "disabled"}
+
 # An app name: one DNS label short enough that app-<name> is one too.
 APP_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,57}[a-z0-9])?$")
 _FQDN = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -255,7 +263,7 @@ def _flag(value: bool) -> str:
     return "true" if value else "false"
 
 
-def wiring_documents(data: dict[str, Any], cluster_vars: dict[str, Any]) -> list[dict[str, Any]]:
+def wiring_documents(data: dict[str, Any], cluster_vars: dict[str, Any], charts: dict[str, dict]) -> list[dict[str, Any]]:
     """One wiring Kustomization per listed app, in list order."""
     return [
         {
@@ -265,7 +273,7 @@ def wiring_documents(data: dict[str, Any], cluster_vars: dict[str, Any]) -> list
             "spec": {
                 "interval": "10m",
                 "retryInterval": "1m",
-                "path": WIRING_PATH,
+                "path": WIRING_PATH if app in charts else DEPLOY_WIRING_PATH,
                 "prune": True,
                 "serviceAccountName": "flux-platform",
                 "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
@@ -280,10 +288,69 @@ def wiring_documents(data: dict[str, Any], cluster_vars: dict[str, Any]) -> list
     ]
 
 
-def render(data: dict[str, Any], cluster_vars: dict[str, Any]) -> str:
+def _retry() -> dict[str, Any]:
+    """A failed install or upgrade (the app's admission params not applied yet, say) is retried,
+    not stalled. Helm does not wait on the objects, as an app's deploy/ Kustomization does not."""
+    return {"disableWait": True, "strategy": {"name": "RetryOnFailure", "retryInterval": "1m"}}
+
+
+def chart_documents(app: str, chart: dict[str, Any], env_values: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """An app's chart, installed by helm-controller as the app's tenant into app-<name>: its source,
+    the app file's values as a ConfigMap, and the release, the env's values inline on top. They live
+    in flux-system, where the tenant writes nothing."""
+    name = f"app-{app}"
+    meta = {"name": name, "namespace": "flux-system"}
+    if chart["url"].startswith("oci://"):
+        source = {"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": {**meta, "annotations": _KEEP},
+                  "spec": {"interval": "30m", "url": chart["url"], "ref": {"tag": chart["version"]},
+                           "layerSelector": {"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"}}}
+        ref: dict[str, Any] = {"chartRef": {"kind": "OCIRepository", "name": name}}
+    else:
+        source = {"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "HelmRepository", "metadata": {**meta, "annotations": _KEEP},
+                  "spec": {"interval": "30m", "url": chart["url"]}}
+        ref = {"chart": {"spec": {"chart": chart["name"], "version": chart["version"], "sourceRef": {"kind": "HelmRepository", "name": name}}}}
+    values = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": f"{name}-values", "namespace": "flux-system", "annotations": _VERBATIM},
+              "data": {"values.yaml": yaml.safe_dump(chart.get("values") or {}, sort_keys=False)}}
+    release = {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {**meta, "annotations": _VERBATIM},
+        "spec": {
+            "interval": "10m", "releaseName": app, "serviceAccountName": name, "targetNamespace": name, "storageNamespace": name,
+            **ref, "install": _retry(), "upgrade": _retry(),
+            "valuesFrom": [{"kind": "ConfigMap", "name": f"{name}-values"}],
+            **({"values": env_values} if env_values else {}),
+        },
+    }  # fmt: skip
+    return [source, values, release]
+
+
+def charts(data: dict[str, Any], apps_root: Path) -> dict[str, dict]:
+    """The chart of each listed app whose app file names one, read where apps_root holds it."""
+    found = {}
+    for app in app_names(data):
+        spec = yaml.safe_load((apps_root / app / "app.yaml").read_text(encoding="utf-8"))["spec"]
+        if spec.get("chart"):
+            found[app] = spec["chart"]
+    return found
+
+
+class _Dumper(yaml.SafeDumper):
+    """safe_dump, with a values file in a ConfigMap written as a block, as it reads in the app file."""
+
+
+_Dumper.add_representer(
+    str, lambda dumper, text: dumper.represent_scalar("tag:yaml.org,2002:str", text, style="|" if "\n" in text else None)
+)
+
+
+def render(data: dict[str, Any], cluster_vars: dict[str, Any], apps_root: Path) -> str:
     header = (
         "# Generated by jarvis render from values/apps.yaml — do not edit.\n"
-        "# One trusted wiring per listed app (core/feature/app-hosting/CONTRACT.md).\n"
+        "# One trusted wiring per listed app, and each chart's release (core/feature/app-hosting/CONTRACT.md).\n"
     )
-    docs = wiring_documents(data, cluster_vars)
-    return header + yaml.safe_dump_all(docs, sort_keys=False, default_flow_style=False, explicit_start=True)
+    found = charts(data, apps_root)
+    docs = wiring_documents(data, cluster_vars, found)
+    for app, chart in found.items():
+        docs += chart_documents(app, chart, (data[app] or {}).get("values"))
+    return header + yaml.dump_all(docs, Dumper=_Dumper, sort_keys=False, default_flow_style=False, explicit_start=True)

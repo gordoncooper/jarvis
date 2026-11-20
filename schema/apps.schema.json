@@ -39,6 +39,13 @@
         "description": "Whether the app's backup: true volumes are backed up. On, jarvis secrets mints the app's own credential and validate requires it, once the app keeps such a volume. Off, none is sealed and nothing reports the volumes.",
         "type": "boolean",
         "default": true
+      },
+      "values": {
+        "description": "Values for the app's chart, laid over the app file's own; only for an app whose file names a chart. jarvis validate renders the chart with them against core's app rules.",
+        "type": [
+          "object",
+          "null"
+        ]
       }
     }
   }

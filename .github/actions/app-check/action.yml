@@ -17,8 +17,9 @@ runs:
       with:
         version: 2026.11.10
         install: false
-    # kustomize and the jarvis package's Python dependencies at this core's pins (mise.lock, uv.lock).
-    - name: Install kustomize and the jarvis package at the core pins
+    # kustomize, helm (an app with a chart renders it) and the jarvis package's Python dependencies
+    # at this core's pins (mise.lock, uv.lock).
+    - name: Install kustomize, helm and the jarvis package at the core pins
       shell: bash
       env:
         CORE: ${{ github.action_path }}/../../..
@@ -27,7 +28,7 @@ runs:
       run: |
         set -euo pipefail
         mise trust --quiet "${CORE}/mise.toml"
-        mise -C "${CORE}" install --locked kustomize uv
+        mise -C "${CORE}" install --locked kustomize helm uv
         mise -C "${CORE}" exec -- uv sync --frozen --no-dev --project "${CORE}"
     - name: app-check
       shell: bash
