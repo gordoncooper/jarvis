@@ -15,7 +15,15 @@ the upgrade.
   `hostnames` (in place of `risky.hostnames`) get route `app-hostnames[-<entry>]` once the env
   grants them. An app ships no route; one whose routing a Service and port cannot express marks
   its entry `ownRoute: true` and ships that entry's route, and admission refuses any other route
-  an app ships. The example apps are hello-web v0.3.0, notes v0.3.0 and lan-demo v0.1.1.
+  an app ships. The example apps are hello-web v0.3.0, notes v0.3.0 and lan-demo v0.2.0.
+- A hosted app can run an upstream Helm chart as it is, in place of `deploy/`: its app file's
+  `chart` names an `oci://` chart, a version and values, and the env entry's `values` lay over
+  them. `jarvis render` reads the app file at its pinned tag and commits the chart source,
+  ConfigMap `app-<name>-values` and HelmRelease `app-<name>`, which helm-controller installs as
+  the app's tenant into `app-<name>`. The app check and `jarvis validate` render the chart with
+  `helm template` and hold its output to the app rules, not core's Kyverno rules; the app-check
+  Action installs helm. Dropping the app uninstalls the chart. An image with no chart runs from a
+  generic one, such as bjw-s app-template, as lan-demo v0.2.0 now does.
 - `values/apps.yaml` holds one entry per app the env runs, keyed by its name: `version`, its
   `grants`, and `backups` (default on). It replaces `apps:` in `values/switches.yaml` and the
   `versions:` and `exceptions:` lists.
@@ -55,13 +63,16 @@ In each env that hosts apps, in one commit:
 
 - Move the core pin and each app's pin together: this core refuses an app file whose `web` is
   not a list of entries. For the example apps that is hello-web v0.3.0, notes v0.3.0 and
-  lan-demo v0.1.1. Their own routes `hello-web` and `notes` are pruned by each app's
+  lan-demo v0.1.1 (or v0.2.0, below). Their own routes `hello-web` and `notes` are pruned by each app's
   Kustomization, and core's `app-web` serves the same names.
 - Rewrite `values/apps.yaml` as one entry per app: its `versions:` pin as `version`, and its
   `exceptions:` lines as `grants` without the `<app>:` prefix. Delete `apps:` from
   `values/switches.yaml`, and any `no-uptime-check` grant.
 - For each app with a `backup: true` volume, run `jarvis secrets --env <env>` to seal its
   credential, or set its `backups: false`.
+- An app that moves from `deploy/` to a chart, as lan-demo v0.2.0 does, moves in its own pair of
+  commits: drop it from `values/apps.yaml`, and list it at the new tag once its objects are gone.
+  In one commit, its old Kustomization's prune and the chart's install act on the same objects.
 
 Then `jarvis render` and `jarvis validate`. An env that moved the core pin alone fails its app
 Kustomizations on the new App schema; move the app pins, or rebuild it.

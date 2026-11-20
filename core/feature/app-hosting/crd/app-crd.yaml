@@ -183,3 +183,25 @@ spec:
                       type: boolean
                     hostPath:
                       type: boolean
+                chart:
+                  description: >-
+                    The upstream Helm chart the app runs, in place of deploy/: core renders it
+                    as the app's tenant with these values, and the env's on top. An app that
+                    ships only an image runs a generic chart such as bjw-s app-template.
+                  type: object
+                  required: [url, version]
+                  properties:
+                    url:
+                      description: The chart's own oci:// address.
+                      type: string
+                      maxLength: 512
+                      pattern: "^oci://[^\\s]+$"
+                    version:
+                      description: The chart version, exactly.
+                      type: string
+                      maxLength: 128
+                      pattern: "^[0-9A-Za-z][0-9A-Za-z.+_-]*$"
+                    values:
+                      description: The chart's values.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true

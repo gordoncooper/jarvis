@@ -105,16 +105,20 @@ def _pulled(chart: tuple[str, ...]) -> tuple[str, str]:
 
 
 @functools.cache
-def _template(release_name: str, namespace: str, chart: tuple[str, ...], values: str, kube: str) -> tuple[str, str]:
-    """helm template's output and error for one release; the same release renders once per run."""
+def helm_template(release_name: str, namespace: str, chart: tuple[str, ...], values: tuple[str, ...], kube: str) -> tuple[str, str]:
+    """helm template's output and error for one release, its values files merged by Helm in order;
+    the same release renders once per run."""
     archive, error = _pulled(chart)
     if error:
         return "", error
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", prefix="jarvis-values-") as handle:
-        handle.write(values)
-        handle.flush()
+    with tempfile.TemporaryDirectory(prefix="jarvis-values-") as work:
+        files: list[str] = []
+        for index, text in enumerate(values):
+            path = Path(work) / f"{index}.yaml"
+            path.write_text(text, encoding="utf-8")
+            files += ["--values", str(path)]
         proc = subprocess.run(
-            [_tool("helm"), "template", release_name, archive, "--namespace", namespace, "--values", handle.name,
+            [_tool("helm"), "template", release_name, archive, "--namespace", namespace, *files,
              "--kube-version", kube, "--include-crds", "--skip-tests"],
             capture_output=True, text=True, check=False,
         )  # fmt: skip
@@ -141,9 +145,9 @@ def env_objects(root: Path, env: str) -> tuple[list[dict], list[str], str]:
         if spec.get("valuesFrom"):
             error = "valuesFrom is read on the cluster, so its chart cannot be rendered here"
         if not error:
-            out, error = _template(
+            out, error = helm_template(
                 str(spec.get("releaseName") or name), str(spec.get("targetNamespace") or namespace), tuple(chart),
-                yaml.safe_dump(spec.get("values") or {}), k3s.split("+")[0],
+                (yaml.safe_dump(spec.get("values") or {}),), k3s.split("+")[0],
             )  # fmt: skip
             rendered += [item for item in yaml.load_all(out, Loader=_LOADER) if isinstance(item, dict)]
         if error:

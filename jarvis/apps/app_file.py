@@ -1,4 +1,4 @@
-"""Validate one hosted app's folder: its app file and the objects in deploy/.
+"""Validate one hosted app's folder: its app file and the objects in deploy/, or its chart's.
 
 CONTRACT: core/feature/app-hosting/CONTRACT.md. The schema is the App CRD's
 (core/feature/app-hosting/crd/app-crd.yaml), read here, with unknown keys refused; the API
@@ -6,6 +6,8 @@ server prunes them unread. The deploy/ rules are ValidatingAdmissionPolicies app
 app-file as far as the folder alone decides them: a risky item the file does not ask for
 fails here, and one it asks for still needs the env's grant in the cluster. An HTTPRoute's
 hostnames are admission's alone to check: here an app may ship one only for an ownRoute entry.
+An app with a chart ships no deploy/: its objects are the chart's, rendered by `helm template` as
+helm-controller installs them (release <name> in app-<name>, the app's values, then the env's).
 """
 
 from __future__ import annotations
@@ -52,8 +54,9 @@ _RULES = {
 }
 
 
-def check_folder(folder: Path | str) -> list[str]:
-    """Every problem with one app folder, or none."""
+def check_folder(folder: Path | str, env_values: dict | None = None, k3s: str | None = None) -> list[str]:
+    """Every problem with one app folder, or none. env_values: the env's values for the app's
+    chart, laid over the app's own; k3s: the env's release, which the chart renders for."""
     folder = Path(folder)
     if not folder.is_dir():
         return [f"{folder}: not a folder"]
@@ -76,11 +79,31 @@ def check_folder(folder: Path | str) -> list[str]:
     errors.extend(f"{name}/{APP_FILE}: {problem}" for problem in app_problems(app, name))
     if errors:
         return errors
-    objects, error = _deploy_objects(folder / DEPLOY_DIR)
+    chart = app["spec"].get("chart")
+    if chart and (folder / DEPLOY_DIR).exists():
+        return [f"{name}/{DEPLOY_DIR}: an app with a chart ships no {DEPLOY_DIR}/; its objects are the chart's"]
+    where = f"{name} chart {chart['version']}" if chart else f"{name}/{DEPLOY_DIR}"
+    objects, error = chart_objects(name, chart, env_values, k3s) if chart else _deploy_objects(folder / DEPLOY_DIR)
     if error:
-        return [f"{name}/{DEPLOY_DIR}: {error}"]
-    errors.extend(f"{name}/{DEPLOY_DIR}: {problem}" for problem in deploy_problems(app, name, objects))
+        return [f"{where}: {error}"]
+    errors.extend(f"{where}: {problem}" for problem in deploy_problems(app, name, objects))
     return errors
+
+
+def chart_objects(
+    name: str, chart: dict, env_values: dict | None = None, k3s: str | None = None
+) -> tuple[list[dict], str | None]:
+    """The chart's objects as helm-controller installs them for app name, at the k3s release given
+    (the env's), or core's."""
+    from jarvis.checks.rendered import helm_template
+    from jarvis.env.k3s import core_release
+
+    values = (yaml.safe_dump(chart.get("values") or {}), yaml.safe_dump(env_values or {}))
+    kube = (k3s or core_release()[0]).split("+")[0]
+    out, error = helm_template(name, f"app-{name}", (chart["url"], "--version", chart["version"]), values, kube)
+    if error:
+        return [], f"helm template failed: {error}"
+    return [doc for doc in yaml.safe_load_all(out) if isinstance(doc, dict)], None
 
 
 def web_labels(folder: Path) -> list[str]:
@@ -154,6 +177,8 @@ def _schema_problems(value: Any, schema: dict, where: str) -> Iterator[str]:
     if _is_int(value):
         if value < schema.get("minimum", value) or value > schema.get("maximum", value):
             yield f"{where}: is from {schema.get('minimum')} to {schema.get('maximum')}"
+    if isinstance(value, dict) and schema.get("x-kubernetes-preserve-unknown-fields"):
+        return
     if isinstance(value, dict):
         if "maxProperties" in schema and len(value) > schema["maxProperties"]:
             yield f"{where}: has at most {schema['maxProperties']} keys"

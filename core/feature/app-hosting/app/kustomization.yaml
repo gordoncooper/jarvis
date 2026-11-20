@@ -1,8 +1,9 @@
 # One hosted app's wiring. The env's generated apps file holds one Flux Kustomization per
-# listed app, app-<name>-wiring, which applies this directory as the platform account with
-# inline values from the env (the app's name and the env's grants for it) and the env's
-# published cluster-vars. Nothing here reads the apps repository: the app's own objects
-# come from it through the two tenant Kustomizations in flux.yaml.
+# listed app, app-<name>-wiring, which applies this directory (an app with a chart) or ../app-deploy
+# (an app with deploy/ objects) as the platform account with inline values from the env (the
+# app's name and the env's grants for it) and the env's published cluster-vars. Nothing here
+# reads the apps repository: the app's own objects come from it as its tenant, through
+# file.yaml's Kustomization and app-deploy's, or the chart's HelmRelease the env renders.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -10,4 +11,4 @@ resources:
   - tenant.yaml
   - grant-revoke.yaml
   - baseline.yaml
-  - flux.yaml
+  - file.yaml

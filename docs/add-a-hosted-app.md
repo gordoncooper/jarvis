@@ -6,7 +6,7 @@ Start from one of the three examples in the `jarvis-apps` apps repository:
 
 - [hello-web](../ci/tests/fixtures/app-hosting/jarvis-apps/hello-web/): a plain web app on defaults, one web entry.
 - [notes](../ci/tests/fixtures/app-hosting/jarvis-apps/notes/): a stateful one, with a backed-up volume.
-- [lan-demo](../ci/tests/fixtures/app-hosting/jarvis-apps/lan-demo/): one that asks for a risky item, a LAN port (`network.ports`), and no web address.
+- [lan-demo](../ci/tests/fixtures/app-hosting/jarvis-apps/lan-demo/): one that asks for a risky item, a LAN port (`network.ports`), and no web address, run from an image by a generic upstream chart.
 
 The links are to [ci/tests/fixtures/app-hosting/jarvis-apps/](../ci/tests/fixtures/app-hosting/jarvis-apps/), which holds exact copies of those three folders for this repository's tests; the apps repository's CI fails when a folder there differs from its copy at the jarvis commit it pins.
 
@@ -51,10 +51,20 @@ In the apps repository:
      callers: [web-ui]      # apps that may call this one; both sides list each other
    ```
 
-   Also optional: `resources` (500m CPU, 512Mi memory for the whole app) and `risky` (nothing). Probes stay in `deploy/`.
+   Also optional: `resources` (500m CPU, 512Mi memory for the whole app) and `risky` (nothing). Probes stay with the app's objects.
 
    An app whose routing one Service and port cannot express (several paths or backends) marks its entry `ownRoute: true` and ships that entry's HTTPRoute in `deploy/`: `hostnames: [${app_host}]` (or a granted custom hostname) and `parentRefs: [{name: jarvis, namespace: platform-gateway, sectionName: apps}]` (`apps-granted` for a custom hostname). The cluster refuses any other route an app ships, such as a chart's own route left on.
-3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, HTTPRoutes (an `ownRoute` entry's only), PodDisruptionBudgets and HorizontalPodAutoscalers. Pods meet Pod Security `restricted`: each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` (adding back only `NET_BIND_SERVICE`), a `seccompProfile` of `RuntimeDefault` (or `Localhost`) is set on the pod or every container, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. Each container's memory request equals its memory limit (or set the limit alone): the app reserves all the memory it may use, and a container past its limit is OOM-killed and restarted. Set no `priorityClassName`: core runs every app pod at `hosted-app`, below everything else, so core preempts it when space runs out. A PVC is named like a declared volume, carries annotation `backup: none` exactly when declared `backup: false`, and sets no `volumeName`, `dataSource` or `dataSourceRef`. The Gateway serves each web address's TLS, and a Service carries no Traefik annotation. A LAN port is a `LoadBalancer` Service with `allocateLoadBalancerNodePorts: false`, each port a `network.ports` entry: `port` its `listen`, `targetPort` its `target` as a number.
+3. Put the app's objects in `<name>/deploy/`: plain manifests, or a kustomization. Or, for an app with an upstream Helm chart, ship no `deploy/` and name the chart in `app.yaml`; core installs it as the app, as is, with no fork:
+
+   ```yaml
+   spec:
+     chart:
+       url: oci://ghcr.io/example/charts/wiki   # the chart's own oci:// address
+       version: 1.2.3
+       values: {}                               # the chart's values, adapted to the rules below
+   ```
+
+   An app that ships only an image uses a generic chart such as [bjw-s app-template](https://bjw-s-labs.github.io/helm-charts/docs/app-template/), as lan-demo does. The chart's output meets the same rules as `deploy/`: turn off its ServiceAccount, Ingress, route and CRDs, and leave its namespace to the release. Either way, leave `metadata.namespace` unset. Only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, Jobs, CronJobs, HTTPRoutes (an `ownRoute` entry's only), PodDisruptionBudgets and HorizontalPodAutoscalers. Pods meet Pod Security `restricted`: each container runs as non-root (`runAsNonRoot: true`) with `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` (adding back only `NET_BIND_SERVICE`), a `seccompProfile` of `RuntimeDefault` (or `Localhost`) is set on the pod or every container, and pods use only configMap, secret, emptyDir, PVC, projected, downwardAPI, csi or ephemeral volumes. Each container's memory request equals its memory limit (or set the limit alone): the app reserves all the memory it may use, and a container past its limit is OOM-killed and restarted. Set no `priorityClassName`: core runs every app pod at `hosted-app`, below everything else, so core preempts it when space runs out. A PVC is named like a declared volume, carries annotation `backup: none` exactly when declared `backup: false`, and sets no `volumeName`, `dataSource` or `dataSourceRef`. The Gateway serves each web address's TLS, and a Service carries no Traefik annotation. A LAN port is a `LoadBalancer` Service with `allocateLoadBalancerNodePorts: false`, each port a `network.ports` entry: `port` its `listen`, `targetPort` its `target` as a number.
 4. Run `<core checkout>/.venv/bin/python -m jarvis.apps.check <name>`. It reports every rule the folder breaks; the apps repository's CI runs the same tool through the app-check Action at a core tag (`uses: <owner>/jarvis/.github/actions/app-check@<tag>`).
 
 ## Turn it on in an env
@@ -76,6 +86,8 @@ In the env's repository:
      version: v0.1.0
    ```
 
+   For an app with a chart, the entry's `values:` lay the env's values over the app file's, such as a hostname the app must know; `jarvis validate` renders the chart with both against the same rules.
+
 3. If the app asks for a risky item in `spec.risky`, a custom hostname, a LAN port or LAN egress, add the matching grant under its entry's `grants:`, one item each: `privileged`, `root`, `host-network`, `host-path`, `hostname <host>`, `lan-port <listen>/<TCP|UDP>`, `lan-all` (for `lan: [all]`) or `lan-target <target> <cidr> <port>/<TCP|UDP>` (one line per port of a named target). Without it the cluster refuses the objects that use that item, or opens no LAN path. A LAN grant needs the env's ranges, `lan_cidrs` in `values/cluster-vars.yaml`, and a `lan-target` range inside them. A LAN port is refused when core or the node holds it, or another app already does. Removing a grant stops what runs on it within minutes (pods, Jobs, Services and HTTPRoutes that need it, and its LAN allows), and keeps the app's volumes; adding it back restores them.
 4. A `backup: true` volume is backed up with the app's own credential while the entry's `backups` is on (the default): `jarvis secrets --env <env>` mints it, and `jarvis validate` fails until it is sealed ([backups.md](backups.md#app-credentials)). To keep the app's volumes out of backups, set `backups: false`.
 5. Render the wiring: `jarvis render --env <env>`.
@@ -85,6 +97,6 @@ Changing the app later is a new tag in the apps repository; the env runs it once
 
 ## Turn it off
 
-1. Remove its entry from `values/apps.yaml` and render again. Commit and push. Flux prunes the app's Kustomizations, which prune its objects.
-2. Delete what `prune: disabled` kept, as the cluster admin: namespace `app-<name>` (its volumes go with it), ServiceAccount `flux-system/app-<name>` and GitRepositories `flux-system/app-<name>` and `app-<name>-file`. Retire its backup credential as the backups contract says.
+1. Remove its entry from `values/apps.yaml` and render again. Commit and push. Flux prunes the app's Kustomizations, which prune its objects, or its HelmRelease, which uninstalls the chart.
+2. Delete what `prune: disabled` kept, as the cluster admin: namespace `app-<name>` (its volumes go with it), ServiceAccount `flux-system/app-<name>` and GitRepositories `flux-system/app-<name>` and `app-<name>-file` (for a chart app, `app-<name>-file` and its chart source `app-<name>`). Retire its backup credential as the backups contract says.
 3. With no app left, the env may turn app hosting off: remove `app-hosting` from `values/switches.yaml` and render again. The CRD keeps `prune: disabled`; delete it by hand once no App is left.
