@@ -13,7 +13,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | `age_key_file` | no | string | `~/.config/sops/age/keys.txt` | The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. SOPS_AGE_KEY_FILE overrides it. |
 | `alerts_provider` | no | string | `generic` | The type of the Flux Provider the alerts feature posts to, such as discord, slack, msteams or googlechat; its whole target is the address in the sealed alerts-notify Secret. generic posts each event as JSON. Flux's Provider CRD lists the types. |
 | `app_dns_cluster_ip` | no; yes when switches.yaml lists app-dns | string |  | ClusterIP of the App DNS Service, which cluster DNS forwards the zone to. A host address inside service_cidr, not its first address (the Kubernetes API) or its tenth (cluster DNS). |
-| `apps_git_repo_url` | no; yes when switches.yaml lists an app | string |  | The hosted apps repository, https, read with no credential. Anyone's: the example apps beside core, or your own. |
+| `apps_git_repo_url` | no; yes when apps.yaml lists an app | string |  | The hosted apps repository, https, read with no credential. Anyone's: the example apps beside core, or your own. |
 | `backup_check_schedule` | no | string | `30 6 * * 3` | Five-field cron for the weekly restic repository check (CronJob platform-backups/restic-check), in time_zone. The check takes no lock, so it never blocks a backup; a prune at the same time can fail one run, and the Job retries. |
 | `backup_path` | yes | string |  | Absolute path on the backup node: etcd snapshots under backup_path/etcd-snapshots, and one restic repository per PVC under backup_path/restic/ns-&lt;namespace&gt;/pvc-&lt;pvc&gt;. |
 | `backup_retention_daily` | yes | integer |  | Daily snapshots restic keeps, per PVC. |
@@ -44,24 +44,26 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 
 ## `values/switches.yaml`
 
-What an env turns on, by name only. jarvis validate also checks each add-on and app name against core and the apps repository.
+What an env turns on, by name only. jarvis validate also checks each add-on name against core. Hosted apps are listed in values/apps.yaml.
 
 | Key | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
 | `addons` | no | array |  | Add-ons this env turns on, by folder name under core's addons/. At most one per slot. |
-| `apps` | no | array |  | Hosted apps this env runs, by folder name in the apps repository. Listing an app turns it on and grants it nothing; needs the app-hosting feature. |
 | `features` | no | array |  | Core features this env turns on, by name: a folder under core/feature/. Off until listed. |
 
-## `values/apps.yaml`
+## `values/apps.yaml: each app, under its name`
 
-What an env decides for its hosted apps. jarvis validate also checks each grant and pin against the app list and the apps repository.
+The hosted apps an env runs, one entry each, keyed by the app's folder name in the apps repository. Listing an app turns it on and grants it nothing; it needs the app-hosting feature. jarvis validate also checks each app at its pinned tag against core's app rules, and each grant against the app list.
 
 | Key | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
-| `exceptions` | no | array |  | Grants, one per line as &lt;app&gt;: &lt;grant&gt;, for a listed app whose app file asks for the same item: privileged, root, host-network, host-path, hostname &lt;name&gt;, lan-port &lt;port&gt;/&lt;TCP\|UDP&gt;, lan-all, lan-target &lt;name&gt; &lt;cidr&gt; &lt;port&gt;/&lt;TCP\|UDP&gt;, no-uptime-check. |
-| `versions` | no | object |  | Each listed app's release: &lt;app&gt;: v&lt;x.y.z&gt;, the apps repository's tag &lt;app&gt;/v&lt;x.y.z&gt;. Every listed app needs one. |
+| `backups` | no | boolean | `true` | Whether the app's backup: true volumes are backed up. On, jarvis secrets mints the app's own credential and validate requires it, once the app keeps such a volume. Off, none is sealed and nothing reports the volumes. |
+| `grants` | no | array |  | What the env allows the app, one item per line, each taking effect only where the app file asks for the same item: privileged, root, host-network, host-path, hostname &lt;name&gt;, lan-port &lt;port&gt;/&lt;TCP\|UDP&gt;, lan-all, lan-target &lt;name&gt; &lt;cidr&gt; &lt;port&gt;/&lt;TCP\|UDP&gt;. |
+| `version` | yes | string |  | The app's release: v&lt;x.y.z&gt;, the apps repository's tag &lt;app&gt;/v&lt;x.y.z&gt;. The env runs that tag until this moves. |
 
 ## `inventory/hosts.yml: each host under all.hosts`
+
+An env's hosts and their roles. jarvis validate also checks one control_plane and one backup host, and at least one edge host.
 
 | Key | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |

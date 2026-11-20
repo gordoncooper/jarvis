@@ -5,9 +5,10 @@ A new CA permits only that env's dns_suffix. A backups-restic file git already
 records is not recreated unless --rotate-restic is set. k3s tokens are minted
 only for a new env; an env with other secrets gets its cluster's token sealed.
 
---app app-<name> mints only that hosted app's own backup credential, sealed under
-envs/<env>/secrets/app-<name>/, which turns that app's backups on once jarvis render registers
-it. A credential git already records is never minted again.
+It also mints each hosted app's own backup credential where the app needs one (backups on in
+values/apps.yaml, and a backup: true volume in its app file at its pinned tag), sealed under
+envs/<env>/secrets/app-<name>/; jarvis render registers it. --app app-<name> mints only that
+app's. A credential git already records is never minted again.
 """
 
 from __future__ import annotations
@@ -478,6 +479,7 @@ def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
 def bootstrap(env: str, *, sops_bin: str | None = None, rotate_restic: bool = False) -> list[str]:
     created: list[str] = []
     _refuse_unsafe_regeneration(env, rotate_restic=rotate_restic)
+    apps = _apps_needing_credentials(env)
     sops = sops_bin or _sops.require_sops()
     secrets = _secrets_dir(env)
     ca_secret = secrets / CA_SECRET_FILENAME
@@ -499,6 +501,8 @@ def bootstrap(env: str, *, sops_bin: str | None = None, rotate_restic: bool = Fa
         if spec.filename == CA_SECRET_FILENAME and not ca_root.exists():
             _write_public_root(ca_root, document["stringData"]["tls.crt"])
             created.append(str(ca_root.relative_to(_repo_root())))
+    for app in apps:
+        created += bootstrap_app(env, f"app-{app}", sops_bin=sops)
     if not ca_root.exists() and ca_secret.exists():
         print(
             f"bootstrap-secrets: {ca_root.relative_to(_repo_root())} is missing; "
@@ -523,7 +527,9 @@ def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> l
     env_dir = repo / "envs" / env
     data, errors = _apps.load_values(env_dir)
     if errors or namespace.removeprefix("app-") not in _apps.app_names(data):
-        raise SystemExit(f"refusing --app: the env does not list {namespace.removeprefix('app-')} under apps")
+        raise SystemExit(f"refusing --app: the env does not list {namespace.removeprefix('app-')} in {_apps.APPS_VALUES}")
+    if not _apps.backups_on(data, namespace.removeprefix("app-")):
+        raise SystemExit(f"refusing --app: {_apps.APPS_VALUES} turns {namespace.removeprefix('app-')}'s backups off")
     missing = []
     for spec in _app_specs(namespace):
         path = _sops.secret_path(repo, env, _secret_name(spec.filename), spec.folder)
@@ -549,6 +555,22 @@ def bootstrap_app(env: str, namespace: str, *, sops_bin: str | None = None) -> l
         )
         created.append(str(path.relative_to(repo)))
     return created
+
+
+def _apps_needing_credentials(env: str) -> list[str]:
+    """The apps whose credential bootstrap mints if missing (jarvis.apps.backups.needing_credentials),
+    read before anything is written."""
+    from jarvis.apps import checkout as _apps_checkout
+
+    env_dir = _repo_root() / "envs" / env
+    data, errors = _apps.load_values(env_dir)
+    if errors or not _apps.app_names(data):
+        return []
+    try:
+        apps_root = _apps_checkout.apps_repo_root(_repo_root(), env_dir)
+    except _apps_checkout.AppsRepoError as exc:
+        raise SystemExit(f"bootstrap-secrets: the env's apps decide which credentials to mint: {exc}") from exc
+    return _app_backups.needing_credentials(data, apps_root)
 
 
 def _key_file(env: str) -> Path:

@@ -5,8 +5,8 @@ metadata:
 spec:
   network:
     web:
-      port: 2283
-      healthPath: /api/server/ping
+      - service: photos
+        port: 80
     callers: [notes]
   volumes: []
   risky:

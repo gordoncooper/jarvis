@@ -26,9 +26,10 @@ What each env under `envs/<env>/` may set. Run from an instance repository, the 
 | Once the env has `flux/` or sealed files, `values/switches.yaml` exists | env-schema |
 | Each feature in `switches.yaml` is a row of `FEATURE_COMPONENTS` in `jarvis/env/switches.py`, its one list | env-schema, and the render refuses before it writes |
 | Each add-on in `switches.yaml` is a folder under core's `addons/`; at most one per slot (label `addons.jarvis.io/slot`) | env-schema, and the render refuses before it writes |
-| Each app in `switches.yaml` has `<app>/app.yaml` in the apps repository (`apps_git_repo_url` beside the instance, or `APPS_REPO`) | env-schema, render |
-| An env that lists apps lists `app-hosting` and sets `apps_git_repo_url`; each listed app has one `versions` pin, and only listed apps | env-schema, render |
-| Each exception line in `apps.yaml` is one known grant for a listed app; `lan-all` and `lan-target` need `lan_cidrs` | env-schema, render |
+| Each app in `apps.yaml`, read at its pinned tag from `APPS_REPO` (the checkout the jarvis CLI fetches), has `<app>/app.yaml` and passes core's app rules; no two apps make one web name | env-schema, render |
+| An env that lists apps lists `app-hosting` and sets `apps_git_repo_url` | env-schema, render |
+| Each grant is one known item; `lan-all` and `lan-target` need `lan_cidrs`; a `lan-port` is no port core or the node holds, and one app's only | env-schema, render |
+| Once bootstrapped, each app with `backups` on and a `backup: true` volume has its credential sealed | env-schema |
 | Once sealed files exist: `k3s-token`, `cert-manager-ca`, `backups-restic`; `backups-offsite` while the off-host copy is listed; an app credential only in its own `secrets/app-<name>/`; a sealed file in each folder an enabled add-on decrypts | env-schema |
 | An `ssh://` root has `secrets/flux-deploy-key.sops.yaml` | env-schema |
 | Every sealed file has a reader, and opens for exactly the env's recipients | env-schema |

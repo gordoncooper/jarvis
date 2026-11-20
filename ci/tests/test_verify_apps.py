@@ -11,7 +11,7 @@ from jarvis.verify.apps import check_app_backups, check_app_baseline, check_decl
 from jarvis.verify.common import CheckError, CheckWarning
 
 SUFFIX = "env-test.example"
-ENV = {"apps": ["notes"], "exceptions": [{"notes": "hostname notes.example.org"}], "versions": {"notes": "v0.1.0"}}
+ENV = {"notes": {"version": "v0.1.0", "grants": ["hostname notes.example.org"]}}
 
 
 def _item(kind: str, namespace: str, name: str, **body: object) -> dict:
@@ -21,16 +21,17 @@ def _item(kind: str, namespace: str, name: str, **body: object) -> dict:
 class Cluster:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
-        grants = {"host": f"notes.apps.{SUFFIX}", "privileged": "false", "root": "false", "host-network": "false",
-                  "host-path": "false", "hostnames": "notes.example.org", "lan-ports": "",
-                  "lan-all": "false", "lan-targets": "", "no-uptime-check": "false"}
+        grants = {"apps-domain": f"apps.{SUFFIX}", "privileged": "false", "root": "false", "host-network": "false",
+                  "host-path": "false", "hostnames": "notes.example.org", "lan-ports": "", "lan-all": "false", "lan-targets": ""}
         self.namespaces = [{"metadata": {"name": "app-notes", "labels": {"hosting.jarvis.io/app": "notes"},
                                          "annotations": {f"hosting.jarvis.io/{key}": value for key, value in grants.items()}}}]
         self.policies = [_item("NetworkPolicy", "app-notes", name) for name in ("default-deny", "cluster-dns", "same-namespace")]
         self.ranges = [_item("LimitRange", "app-notes", "app")]
         self.bindings = [{"metadata": {"name": "app-file"}}, {"metadata": {"name": "app-grants"}}]
         self.hosts = [f"notes.apps.{SUFFIX}", "notes.example.org"]
-        self.apps = [_item("App", "app-notes", "notes", spec={"volumes": [{"name": "cache", "backup": False}, {"name": "data", "backup": True}]})]
+        self.routes = [_item("HTTPRoute", "app-notes", "app-web", spec={"hostnames": self.hosts})]
+        self.apps = [_item("App", "app-notes", "notes", spec={"network": {"web": [{"service": "notes", "port": 80}]},
+                                                             "volumes": [{"name": "cache", "backup": False}, {"name": "data", "backup": True}]})]
         self.pvcs = [_item("PersistentVolumeClaim", "app-notes", "cache", metadata={"namespace": "app-notes", "name": "cache", "annotations": {"backup": "none"}})]
         self.sources: list[dict] = []
 
@@ -41,7 +42,7 @@ class Cluster:
             "namespaces": self.namespaces, "networkpolicies": self.policies, "limitranges": self.ranges,
             "validatingadmissionpolicybindings": self.bindings, "apps.hosting.jarvis.io": self.apps, "pvc": self.pvcs,
             "replicationsource": self.sources,
-            "httproutes.gateway.networking.k8s.io": [_item("HTTPRoute", "app-notes", "web", spec={"hostnames": self.hosts})],
+            "httproutes.gateway.networking.k8s.io": self.routes,
         }
         if argv[0] == "get" and argv[1] in lists:
             return CompletedProcess(argv, 0, json.dumps({"items": lists[argv[1]]}), "")
@@ -64,15 +65,17 @@ def test_listed_app_with_its_baseline_and_grants_passes() -> None:
         (lambda c: c.bindings.pop(1), "no ValidatingAdmissionPolicyBinding app-grants"),
         (lambda c: c.namespaces[0]["metadata"]["annotations"].update({"hosting.jarvis.io/privileged": "true"}), "annotation hosting.jarvis.io/privileged"),
         (lambda c: c.namespaces[0]["metadata"]["annotations"].update({"hosting.jarvis.io/lan-all": "true"}), "annotation hosting.jarvis.io/lan-all"),
-        (lambda c: c.namespaces[0]["metadata"].pop("annotations"), "annotation hosting.jarvis.io/host "),
-        (lambda c: c.hosts.append(f"grafana.{SUFFIX}"), "hostname 'grafana.env-test.example' is not"),
+        (lambda c: c.namespaces[0]["metadata"].pop("annotations"), "annotation hosting.jarvis.io/apps-domain "),
+        (lambda c: c.hosts.append(f"grafana.{SUFFIX}"), "hostname 'grafana.env-test.example' is not a web entry's"),
         (lambda c: c.ranges.clear(), "no LimitRange app"),
+        (lambda c: c.routes.clear(), "no HTTPRoute app-web"),
     ],
     ids=["no-default-deny", "unlabelled", "no-grants-binding", "grant-without-line", "lan-grant-without-line", "no-annotations",
-         "host-outside-apps", "no-limitrange"],
+         "host-outside-apps", "no-limitrange", "no-core-route"],
 )
 def test_app_namespace_off_its_baseline_fails(seed, expected: str) -> None:
-    """Rule: each missing baseline object, an ungranted exception and a host outside .apps fail."""
+    """Rule: each missing baseline object, a grant the env did not give, a host that is no web
+    entry's and a web entry without core's route fail."""
     cluster = Cluster()
     seed(cluster)
     with pytest.raises(CheckError, match=expected):
@@ -98,14 +101,13 @@ def test_declared_unbacked_volume_is_reported_and_an_undeclared_one_fails() -> N
         check_declared_unbacked(cluster.kubectl)
 
 
-def test_an_app_volume_without_a_credential_is_reported_and_a_registered_one_needs_its_source() -> None:
-    """Rule: a bound app volume with no ReplicationSource is reported as not backed up while its
-    app has no credential, and fails once the credential is registered; one with a source passes."""
+def test_an_app_volume_with_backups_on_needs_its_source() -> None:
+    """Rule: a bound app volume with no ReplicationSource fails while its app's backups are on,
+    passes with one, and is not checked while they are off."""
     cluster = Cluster()
     cluster.pvcs.append(_item("PersistentVolumeClaim", "app-notes", "data", spec={"volumeName": "pv-1"}))
-    with pytest.raises(CheckWarning, match="not backed up: app-notes/data; to turn on: jarvis secrets --app app-notes"):
-        check_app_backups(cluster.kubectl, registered=[])
-    with pytest.raises(CheckError, match="app-notes/data: the app's credential is registered, and no ReplicationSource"):
-        check_app_backups(cluster.kubectl, registered=["app-notes"])
+    check_app_backups(cluster.kubectl, on=[])
+    with pytest.raises(CheckError, match="app-notes/data: the app's backups are on, and no ReplicationSource"):
+        check_app_backups(cluster.kubectl, on=["app-notes"])
     cluster.sources.append(_item("ReplicationSource", "app-notes", "data"))
-    check_app_backups(cluster.kubectl, registered=["app-notes"])
+    check_app_backups(cluster.kubectl, on=["app-notes"])

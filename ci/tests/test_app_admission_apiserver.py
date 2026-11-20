@@ -18,7 +18,7 @@ import pytest
 from apiserver import Api as _Api
 from apiserver import eventually as _eventually
 from apiserver import serve, token
-from test_app_admission import POLICIES, SUFFIX, _app, _deploy, _docs, _job, _pod, _route, _wiring, stand_in_crd
+from test_app_admission import POLICIES, SUFFIX, _app, _docs, _job, _pod, _route, _wiring, stand_in_crd
 
 from support import REPO_ROOT
 
@@ -27,6 +27,7 @@ SCHEDULER = "system:kube-scheduler"
 BINDER = "system:serviceaccount:kube-system:persistent-volume-binder"
 PVC_PROTECTION = "system:serviceaccount:kube-system:pvc-protection-controller"
 TENANT_NOTES = "system:serviceaccount:flux-system:app-notes"
+TENANT_OWN = "system:serviceaccount:flux-system:app-own"
 RS_CONTROLLER = "system:serviceaccount:kube-system:replicaset-controller"
 REVOKER = "system:serviceaccount:platform-app-hosting:app-grant-revoke"
 SELECTED_NODE = "volume.kubernetes.io/selected-node"
@@ -159,7 +160,8 @@ def _ensure_pvc_rbac(api: Api) -> None:
         "metadata": {"name": "app-hosting-admission-test-pvc"},
         "rules": [{"apiGroups": [""], "resources": ["persistentvolumeclaims"], "verbs": ["create", "get", "update", "patch"]},
                   {"apiGroups": [""], "resources": ["pods"], "verbs": ["create"]},
-                  {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["create"]}],
+                  {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["create"]},
+                  {"apiGroups": ["gateway.networking.k8s.io"], "resources": ["httproutes"], "verbs": ["create"]}],
     }
     api.create(role)
     for subject in (
@@ -168,6 +170,7 @@ def _ensure_pvc_rbac(api: Api) -> None:
         {"kind": "User", "name": BINDER, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": PVC_PROTECTION, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": TENANT_NOTES, "apiGroup": "rbac.authorization.k8s.io"},
+        {"kind": "User", "name": TENANT_OWN, "apiGroup": "rbac.authorization.k8s.io"},
         {"kind": "User", "name": RS_CONTROLLER, "apiGroup": "rbac.authorization.k8s.io"},
     ):
         api.create({
@@ -205,8 +208,10 @@ def api():
         server.create(_namespace("annotation-gone", ["privileged"], without="hosting.jarvis.io/privileged"))
         server.create(_namespace("upgraded", []))
         server.create(_namespace("notes", []))
+        server.create(_namespace("own", []))
         apps = [_app("wired"), _app("granted", risky={"privileged": True}),
-                _app("annotation-gone", risky={"privileged": True}), _app("upgraded"), _app("notes")]
+                _app("annotation-gone", risky={"privileged": True}), _app("upgraded"), _app("notes"),
+                _app("own", network={"web": [{"service": "own", "port": 80, "ownRoute": True}]})]
 
         def served() -> bool:
             return all(server.request("GET", PATHS[kind].format(namespace="app-wired"))[0] == 200 for kind in ("App", "HTTPRoute"))
@@ -240,18 +245,25 @@ def test_a_labelled_namespace_with_no_app_refuses_what_a_wired_one_admits(api: A
 def test_a_risky_item_needs_the_namespace_annotation(api: Api) -> None:
     """Rule: with the App asking for privileged, the namespace's annotation decides: refused
     when it is missing, admitted when the wiring wrote the env's grant."""
-    _refused(api, _deployment("annotation-gone", **PRIVILEGED), "'<app>: privileged' exception")
+    _refused(api, _deployment("annotation-gone", **PRIVILEGED), "the env's grant privileged")
     _admitted(api, _deployment("granted", **PRIVILEGED))
 
 
-def test_an_apps_routes_name_only_its_own_or_granted_hostnames(api: Api) -> None:
-    """Rule: an app's HTTPRoute names its hostnames, each its own <name>.apps.<suffix> or one the
-    file asks for and the env grants (the revoke case below admits one); a route with none would
-    take every name on the apps door. The sample app's own route passes."""
-    (sample,) = [doc for doc in _deploy("notes") if doc["kind"] == "HTTPRoute"]
-    _admitted(api, sample)
+def test_an_apps_routes_name_only_its_web_entries_hostnames(api: Api) -> None:
+    """Rule: a route in an app's namespace names its hostnames, each a web entry's
+    <name>[-<entry>].apps.<suffix> or a custom hostname an entry asks for and the env grants (the
+    revoke case below admits one); a route with none would take every name on the apps door.
+    Core's route for an entry passes. The app's own passes only for an entry marked ownRoute, so
+    a stray one, such as a chart's route left on, is refused."""
+    core = _route("app-web", "notes", f"notes.apps.{SUFFIX}")
+    _admitted(api, core)
+    _eventually(lambda: "marked ownRoute" in api.refusal(core, as_user=TENANT_NOTES), "a stray route to be refused")
+    own = _route("own", "own", f"own.apps.{SUFFIX}")
+    _eventually(lambda: not api.refusal(own, as_user=TENANT_OWN), "an ownRoute entry's route to pass")
     for route in (_route("core-host", "notes", f"grafana.{SUFFIX}"),
                   _route("other-app-host", "notes", f"wired.apps.{SUFFIX}"),
+                  _route("no-such-entry", "notes", f"notes-admin.apps.{SUFFIX}"),
+                  _route("deeper-host", "notes", f"x.notes.apps.{SUFFIX}"),
                   _route("look-alike-host", "notes", f"notes.apps.{SUFFIX}.evil.example"),
                   _route("second-host", "notes", f"notes.apps.{SUFFIX}", f"wired.apps.{SUFFIX}"),
                   _route("no-hostnames", "notes")):
@@ -402,8 +414,9 @@ def test_only_the_finalizer_on_a_terminating_volsync_claim_is_released(api: Api)
 
 # Asked for and granted at first, then revoked.
 REVOCABLE = ["privileged", "hostname custom.example.test", "lan-port 8443/TCP", "lan-all", "lan-target nas 10.200.0.10/32 445/TCP"]
-ASKS = {"risky": {"privileged": True, "hostnames": ["custom.example.test"]}, "volumes": [{"name": "data", "backup": False}],
-        "network": {"web": {"port": 8080}, "ports": [{"listen": 8443, "target": 8443, "protocol": "TCP"}]}}
+ASKS = {"risky": {"privileged": True}, "volumes": [{"name": "data", "backup": False}],
+        "network": {"web": [{"service": "web", "port": 80, "ownRoute": True, "hostnames": ["custom.example.test"]}],
+                    "ports": [{"listen": 8443, "target": 8443, "protocol": "TCP"}]}}
 
 
 def _reconcile(api: Api, *, succeeds: bool = True) -> str:
@@ -488,7 +501,7 @@ def test_a_revoked_grant_stops_what_runs_on_it_and_keeps_the_data(api: Api) -> N
     assert {"web-1-a", "clean", "mover-pod", "task-pod", "odd-memory"} == api.names("Pod", ns)
 
     _revoke(api, app)
-    _eventually(lambda: "exception" in api.refusal(replacement, as_user=RS_CONTROLLER), "the revoke to refuse the replacement")
+    _eventually(lambda: "the env's grant" in api.refusal(replacement, as_user=RS_CONTROLLER), "the revoke to refuse the replacement")
     _reconcile(api)
     assert api.names("Pod", ns) == {"clean", "mover-pod", "odd-memory"}
     assert api.names("Job", ns) == {"volsync-src-data"}
@@ -553,7 +566,7 @@ def test_a_pods_own_grace_period_does_not_outlast_the_revoke(api: Api) -> None:
     path = PATHS["Pod"].format(namespace=ns)
     assert api.request("DELETE", f"{path}/begun")[0] == 200
     _revoke(api, app)
-    _eventually(lambda: "exception" in api.refusal({**pods[0], "metadata": {"name": "next", "namespace": ns}}), "the revoke to refuse")
+    _eventually(lambda: "the env's grant" in api.refusal({**pods[0], "metadata": {"name": "next", "namespace": ns}}), "the revoke to refuse")
     _reconcile(api)
     for name in ("fresh", "begun"):
         assert json.loads(api.request("GET", f"{path}/{name}")[1])["metadata"]["deletionGracePeriodSeconds"] == 30

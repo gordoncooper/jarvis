@@ -17,7 +17,6 @@ from support import (
     copy_sample,
     instance_apps_repo_for_checks,
     render_switches,
-    set_switches,
 )
 
 _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
@@ -29,7 +28,7 @@ def _instance(tmp_path: Path, *, core_only: bool) -> Path:
     env_dir = copy_sample(instance) / "envs" / "env-00"
     if core_only:
         (env_dir / "values" / "apps.yaml").write_text("{}\n", encoding="utf-8")
-        set_switches(env_dir, apps=[])
+        shutil.rmtree(env_dir / "secrets" / "app-notes")
         render_switches(env_dir, instance)
     return instance
 
@@ -90,8 +89,7 @@ def _write_env(instance: Path, name: str, url: str, apps: list[str]) -> None:
     values = instance / "envs" / name / "values"
     values.mkdir(parents=True)
     (values / "cluster-vars.yaml").write_text(yaml.safe_dump({"apps_git_repo_url": url}), encoding="utf-8")
-    (values / "switches.yaml").write_text(yaml.safe_dump({"apps": apps}), encoding="utf-8")
-    (values / "apps.yaml").write_text(yaml.safe_dump({"versions": {app: "v0.1.0" for app in apps}}), encoding="utf-8")
+    (values / "apps.yaml").write_text(yaml.safe_dump({app: {"version": "v0.1.0"} for app in apps}), encoding="utf-8")
 
 
 def _fetch(tmp_path: Path, instance: Path) -> Path | None:
@@ -127,7 +125,7 @@ def test_a_pin_the_checkout_lacks_fails(tmp_path: Path) -> None:
     _write_env(instance, "env-b", f"file://{tmp_path / 'remote'}", ["notes"])
     checkout = _fetch(tmp_path, instance)
     assert checkout is not None
-    (instance / "envs" / "env-b" / "values" / "apps.yaml").write_text("versions:\n  notes: v9.9.9\n", encoding="utf-8")
+    (instance / "envs" / "env-b" / "values" / "apps.yaml").write_text("notes:\n  version: v9.9.9\n", encoding="utf-8")
     with pytest.raises(_checkout.AppsRepoError, match="no tag notes/v9.9.9"):
         _checkout._pinned_view(checkout, instance / "envs" / "env-b")
 
@@ -145,7 +143,7 @@ def test_a_pin_newer_than_the_clone_fetches_its_tags_once(tmp_path: Path) -> Non
     subprocess.run([*_GIT, "tag", "-a", "notes/v0.1.1", "notes/v0.1.0", "-m", "notes/v0.1.1"], cwd=remote, check=True)
     instance = tmp_path / "instance"
     _write_env(instance, "env-b", f"file://{remote}", ["notes"])
-    (instance / "envs" / "env-b" / "values" / "apps.yaml").write_text("versions:\n  notes: v0.1.1\n", encoding="utf-8")
+    (instance / "envs" / "env-b" / "values" / "apps.yaml").write_text("notes:\n  version: v0.1.1\n", encoding="utf-8")
     view = _checkout._pinned_view(clone, instance / "envs" / "env-b")
     assert (view / "notes" / "app.yaml").is_file()
     after = subprocess.run([*_GIT, "rev-parse", "HEAD"], cwd=clone, check=True, capture_output=True, text=True).stdout
@@ -188,7 +186,7 @@ def test_an_app_missing_from_the_checkout_names_the_pinned_tag(tmp_path: Path) -
     shutil.rmtree(stale / "notes")
     proc = _env_schema(instance, stale)
     assert proc.returncode != 0
-    assert "unknown name 'notes'" in proc.stdout + proc.stderr and "pinned tag" in proc.stdout + proc.stderr
+    assert "no notes/app.yaml" in proc.stdout + proc.stderr and "pinned tag" in proc.stdout + proc.stderr
 
 
 def test_instance_listing_apps_without_a_checkout_fails(tmp_path: Path) -> None:
@@ -196,19 +194,3 @@ def test_instance_listing_apps_without_a_checkout_fails(tmp_path: Path) -> None:
     proc = _env_schema(_instance(tmp_path, core_only=False), None)
     assert proc.returncode != 0
     assert "APPS_REPO" in proc.stdout + proc.stderr
-
-
-def test_the_checkout_beside_the_instance_is_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rule: without APPS_REPO, the checks read the checkout of apps_git_repo_url beside the instance,
-    and with neither they name APPS_REPO."""
-    from jarvis.apps import checkout as _checkout
-
-    instance = _instance(tmp_path, core_only=False)
-    env_dir = instance / "envs" / "env-00"
-    monkeypatch.delenv("APPS_REPO", raising=False)
-    with pytest.raises(_checkout.AppsRepoError, match="APPS_REPO"):
-        _checkout.apps_repo_root(instance, env_dir)
-    url = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))["apps_git_repo_url"]
-    beside = tmp_path / url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-    shutil.copytree(REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps", beside)
-    assert _checkout.apps_repo_root(instance, env_dir) == beside.resolve()

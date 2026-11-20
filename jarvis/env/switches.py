@@ -1,8 +1,8 @@
 """An env's switches: the one short file naming what it enables, and the Flux wiring rendered from it.
 
 CONTRACT: schema/CONTRACT.md. schema/switches.schema.json holds the file's shape, env-schema checks
-the names against core and the apps repository, and jarvis render writes the wiring. The file holds
-names only: an app's settings stay in its app file.
+the names against core, and jarvis render writes the wiring. The file holds names only. Hosted
+apps are listed in values/apps.yaml (jarvis/apps/values.py).
 """
 
 from __future__ import annotations
@@ -18,8 +18,7 @@ SWITCHES_FILE = "values/switches.yaml"
 # The features an env turns on.
 FEATURES = "features"
 ADDONS = "addons"
-APPS = "apps"
-SECTIONS = (FEATURES, ADDONS, APPS)
+SECTIONS = (FEATURES, ADDONS)
 # The rendered wiring, under envs/<env>/flux/.
 ROOT_REL = "kustomization.yaml"
 SERVICES_REL = "kustomizations/services.yaml"
@@ -135,7 +134,7 @@ def services(data: dict[str, Any]) -> str:
     return _dump(doc, "# The services stage applies each add-on's wiring from core, as the platform account.\n")
 
 
-def root_kustomization(data: dict[str, Any], *, apps_generated: str) -> str:
+def root_kustomization(*, apps_generated: str | None) -> str:
     """The root Flux path's list; the app wiring render joins it once the env lists an app."""
     resources = [
         CORE_FLUX_BASE,
@@ -143,7 +142,7 @@ def root_kustomization(data: dict[str, Any], *, apps_generated: str) -> str:
         "sync.yaml",
         SERVICES_REL,
     ]
-    if names(data, APPS):
+    if apps_generated:
         resources.append(apps_generated)
     return _dump({"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization", "resources": resources})
 

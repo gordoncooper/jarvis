@@ -617,6 +617,9 @@ def _check_node(kubectl: Kubectl, node: str) -> None:
 
 
 def _binder_body(namespace: str, pvc: str, image: str, placement: dict) -> dict:
+    """A pod that only mounts the claim, so the volume binds where placement puts it. It meets
+    core's rules everywhere (sized, run to completion) and a hosted app's baseline in its
+    namespace: Pod Security restricted, memory request equal to its limit, PriorityClass hosted-app."""
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -624,11 +627,15 @@ def _binder_body(namespace: str, pvc: str, image: str, placement: dict) -> dict:
         "spec": {
             "restartPolicy": "Never",
             **placement,
+            **({"priorityClassName": "hosted-app"} if namespace.startswith("app-") else {}),
+            "securityContext": {"runAsNonRoot": True, "runAsUser": 65534, "seccompProfile": {"type": "RuntimeDefault"}},
             "containers": [
                 {
                     "name": "bind",
                     "image": image,
                     "command": ["sh", "-c", "exit 0"],
+                    "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+                    "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"memory": "16Mi"}},
                     "volumeMounts": [{"name": "data", "mountPath": "/data"}],
                 }
             ],

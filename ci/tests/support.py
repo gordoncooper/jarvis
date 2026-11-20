@@ -302,10 +302,17 @@ def _git_ignored(repo: Path, path: Path) -> bool:
 
 
 def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
-    """Turn on backup for one listed app in the copy as an owner would: jarvis secrets --app, then render."""
+    """Turn on backup for one listed app in the copy as an owner would: its backups on in
+    values/apps.yaml, jarvis secrets --app, then render."""
+    import yaml
+
     sops = shutil.which("sops")
     if not sops:
         raise RuntimeError("sops not found on PATH (run make deps)")
+    path = copy.env_dir / "values" / "apps.yaml"
+    apps = yaml.safe_load(path.read_text(encoding="utf-8"))
+    apps[namespace.removeprefix("app-")].pop("backups", None)
+    path.write_text(yaml.safe_dump(apps, sort_keys=False), encoding="utf-8")
     mod = importlib.import_module("jarvis.secrets.mint")
     previous_root, previous_repo_root = mod.REPO_ROOT, mod._repo_root
     mod.REPO_ROOT = copy.root

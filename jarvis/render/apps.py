@@ -1,7 +1,8 @@
 """Render envs/<env>/flux/generated/apps.yaml from values/apps.yaml (core/feature/app-hosting/CONTRACT.md).
 
-render_switches.py runs this with the rest of the env's wiring. With no app listed there is
-nothing to render, and it removes the file and its line in flux/kustomization.yaml.
+render_switches.py runs this with the rest of the env's wiring. It refuses what env-schema's
+apps_problems refuses, each app read at its pinned tag. With no app listed there is nothing to
+render, and it removes the file and its line in flux/kustomization.yaml.
 """
 
 from __future__ import annotations
@@ -14,26 +15,20 @@ import yaml
 
 from jarvis.apps import values as _apps
 from jarvis.paths import PRODUCT_ROOT
-from jarvis.schema.env import app_hosting_listed, instance_root, resolve_cluster_vars
+from jarvis.schema.env import apps_problems, instance_root, resolve_cluster_vars
 
 REPO_ROOT = PRODUCT_ROOT
 
 
 def render_env(env_dir: Path) -> str | None:
     """The rendered file, or None when the env lists no app."""
-    data, errors = _apps.load_values(env_dir)
-    if errors:
-        raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(errors)}")
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
-    problems = _apps.validate(data, cluster_vars.get("dns_suffix"), _apps.lan_networks(cluster_vars)) + _apps.version_problems(data)
+    problems = apps_problems(env_dir, env_dir.parent.parent.resolve(), cluster_vars)
     if problems:
-        raise SystemExit(f"{env_dir / _apps.APPS_VALUES}: {'; '.join(problems)}")
+        raise SystemExit("; ".join(problems))
+    data, _ = _apps.load_values(env_dir)
     if not _apps.app_names(data):
         return None
-    if not app_hosting_listed(env_dir):
-        raise SystemExit(f"{env_dir}: lists apps, but app hosting is off (list app-hosting under features in values/switches.yaml)")
-    if not cluster_vars.get("apps_git_repo_url"):
-        raise SystemExit(f"{env_dir}: lists apps, so values/cluster-vars.yaml sets apps_git_repo_url")
     return _apps.render(data, resolve_cluster_vars(cluster_vars))
 
 

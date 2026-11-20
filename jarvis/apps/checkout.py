@@ -20,7 +20,6 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 
 import yaml
 
@@ -43,49 +42,10 @@ class AppsRepoError(Exception):
     """The apps repository checkout is missing or unreadable."""
 
 
-def _repo_basename(url: str) -> str | None:
-    parsed = urlparse(url.strip())
-    if parsed.scheme not in {"http", "https"}:
-        return None
-    parts = [part for part in parsed.path.strip("/").split("/") if part]
-    if not parts:
-        return None
-    return parts[-1].removesuffix(".git")
-
-
 def _looks_like_apps_repo(path: Path) -> bool:
     if not path.is_dir():
         return False
     return any((path / child / "app.yaml").is_file() for child in path.iterdir() if child.is_dir())
-
-
-def _resolve_apps_checkout(repo_root: Path, env_dir: Path) -> Path | None:
-    cv_path = env_dir / "values" / "cluster-vars.yaml"
-    if not cv_path.is_file():
-        return None
-    try:
-        cluster_vars = yaml.safe_load(cv_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
-        return None
-    url = cluster_vars.get("apps_git_repo_url")
-    if not isinstance(url, str) or not url.strip():
-        return None
-    name = _repo_basename(url)
-    if not name:
-        return None
-    roots = {instance_root(repo_root), repo_root.resolve()}
-    candidates: list[Path] = []
-    for root in roots:
-        candidates.extend((root.parent / name, root / name))
-    seen: set[Path] = set()
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if _looks_like_apps_repo(resolved):
-            return resolved
-    return None
 
 
 _PINNED_VIEWS: dict[tuple[Path, tuple[tuple[str, str], ...]], Path] = {}
@@ -104,10 +64,9 @@ def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
     if env_dir is None or not (checkout / ".git").exists():
         return checkout
     data, errors = _apps.load_values(env_dir)
-    versions = data.get(_apps.VERSIONS) if not errors else None
-    if not isinstance(versions, dict) or not versions:
+    if errors or not data:
         return checkout
-    pins = tuple(sorted((str(app), str(version)) for app, version in versions.items()))
+    pins = tuple(sorted((app, str(data[app].get("version"))) for app in _apps.app_names(data)))
     key = (checkout, pins)
     if key in _PINNED_VIEWS:
         return _PINNED_VIEWS[key]
@@ -131,30 +90,19 @@ def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
 
 
 def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
-    """Directory of app folders (<name>/app.yaml), each app as the env pins it.
-
-    APPS_REPO overrides for tests and operators. Otherwise resolve a local checkout of
-    apps_git_repo_url beside the instance or product checkout. A git checkout is read at each
-    app's pinned tag (_pinned_view).
-    """
+    """Directory of app folders (<name>/app.yaml), each app as the env pins it: APPS_REPO, the
+    checkout the jarvis CLI fetches (fetch) or a test's tree, read at each app's pinned tag
+    when it is a git repository (_pinned_view)."""
     override = os.environ.get(_APPS_REPO_ENV)
-    if override:
-        path = Path(override).expanduser().resolve()
-        if not _looks_like_apps_repo(path):
-            raise AppsRepoError(f"{_APPS_REPO_ENV}={override!r} is not an apps repository checkout")
-        return _pinned_view(path, env_dir)
-    if env_dir is None:
+    if not override:
         raise AppsRepoError(
-            f"set {_APPS_REPO_ENV} to a checkout of the env's apps_git_repo_url, "
-            "or clone that repository beside this checkout"
+            f"set {_APPS_REPO_ENV} to a checkout of the env's apps_git_repo_url with its tags; "
+            "the jarvis CLI fetches one for the commands that read app files"
         )
-    resolved = _resolve_apps_checkout(repo_root, env_dir)
-    if resolved is not None:
-        return _pinned_view(resolved, env_dir)
-    raise AppsRepoError(
-        f"set {_APPS_REPO_ENV} to a checkout of apps_git_repo_url, "
-        "or clone the apps repository beside this checkout"
-    )
+    path = Path(override).expanduser().resolve()
+    if not _looks_like_apps_repo(path):
+        raise AppsRepoError(f"{_APPS_REPO_ENV}={override!r} is not an apps repository checkout")
+    return _pinned_view(path, env_dir)
 
 
 def _envs_needing_apps(instance: Path) -> list[Path]:

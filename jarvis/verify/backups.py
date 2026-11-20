@@ -43,6 +43,16 @@ def check_secret(kubectl: Kubectl) -> None:
         raise CheckError("backups-restic has no data keys")
 
 
+def backed_up(pvcs: list[dict]) -> list[dict]:
+    """The claims backups cover: bound, not annotated backup: none, and not a VolSync mover's own."""
+    return [
+        pvc for pvc in pvcs
+        if (pvc.get("spec") or {}).get("volumeName")
+        and ((pvc.get("metadata") or {}).get("annotations") or {}).get("backup") != "none"
+        and ((pvc.get("metadata") or {}).get("labels") or {}).get("app.kubernetes.io/created-by") != "volsync"
+    ]
+
+
 def check_backups(kubectl: Kubectl, *, zone_name: str, now: datetime) -> None:
     pvcs = items(kubectl(["get", "pvc", "-A", "-o", "json"]), "list PVCs")
     sources = items(
@@ -56,15 +66,8 @@ def check_backups(kubectl: Kubectl, *, zone_name: str, now: datetime) -> None:
         ): item
         for item in sources
     }
-    for pvc in pvcs:
+    for pvc in backed_up(pvcs):
         meta = pvc.get("metadata") or {}
-        spec = pvc.get("spec") or {}
-        if not spec.get("volumeName"):
-            continue
-        if (meta.get("annotations") or {}).get("backup") == "none":
-            continue
-        if (meta.get("labels") or {}).get("app.kubernetes.io/created-by") == "volsync":
-            continue
         namespace, name = meta.get("namespace"), meta.get("name")
         if not namespace or not name:
             raise CheckError("PVC has no namespace or name")

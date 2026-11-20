@@ -167,8 +167,6 @@ def add_env_from_spec(
 ) -> Path:
     """The env sample describes, in root: written by jarvis init's code, then the sample apps and
     add-on and the owner's hand-sealed files, minted, sealed and rendered."""
-    from jarvis.render.env import render_env
-
     # The example apps on, as jarvis init --with-examples turns them on.
     sample = dataclasses.replace(sample, examples=with_apps and "app-hosting" in sample.features)
     name = sample.name
@@ -184,18 +182,10 @@ def add_env_from_spec(
         names = sorted(entry.name for entry in FIXTURE_ADDONS.iterdir() if entry.is_dir())
         text = text.replace("addons: []\n", "addons:\n" + "".join(f"  - {name}\n" for name in names))
     switches.write_text(text, encoding="utf-8")
-    _mint(root, name)
-    if "offsite-backup-copy" in sample.features:
-        # The owner seals the target's login by hand; a placeholder stands in.
-        _seal(root, name, "backups-offsite", "platform-backups",
-              {"RESTIC_REPOSITORY": "rest:https://offsite.example.invalid/", "RESTIC_PASSWORD": "placeholder"})  # fmt: skip
-    if "alerts" in sample.features:
-        # The owner seals the target's webhook; testapp stands in for it.
-        _seal(root, name, "alerts-notify", "flux-system", {"address": ALERTS_TARGET})
     previous = os.environ.get("APPS_REPO")
     os.environ.setdefault("APPS_REPO", str(FIXTURE_APPS_REPO))
     try:
-        render_env(env_dir, root)
+        _render_sealed(root, sample, env_dir)
     finally:
         if previous is None:
             os.environ.pop("APPS_REPO", None)
@@ -206,6 +196,23 @@ def add_env_from_spec(
         for namespace in addon_secret_namespaces(addon_documents(paths.core_root(), addon)):
             _seal(root, name, f"{namespace}-fixture", namespace, {"greeting": "placeholder"}, folder=namespace)
     return env_dir
+
+
+def _render_sealed(root: Path, sample: scaffold.EnvSpec, env_dir: Path) -> None:
+    """Mint the env's secrets, seal what an owner seals by hand, and render: each reads the apps
+    at APPS_REPO."""
+    from jarvis.render.env import render_env
+
+    name = sample.name
+    _mint(root, name)
+    if "offsite-backup-copy" in sample.features:
+        # The owner seals the target's login by hand; a placeholder stands in.
+        _seal(root, name, "backups-offsite", "platform-backups",
+              {"RESTIC_REPOSITORY": "rest:https://offsite.example.invalid/", "RESTIC_PASSWORD": "placeholder"})  # fmt: skip
+    if "alerts" in sample.features:
+        # The owner seals the target's webhook; testapp stands in for it.
+        _seal(root, name, "alerts-notify", "flux-system", {"address": ALERTS_TARGET})
+    render_env(env_dir, root)
 
 
 def build(root: Path, name: str = NAME, **options) -> Path:

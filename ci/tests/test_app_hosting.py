@@ -1,4 +1,4 @@
-"""the app-hosting check (jarvis validate), the env's app list in env-schema, and the app wiring in flux-identity."""
+"""the app-hosting check (jarvis validate), the env's apps in env-schema, and the app wiring in flux-identity."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from jarvis.checks.flux_identity import scan_flux_identity
 from jarvis.env import switches as _switches
 from jarvis.schema import env as env_schema
 from support import REPO_ROOT, core_at, sample_root
+
+FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 
 EXAMPLE = sample_root() / "envs" / "env-00"
 
@@ -90,12 +92,11 @@ def test_app_wiring_outside_the_contract_fails(tmp_path: Path, file: str, old: s
 def test_listed_app_without_wiring_and_wiring_without_listing_fail(tmp_path: Path) -> None:
     """Rule: the env runs exactly the apps it lists."""
     _product, instance = _tree(tmp_path)
-    values = instance / "envs" / "env-00" / _switches.SWITCHES_FILE
-    _edit(values, "  - lan-demo\n", "  - lan-demo\n  - extra\n")
-    _edit(values, "  - hello-web\n", "")
+    values = instance / "envs" / "env-00" / _apps.APPS_VALUES
+    _edit(values, "hello-web:\n", "extra:\n")
     messages = _messages(instance)
-    assert any("holds extra, and the flux tree has no app-extra-wiring" in item for item in messages), messages
-    assert any("wires app hello-web, which the apps list in values/switches.yaml does not hold" in item for item in messages), messages
+    assert any("lists extra, and the flux tree has no app-extra-wiring" in item for item in messages), messages
+    assert any("wires app hello-web, which values/apps.yaml does not list" in item for item in messages), messages
 
 
 def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None:
@@ -107,58 +108,57 @@ def test_flux_identity_holds_the_wiring_to_core_template(tmp_path: Path) -> None
     assert any("an app's wiring runs as flux-platform" in item for item in messages), messages
 
 
+def _env(**grants: list[str]) -> dict:
+    return {app: {"version": "v0.1.0", "grants": lines} for app, lines in grants.items()}
+
+
 @pytest.mark.parametrize(
     ("values", "expected"),
     [
-        ({"apps": ["Web_Demo"]}, "is not an app name"),
-        ({"apps": ["web", "web"]}, "listed twice"),
-        ({"apps": ["web"], "sizes": {"web": "big"}}, "unknown key 'sizes'"),
-        ({"apps": ["web"], "exceptions": [{"web": "trust"}]}, "unknown grant"),
-        ({"apps": ["web"], "exceptions": [{"Web!": "privileged"}]}, "is not an app name"),
-        ({"apps": ["web"], "exceptions": [{"other": "privileged"}]}, "not on this env's app list"),
-        ({"apps": ["web"], "exceptions": [{"web": "privileged", "x": "root"}]}, "is not one '<app>: <grant>' line"),
-        ({"apps": ["web"], "exceptions": [{"web": "hostname grafana.env-00.example"}]}, "outside env-00.example"),
-        ({"apps": ["web"], "exceptions": [{"web": "lan-port 70000/TCP"}]}, "lan-port takes"),
-        ({"apps": ["web"], "exceptions": [{"web": "privileged"}, {"web": "privileged"}]}, "listed twice"),
-        ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.99.0.10/32 445/TCP"}]}, "outside the env's lan_cidrs"),
-        ({"apps": ["web"], "exceptions": [{"web": "lan-target all 10.200.0.0/24 445/TCP"}]}, "other than all"),
-        ({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.200.0.10/32"}]}, "lan-target takes"),
+        (_env(web=["trust"]), "unknown grant"),
+        (_env(web=["hostname grafana.env-00.example"]), "outside env-00.example"),
+        (_env(web=["lan-port 70000/TCP"]), "lan-port takes"),
+        (_env(web=["lan-target nas 10.99.0.10/32 445/TCP"]), "outside the env's lan_cidrs"),
+        (_env(web=["lan-target all 10.200.0.0/24 445/TCP"]), "other than all"),
+        (_env(web=["lan-target nas 10.200.0.10/32"]), "lan-target takes"),
+        (_env(web=["lan-port 443/TCP"]), "443/TCP is core's web door's"),
+        (_env(web=["lan-port 6443/TCP"]), "the Kubernetes API's"),
+        (_env(web=["lan-port 8472/UDP"]), "flannel's VXLAN's"),
+        (_env(web=["lan-port 8080/TCP"], db=["lan-port 8080/TCP"]), "app web already holds 8080/TCP"),
     ],
-    ids=["not-a-label", "duplicate", "size-in-list", "unknown-grant", "bad-exception-name", "unlisted-app",
-         "two-grants-one-line", "hostname-in-zone", "bad-lan-port", "duplicate-line", "lan-target-off-lan", "lan-target-all", "lan-target-no-port"],
+    ids=["unknown-grant", "hostname-in-zone", "bad-lan-port", "lan-target-off-lan", "lan-target-all", "lan-target-no-port",
+         "core-port", "node-port", "node-udp-port", "port-held-twice"],
 )
-def test_env_app_list_rejects_what_it_does_not_hold(values: dict, expected: str) -> None:
-    """Rule: the app list holds names only, and each exception line one known grant for a listed
-    app; a lan-target range sits inside the env's LAN ranges, so it cannot open the internet."""
+def test_env_grants_reject_what_they_do_not_hold(values: dict, expected: str) -> None:
+    """Rule: each grant is one known item; a lan-target range sits inside the env's LAN ranges, so
+    it cannot open the internet; a LAN port is no port core or the node holds, and one app's only."""
     errors = _apps.validate(values, "env-00.example", ["10.200.0.0/24"])
     assert any(expected in error for error in errors), errors
 
 
 def test_lan_grant_needs_the_env_lan_ranges() -> None:
     """Rule: an env that grants a LAN item names its LAN ranges (lan_cidrs)."""
-    errors = _apps.validate({"apps": ["web"], "exceptions": [{"web": "lan-all"}]}, "env-00.example")
+    errors = _apps.validate(_env(web=["lan-all"]), "env-00.example")
     assert any("set lan_cidrs" in error for error in errors), errors
 
 
 def test_lan_target_against_an_invalid_lan_range_is_reported_not_raised() -> None:
     """Rule: a lan_cidrs entry that is no network (reported as lan_cidrs) holds no lan-target."""
-    errors = _apps.validate({"apps": ["web"], "exceptions": [{"web": "lan-target nas 10.200.0.10/32 445/TCP"}]},
-                            "env-00.example", ["10.200.0.1/24"])
+    errors = _apps.validate(_env(web=["lan-target nas 10.200.0.10/32 445/TCP"]), "env-00.example", ["10.200.0.1/24"])
     assert any("outside the env's lan_cidrs" in error for error in errors), errors
 
 
-def test_env_app_list_and_grants_that_fit_pass() -> None:
-    """Rule: each known grant on a listed app passes."""
-    lines = [{"web": grant} for grant in ("privileged", "root", "host-network", "host-path", "hostname photos.example.org",
-                                          "lan-port 8443/TCP", "lan-all", "lan-target nas 10.200.0.10/32 445/TCP",
-                                          "lan-target nas 10.200.0.10/32 137/UDP", "no-uptime-check")]
-    assert _apps.validate({"apps": ["web"], "exceptions": lines}, "env-00.example", ["10.200.0.0/24"]) == []
+def test_env_grants_that_fit_pass() -> None:
+    """Rule: each known grant passes, and a protocol core does not hold on a port passes."""
+    lines = ["privileged", "root", "host-network", "host-path", "hostname photos.example.org", "lan-port 8443/TCP",
+             "lan-port 443/UDP", "lan-all", "lan-target nas 10.200.0.10/32 445/TCP", "lan-target nas 10.200.0.10/32 137/UDP"]
+    assert _apps.validate(_env(web=lines), "env-00.example", ["10.200.0.0/24"]) == []
 
 
-def _schema_errors(instance: Path) -> list[str]:
+def _schema_errors(instance: Path, *, bootstrapped: bool = False) -> list[str]:
     env_dir = instance / "envs" / "env-00"
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    return env_schema._apps_problems(env_dir, instance, cluster_vars)
+    return env_schema._apps_problems(env_dir, instance, cluster_vars, bootstrapped)
 
 
 _APP_PIECES = {
@@ -241,9 +241,42 @@ def test_env_schema_requires_the_apps_repository_for_an_app(tmp_path: Path) -> N
     assert any("sets apps_git_repo_url" in error for error in _schema_errors(instance))
 
 
-def test_every_listed_app_needs_one_pin_in_the_tag_form() -> None:
-    """Rule: versions pins each listed app as v<x.y.z>, and only listed apps."""
-    assert _apps.version_problems({"apps": ["web"], "versions": {"web": "v1.2.3"}}) == []
-    problems = _apps.version_problems({"apps": ["web", "db"], "versions": {"web": "1.2", "old": "v0.1.0"}})
-    text = "\n".join(problems)
-    assert "db" in text and "old" in text and "web" in text, problems
+def test_each_app_is_checked_at_its_pinned_tag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: validate reads each listed app as the env pins it and holds it to core's app rules:
+    an app that core's release refuses fails the env, so a core pin move past an app fails CI."""
+    _product, instance = _tree(tmp_path)
+    apps = tmp_path / "apps"
+    shutil.copytree(FIXTURE_APPS, apps)
+    monkeypatch.setenv("APPS_REPO", str(apps))
+    assert _schema_errors(instance) == []
+    _edit(apps / "hello-web" / "app.yaml", "        port: 80\n", "")
+    assert any("hello-web v0.3.0: hello-web/app.yaml: spec.network.web[0]" in error for error in _schema_errors(instance))
+
+
+def test_two_apps_making_one_web_name_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: no two apps make the same web name: app notes' entry admin and an app notes-admin both
+    make notes-admin.apps.<dns suffix>."""
+    _product, instance = _tree(tmp_path)
+    apps = tmp_path / "apps"
+    shutil.copytree(FIXTURE_APPS, apps)
+    shutil.copytree(apps / "hello-web", apps / "notes-admin")
+    _edit(apps / "notes-admin" / "app.yaml", "name: hello-web", "name: notes-admin")
+    _edit(apps / "notes" / "app.yaml", "        port: 80\n", "        port: 80\n      - name: admin\n        service: notes\n        port: 80\n")
+    monkeypatch.setenv("APPS_REPO", str(apps))
+    values = instance / "envs" / "env-00" / _apps.APPS_VALUES
+    values.write_text(values.read_text(encoding="utf-8") + "notes-admin:\n  version: v0.3.0\n", encoding="utf-8")
+    errors = _schema_errors(instance)
+    assert any("notes-admin v0.3.0: web name notes-admin.apps.<dns suffix> is also app notes's" in error for error in errors), errors
+
+
+def test_an_app_with_backups_on_needs_its_credential(tmp_path: Path) -> None:
+    """Rule: once the env is bootstrapped, an app whose backups are on and that keeps a backup: true
+    volume has its credential sealed; with backups off it needs none."""
+    _product, instance = _tree(tmp_path)
+    values = instance / "envs" / "env-00" / _apps.APPS_VALUES
+    assert _schema_errors(instance, bootstrapped=True) == []
+    (instance / "envs" / "env-00" / "secrets" / "app-notes" / "backups-restic-app-notes.sops.yaml").unlink()
+    assert any("notes: backups are on" in error for error in _schema_errors(instance, bootstrapped=True))
+    assert _schema_errors(instance) == []
+    _edit(values, "notes:\n  version: v0.3.0\n", "notes:\n  version: v0.3.0\n  backups: false\n")
+    assert _schema_errors(instance, bootstrapped=True) == []
