@@ -87,6 +87,7 @@ class Cluster:
         self.source = True
         self.source_schedule = "0 1 * * *"
         self.source_sync = "2026-10-31T01:01:00Z"
+        self.source_created = "2026-01-01T00:00:00Z"
         self.etcd_schedule = "5 */12 * * *"
         self.etcd_zone: str | None = "Etc/UTC"
         self.etcd_sync: str | None = "2026-10-31T05:10:00Z"
@@ -149,7 +150,7 @@ class Cluster:
             if self.bad_sources_json:
                 return _completed(argv, {"items": "unreadable"})
             source = {
-                "metadata": {"namespace": "app", "name": "data"},
+                "metadata": {"namespace": "app", "name": "data", "creationTimestamp": self.source_created},
                 "spec": {"trigger": {"schedule": self.source_schedule}},
                 "status": {"lastSyncTime": self.source_sync},
             }
@@ -500,6 +501,25 @@ def test_first_run_warns_only_while_pending_or_running_in_its_first_interval(
     output = capsys.readouterr().out
     assert expected in output
     assert f"FAIL {label}" not in output or expected.startswith("FAIL")
+
+
+@pytest.mark.parametrize(
+    ("created", "hold", "line"),
+    [
+        # The volume's source syncs daily at 01:00; NOW is 12:00.
+        ("2026-10-31T09:00:00Z", False, "WARN backup freshness: app/data pending first scheduled sync"),
+        ("2026-10-29T09:00:00Z", False, "FAIL backup freshness: app/data: no completed scheduled sync"),
+        ("2026-10-31T09:00:00Z", True, "FAIL backup freshness: backup rebuild hold is present"),
+    ],
+    ids=["restored", "never-synced", "restored-under-hold"],
+)
+def test_a_restored_volume_warns_until_its_first_scheduled_sync(tmp_path, monkeypatch, capsys, created, hold, line):
+    """Rule: a volume's source made inside its first interval, as a restore leaves it, warns until
+    it syncs, as the other first runs do; past that interval it fails, and a hold still fails."""
+    cluster = Cluster()
+    cluster.source_sync, cluster.source_created, cluster.hold = None, created, hold
+    assert _run(tmp_path, cluster, monkeypatch) == (0 if line.startswith("WARN") else 1)
+    assert line in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

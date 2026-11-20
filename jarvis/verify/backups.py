@@ -8,10 +8,12 @@ from jarvis.env.runtime import json_object, not_found, reason
 from jarvis.schema.env import offsite_copy_listed
 from jarvis.verify.common import (
     CheckError,
+    CheckWarning,
     Context,
     Kubectl,
     items,
     no_success_yet,
+    pending_first_run,
     recent,
     scheduled_instants,
 )
@@ -66,6 +68,8 @@ def check_backups(kubectl: Kubectl, *, zone_name: str, now: datetime) -> None:
         ): item
         for item in sources
     }
+    # First runs WARN once every FAIL below has had its say: a hold or a stale copy still fails.
+    pending: list[str] = []
     for pvc in backed_up(pvcs):
         meta = pvc.get("metadata") or {}
         namespace, name = meta.get("namespace"), meta.get("name")
@@ -79,7 +83,14 @@ def check_backups(kubectl: Kubectl, *, zone_name: str, now: datetime) -> None:
             raise CheckError(f"{namespace}/{name}: no ReplicationSource")
         status = source.get("status") or {}
         schedule = (((source.get("spec") or {}).get("trigger") or {}).get("schedule"))
-        if not isinstance(schedule, str) or not isinstance(status.get("lastSyncTime"), str):
+        if not isinstance(schedule, str):
+            raise CheckError(f"{namespace}/{name}: no completed scheduled sync")
+        if not isinstance(status.get("lastSyncTime"), str):
+            # A source made inside its first interval, as on a restored volume, has not synced yet.
+            created = (source.get("metadata") or {}).get("creationTimestamp")
+            if isinstance(created, str) and pending_first_run(created, schedule, zone_name, now):
+                pending.append(f"{namespace}/{name} pending first scheduled sync")
+                continue
             raise CheckError(f"{namespace}/{name}: no completed scheduled sync")
         if not recent(status["lastSyncTime"], schedule, zone_name, now):
             raise CheckError(f"{namespace}/{name}: last successful sync is stale")
@@ -91,8 +102,11 @@ def check_backups(kubectl: Kubectl, *, zone_name: str, now: datetime) -> None:
     if not isinstance(schedule, str) or not isinstance(cron_zone, str):
         raise CheckError("etcd snapshot copy has no successful scheduled run")
     if not isinstance(last, str):
-        no_success_yet(cronjob, schedule, cron_zone, now, "etcd snapshot copy")
-    if not recent(last, schedule, cron_zone, now):
+        try:
+            no_success_yet(cronjob, schedule, cron_zone, now, "etcd snapshot copy")
+        except CheckWarning as exc:
+            pending.append(str(exc))
+    elif not recent(last, schedule, cron_zone, now):
         raise CheckError("etcd snapshot copy is stale")
 
     hold = kubectl(
@@ -102,6 +116,8 @@ def check_backups(kubectl: Kubectl, *, zone_name: str, now: datetime) -> None:
         raise CheckError("backup rebuild hold is present")
     if not not_found(hold):
         raise CheckError(f"read backup rebuild hold: {reason(hold)}")
+    if pending:
+        raise CheckWarning("; ".join(pending))
 
 
 def _cronjob(kubectl: Kubectl, name: str = "etcd-snapshots") -> dict:
