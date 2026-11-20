@@ -102,6 +102,8 @@ class Cluster:
         self.hold = False
         self.bad_sources_json = False
         self.node_ready = True
+        # The kubelet's last Lease renewal; NOW is 12:00:00.
+        self.lease_renewed: str | None = "2026-10-31T11:59:50.000000Z"
         self.nodes_rc = 0
         self.pods_rc = 0
         self.pods: list[dict] = []
@@ -138,6 +140,10 @@ class Cluster:
             ready = {"type": "Ready", "status": "True" if self.node_ready else "False"}
             body = {"items": [{"metadata": {"name": "n1", "labels": labels}, "status": {"conditions": [ready]}}]}
             return _completed(argv, body, returncode=self.nodes_rc, stderr="forbidden" if self.nodes_rc else "")
+        if argv[:2] == ["get", "leases"]:
+            spec = {"holderIdentity": "n1", "leaseDurationSeconds": 40, "renewTime": self.lease_renewed}
+            leases = [{"metadata": {"name": "n1"}, "spec": spec}] if self.lease_renewed else []
+            return _completed(argv, {"items": leases})
         if argv[:2] == ["get", "pods"]:
             if self.pods_rc:
                 return _completed(argv, {"items": []}, returncode=self.pods_rc, stderr="forbidden")
@@ -327,6 +333,24 @@ def test_each_bad_standing_state_fails(
     assert message in output
     assert f"PASS {message.removeprefix('FAIL ')}" not in output and SECRET_VALUE not in output
     assert absent is None or absent not in output
+
+
+@pytest.mark.parametrize(
+    ("renewed", "reported"),
+    [("2026-10-31T11:58:00.000000Z", "n1: its kubelet last reported at 2026-10-31T11:58:00.000000Z"),
+     (None, "n1: its kubelet has not reported")],
+    ids=["stale-lease", "no-lease"],
+)
+def test_a_node_whose_kubelet_has_not_reported_since_a_boot_is_not_judged(tmp_path, monkeypatch, capsys, renewed, reported):
+    """Rule: right after a boot the API server still holds status from before it. A node whose
+    kubelet has not renewed its Lease within the Lease's duration stops verify before any
+    standing check, so none passes on that status."""
+    cluster = Cluster()
+    cluster.lease_renewed = renewed
+    assert _run(tmp_path, cluster, monkeypatch) == 1
+    output = capsys.readouterr().out
+    assert f"FAIL too freshly started to judge: {reported}" in output
+    assert "PASS" not in output and "WARN" not in output
 
 
 def test_a_pending_pod_within_its_grace_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:

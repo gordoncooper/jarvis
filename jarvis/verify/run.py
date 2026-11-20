@@ -122,7 +122,18 @@ def run(
         _line(f"FAIL verify components: {exc}")
         return 1
 
-    failed = _report(checks)
+    unread = 0
+    try:
+        unreported = _platform.unreported_nodes(kubectl, ctx.now)
+    except (CheckError, EnvError) as exc:
+        _line(f"FAIL kubelets reporting: {exc}")
+        unread, unreported = 1, []
+    if unreported:
+        # Every standing check would read status left from before the boot; none of them runs.
+        _line(f"FAIL too freshly started to judge: {'; '.join(unreported)}. "
+              "Run verify again once every kubelet reports")
+        return 1
+    failed = unread + _report(checks)
     app_dns = _switches.APP_DNS in _switches.names(switches, _switches.FEATURES)
     try:
         # With App DNS off, the LAN's own DNS names apps; verify reaches Traefik's address directly.

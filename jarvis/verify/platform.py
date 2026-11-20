@@ -6,7 +6,7 @@ import hashlib
 import json
 import subprocess
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -188,6 +188,30 @@ def _node_ready(item: dict) -> bool:
         if isinstance(condition, dict) and condition.get("type") == "Ready":
             return condition.get("status") == "True"
     return False
+
+
+def unreported_nodes(kubectl: Kubectl, now: datetime) -> list[str]:
+    """Nodes whose kubelet has not renewed its Lease within the Lease's own duration, the node
+    controller's rule. Right after a boot the API server still holds such a node's status, and
+    its pods', from before, and the node controller is still in its own start-up grace."""
+    nodes = items(kubectl(["get", "nodes", "-o", "json"]), "list nodes")
+    leases = {
+        (lease.get("metadata") or {}).get("name"): lease.get("spec") or {}
+        for lease in items(kubectl(["get", "leases", "-n", "kube-node-lease", "-o", "json"]), "list node leases")
+    }
+    stale = []
+    for node in nodes:
+        name = (node.get("metadata") or {}).get("name")
+        spec = leases.get(name) or {}
+        renewed = spec.get("renewTime")
+        try:
+            at = datetime.fromisoformat(str(renewed).replace("Z", "+00:00"))
+        except ValueError:
+            stale.append(f"{name}: its kubelet has not reported")
+            continue
+        if at.tzinfo is None or now - at > timedelta(seconds=int(spec.get("leaseDurationSeconds") or 40)):
+            stale.append(f"{name}: its kubelet last reported at {renewed}")
+    return stale
 
 
 def check_nodes_ready(kubectl: Kubectl) -> None:
