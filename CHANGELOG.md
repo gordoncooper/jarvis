@@ -38,10 +38,15 @@ the upgrade.
 
 ### Upgrading
 
-- Move each hosted app to a release that ships an HTTPRoute, in the same commit as the core pin:
-  after the upgrade the cluster refuses an app's Ingress. For the example apps that is
-  `hello-web: v0.2.0` and `notes: v0.2.0` in `values/apps.yaml`; `lan-demo` has no web address
-  and stays.
+- Move each hosted app to a release that ships an HTTPRoute in the same commit as the core pin,
+  never after it: once the core pin moves, the app's account can no longer touch Ingresses, so
+  the app's Kustomization fails. For the example apps that is `hello-web: v0.2.0` and
+  `notes: v0.2.0` in `values/apps.yaml`; `lan-demo` has no web address and stays.
+- An env whose apps shipped an Ingress then sticks: each app Kustomization fails `PruneFailed`,
+  because Flux reads each stale Ingress in its inventory as the app's account, which can no
+  longer read Ingresses. Rebuild the env, or for each app set `deletionPolicy: Orphan` on
+  Kustomization `flux-system/app-<name>` and delete it; its wiring `app-<name>-wiring` makes it
+  again with a fresh inventory, which adopts the app's objects.
 - An add-on's Ingress becomes an HTTPRoute on the core door, as `core/platform/testapp` shows.
 
 ## v0.6.1
