@@ -59,8 +59,7 @@ In the apps repository:
    ```yaml
    spec:
      chart:
-       url: oci://ghcr.io/example/charts/wiki   # the chart's oci:// address, or an https:// repository...
-       # name: wiki                             # ...and the chart's name in it
+       url: oci://ghcr.io/example/charts/wiki   # the chart's own oci:// address
        version: 1.2.3
        values: {}                               # the chart's values, adapted to the rules below
    ```

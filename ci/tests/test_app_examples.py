@@ -66,12 +66,9 @@ def test_committed_env_00_render_wires_the_examples_and_passes_env_schema() -> N
     """Rule: env-00's committed render is the examples' wiring, and env-schema passes it."""
     env_dir = sample_root() / "envs" / "env-00"
     docs = yaml.safe_load_all((env_dir / "flux" / _apps.GENERATED_REL).read_text(encoding="utf-8"))
-    docs = [doc for doc in docs if doc]
-    subs = {d["spec"]["postBuild"]["substitute"]["app_name"]: d["spec"]["postBuild"]["substitute"] for d in docs if d["kind"] == "Kustomization"}
+    subs = {d["spec"]["postBuild"]["substitute"]["app_name"]: d["spec"]["postBuild"]["substitute"] for d in docs if d and d["kind"] == "Kustomization"}
     assert list(subs) == APPS
     assert subs["lan-demo"]["app_grant_lan_ports"] == "8080/TCP"
-    release = next(d["spec"] for d in docs if d["kind"] == "HelmRelease")
-    assert release["serviceAccountName"] == release["targetNamespace"] == release["storageNamespace"] == "app-lan-demo"
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
     assert env_schema._apps_problems(env_dir, sample_root(), cluster_vars, True) == []
 

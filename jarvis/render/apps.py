@@ -2,7 +2,8 @@
 
 render_switches.py runs this with the rest of the env's wiring. It refuses what env-schema's
 apps_problems refuses, each app read at its pinned tag, where it also reads each chart app's
-chart for its release. With no app listed there is nothing to render, and it removes the file and its line in flux/kustomization.yaml.
+chart for its release. With no app listed there is nothing to render, and it removes the file
+and its line in flux/kustomization.yaml.
 """
 
 from __future__ import annotations

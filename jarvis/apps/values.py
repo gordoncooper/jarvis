@@ -300,15 +300,9 @@ def chart_documents(app: str, chart: dict[str, Any], env_values: dict[str, Any] 
     in flux-system, where the tenant writes nothing."""
     name = f"app-{app}"
     meta = {"name": name, "namespace": "flux-system"}
-    if chart["url"].startswith("oci://"):
-        source = {"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": {**meta, "annotations": _KEEP},
-                  "spec": {"interval": "30m", "url": chart["url"], "ref": {"tag": chart["version"]},
-                           "layerSelector": {"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"}}}
-        ref: dict[str, Any] = {"chartRef": {"kind": "OCIRepository", "name": name}}
-    else:
-        source = {"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "HelmRepository", "metadata": {**meta, "annotations": _KEEP},
-                  "spec": {"interval": "30m", "url": chart["url"]}}
-        ref = {"chart": {"spec": {"chart": chart["name"], "version": chart["version"], "sourceRef": {"kind": "HelmRepository", "name": name}}}}
+    source = {"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": {**meta, "annotations": _KEEP},
+              "spec": {"interval": "30m", "url": chart["url"], "ref": {"tag": chart["version"]},
+                       "layerSelector": {"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"}}}
     values = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": f"{name}-values", "namespace": "flux-system", "annotations": _VERBATIM},
               "data": {"values.yaml": yaml.safe_dump(chart.get("values") or {}, sort_keys=False)}}
     release = {
@@ -317,7 +311,7 @@ def chart_documents(app: str, chart: dict[str, Any], env_values: dict[str, Any] 
         "metadata": {**meta, "annotations": _VERBATIM},
         "spec": {
             "interval": "10m", "releaseName": app, "serviceAccountName": name, "targetNamespace": name, "storageNamespace": name,
-            **ref, "install": _retry(), "upgrade": _retry(),
+            "chartRef": {"kind": "OCIRepository", "name": name}, "install": _retry(), "upgrade": _retry(),
             "valuesFrom": [{"kind": "ConfigMap", "name": f"{name}-values"}],
             **({"values": env_values} if env_values else {}),
         },

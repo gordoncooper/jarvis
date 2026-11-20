@@ -4,12 +4,11 @@ read without their namespace scope) and those only Git keeps (git-rules.yaml bes
 
 The objects are Flux's build of every path on the root artifact (flux_build.env_tree) and each
 HelmRelease's chart, rendered by `helm template` from the source the build names, with the
-release's values (its valuesFrom ConfigMaps from the build, then its own), at the env's Kubernetes
-version. Each chart version is pulled once into the jarvis cache and rendered from there, so a run
-with the cache reaches no chart host. helm-controller renders the same way; its postRenderers are
-not applied here. A hosted app's deploy/ paths read the apps repository, so the app checks read
-those; a hosted app's chart is rendered here like any other. k3s's own charts (Traefik, configured
-by a HelmChartConfig) ship inside k3s and are not rendered.
+release's values, at the env's Kubernetes version. Each chart version is pulled once into the
+jarvis cache and rendered from there, so a run with the cache reaches no chart host. helm-controller renders the same way; its
+postRenderers are not applied here. A hosted app's paths read the apps repository, so the app
+checks read those. k3s's own charts (Traefik, configured by a HelmChartConfig) ship inside k3s and
+are not rendered.
 
 kubeconform reads Kubernetes' schemas, then the CRDs these objects carry themselves and the ones
 the pinned flux CLI installs, then one pinned public catalog for the rest (k3s's Traefik and
@@ -105,8 +104,8 @@ def _pulled(chart: tuple[str, ...]) -> tuple[str, str]:
 
 @functools.cache
 def helm_template(release_name: str, namespace: str, chart: tuple[str, ...], values: tuple[str, ...], kube: str) -> tuple[str, str]:
-    """helm template's output and error for one release, its values files merged in order, as
-    helm-controller merges valuesFrom then values; the same release renders once per run."""
+    """helm template's output and error for one release, its values files merged by Helm in order;
+    the same release renders once per run."""
     archive, error = _pulled(chart)
     if error:
         return "", error
@@ -124,19 +123,6 @@ def helm_template(release_name: str, namespace: str, chart: tuple[str, ...], val
     return (proc.stdout, "") if proc.returncode == 0 else ("", proc.stderr.strip())
 
 
-def _values_from(spec: dict, namespace: str, configmaps: dict[tuple[str, str, str], dict]) -> tuple[list[str], str | None]:
-    """The values each valuesFrom entry names: a whole key (default values.yaml) of a ConfigMap
-    in the build. The cluster reads a Secret there, which Git cannot."""
-    texts = []
-    for ref in spec.get("valuesFrom") or []:
-        found = configmaps.get(("ConfigMap", namespace, str(ref.get("name"))))
-        text = ((found or {}).get("data") or {}).get(ref.get("valuesKey") or "values.yaml")
-        if ref.get("kind") != "ConfigMap" or ref.get("targetPath") or text is None:
-            return [], f"valuesFrom {ref.get('kind')}/{ref.get('name')} is not a key of a ConfigMap in the build"
-        texts.append(text)
-    return texts, None
-
-
 def env_objects(root: Path, env: str) -> tuple[list[dict], list[str], str]:
     """Every object the env's Flux paths apply, its charts rendered, and the env's k3s version."""
     values = yaml.safe_load((root / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
@@ -147,27 +133,21 @@ def env_objects(root: Path, env: str) -> tuple[list[dict], list[str], str]:
     problems = [f"{p.kustomization['metadata']['name']}: {p.error}" for p in tree.paths if p.error]
     docs = tree.env_docs + [doc for path in tree.paths for doc in path.docs]
     sources = {_key(doc): doc for doc in docs if doc.get("kind") in ("OCIRepository", "HelmRepository")}
-    configmaps = {_key(doc): doc for doc in docs if doc.get("kind") == "ConfigMap"}
     rendered: list[dict] = []
     for doc in docs:
         if doc.get("kind") != "HelmRelease":
             continue
         _, namespace, name = _key(doc)
         spec = doc.get("spec") or {}
-        target = str(spec.get("targetNamespace") or namespace)
         chart, error = _chart(doc, sources)
-        values, values_error = _values_from(spec, namespace, configmaps)
-        error = error or values_error
+        if spec.get("valuesFrom"):
+            error = "valuesFrom is read on the cluster, so its chart cannot be rendered here"
         if not error:
             out, error = helm_template(
-                str(spec.get("releaseName") or name), target, tuple(chart),
-                (*values, yaml.safe_dump(spec.get("values") or {})), k3s.split("+")[0],
+                str(spec.get("releaseName") or name), str(spec.get("targetNamespace") or namespace), tuple(chart),
+                (yaml.safe_dump(spec.get("values") or {}),), k3s.split("+")[0],
             )  # fmt: skip
-            for item in yaml.load_all(out, Loader=_LOADER):
-                if isinstance(item, dict):
-                    # helm-controller applies an object with no namespace in the release's.
-                    item.setdefault("metadata", {}).setdefault("namespace", target)
-                    rendered.append(item)
+            rendered += [item for item in yaml.load_all(out, Loader=_LOADER) if isinstance(item, dict)]
         if error:
             problems.append(f"HelmRelease {namespace}/{name}: {error}")
     return docs + rendered, problems, k3s
@@ -244,14 +224,9 @@ def _ruled_groups(files: tuple[Path, ...]) -> frozenset[str]:
 
 
 def policies(docs: list[dict]) -> list[str]:
-    """Each object against core's rules, with the Kyverno CLI. A hosted app's namespace (labelled
-    hosting.jarvis.io/app in the build) is left out: there the app rules hold instead, which the
-    app checks run on its chart, as admission scopes core's rules to core's layers."""
+    """Each object against core's rules, with the Kyverno CLI."""
     files = _rule_files()
-    apps = {_key(doc)[2] for doc in docs
-            if doc.get("kind") == "Namespace" and "hosting.jarvis.io/app" in ((doc.get("metadata") or {}).get("labels") or {})}
-    docs = [doc for doc in docs
-            if str(doc.get("apiVersion", "")).rpartition("/")[0] in _ruled_groups(files) and _key(doc)[1] not in apps]
+    docs = [doc for doc in docs if str(doc.get("apiVersion", "")).rpartition("/")[0] in _ruled_groups(files)]
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", prefix="jarvis-objects-") as handle:
         yaml.safe_dump_all(docs, handle, sort_keys=False)
         handle.flush()

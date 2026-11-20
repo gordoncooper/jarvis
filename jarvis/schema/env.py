@@ -25,6 +25,7 @@ from jarvis.apps import checkout as _apps_checkout
 from jarvis.apps import values as _apps
 from jarvis.apps.app_file import check_folder, web_labels
 from jarvis.env import switches as _switches
+from jarvis.env.k3s import release
 from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE resolver)
 from jarvis.schema import values as _values
 from jarvis.secrets import recipients as _recipients
@@ -442,7 +443,7 @@ def apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) 
             errors.append(f"{where}: no {app}/app.yaml in the apps repository{_apps_checkout.STALE_HINT}")
             continue
         env_values = data[app].get("values")
-        problems = check_folder(apps_root / app, env_values)
+        problems = check_folder(apps_root / app, env_values, release(cluster_vars)[0])
         errors.extend(f"{where}: {problem}" for problem in problems)
         if problems:
             continue

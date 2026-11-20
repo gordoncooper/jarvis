@@ -8,8 +8,7 @@ requires every object of a protected kind, and the root Kustomization, to
 carry prune: disabled. The layer Kustomizations keep prune on.
 
 An exception needs a reason. Objects already guarded that are not one of
-those kinds stay guarded. A hosted app's HelmRelease keeps prune on, as an app's
-deploy/ Kustomization does: the env dropping the app from its list uninstalls it.
+those kinds stay guarded.
 """
 
 from __future__ import annotations
@@ -115,19 +114,10 @@ def unguarded_objects(
         for key, doc in applied.items()
         if key not in exceptions
         and (key[0] in PROTECTED_KINDS or key in KEPT)
-        and not _app_release(doc)
         and not prune_disabled(doc)
     ]
     absent = sorted(key for key in KEPT - FEATURE_KEPT if key not in applied)
     return sorted(unguarded), absent
-
-
-def _app_release(doc: dict) -> bool:
-    """A hosted app's chart release: app-<name>, run as its tenant app-<name> into app-<name>."""
-    spec = doc.get("spec") or {}
-    name = (doc.get("metadata") or {}).get("name")
-    return (doc.get("kind") == "HelmRelease" and str(name).startswith("app-")
-            and spec.get("serviceAccountName") == spec.get("targetNamespace") == name)
 
 
 def prune_disabled(doc: dict) -> bool:

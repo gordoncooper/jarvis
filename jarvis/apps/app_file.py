@@ -51,13 +51,12 @@ PRIORITY_CLASS = "hosted-app"
 # The CRD's CEL rules, by rule text. A rule added to the CRD fails here until it has its twin.
 _RULES = {
     "!('all' in self) || self.size() == 1": lambda value: "all" not in value or len(value) == 1,
-    "self.url.startsWith('oci://') != has(self.name)": lambda value: str(value.get("url")).startswith("oci://") != ("name" in value),
 }
 
 
-def check_folder(folder: Path | str, env_values: dict | None = None) -> list[str]:
+def check_folder(folder: Path | str, env_values: dict | None = None, k3s: str | None = None) -> list[str]:
     """Every problem with one app folder, or none. env_values: the env's values for the app's
-    chart, laid over the app's own."""
+    chart, laid over the app's own; k3s: the env's release, which the chart renders for."""
     folder = Path(folder)
     if not folder.is_dir():
         return [f"{folder}: not a folder"]
@@ -84,27 +83,24 @@ def check_folder(folder: Path | str, env_values: dict | None = None) -> list[str
     if chart and (folder / DEPLOY_DIR).exists():
         return [f"{name}/{DEPLOY_DIR}: an app with a chart ships no {DEPLOY_DIR}/; its objects are the chart's"]
     where = f"{name} chart {chart['version']}" if chart else f"{name}/{DEPLOY_DIR}"
-    objects, error = chart_objects(name, chart, env_values) if chart else _deploy_objects(folder / DEPLOY_DIR)
+    objects, error = chart_objects(name, chart, env_values, k3s) if chart else _deploy_objects(folder / DEPLOY_DIR)
     if error:
         return [f"{where}: {error}"]
     errors.extend(f"{where}: {problem}" for problem in deploy_problems(app, name, objects))
     return errors
 
 
-def chart_args(chart: dict) -> list[str]:
-    """What `helm pull` takes for the app file's chart."""
-    if chart["url"].startswith("oci://"):
-        return [chart["url"], "--version", chart["version"]]
-    return [chart["name"], "--repo", chart["url"], "--version", chart["version"]]
-
-
-def chart_objects(name: str, chart: dict, env_values: dict | None = None) -> tuple[list[dict], str | None]:
-    """The chart's objects as helm-controller installs them for app name, at core's k3s release."""
+def chart_objects(
+    name: str, chart: dict, env_values: dict | None = None, k3s: str | None = None
+) -> tuple[list[dict], str | None]:
+    """The chart's objects as helm-controller installs them for app name, at the k3s release given
+    (the env's), or core's."""
     from jarvis.checks.rendered import helm_template
     from jarvis.env.k3s import core_release
 
     values = (yaml.safe_dump(chart.get("values") or {}), yaml.safe_dump(env_values or {}))
-    out, error = helm_template(name, f"app-{name}", tuple(chart_args(chart)), values, core_release()[0].split("+")[0])
+    kube = (k3s or core_release()[0]).split("+")[0]
+    out, error = helm_template(name, f"app-{name}", (chart["url"], "--version", chart["version"]), values, kube)
     if error:
         return [], f"helm template failed: {error}"
     return [doc for doc in yaml.safe_load_all(out) if isinstance(doc, dict)], None

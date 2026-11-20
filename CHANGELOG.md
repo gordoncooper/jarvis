@@ -17,16 +17,13 @@ the upgrade.
   its entry `ownRoute: true` and ships that entry's route, and admission refuses any other route
   an app ships. The example apps are hello-web v0.3.0, notes v0.3.0 and lan-demo v0.2.0.
 - A hosted app can run an upstream Helm chart as it is, in place of `deploy/`: its app file's
-  `chart` names an `oci://` chart or an `https://` repository and chart, a version and values,
-  and the env entry's `values` lay over them. `jarvis render` reads the app file at its pinned
-  tag and commits the chart source, ConfigMap `app-<name>-values` and HelmRelease `app-<name>`,
-  which helm-controller installs as the app's tenant into `app-<name>`. The app check and
-  `jarvis validate` render the chart with `helm template` and hold its output to the app rules;
-  the app-check Action installs helm. An image with no chart runs from a generic one, such as
-  bjw-s app-template, as lan-demo v0.2.0 now does.
-- `jarvis validate` renders a HelmRelease's `valuesFrom` ConfigMaps from the build, merged by
-  Helm before its own values, where it refused them before. Core's Kyverno rules leave out a
-  hosted app's namespace, as admission does; the app rules hold there.
+  `chart` names an `oci://` chart, a version and values, and the env entry's `values` lay over
+  them. `jarvis render` reads the app file at its pinned tag and commits the chart source,
+  ConfigMap `app-<name>-values` and HelmRelease `app-<name>`, which helm-controller installs as
+  the app's tenant into `app-<name>`. The app check and `jarvis validate` render the chart with
+  `helm template` and hold its output to the app rules, not core's Kyverno rules; the app-check
+  Action installs helm. Dropping the app uninstalls the chart. An image with no chart runs from a
+  generic one, such as bjw-s app-template, as lan-demo v0.2.0 now does.
 - `values/apps.yaml` holds one entry per app the env runs, keyed by its name: `version`, its
   `grants`, and `backups` (default on). It replaces `apps:` in `values/switches.yaml` and the
   `versions:` and `exceptions:` lists.

@@ -190,20 +190,12 @@ spec:
                     ships only an image runs a generic chart such as bjw-s app-template.
                   type: object
                   required: [url, version]
-                  x-kubernetes-validations:
-                    - rule: "self.url.startsWith('oci://') != has(self.name)"
-                      message: an https:// repository names its chart; an oci:// url is the chart itself
                   properties:
                     url:
-                      description: An https:// chart repository, or the chart's own oci:// address.
+                      description: The chart's own oci:// address.
                       type: string
                       maxLength: 512
-                      pattern: "^(https|oci)://[^\\s]+$"
-                    name:
-                      description: The chart's name in an https:// repository.
-                      type: string
-                      maxLength: 253
-                      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                      pattern: "^oci://[^\\s]+$"
                     version:
                       description: The chart version, exactly.
                       type: string
