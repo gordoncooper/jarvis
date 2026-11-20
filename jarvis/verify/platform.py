@@ -200,7 +200,7 @@ def _renewed(spec: dict) -> datetime | None:
 
 def _leases(kubectl: Kubectl, namespace: str) -> dict[str, dict]:
     listed = items(kubectl(["get", "leases", "-n", namespace, "-o", "json"]), f"list {namespace} Leases")
-    return {(lease.get("metadata") or {}).get("name"): lease.get("spec") or {} for lease in listed}
+    return {str((lease.get("metadata") or {}).get("name")): lease.get("spec") or {} for lease in listed}
 
 
 def unreported_nodes(kubectl: Kubectl) -> list[str]:
@@ -217,7 +217,7 @@ def unreported_nodes(kubectl: Kubectl) -> list[str]:
     leases = _leases(kubectl, "kube-node-lease")
     stale = []
     for node in items(kubectl(["get", "nodes", "-o", "json"]), "list nodes"):
-        name = (node.get("metadata") or {}).get("name")
+        name = str((node.get("metadata") or {}).get("name"))
         spec = leases.get(name) or {}
         at = _renewed(spec)
         if at is None:
