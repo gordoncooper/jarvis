@@ -613,8 +613,8 @@ def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj:
         (lambda folder: _edit_app(folder, lambda app: app["spec"].pop("volumes")), "spec.volumes: is required"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(web=[{"service": "web", "port": "eighty"}])),
          "spec.network.web[0].port: is a integer"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"][0].update(service="web")),
-         "names a service and its port, or sets ownRoute"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"][0].pop("port")),
+         "spec.network.web[0].port: is required"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(web=[{"name": "a" * 60, "service": "web", "port": 80}])),
          "longer than 63"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"].update(webPort=8080)), "unknown key 'webPort'"),
@@ -622,7 +622,7 @@ def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj:
         (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(ports=[{"listen": 80, "protocol": "TCP"}])), "target: is required"),
         (lambda folder: _edit_app(folder, lambda app: app["metadata"].update(namespace="kube-system")), "metadata holds the name only"),
     ],
-    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "own-route-and-service", "web-name-too-long",
+    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "web-port-missing", "web-name-too-long",
          "old-web-port-key", "lan-all-and-names", "port-without-target", "namespace-set"],
 )
 def test_app_check_refuses_a_missing_invalid_or_misnamed_file(tmp_path: Path, change, expected: str) -> None:

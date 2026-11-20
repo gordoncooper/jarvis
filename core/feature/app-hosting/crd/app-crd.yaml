@@ -53,9 +53,7 @@ spec:
                       x-kubernetes-list-map-keys: [name]
                       items:
                         type: object
-                        x-kubernetes-validations:
-                          - rule: "has(self.ownRoute) && self.ownRoute ? !has(self.service) && !has(self.port) : has(self.service) && has(self.port)"
-                            message: a web entry names a service and its port, or sets ownRoute and names neither
+                        required: [service, port]
                         properties:
                           name:
                             description: Empty for the app's own address; otherwise a DNS label added to it.
@@ -87,7 +85,7 @@ spec:
                           ownRoute:
                             description: >-
                               The app ships this entry's HTTPRoute itself, for routing one service
-                              and port cannot express. Core makes none for it.
+                              and port cannot express; core makes none for that service and port.
                             type: boolean
                     ports:
                       description: >-

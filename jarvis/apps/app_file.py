@@ -49,8 +49,6 @@ PRIORITY_CLASS = "hosted-app"
 # The CRD's CEL rules, by rule text. A rule added to the CRD fails here until it has its twin.
 _RULES = {
     "!('all' in self) || self.size() == 1": lambda value: "all" not in value or len(value) == 1,
-    "has(self.ownRoute) && self.ownRoute ? !has(self.service) && !has(self.port) : has(self.service) && has(self.port)":
-        lambda value: (not {"service", "port"} & set(value)) if value.get("ownRoute") else {"service", "port"} <= set(value),
 }
 
 

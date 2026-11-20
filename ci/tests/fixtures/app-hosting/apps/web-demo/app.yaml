@@ -7,5 +7,7 @@ spec:
     # Routed by its own HTTPRoute (deploy/web.yaml), as an app whose routing one service and
     # port cannot express does; core makes no route for it.
     web:
-      - ownRoute: true
+      - service: web
+        port: 80
+        ownRoute: true
   volumes: []

@@ -211,7 +211,7 @@ def api():
         server.create(_namespace("own", []))
         apps = [_app("wired"), _app("granted", risky={"privileged": True}),
                 _app("annotation-gone", risky={"privileged": True}), _app("upgraded"), _app("notes"),
-                _app("own", network={"web": [{"ownRoute": True}]})]
+                _app("own", network={"web": [{"service": "own", "port": 80, "ownRoute": True}]})]
 
         def served() -> bool:
             return all(server.request("GET", PATHS[kind].format(namespace="app-wired"))[0] == 200 for kind in ("App", "HTTPRoute"))
@@ -415,7 +415,7 @@ def test_only_the_finalizer_on_a_terminating_volsync_claim_is_released(api: Api)
 # Asked for and granted at first, then revoked.
 REVOCABLE = ["privileged", "hostname custom.example.test", "lan-port 8443/TCP", "lan-all", "lan-target nas 10.200.0.10/32 445/TCP"]
 ASKS = {"risky": {"privileged": True}, "volumes": [{"name": "data", "backup": False}],
-        "network": {"web": [{"ownRoute": True, "hostnames": ["custom.example.test"]}],
+        "network": {"web": [{"service": "web", "port": 80, "ownRoute": True, "hostnames": ["custom.example.test"]}],
                     "ports": [{"listen": 8443, "target": 8443, "protocol": "TCP"}]}}
 
 

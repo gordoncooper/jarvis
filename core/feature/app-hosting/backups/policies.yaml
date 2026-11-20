@@ -1,7 +1,8 @@
 # Hosted apps' backups. Each app's data has its own restic password and its own login on the
 # apps rest-server (rest-server.yaml), which confines that login to the app's own folder
-# ns-<namespace>/. An app's backups are on once the env seals its credential
-# (jarvis secrets --app app-<name>); the render registers it (core/feature/app-hosting/CONTRACT.md).
+# ns-<namespace>/. An app's backups are on unless its entry in values/apps.yaml says backups:
+# false; jarvis secrets --env mints its credential and the render registers it
+# (core/feature/app-hosting/CONTRACT.md).
 # Core's pvc-backup skips app- namespaces, so core's credential never reaches one.
 #
 # pvc-backup-app: a hosted app's PVC. Its Secret comes only from that app's own credential, so
