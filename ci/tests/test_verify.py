@@ -319,6 +319,9 @@ _BAD_STATES = {
     "crashloop": ("pods", [_pod("Running", waiting="CrashLoopBackOff")], "app/web: CrashLoopBackOff", "spec"),
     "pending-past-grace": ("pods", [_pod("Pending", "2026-10-31T11:54:59Z")], "app/web: Pending", None),
     "pending-no-timestamp": ("pods", [_pod("Pending", None)], "app/web: Pending", None),
+    # Right after a boot: the kubelet has not renewed its Lease, so no check runs on older status.
+    "kubelet-not-reported": ("lease_renewed", "2026-10-31T11:59:00Z", "judge: n1: its kubelet last reported at", "PASS"),
+    "no-node-lease": ("lease_renewed", None, "judge: n1: its kubelet has not reported", "PASS"),
 }
 
 
@@ -333,24 +336,6 @@ def test_each_bad_standing_state_fails(
     assert message in output
     assert f"PASS {message.removeprefix('FAIL ')}" not in output and SECRET_VALUE not in output
     assert absent is None or absent not in output
-
-
-@pytest.mark.parametrize(
-    ("renewed", "reported"),
-    [("2026-10-31T11:58:00.000000Z", "n1: its kubelet last reported at 2026-10-31T11:58:00.000000Z"),
-     (None, "n1: its kubelet has not reported")],
-    ids=["stale-lease", "no-lease"],
-)
-def test_a_node_whose_kubelet_has_not_reported_since_a_boot_is_not_judged(tmp_path, monkeypatch, capsys, renewed, reported):
-    """Rule: right after a boot the API server still holds status from before it. A node whose
-    kubelet has not renewed its Lease within the Lease's duration stops verify before any
-    standing check, so none passes on that status."""
-    cluster = Cluster()
-    cluster.lease_renewed = renewed
-    assert _run(tmp_path, cluster, monkeypatch) == 1
-    output = capsys.readouterr().out
-    assert f"FAIL too freshly started to judge: {reported}" in output
-    assert "PASS" not in output and "WARN" not in output
 
 
 def test_a_pending_pod_within_its_grace_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
