@@ -124,16 +124,16 @@ def run(
 
     unread = 0
     try:
-        unreported = _platform.unreported_nodes(kubectl, ctx.now)
+        unreported = _platform.unreported_nodes(kubectl)
     except (CheckError, EnvError) as exc:
         _line(f"FAIL kubelets reporting: {exc}")
         unread, unreported = 1, []
     if unreported:
         # Every standing check would read status left from before the boot; none of them runs.
-        # The Lease's renewTime is the node's clock, and now is this machine's: past 40 s apart,
-        # every run reads as fresh, which the line names.
+        # A kubelet's renewTime is its node's clock, and the control plane's is its own: a node
+        # whose clock is off by more than the Lease's duration reads as fresh on every run.
         _line(f"FAIL too freshly started to judge: {'; '.join(unreported)}. Run verify again once every "
-              "kubelet reports; if this persists, check this machine's clock against the nodes'")
+              "kubelet reports; if this persists, check that node's clock against the control plane's")
         return 1
     failed = unread + _report(checks)
     app_dns = _switches.APP_DNS in _switches.names(switches, _switches.FEATURES)

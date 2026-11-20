@@ -102,8 +102,9 @@ class Cluster:
         self.hold = False
         self.bad_sources_json = False
         self.node_ready = True
-        # The kubelet's last Lease renewal; NOW is 12:00:00.
+        # The kubelet's last Lease renewal, and the API server's identity Lease's: the cluster's now.
         self.lease_renewed: str | None = "2026-10-31T11:59:50.000000Z"
+        self.control_plane_renewed = "2026-10-31T11:59:58.000000Z"
         self.nodes_rc = 0
         self.pods_rc = 0
         self.pods: list[dict] = []
@@ -140,6 +141,9 @@ class Cluster:
             ready = {"type": "Ready", "status": "True" if self.node_ready else "False"}
             body = {"items": [{"metadata": {"name": "n1", "labels": labels}, "status": {"conditions": [ready]}}]}
             return _completed(argv, body, returncode=self.nodes_rc, stderr="forbidden" if self.nodes_rc else "")
+        if argv[:4] == ["get", "leases", "-n", "kube-system"]:
+            spec = {"leaseDurationSeconds": 3600, "renewTime": self.control_plane_renewed}
+            return _completed(argv, {"items": [{"metadata": {"name": "apiserver-a1"}, "spec": spec}]})
         if argv[:2] == ["get", "leases"]:
             spec = {"holderIdentity": "n1", "leaseDurationSeconds": 40, "renewTime": self.lease_renewed}
             leases = [{"metadata": {"name": "n1"}, "spec": spec}] if self.lease_renewed else []
@@ -336,6 +340,14 @@ def test_each_bad_standing_state_fails(
     assert message in output
     assert f"PASS {message.removeprefix('FAIL ')}" not in output and SECRET_VALUE not in output
     assert absent is None or absent not in output
+
+
+def test_a_kubelet_is_judged_by_the_cluster_clock_not_this_machine(tmp_path, monkeypatch, capsys) -> None:
+    """Rule: a node's Lease is compared with the control plane's, so a machine whose clock is a
+    day ahead of the cluster still judges a kubelet that renewed 10 s before the API server."""
+    cluster = Cluster()
+    cluster.lease_renewed, cluster.control_plane_renewed = "2026-10-30T11:59:50Z", "2026-10-30T12:00:00Z"
+    assert _run(tmp_path, cluster, monkeypatch) == 0, capsys.readouterr().out
 
 
 def test_a_pending_pod_within_its_grace_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:

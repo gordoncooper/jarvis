@@ -190,27 +190,40 @@ def _node_ready(item: dict) -> bool:
     return False
 
 
-def unreported_nodes(kubectl: Kubectl, now: datetime) -> list[str]:
+def _renewed(spec: dict) -> datetime | None:
+    try:
+        at = datetime.fromisoformat(str(spec.get("renewTime")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo else None
+
+
+def _leases(kubectl: Kubectl, namespace: str) -> dict[str, dict]:
+    listed = items(kubectl(["get", "leases", "-n", namespace, "-o", "json"]), f"list {namespace} Leases")
+    return {(lease.get("metadata") or {}).get("name"): lease.get("spec") or {} for lease in listed}
+
+
+def unreported_nodes(kubectl: Kubectl) -> list[str]:
     """Nodes whose kubelet has not renewed its Lease within the Lease's own duration, the node
     controller's rule. Right after a boot the API server still holds such a node's status, and
-    its pods', from before, and the node controller is still in its own start-up grace."""
-    nodes = items(kubectl(["get", "nodes", "-o", "json"]), "list nodes")
-    leases = {
-        (lease.get("metadata") or {}).get("name"): lease.get("spec") or {}
-        for lease in items(kubectl(["get", "leases", "-n", "kube-node-lease", "-o", "json"]), "list node leases")
-    }
+    its pods', from before, and the node controller is still in its own start-up grace.
+    Now is the cluster's: the newest renewal among kube-system's Leases, which the API server
+    (its identity Lease) and any leader-elected controller renew every few seconds, so the
+    clock of the machine running verify plays no part."""
+    clock = [at for spec in _leases(kubectl, "kube-system").values() if (at := _renewed(spec))]
+    if not clock:
+        raise CheckError("no Lease in kube-system to read the cluster's time from")
+    now = max(clock)
+    leases = _leases(kubectl, "kube-node-lease")
     stale = []
-    for node in nodes:
+    for node in items(kubectl(["get", "nodes", "-o", "json"]), "list nodes"):
         name = (node.get("metadata") or {}).get("name")
         spec = leases.get(name) or {}
-        renewed = spec.get("renewTime")
-        try:
-            at = datetime.fromisoformat(str(renewed).replace("Z", "+00:00"))
-        except ValueError:
+        at = _renewed(spec)
+        if at is None:
             stale.append(f"{name}: its kubelet has not reported")
-            continue
-        if at.tzinfo is None or now - at > timedelta(seconds=int(spec.get("leaseDurationSeconds") or 40)):
-            stale.append(f"{name}: its kubelet last reported at {renewed}")
+        elif now - at > timedelta(seconds=int(spec.get("leaseDurationSeconds") or 40)):
+            stale.append(f"{name}: its kubelet last reported at {spec['renewTime']}, {int((now - at).total_seconds())} s before the control plane")
     return stale
 
 
