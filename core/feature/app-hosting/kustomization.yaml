@@ -18,6 +18,7 @@ resources:
   - policies/derive.yaml
   - backups
   - priority.yaml
+  - lan-name.yaml
   - grant-revoke.yaml
   - certificate.yaml
 patches:
