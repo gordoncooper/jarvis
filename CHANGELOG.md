@@ -7,6 +7,19 @@ the upgrade.
 
 ## Unreleased
 
+### Changed
+
+- `jarvis up` and the pre-commit hook `jarvis init` installs no longer run `jarvis render --check`
+  beside `jarvis validate`, which already runs it. A hook installed before keeps working as it is.
+- The instance workflow restores the chart and schema cache, as core's CI does, so an instance's
+  `jarvis validate` reaches a chart host only for a chart version no earlier run pulled.
+
+### Fixed
+
+- `jarvis node prep` waits up to 10 minutes for apt's lock, so it no longer fails on a new node
+  still running unattended-upgrades after boot.
+- The flux-operator role's first API call reads no secret, so a wrong kubeconfig shows its error.
+
 ## v0.7.0
 
 ### Changed

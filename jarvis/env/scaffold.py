@@ -262,7 +262,6 @@ PRE_COMMIT = """#!/bin/sh
 envs=$(git diff --cached --name-only -- envs | cut -d/ -f2 | sort -u)
 for env in $envs; do
   [ -d "envs/$env" ] || continue
-  jarvis --env "$env" render --check || exit 1
   jarvis --env "$env" validate || exit 1
 done
 """

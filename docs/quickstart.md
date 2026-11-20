@@ -72,7 +72,7 @@ git remote add origin "$REPO_URL"
 git push -u origin "$BRANCH"
 ```
 
-The commit runs the pre-commit hook `jarvis init` installed: `jarvis render --check` and `jarvis validate`.
+The commit runs the pre-commit hook `jarvis init` installed: `jarvis validate`.
 
 ## 6. Bring it up
 

@@ -1,6 +1,15 @@
 ---
 # Read-only. Runs before the operator install, so a wrong key file stops the run
 # before any cluster change. sops_age_secret.yml creates the secret.
+# The role's first API call reads no secret, so a wrong kubeconfig or an API server that does
+# not answer shows its error here rather than inside the no_log lookup below.
+- name: Reach the Kubernetes API
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: kube-system
+  check_mode: false
+
 # The result holds the secret's data, so it is never shown.
 - name: Check whether flux-system sops-age secret exists
   kubernetes.core.k8s_info:

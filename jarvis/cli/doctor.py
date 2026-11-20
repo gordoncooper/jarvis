@@ -109,7 +109,7 @@ def check_hook(instance: Path) -> list[tuple[str, str]]:
     if hook is None:
         return [("WARN", f"{instance} is not a git repository; commits are not checked before they are made")]
     if hook.is_file() and "jarvis" in hook.read_text(encoding="utf-8", errors="ignore"):
-        return [("PASS", "the pre-commit hook runs jarvis render --check and validate")]
+        return [("PASS", "the pre-commit hook runs jarvis validate")]
     if not hook.exists():
         install_hook(instance)
         return [("PASS", f"installed the pre-commit hook at {hook} (a fresh clone or worktree has none)")]

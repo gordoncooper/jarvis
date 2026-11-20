@@ -14,7 +14,8 @@
       - chrony
       - unattended-upgrades
       - tzdata
-      # kubernetes.core's client, for the k3s labels and flux-operator tasks on the control plane.
+      # kubernetes.core's client. Only the control plane's tasks use it (labels, flux-operator,
+      # backups); every node gets it so base-os keeps one package list.
       - python3-kubernetes
     state: present
     update_cache: true

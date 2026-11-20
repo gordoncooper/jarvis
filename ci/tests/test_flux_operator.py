@@ -627,7 +627,8 @@ def test_sops_age_refuses_wrong_owner_from_stat(api: apiserver.Api, tmp_path: Pa
 
 
 def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
-    """An API that does not answer is not an absent secret: nothing is read or created."""
+    """An API that does not answer is not an absent secret: the role stops at its first call, which
+    reads no secret, so its error shows and nothing is read or created."""
     require_cli("ansible-playbook")
     sentinel = "SENTINEL-AGE-KEY-NOT-READ"
     keyfile = tmp_path / "age.key"
@@ -638,7 +639,7 @@ def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
     proc = _run_localhost_role(_SOPS_PLAY, tmp_path, [], env=env)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
-    assert _failed_task(output) == "Check whether flux-system sops-age secret exists", output
+    assert _failed_task(output) == "Reach the Kubernetes API", output
     assert sentinel not in output
 
 
