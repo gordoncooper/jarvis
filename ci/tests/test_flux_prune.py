@@ -43,7 +43,7 @@ def test_addon_secret_without_the_annotation_is_reported(tmp_path) -> None:
         sops_bin=shutil.which("sops"),
     )
     messages = [item.message for item in scan_flux_prune(copy_env.root)]
-    assert any(f"Secret {sealed.parent.name}/" in item and "must carry" in item for item in messages), messages
+    assert any(f"Secret {doc['metadata']['namespace']}/" in item and "must carry" in item for item in messages), messages
 
 
 def test_dropped_annotation_on_a_flux_object_is_reported() -> None:
