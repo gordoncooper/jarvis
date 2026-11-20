@@ -275,6 +275,8 @@ def test_an_app_with_backups_on_needs_its_credential(tmp_path: Path) -> None:
     _product, instance = _tree(tmp_path)
     values = instance / "envs" / "env-00" / _apps.APPS_VALUES
     assert _schema_errors(instance, bootstrapped=True) == []
-    _edit(values, "  backups: false\n", "")
+    (instance / "envs" / "env-00" / "secrets" / "app-notes" / "backups-restic-app-notes.sops.yaml").unlink()
     assert any("notes: backups are on" in error for error in _schema_errors(instance, bootstrapped=True))
     assert _schema_errors(instance) == []
+    _edit(values, "notes:\n  version: v0.3.0\n", "notes:\n  version: v0.3.0\n  backups: false\n")
+    assert _schema_errors(instance, bootstrapped=True) == []

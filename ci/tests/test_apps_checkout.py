@@ -28,6 +28,7 @@ def _instance(tmp_path: Path, *, core_only: bool) -> Path:
     env_dir = copy_sample(instance) / "envs" / "env-00"
     if core_only:
         (env_dir / "values" / "apps.yaml").write_text("{}\n", encoding="utf-8")
+        shutil.rmtree(env_dir / "secrets" / "app-notes")
         render_switches(env_dir, instance)
     return instance
 

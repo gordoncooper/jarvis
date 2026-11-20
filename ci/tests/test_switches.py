@@ -14,7 +14,6 @@ from support import (
     _kustomize_build,
     bootstrap_example_copy,
     flux_built,
-    register_copy_app,
     render_switches,
     set_switches,
 )
@@ -125,11 +124,9 @@ def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:
 
 def test_a_sealed_app_credential_registers_on_the_apps_server(tmp_path: Path) -> None:
     """Rule: app-hosting brings the apps server, and each app with backups on whose credential is
-    sealed registers on it; an app without one registers nothing."""
+    sealed registers on it: notes, whose volume jarvis secrets minted one for. An app without
+    one registers nothing."""
     copy = bootstrap_example_copy(tmp_path)
-    assert ("Deployment", "restic-apps") in _objects(copy, "platform-configs")
-    assert not any(name.startswith("backups-restic-app-") for _kind, name in _objects(copy, "platform-configs"))
-    register_copy_app(copy, "app-notes")
     validate_one_env(copy.root, copy.name)
     objects = _objects(copy, "platform-configs")
     assert {("Deployment", "restic-apps"), ("Secret", "backups-restic-app-notes")} <= objects

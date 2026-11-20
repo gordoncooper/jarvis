@@ -27,7 +27,7 @@ the upgrade.
 - An app with `backups` on and a `backup: true` volume needs its own credential: `jarvis secrets
   --env <env>` mints it, `jarvis validate` requires it once the env is bootstrapped, and `jarvis
   verify` fails a volume of it with no ReplicationSource. With `backups: false` nothing is sealed
-  or reported. The example notes keeps `backups: false`.
+  or reported.
 - The env checks read the apps repository only from `APPS_REPO`, which the jarvis CLI sets; they
   no longer look for a checkout beside the instance.
 - `jarvis restore`'s binder pod meets core's rules and an app namespace's baseline (sized, Pod
