@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.8.1
+
 ### Fixed
 
 - `jarvis site` and `jarvis node prep` work on an env that lists hosted apps. The CLI fetched the
