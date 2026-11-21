@@ -32,7 +32,7 @@ actionlint = "1.7.12"
 # The admission test's loopback API server (Linux only): kube-apiserver at kubectl's release,
 # and the etcd kubeadm pairs with that minor.
 "aqua:kubernetes/kubernetes/kube-apiserver" = { version = "1.36.6", os = ["linux"] }
-etcd = { version = "3.6.16", os = ["linux"] }
+etcd = { version = "3.6.17", os = ["linux"] }
 
 [tasks.deps]
 # The one way a core checkout installs itself: make deps, CI and the jarvis CLI (for the core
