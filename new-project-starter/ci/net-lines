@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# A PR's net lines by area, against main: the first lines of its body.
+# Set the two lists for your layout: product is what users run, tests is the suite.
+# Docs are every Markdown file; tooling is everything else, lockfiles left out.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+product=(src)
+tests=(tests)
+
+git fetch -q origin main
+net() { printf '%-8s %s\n' "$1" "$(shift; git diff --shortstat origin/main...HEAD -- "$@")"; }
+
+net product "${product[@]}" ':!*.md'
+net tests "${tests[@]}" ':!*.md'
+net docs '*.md'
+others=()
+for path in "${product[@]}" "${tests[@]}"; do others+=(":!$path"); done
+net tooling . "${others[@]}" ':!*.md' ':!*.lock' ':!*-lock.json' ':!*-lock.yaml' ':!go.sum'

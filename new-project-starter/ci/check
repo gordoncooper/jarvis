@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# The one check. CI runs exactly this, and so does everyone before pushing.
+# Fill in the three steps for your stack. Until then each one fails, so the project
+# can't start without a formatter, a linter and tests.
+# Put one command per line in each step: set -e stops at the first one that fails.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+format() {
+  # Check formatting without changing files, e.g. `ruff format --check .` or `prettier --check .`.
+  echo "fill in format() in ci/check for your stack" >&2
+  return 1
+}
+
+lint() {
+  # e.g. `ruff check .`, `eslint .` or `go vet ./...`.
+  echo "fill in lint() in ci/check for your stack" >&2
+  return 1
+}
+
+tests() {
+  # The whole suite, e.g. `pytest -q`, `npm test` or `go test ./...`. Keep this script under 3 minutes.
+  echo "fill in tests() in ci/check for your stack" >&2
+  return 1
+}
+
+for step in format lint tests; do
+  echo "== $step"
+  start=$SECONDS
+  "$step"
+  echo "-- $step passed in $((SECONDS - start))s"
+done
+echo "== all passed in ${SECONDS}s"

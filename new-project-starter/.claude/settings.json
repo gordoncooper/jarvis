@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(gh *pr merge*)",
+      "Bash(gh *api*/merge*)",
+      "Bash(git *push *--force*)",
+      "Bash(git *push *-f)",
+      "Bash(git *push *-f *)",
+      "Bash(git *push * +*)",
+      "Bash(git *push * main)",
+      "Bash(git *push * main *)",
+      "Bash(git *push *:main*)",
+      "Bash(git *push *refs/heads/main*)",
+      "Bash(git *push *--tags*)",
+      "Bash(git *push *refs/tags/*)",
+      "Bash(git *push * v*)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(sftp *)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(~/.ssh/**)",
+      "Read(//**/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.netrc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.config/gh/**)"
+    ]
+  }
+}

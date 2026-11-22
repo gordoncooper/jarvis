@@ -1,0 +1,2 @@
+# LF in the repository and in every checkout, so a diff shows only real changes.
+* text=auto eol=lf

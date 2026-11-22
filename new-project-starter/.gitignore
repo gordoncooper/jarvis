@@ -1,0 +1,19 @@
+# Secrets and local settings never enter the repository.
+# Name an example file env.example, not .env.example, so it isn't caught here.
+.env
+.env.*
+*.pem
+*.key
+.claude/settings.local.json
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Scratch space for experiments; nothing in it is kept
+.scratch/
+
+# Your stack's build output and caches go below.
