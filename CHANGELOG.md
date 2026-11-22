@@ -44,7 +44,9 @@ the upgrade.
   the app's LoadBalancer Service. Core names each app LoadBalancer (MutatingPolicy
   `app-lan-name`), and admission refuses an app Service that is unnamed or names any other
   hostname. An app LoadBalancer made before this release gets its name the next time it is
-  written; for a chart app, `flux reconcile helmrelease app-<name> -n flux-system --force`.
+  written; for a chart app, once `jarvis verify` passes on this release,
+  `flux reconcile helmrelease app-<name> -n flux-system --force`. Run before that, the reconcile
+  writes the Service before `app-lan-name` exists, and it stays unnamed.
 - `jarvis verify` warns, instead of failing, while a restored volume's backup waits for its
   first scheduled sync.
 - `jarvis verify` right after a boot: while a node's kubelet has not renewed its Lease, it prints
