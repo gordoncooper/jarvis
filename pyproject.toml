@@ -13,7 +13,7 @@ dynamic = ["version"]
 requires-python = ">=3.13"
 # What the operator tools and the app-check Action import.
 dependencies = [
-  "PyYAML==6.0.3",
+  "PyYAML==6.0.4",
   "jsonschema==4.26.0",
   "bcrypt==5.0.0",
   # jarvis verify --smoke asks App DNS for a new name directly.
@@ -35,7 +35,7 @@ dev = [
   "pytest==9.2.0",
   "pytest-xdist==3.8.0",
   "pyright==1.1.414",
-  "ruff==0.17.5",
+  "ruff==0.17.6",
   # kubernetes.core's client, where the controller is the control plane: e2e and the role proofs.
   # A node gets python3-kubernetes from base-os.
   "kubernetes==37.0.3",
