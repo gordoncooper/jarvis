@@ -15,7 +15,7 @@ runs:
     - name: Install mise
       uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
       with:
-        version: 2026.11.10
+        version: 2026.11.12
         install: false
     # kustomize, helm (an app with a chart renders it) and the jarvis package's Python dependencies
     # at this core's pins (mise.lock, uv.lock).
