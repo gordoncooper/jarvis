@@ -1,6 +1,7 @@
 """What an env deploys, checked by the upstream tools: kubeconform for schemas, the Kyverno CLI for
 core's rules: those the cluster also enforces at admission (core/platform/kyverno/rules/rules.yaml,
-read without their namespace scope) and those only Git keeps (git-rules.yaml beside this file).
+as the env's build applies them, a feature's exception included, but without their namespace scope)
+and those only Git keeps (git-rules.yaml beside this file).
 
 The objects are Flux's build of every path on the root artifact (flux_build.env_tree) and each
 HelmRelease's chart, rendered by `helm template` from the source the build names, with the
@@ -211,29 +212,32 @@ def kubeconform(docs: list[dict], k3s: str) -> list[str]:
     return problems or ([proc.stderr.strip() or "kubeconform failed"] if proc.returncode else [])
 
 
-def _rule_files() -> tuple[Path, Path]:
-    return _paths.core_root() / "core" / "platform" / "kyverno" / "rules" / "rules.yaml", GIT_RULES
+def _load(path: Path) -> list[dict]:
+    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
 
 
-@functools.cache
-def _ruled_groups(files: tuple[Path, ...]) -> frozenset[str]:
-    """The API groups the rules match. The CLI's time grows with every object it reads, so it reads
-    only objects in these groups; the CLI itself matches kinds within them."""
-    rules = [doc for path in files for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
-    return frozenset(
-        group for rule in rules for match in rule["spec"]["matchConstraints"]["resourceRules"] for group in match["apiGroups"]
-    )
+def core_rules(docs: list[dict]) -> list[dict]:
+    """Core's admission rules among docs, as the env's build made them. Offline there are no
+    namespaces to select (a chart's objects carry none of their labels), so each holds every object."""
+    names = {rule["metadata"]["name"] for rule in _load(_paths.core_root() / "core" / "platform" / "kyverno" / "rules" / "rules.yaml")}
+    rules = [doc for doc in docs if doc.get("kind") == "ValidatingPolicy" and _key(doc)[2] in names]
+    return [{**rule, "spec": {**rule["spec"], "matchConstraints": {
+        k: v for k, v in rule["spec"]["matchConstraints"].items() if k != "namespaceSelector"}}} for rule in rules]  # fmt: skip
 
 
-def policies(docs: list[dict]) -> list[str]:
-    """Each object against core's rules, with the Kyverno CLI."""
-    files = _rule_files()
-    docs = [doc for doc in docs if str(doc.get("apiVersion", "")).rpartition("/")[0] in _ruled_groups(files)]
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", prefix="jarvis-objects-") as handle:
-        yaml.safe_dump_all(docs, handle, sort_keys=False)
-        handle.flush()
+def policies(docs: list[dict], rules: list[dict]) -> list[str]:
+    """Each object against rules and the Git-only rules, with the Kyverno CLI."""
+    rules = rules + _load(GIT_RULES)
+    # The CLI's time grows with every object it reads, so it reads only objects in the groups the
+    # rules match; the CLI itself matches kinds within them.
+    groups = {group for rule in rules for match in rule["spec"]["matchConstraints"]["resourceRules"] for group in match["apiGroups"]}
+    docs = [doc for doc in docs if str(doc.get("apiVersion", "")).rpartition("/")[0] in groups]
+    with tempfile.TemporaryDirectory(prefix="jarvis-policies-") as work:
+        rule_file, objects = Path(work) / "rules.yaml", Path(work) / "objects.yaml"
+        rule_file.write_text(yaml.safe_dump_all(rules, sort_keys=False), encoding="utf-8")
+        objects.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
         proc = subprocess.run(
-            [_tool("kyverno"), "apply", *map(str, files), "--resource", handle.name,
+            [_tool("kyverno"), "apply", str(rule_file), "--resource", str(objects),
              "--policy-report", "--output-format", "json", "--remove-color"],
             capture_output=True, text=True, check=False,
         )  # fmt: skip
@@ -270,4 +274,4 @@ def scan_kubeconform(instance: Path) -> list[str]:
 
 
 def scan_policies(instance: Path) -> list[str]:
-    return _each_env(instance, lambda docs, _k3s: policies(docs))
+    return _each_env(instance, lambda docs, _k3s: policies(docs, core_rules(docs)))

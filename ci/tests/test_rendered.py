@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
-from jarvis.checks.rendered import kubeconform, policies
+import yaml
+
+from jarvis.checks.rendered import core_rules, kubeconform, policies
+from support import REPO_ROOT, ExampleCopy, bootstrap_example_copy, flux_built, render_switches, set_switches
 
 PINNED = "registry.example/app:1.0@sha256:" + "a" * 64
 PROBE = {"httpGet": {"path": "/", "port": 80}}
 SIZED = {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"memory": "32Mi"}}
+RULES = list(yaml.safe_load_all((REPO_ROOT / "core/platform/kyverno/rules/rules.yaml").read_text(encoding="utf-8")))
 
 
 def _deployment(namespace: str = "demo", name: str = "web", **container: object) -> dict:
@@ -40,13 +45,25 @@ def test_each_rule_fails_its_seeded_object_and_passes_a_sound_one() -> None:
         "backups": {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource",
                     "metadata": {"name": "data", "namespace": "demo"}, "spec": {"sourcePVC": "data"}},
     }  # fmt: skip
-    failed = policies(list(seeded.values()))
+    failed = policies(list(seeded.values()), RULES)
     assert {line.split(":")[0] for line in failed} == set(seeded), failed
     throttled = _deployment(resources={**SIZED, "limits": {"cpu": "1", "memory": "32Mi"}})
-    assert [line.split(":")[0] for line in policies([throttled])] == ["resources"]
+    assert [line.split(":")[0] for line in policies([throttled], RULES)] == ["resources"]
     excepted = copy.deepcopy(unprobed)
     excepted["metadata"] = {"name": "cert-manager-cainjector", "namespace": "platform-cert-manager"}
-    assert policies([_deployment(), job, excepted]) == []
+    assert policies([_deployment(), job, excepted], RULES) == []
+
+
+def test_a_feature_brings_its_own_exception(example_copy: ExampleCopy, tmp_path: Path) -> None:
+    """App DNS's LoadBalancer passes core's rules as an env that lists App DNS builds them, and
+    fails them in one that does not."""
+    service = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "k8s-gateway", "namespace": "platform-app-dns"},
+               "spec": {"type": "LoadBalancer", "ports": [{"port": 53}]}}  # fmt: skip
+    off = bootstrap_example_copy(tmp_path)
+    set_switches(off.env_dir, features=["alerts", "app-hosting", "offsite-backup-copy"])
+    render_switches(off.env_dir, off.root)
+    found = [policies([service], core_rules(flux_built(copy.root, copy.name))) for copy in (example_copy, off)]
+    assert found[0] == [] and [line.split(":")[0] for line in found[1]] == ["load-balancers"]
 
 
 def test_kubeconform_reads_a_kind_from_the_crd_beside_it() -> None:

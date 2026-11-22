@@ -10,8 +10,8 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | Wiring applied for it | The services stage applies the add-on's wiring as the platform account, so it never creates its own namespace or identity |
 | Slots | `addons/slots/<slot>/CONTRACT.md`. One add-on per slot per env. Core and other add-ons refer to the slot, never the add-on |
 | Values | The env's published `cluster-vars` keys, as inline `postBuild.substitute` entries on its Kustomizations |
-| Backups | Its PVCs are enrolled with core's credential ([backups](../core/platform/backups/CONTRACT.md)); it writes no VolSync object or restic URL |
-| Exposure | The core door ([traefik](../core/platform/traefik/CONTRACT.md)) and its wildcard serve `<name>.${dns_suffix}` |
+| Backups | Its PVCs are enrolled with core's credential ([backups](../core/platform/backups/CONTRACT.md)) once core's namespace selectors list layer `addon`, with the first add-on; it writes no VolSync object or restic URL |
+| Exposure | The core door ([traefik](../core/platform/traefik/CONTRACT.md)) and its wildcard serve `<name>.${dns_suffix}`, once the door's selector lists layer `addon`, with the first add-on |
 | Checks | Optional `addons/<name>/verify.py`, registered with `verify.registry.register`, loaded only when the env lists the add-on |
 
 ## Expects

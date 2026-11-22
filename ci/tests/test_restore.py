@@ -281,8 +281,8 @@ def _boom(_seconds: float) -> None:
 
 
 def _run(cluster: _Cluster, *, kubectl=None, **kwargs: object) -> int:
-    """restore on cluster, for app demo unless kwargs say otherwise, with a clock that never sleeps."""
-    args = {"env": "env-00", "app": "demo", "all_pvcs": False, "monotonic": lambda: 0.0, "sleep": _boom,
+    """restore on cluster, for namespace demo unless kwargs say otherwise, with a clock that never sleeps."""
+    args = {"env": "env-00", "in_namespace": "demo", "all_pvcs": False, "monotonic": lambda: 0.0, "sleep": _boom,
             "now": lambda: 1000.0, **kwargs}  # fmt: skip
     return restore_tool.run(kubectl or cluster.kubectl, **args)  # type: ignore[arg-type]
 
@@ -312,11 +312,11 @@ def test_kubectl_is_bound_to_the_environment_file(monkeypatch) -> None:
 
 
 def test_restore_pauses_before_direct_destination(capsys) -> None:
-    for argv in (["--env", "env-00"], ["--env", "env-00", "--app", "demo", "--all"]):
+    for argv in (["--env", "env-00"], ["--env", "env-00", "--namespace", "demo", "--all"]):
         with pytest.raises(SystemExit) as refused:
             restore_tool.main(argv)
         assert refused.value.code == 2
-    assert "one of the arguments --app --all is required" in capsys.readouterr().err
+    assert "one of the arguments --namespace --all is required" in capsys.readouterr().err
 
     long_name = "p" * 60
     assert restore_tool.job_name("drill") == "volsync-src-drill"
@@ -359,7 +359,7 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
     assert "did not pause" in capsys.readouterr().out
 
     everyone = _Cluster(items, will_pause=True)
-    assert _run(everyone, app=None, all_pvcs=True) == 0
+    assert _run(everyone, in_namespace=None, all_pvcs=True) == 0
     restored = {doc["metadata"]["namespace"] + "/" + doc["spec"]["restic"]["destinationPVC"] for doc in everyone.applied}
     assert restored == {"demo/drill", "other/keep"}
 
@@ -391,14 +391,14 @@ def test_empty_mover_logs_fail(capsys) -> None:
 def test_restore_all_on_an_empty_env_is_a_clean_no_op(capsys) -> None:
     """A fresh env has no hold and no PVC: restore-all says so and exits 0, changing nothing."""
     cluster = _Cluster([], will_pause=True)
-    assert _run(cluster, app=None, all_pvcs=True) == 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True) == 0
     assert "nothing to restore: no rebuild hold and no PVC" in capsys.readouterr().out
     assert not any(call[0] in ("apply", "delete", "patch", "create") for call in cluster.calls)
 
 
 def test_named_restore_fails_when_nothing_matches(capsys) -> None:
     cluster = _Cluster([], will_pause=True, hold=["ns-demo/pvc-drill"])
-    assert _run(cluster, app="typo", all_pvcs=False) != 0
+    assert _run(cluster, in_namespace="typo", all_pvcs=False) != 0
     assert "no PVC to restore" in capsys.readouterr().out
     assert cluster.hold_deleted is False
 
@@ -460,7 +460,7 @@ def test_restore_all_node_pins_every_unbound_pvc(capsys) -> None:
         ],
         will_pause=True,
     )
-    assert _run(cluster, app=None, all_pvcs=True, node="node-a") == 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True, node="node-a") == 0
     pinned = restore_tool._node_placement("node-a")["affinity"]
     claims = {
         (
@@ -546,11 +546,12 @@ def _mounting(kind: str, placement: dict, *, name: str | None = None, claim="pen
 
 @pytest.mark.parametrize("kind", ["deployment", "statefulset", "cronjob"])
 def test_binder_copies_the_mounting_workload_placement(kind: str) -> None:
-    """local-path binds on the binder's node, so the binder runs where the workload will."""
-    cluster = _Cluster([], will_pause=True, **{f"{kind}s": [_mounting(kind, _PLACED)]})
+    """local-path binds on the binder's node, so the binder runs where the workload will, at its
+    PriorityClass, which its namespace may require."""
+    cluster = _Cluster([], will_pause=True, **{f"{kind}s": [_mounting(kind, {**_PLACED, "priorityClassName": "low"})]})
     placement = restore_tool.binder_placement(cluster.kubectl, "demo", "pending", None)
     spec = restore_tool._binder_body("demo", "pending", _FAKE_RESTIC_IMAGE, placement)["spec"]
-    assert {key: spec[key] for key in _PLACED} == _PLACED
+    assert {key: spec[key] for key in [*_PLACED, "priorityClassName"]} == {**_PLACED, "priorityClassName": "low"}
     assert spec["volumes"][0]["persistentVolumeClaim"]["claimName"] == "pending"
 
 
@@ -591,10 +592,10 @@ def test_pvc_unbound_after_selection_fails_without_a_binder(capsys) -> None:
 
 
 def test_node_override_wins_over_the_workload_placement() -> None:
-    cluster = _Cluster([], will_pause=True, deployments=[_mounting("deployment", _PLACED)])
+    cluster = _Cluster([], will_pause=True, deployments=[_mounting("deployment", {**_PLACED, "priorityClassName": "low"})])
     placement = restore_tool.binder_placement(cluster.kubectl, "demo", "pending", "node-b")
     spec = restore_tool._binder_body("demo", "pending", _FAKE_RESTIC_IMAGE, placement)["spec"]
-    assert "nodeSelector" not in spec
+    assert "nodeSelector" not in spec and spec["priorityClassName"] == "low"
     required = spec["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
     assert required["nodeSelectorTerms"] == [
         {"matchFields": [{"key": "metadata.name", "operator": "In", "values": ["node-b"]}]}
@@ -700,7 +701,7 @@ def test_single_restore_does_not_lift_the_hold(capsys) -> None:
 
 def test_restore_all_keeps_hold_until_every_repo_has_a_pvc(capsys) -> None:
     kept = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill", "ns-ghost/pvc-gone"])
-    assert _run(kept, app=None, all_pvcs=True) != 0
+    assert _run(kept, in_namespace=None, all_pvcs=True) != 0
     kept_out = capsys.readouterr().out
     assert "HOLD kept: no PVC for ns-ghost/pvc-gone" in kept_out
     assert "PASS restore demo/drill" in kept_out
@@ -708,7 +709,7 @@ def test_restore_all_keeps_hold_until_every_repo_has_a_pvc(capsys) -> None:
     assert "backup-" not in [arg for call in kept.calls for arg in call]
 
     lifted = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill"])
-    assert _run(lifted, app=None, all_pvcs=True) == 0
+    assert _run(lifted, in_namespace=None, all_pvcs=True) == 0
     assert lifted.hold_deleted is True
 
     delete_at = _index(lifted.calls, lambda call: call[:3] == ["delete", "configmap", restore_tool.HOLD_NAME])
@@ -718,7 +719,7 @@ def test_restore_all_keeps_hold_until_every_repo_has_a_pvc(capsys) -> None:
 
 def test_restore_all_retires_a_named_repo_with_no_pvc(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill", "ns-ghost/pvc-gone"])
-    assert _run(cluster, app=None, all_pvcs=True, retire=["ns-ghost/pvc-gone"]) == 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True, retire=["ns-ghost/pvc-gone"]) == 0
     assert cluster.hold_deleted is True
     out = capsys.readouterr().out
     assert "HOLD retired ns-ghost/pvc-gone" in out
@@ -732,7 +733,7 @@ def test_lift_does_not_treat_a_missing_source_as_unpaused(capsys) -> None:
         hold=["ns-demo/pvc-drill"],
         drop_source_after_hold=True,
     )
-    assert _run(cluster, app=None, all_pvcs=True, pause_budget_s=0) != 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True, pause_budget_s=0) != 0
     assert cluster.hold_deleted is False
     out = capsys.readouterr().out
     assert "source stayed paused" in out
@@ -743,7 +744,7 @@ def test_interrupt_during_hold_resume_restores_hold_and_reraises(capsys) -> None
     hold = ["ns-demo/pvc-drill"]
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=hold.copy(), interrupt_resume=True)
     with pytest.raises(KeyboardInterrupt):
-        _run(cluster, app=None, all_pvcs=True)
+        _run(cluster, in_namespace=None, all_pvcs=True)
     assert cluster.hold == hold
     assert cluster.hold_deleted is False
     assert "HOLD restored after lift failure" in capsys.readouterr().out
@@ -768,7 +769,7 @@ def test_printed_hold_recovery_preserves_repo_lines(capsys) -> None:
 
 def test_restore_all_fails_closed_on_no_snapshot(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=_NO_SNAPSHOT_LOG, hold=["ns-demo/pvc-drill"])
-    assert _run(cluster, app=None, all_pvcs=True) != 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True) != 0
     out = capsys.readouterr().out
     assert "no eligible snapshots" in out
     assert "PASS restore" not in out
@@ -779,7 +780,7 @@ def test_restore_all_fails_closed_on_no_snapshot(capsys) -> None:
 
 def test_restore_all_accepts_an_explicit_empty_volume(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, logs=_NO_SNAPSHOT_LOG, hold=["ns-demo/pvc-drill"])
-    assert _run(cluster, app=None, all_pvcs=True, accept_empty=["demo/drill"]) == 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True, accept_empty=["demo/drill"]) == 0
     out = capsys.readouterr().out
     assert "ACCEPT empty demo/drill" in out
     assert "SUMMARY restored=0 accepted=1 retired=0" in out
@@ -788,7 +789,7 @@ def test_restore_all_accepts_an_explicit_empty_volume(capsys) -> None:
 
 def test_accept_empty_refuses_an_unselected_pvc(capsys) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=["ns-demo/pvc-drill"])
-    assert _run(cluster, app=None, all_pvcs=True, accept_empty=["other/missing"]) != 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True, accept_empty=["other/missing"]) != 0
     assert "accepted PVC is not selected: other/missing" in capsys.readouterr().out
     _assert_no_mutation(cluster)
 
@@ -806,7 +807,7 @@ def test_retire_refuses_nonmissing_hold_repositories(
     capsys,
 ) -> None:
     cluster = _Cluster([_pvc("demo", "drill")], will_pause=True, hold=hold)
-    assert _run(cluster, app=None, all_pvcs=True, retire=[retire]) != 0
+    assert _run(cluster, in_namespace=None, all_pvcs=True, retire=[retire]) != 0
     assert "retired repository is not missing from the hold" in capsys.readouterr().out
     _assert_no_mutation(cluster)
 
@@ -854,7 +855,7 @@ def test_missing_environment_kubeconfig_refuses_before_kubectl(
         raise AssertionError("kubectl must not run")
 
     monkeypatch.setattr(restore_tool, "_kubectl", forbidden)
-    assert restore_tool.main(["--env", "env-00", "--app", "demo"]) != 0
+    assert restore_tool.main(["--env", "env-00", "--namespace", "demo"]) != 0
     assert "kubeconfig does not exist" in capsys.readouterr().out
 
 

@@ -41,7 +41,7 @@
 | [../core/platform/configs/CONTRACT.md](../core/platform/configs/CONTRACT.md) | platform-configs list |
 | [../core/platform/flux-operator/CONTRACT.md](../core/platform/flux-operator/CONTRACT.md) | Flux Operator |
 | [../core/platform/kyverno/CONTRACT.md](../core/platform/kyverno/CONTRACT.md) | Kyverno admission |
-| [../core/feature/CONTRACT.md](../core/feature/CONTRACT.md) | Optional core pieces and how an env enables them, observability included |
+| [../core/feature/CONTRACT.md](../core/feature/CONTRACT.md) | Optional core pieces and how an env enables them |
 | [../core/platform/testapp/CONTRACT.md](../core/platform/testapp/CONTRACT.md) | Platform canary |
 | [../core/platform/traefik/CONTRACT.md](../core/platform/traefik/CONTRACT.md) | Exposure: the Gateway and its doors |
 | [../addons/CONTRACT.md](../addons/CONTRACT.md) | Add-ons: what every add-on meets |

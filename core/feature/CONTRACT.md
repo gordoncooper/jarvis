@@ -9,7 +9,7 @@ Core pieces an env runs only once it lists them under `features` in `values/swit
 | `alerts/` | Failed reconciles posted to the env's target: [CONTRACT.md](alerts/CONTRACT.md) |
 | `app-hosting/` | Hosted apps and their backups: [CONTRACT.md](app-hosting/CONTRACT.md) |
 | `app-dns/` | DNS for `<dns_suffix>`: [CONTRACT.md](app-dns/CONTRACT.md) |
-| `offsite-backup-copy/` | CronJob `restic-offsite` to the env's off-host target ([backups](../platform/backups/CONTRACT.md)) |
+| `offsite-backup-copy/` | Every local repository copied to the env's off-host target: [CONTRACT.md](offsite-backup-copy/CONTRACT.md) |
 
 ## Expects
 
@@ -17,7 +17,6 @@ Core pieces an env runs only once it lists them under `features` in `values/swit
 | --- | --- |
 | Always-on core | Lists no folder here; only an env's rendered wiring does |
 | The backup pieces | `core/platform/backups` is up |
-| Observability | Not built yet; `observability` is an unknown name until its row exists |
 
 ## Health
 

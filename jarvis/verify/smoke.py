@@ -1,14 +1,15 @@
 """Short-lived probes for jarvis verify --smoke: each makes something, checks it, and removes it.
 
 The standing checks read the cluster. A probe proves a capability by using it once. The ones that
-make objects work in namespace platform-smoke, which the run creates first and deletes at the end
-(a namespace left by an interrupted run is deleted first); the admission probe is a server-side
-dry run, which leaves nothing.
+make objects work in namespace platform-smoke, which the run creates first (labelled core's layer,
+platform, as core's own namespaces are) and deletes at the end (a namespace left by an interrupted
+run is deleted first); the admission probe is a server-side dry run, which leaves nothing.
 
   platform     a Certificate from ClusterIssuer internal-ca becomes Ready; a copy of testapp's running
                pod is admitted, and refused by policy images-pinned once unpinned and by Pod
                Security once privileged
-  app-dns      a new HTTPRoute name on the core door answers at App DNS's address, with Traefik's address
+  app-dns      a new HTTPRoute on the core door is Accepted there, then its name answers at App DNS's
+               address, with Traefik's address
   app-hosting  a copy of a running pod of a listed app is admitted, and the same copy with one
                risky item the env does not grant that app is refused for that grant
   <add-on>     the probes an add-on's verify.py registers with registry.register_smoke
@@ -70,11 +71,11 @@ def _apply(ctx: Context, body: dict, what: str) -> None:
         raise CheckError(f"{what}: {reason(proc)}")
 
 
-def _until(what: str, done: Callable[[], bool]) -> None:
+def _until(what: str | Callable[[], str], done: Callable[[], bool]) -> None:
     deadline = _clock() + WAIT_SECONDS
     while not done():
         if _clock() >= deadline:
-            raise CheckError(f"{what} within {WAIT_SECONDS} s")
+            raise CheckError(f"{what() if callable(what) else what} within {WAIT_SECONDS} s")
         _sleep(POLL_SECONDS)
 
 
@@ -102,7 +103,8 @@ def open_scratch(ctx: Context) -> None:
         raise CheckError(f"namespace {NAMESPACE} exists and is not jarvis verify's (label {OWNER_LABEL}); nothing was changed")
     if owner == OWNER:
         _remove_namespace(ctx)
-    body = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE, "labels": {OWNER_LABEL: OWNER}}}
+    labels = {OWNER_LABEL: OWNER, "jarvis.io/layer": "platform"}
+    body = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE, "labels": labels}}
     _apply(ctx, body, f"create namespace {NAMESPACE}")
 
 
@@ -146,6 +148,23 @@ def _app_dns_address(ctx: Context) -> str:
     raise CheckError(f"App DNS has no LoadBalancer address in {APP_DNS_NAMESPACE}")
 
 
+def _accepted(ctx: Context, name: str, seen: list[str]) -> bool:
+    """Whether the route reads Accepted=True on the core door; seen keeps the last other answer."""
+    proc = ctx.kubectl(["get", "httproute", name, "-n", NAMESPACE, "-o", "json"])
+    if proc.returncode:
+        raise CheckError(f"read HTTPRoute {NAMESPACE}/{name}: {reason(proc)}")
+    for parent in (json_object(proc, f"HTTPRoute {name}").get("status") or {}).get("parents") or []:
+        ref = parent.get("parentRef") or {}
+        if (ref.get("name"), ref.get("namespace"), ref.get("sectionName")) != (GATEWAY_NAME, GATEWAY_NAMESPACE, "core"):
+            continue
+        for condition in parent.get("conditions") or []:
+            if condition.get("type") == "Accepted":
+                if condition.get("status") == "True":
+                    return True
+                seen[:] = [f"Accepted={condition.get('status')} ({condition.get('reason')})"]
+    return False
+
+
 def probe_app_dns(ctx: Context) -> None:
     host = f"smoke-{_token()}.{ctx.values['dns_suffix']}"
     service = {
@@ -166,6 +185,11 @@ def probe_app_dns(ctx: Context) -> None:
     }
     _apply(ctx, service, "create Service smoke")
     _apply(ctx, route, "create HTTPRoute smoke")
+    # App DNS answers a route's name whether or not the door serves it, so the name proves the
+    # path only once the core door has accepted the route.
+    seen = ["no status for it"]
+    door = f"{GATEWAY_NAMESPACE}/{GATEWAY_NAME} section core"
+    _until(lambda: f"HTTPRoute {NAMESPACE}/smoke was not Accepted on {door} (last: {seen[0]})", lambda: _accepted(ctx, "smoke", seen))
     server, expected = _app_dns_address(ctx), traefik_address(ctx.kubectl)
     _until(f"App DNS ({server}) did not answer {host} with Traefik's address {expected}", lambda: expected in _resolve(server, host))
 
