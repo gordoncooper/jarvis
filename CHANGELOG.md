@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.8.2
+
 ### Changed
 
 - Core acts only on its own namespaces, those labelled `jarvis.io/layer` `platform` or
