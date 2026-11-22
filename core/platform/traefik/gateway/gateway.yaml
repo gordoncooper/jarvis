@@ -1,8 +1,9 @@
 # The core door: HTTPS for *.${dns_suffix}, from core's own namespaces: those labelled with a
 # core layer. Only core's wiring creates namespaces and sets that label, so a tenant cannot
 # attach here, and a namespace without it (a feature's left after it is switched off, or one
-# made by hand) gets nothing. A feature adds its own door beside it from its own Component. Both doors share Traefik's websecure
-# entrypoint (container port 8443, published on 443): shared-address mode.
+# made by hand) gets nothing. A feature adds its own door beside it from its own Component.
+# Both doors share Traefik's websecure entrypoint (container port 8443, published on 443):
+# shared-address mode.
 # platform-configs postBuild fills ${dns_suffix}.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

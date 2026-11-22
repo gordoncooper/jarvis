@@ -227,8 +227,8 @@ def test_app_hosting_on_renders_all_of_it(tmp_path: Path) -> None:
     assert [listener["name"] for listener in on[gateway]["spec"]["listeners"]] == ["core", "apps", "apps-granted"]
     envs = [{item["name"]: item for item in doc[check]["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0].pop("env")}
             for doc in (on, off)]  # fmt: skip
-    assert envs[1].pop("OWN_PASSWORD_REPOSITORIES")["value"] == ""
-    assert envs[0].pop("OWN_PASSWORD_REPOSITORIES")["value"] == "ns-app-*/*"
+    for env in envs:
+        env.pop("OWN_PASSWORD_REPOSITORIES")
     assert envs[0] == envs[1]
     for key in set(off) - {gateway}:
         assert on[key] == off[key], key

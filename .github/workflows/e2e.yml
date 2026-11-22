@@ -284,7 +284,8 @@ jobs:
           echo "${host}:8080 answers at ${address}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # A hosted app's backup and restore, with its own credential on the apps rest-server: a file
-      # written to notes reaches a fresh backup, its volume is lost, and jarvis restore puts it back.
+      # written to notes reaches a fresh backup. jarvis restore puts it back twice: once deleted
+      # while notes runs, which restore quiesces and brings back, and once with its volume lost.
       - name: A hosted app's volume backs up and restores
         run: |
           set -euo pipefail
@@ -315,6 +316,20 @@ jobs:
           repository="$(kubectl -n app-notes get secret restic-data -o jsonpath='{.data.RESTIC_REPOSITORY}' | base64 -d)"
           [[ -n "${app_password}" && "${app_password}" != "${core_password}" && "${repository}" == rest:http://restic-apps.* ]] \
             || { echo "::error::core's backup credential reached app-notes"; exit 1; }
+          back() {
+            for attempt in $(seq 1 30); do
+              [[ "$(get "${url}" || true)" == "${marker}" ]] && return
+              [ "${attempt}" -lt 30 ] || { echo "::error::${url} did not come back ($1)"; exit 1; }
+              sleep 5
+            done
+          }
+          # In place: restore suspends notes' wiring, scales it down, restores, and undoes both.
+          get -f -X DELETE "${url}"
+          [[ "$(get -o /dev/null -w '%{http_code}' "${url}")" == 404 ]]
+          .venv/bin/jarvis --env "${E2E_ENV}" restore --namespace app-notes --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          kubectl -n app-notes wait --for=condition=Available deployment/notes --timeout=5m
+          [[ "$(kubectl -n flux-system get kustomization app-notes -o jsonpath='{.spec.suspend}')" != true ]]
+          back "deleted"
           # Lose the volume: its claim deleted and made again, unbound, with notes stopped and its
           # wiring suspended. The API server defaults what it defaulted before, so Flux's manifest
           # still owns the claim. jarvis restore binds it with a pod that admission holds to notes'
@@ -331,12 +346,8 @@ jobs:
           kubectl -n app-notes scale deployment notes --replicas=1
           kubectl -n flux-system patch kustomization app-notes --type merge -p '{"spec":{"suspend":false}}'
           kubectl -n app-notes wait --for=condition=Available deployment/notes --timeout=5m
-          for attempt in $(seq 1 30); do
-            [[ "$(get "${url}" || true)" == "${marker}" ]] && break
-            [ "${attempt}" -lt 30 ] || { echo "::error::${url} did not come back"; exit 1; }
-            sleep 5
-          done
-          echo "notes: ${url} backed up, its volume lost and restored" | tee -a "${GITHUB_STEP_SUMMARY}"
+          back "volume lost"
+          echo "notes: ${url} backed up, then restored deleted and with its volume lost" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # The standing checks, then each enabled capability's short-lived probe (jarvis/verify/smoke.py).
       - name: jarvis verify --smoke
