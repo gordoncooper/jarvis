@@ -24,4 +24,4 @@ A second CoreDNS with the k8s_gateway plugin answers `${dns_suffix}` from HTTPRo
 | Check | Pass |
 | --- | --- |
 | Deployment `k8s-gateway` | Ready (`/health` on 8080, `/ready` on 8181) |
-| `jarvis verify --smoke` | a new HTTPRoute hostname answers at Traefik's address |
+| `jarvis verify --smoke` | a new HTTPRoute that the core door reads `Accepted` answers at Traefik's address |

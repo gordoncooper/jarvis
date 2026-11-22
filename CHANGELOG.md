@@ -24,6 +24,9 @@ the upgrade.
   Service: core publishes through Traefik's`.
 - `restic-check` prints `no backup credential registered for it` (was `for its app`) for an
   app repository with no registered credential.
+- `jarvis verify --smoke` labels its namespace, `platform-smoke`, `jarvis.io/layer: platform`,
+  and its App DNS probe waits for its route to read `Accepted` on the core door before it asks
+  the name, failing `was not Accepted on platform-gateway/jarvis section core` otherwise.
 
 ### Upgrading
 
