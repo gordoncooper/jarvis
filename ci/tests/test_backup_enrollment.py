@@ -48,8 +48,11 @@ def _credential(name: str, repository: str, password: str) -> dict:
 
 
 def _cluster(*extra: dict) -> list[dict]:
-    namespaces = ["monitoring", "app-notes", "app-web-demo", "platform-backups", "kube-system"]
-    return [*({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": name}} for name in namespaces),
+    # A core layer's namespace, two apps', core's own, k3s's, and one made by hand.
+    namespaces = {"monitoring": {"jarvis.io/layer": "feature"}, "app-notes": {"hosting.jarvis.io/app": "notes"},
+                  "app-web-demo": {"hosting.jarvis.io/app": "web-demo"}, "platform-backups": {"jarvis.io/layer": "platform"},
+                  "kube-system": {}, "by-hand": {}}  # fmt: skip
+    return [*({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": name, "labels": labels}} for name, labels in namespaces.items()),
             _credential("backups-restic", "rest:http://restic:8000/", "core"),
             _credential("backups-restic-app-notes", "rest:http://restic-apps:8000/", "notes"),
             # Every cluster has this one; the CLI cannot list a kind its context holds none of.
@@ -74,9 +77,9 @@ def _source(name: str, *, paused: bool = False) -> dict:
 
 def test_enrollment_generates_a_secret_and_source_per_bound_claim(tmp_path: Path) -> None:
     """Rule: a bound claim gets Secret restic-<pvc> and ReplicationSource <pvc> on the env's
-    schedule and retention; a core claim reads core's credential, an app- claim only its own; an
-    app with no credential, an unbound claim, backup: none and a mover's claim get nothing;
-    backup: paused pauses its source."""
+    schedule and retention; a claim in a core layer's namespace reads core's credential, an app-
+    claim only its own; an app with no credential, a namespace with no layer, an unbound claim,
+    backup: none and a mover's claim get nothing; backup: paused pauses its source."""
     claims = [
         _claim("data", "monitoring"),
         _claim("held", "monitoring", backup="paused"),
@@ -84,6 +87,7 @@ def test_enrollment_generates_a_secret_and_source_per_bound_claim(tmp_path: Path
         _claim("db", "app-web-demo"),
         _claim("waiting", "monitoring", bound=False),
         _claim("scratch", "monitoring", backup="none"),
+        _claim("data", "by-hand"),
     ]
     mover = _claim("volsync-cache", "monitoring")
     mover["metadata"]["labels"] = {"app.kubernetes.io/created-by": "volsync"}

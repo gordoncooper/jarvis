@@ -210,10 +210,11 @@ def _pvc() -> dict:
     }
 
 
-def _volume_pod(name: str, image: str, command: str, env: list[dict] | None = None) -> dict:
+def _volume_pod(name: str, template: dict, command: str, env: list[dict] | None = None) -> dict:
     container = {
         "name": "drill",
-        "image": image,
+        "image": template["image"],
+        "resources": template["resources"],
         "command": ["/bin/sh", "-c", command],
         "volumeMounts": [{"name": "data", "mountPath": "/data"}],
     }
@@ -291,7 +292,8 @@ def _templates(kubectl: Kubectl) -> tuple[dict, dict]:
             raise DrillError("live backup workload has an unsupported pod template")
         if "nodeSelector" not in restic_place and "affinity" not in restic_place:
             raise DrillError("live backup workload has an unsupported pod template")
-        # The drill's pods in platform-backups are sized as the copy is, so core's rules admit them.
+        # The drill's pods, in platform-backups and platform-drill, are sized as the copy is, so
+        # core's rules admit them.
         etcd = {
             "image": container["image"],
             "resources": container.get("resources", {}),
@@ -637,7 +639,8 @@ def _run(
         expected = hashlib.sha256(content.encode()).hexdigest()
         _apply(
             kubectl,
-            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}},
+            # A core namespace, so core's backups enroll its volume.
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE, "labels": {"jarvis.io/layer": "platform"}}},
             "create drill namespace",
         )
         started = True
@@ -648,7 +651,7 @@ def _run(
             kubectl,
             _volume_pod(
                 WRITER,
-                etcd_template["image"],
+                etcd_template,
                 "printf '%s' \"$PAYLOAD\" > /data/payload; "
                 "printf 'VOLUME '; sha256sum /data/payload | cut -d' ' -f1",
                 [{"name": "PAYLOAD", "value": content}],
@@ -693,7 +696,7 @@ def _run(
 
         _line(f"NODE restoring onto {node}")
         restored = restore(
-            [sys.executable, "-m", "jarvis.backups.restore", "--env", env, "--app", NAMESPACE, "--node", node]
+            [sys.executable, "-m", "jarvis.backups.restore", "--env", env, "--namespace", NAMESPACE, "--node", node]
         )
         if restored.stdout:
             _line(restored.stdout.rstrip())
@@ -706,7 +709,7 @@ def _run(
             kubectl,
             _volume_pod(
                 READER,
-                etcd_template["image"],
+                etcd_template,
                 "printf 'VOLUME '; sha256sum /data/payload | cut -d' ' -f1",
             ),
             "create reader pod",

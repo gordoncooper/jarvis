@@ -384,7 +384,7 @@ def test_drill_calls_real_restore_and_cleans_repository_in_cluster(
     code, restores = _run(tmp_path, monkeypatch, cluster)
     assert code == 0
     assert restores == [
-        [sys.executable, "-m", "jarvis.backups.restore", "--env", "env-test", "--app", "platform-drill", "--node", "node-a"]
+        [sys.executable, "-m", "jarvis.backups.restore", "--env", "env-test", "--namespace", "platform-drill", "--node", "node-a"]
     ]
     etcd_pod = _applied_pod(cluster, drill_tool.ETCD_POD)
     assert etcd_pod["metadata"]["namespace"] == drill_tool.BACKUP_NAMESPACE

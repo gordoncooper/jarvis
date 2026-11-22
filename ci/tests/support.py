@@ -327,7 +327,8 @@ def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
 def kyverno_generated(work: Path, policies: list[dict], triggers: list[dict], cluster: list[dict] | None = None) -> list[dict]:
     """Every object the GeneratingPolicies make for the triggers, with the kyverno CLI (kyverno
     apply -o). cluster holds what resource.get and resource.list read, and each trigger's
-    Namespace. kyverno test cannot be used: it passes a generatedResource that was never made."""
+    Namespace, whose labels a namespaceSelector reads. kyverno test cannot be used: it passes a
+    generatedResource that was never made."""
     kyverno = shutil.which("kyverno")
     if kyverno is None:
         pytest.fail("kyverno CLI not found on PATH (run make deps)")
@@ -339,12 +340,16 @@ def kyverno_generated(work: Path, policies: list[dict], triggers: list[dict], cl
     context = {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Context", "metadata": {"name": "c"},
                "spec": {"resources": cluster or []}}
     (work / "context.yaml").write_text(yaml.safe_dump(context), encoding="utf-8")
+    values = {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Value", "metadata": {"name": "v"},
+              "namespaceSelector": [{"name": doc["metadata"]["name"], "labels": doc["metadata"].get("labels") or {}}
+                                    for doc in cluster or [] if doc.get("kind") == "Namespace"]}  # fmt: skip
+    (work / "values.yaml").write_text(yaml.safe_dump(values), encoding="utf-8")
     out = work / "out"
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir()
     proc = subprocess.run(
         [kyverno, "apply", str(work / "policies.yaml"), "--resource", str(work / "triggers.yaml"),
-         "--context-file", str(work / "context.yaml"), "-o", str(out), "--remove-color"],
+         "--context-file", str(work / "context.yaml"), "--values-file", str(work / "values.yaml"), "-o", str(out), "--remove-color"],
         capture_output=True, text=True, check=False,
     )
     report = proc.stdout + proc.stderr
