@@ -316,16 +316,17 @@ jobs:
           [[ -n "${app_password}" && "${app_password}" != "${core_password}" && "${repository}" == rest:http://restic-apps.* ]] \
             || { echo "::error::core's backup credential reached app-notes"; exit 1; }
           # Lose the volume: its claim deleted and made again, unbound, with notes stopped and its
-          # wiring suspended. jarvis restore binds it with a pod that admission holds to notes' own
-          # PriorityClass, then restores into it.
+          # wiring suspended. The API server defaults what it defaulted before, so Flux's manifest
+          # still owns the claim. jarvis restore binds it with a pod that admission holds to notes'
+          # own PriorityClass, then restores into it.
           kubectl -n flux-system patch kustomization app-notes --type merge -p '{"spec":{"suspend":true}}'
           kubectl -n app-notes scale deployment notes --replicas=0
           kubectl -n app-notes get pvc data -o json | jq '{apiVersion, kind,
             metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}),
               annotations: ((.metadata.annotations // {}) | with_entries(select(.key | test("^(pv|volume)\\.(beta\\.)?kubernetes\\.io/") | not)))},
-            spec: (.spec | del(.volumeName))}' > "${RUNNER_TEMP}/claim.json"
+            spec: (.spec | del(.volumeName, .storageClassName, .volumeMode))}' > "${RUNNER_TEMP}/claim.json"
           kubectl -n app-notes delete pvc data --wait --timeout=5m
-          kubectl apply -f "${RUNNER_TEMP}/claim.json"
+          kubectl create -f "${RUNNER_TEMP}/claim.json"
           .venv/bin/jarvis --env "${E2E_ENV}" restore --namespace app-notes
           kubectl -n app-notes scale deployment notes --replicas=1
           kubectl -n flux-system patch kustomization app-notes --type merge -p '{"spec":{"suspend":false}}'
