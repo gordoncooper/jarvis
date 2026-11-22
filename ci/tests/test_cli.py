@@ -17,11 +17,16 @@ from support import REPO_ROOT
 _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
 
 
+def _repo(root: Path) -> Path:
+    subprocess.run([*_GIT, "init", "-q", str(root)], check=True)
+    return root
+
+
 def _instance(tmp_path: Path, *envs: str) -> Path:
     root = tmp_path / "instance"
     for env in envs:
         (root / "envs" / env / "values").mkdir(parents=True)
-    return root
+    return _repo(root)
 
 
 @pytest.mark.parametrize(
@@ -43,12 +48,17 @@ def test_a_missing_or_repeated_global_is_a_usage_error(argv) -> None:
         cli.split_globals(argv)
 
 
-def test_the_instance_is_the_nearest_folder_holding_envs(tmp_path: Path) -> None:
+def test_the_instance_is_the_git_repository_holding_envs(tmp_path: Path) -> None:
+    """Rule: the instance is the git repository the command runs in, not any folder above it that
+    holds envs/."""
     root = _instance(tmp_path, "home")
     deep = root / "envs" / "home" / "values"
     assert cli.find_instance(deep) == root
-    with pytest.raises(cli.UsageError, match="inside an instance repo"):
-        cli.find_instance(tmp_path)
+    other = _repo(tmp_path / "project")
+    (other / "tools" / "envs").mkdir(parents=True)
+    for start in (tmp_path, other / "tools"):
+        with pytest.raises(cli.UsageError, match="inside an instance repo"):
+            cli.find_instance(start)
 
 
 def test_the_env_is_implicit_only_when_there_is_one(tmp_path: Path) -> None:
@@ -94,7 +104,7 @@ def test_core_runs_this_checkout_unpinned_and_says_so(tmp_path: Path, monkeypatc
     from jarvis.cli import core as cli_core
     from support import copy_sample
 
-    instance = copy_sample(tmp_path / "instance")
+    instance = _repo(copy_sample(tmp_path / "instance"))
     monkeypatch.chdir(instance / "envs")
     # The CLI sets these in place; register them so they are restored after the test.
     for name in ("PATH", "INSTANCE", cli_core.UNPINNED_VAR):
@@ -134,7 +144,7 @@ def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_pat
     monkeypatch.setattr(checkout, "_fetch_for", None)
     monkeypatch.setattr(site, "shutil", types.SimpleNamespace(which=lambda name: name))
     monkeypatch.setattr(site, "playbook_command", lambda *a, **k: ["true"])
-    monkeypatch.chdir(instance)
+    monkeypatch.chdir(_repo(instance))
     assert cli.main(["--core", str(REPO_ROOT), "site"]) == 0, capsys.readouterr()
 
 
@@ -184,7 +194,7 @@ def _pushed_instance(tmp_path: Path) -> Path:
     subprocess.run([*_GIT, "clone", "-q", str(origin), str(clone)], check=True, capture_output=True)
     values = clone / "envs" / "home" / "values"
     values.mkdir(parents=True)
-    (values / "cluster-vars.yaml").write_text("flux_git_ref: refs/heads/main\n", encoding="utf-8")
+    (values / "cluster-vars.yaml").write_text(f"flux_git_repo_url: {origin}\nflux_git_ref: refs/heads/main\n", encoding="utf-8")
     subprocess.run([*_GIT, "add", "-A"], cwd=clone, check=True)
     subprocess.run([*_GIT, "commit", "-q", "-m", "home"], cwd=clone, check=True)
     subprocess.run([*_GIT, "push", "-q", "origin", "HEAD:main"], cwd=clone, check=True, capture_output=True)
@@ -353,7 +363,7 @@ def test_doctor_finds_a_worktrees_hooks_where_git_runs_them(tmp_path: Path) -> N
 
 def test_version_names_this_release_and_each_envs_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(cli._core, "own_release", lambda: ("https://github.com/example/jarvis", "v9.9.9"))
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(_repo(tmp_path))
     assert cli.main(["--version"]) == 0
     assert capsys.readouterr().out == "jarvis v9.9.9 (https://github.com/example/jarvis)\n"
     for env, ref in (("home", "refs/tags/v9.9.8"), ("lab", "refs/heads/main")):
@@ -373,7 +383,7 @@ def test_help_in_an_instance_is_the_pinned_releases(tmp_path: Path, monkeypatch:
         (values / "cluster-vars.yaml").write_text(
             "core_git_repo_url: https://github.com/example/jarvis\ncore_git_ref: refs/tags/v9.9.9\n", encoding="utf-8"
         )
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(_repo(tmp_path))
     monkeypatch.delenv(cli._core.DELEGATED_VAR, raising=False)
     monkeypatch.delenv(cli._core.UNPINNED_VAR, raising=False)
     monkeypatch.setattr(cli._core, "checkout", lambda env_dir: tmp_path / "cached")

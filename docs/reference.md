@@ -39,7 +39,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | `ntp_pools` | yes | array |  | Chrony pool hostnames for the nodes, one pool line each (with nts while chrony_nts is on). |
 | `pod_cidr` | yes | string |  | The pod network, set once per env. |
 | `service_cidr` | yes | string |  | The service network, set once per env. |
-| `ssh_user` | no | string | `ubuntu` | The user Ansible logs in to the nodes as; tasks run as root through sudo. jarvis init writes the user who ran it. A host's own ssh_user overrides it. |
+| `ssh_user` | no | string | `ubuntu` | The user Ansible logs in to the nodes as; tasks run as root through sudo. jarvis init writes the one it is given or asked for. A host's own ssh_user overrides it. |
 | `time_zone` | yes | string |  | IANA time zone for the nodes and for every schedule (VolSync, the restic check). Unknown names fail. |
 
 ## `values/switches.yaml`

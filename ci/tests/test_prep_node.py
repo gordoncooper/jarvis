@@ -245,7 +245,7 @@ def test_unsynced_clock_prompt_defaults_to_no(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(module, "batch_ssh", fake_batch)
     monkeypatch.setattr(module, "confirm", fake_confirm)
     with pytest.raises(module.PrepError, match="clock is not synced"):
-        module.check_clock("user", "host.example", Path("/tmp/id_ed25519.pub"))
+        module.check_clock("user", "host.example")
     assert prompts == [("Continue with the clock unsynced?", False)]
 
 
@@ -399,7 +399,7 @@ def _block_host_calls(module: object, monkeypatch: pytest.MonkeyPatch) -> list[s
 
     def guarded_run(argv: object, *args: object, **kwargs: object) -> object:
         command = argv[0] if argv else ""
-        if command in {"ssh", "ssh-keyscan", "getent"}:
+        if command in {"ssh", "ssh-keyscan"}:
             host_calls.append(str(command))
             raise AssertionError(f"{command} called")
         return real_run(argv, *args, **kwargs)

@@ -208,7 +208,7 @@
       "pattern": "\\S"
     },
     "ssh_user": {
-      "description": "The user Ansible logs in to the nodes as; tasks run as root through sudo. jarvis init writes the user who ran it. A host's own ssh_user overrides it.",
+      "description": "The user Ansible logs in to the nodes as; tasks run as root through sudo. jarvis init writes the one it is given or asked for. A host's own ssh_user overrides it.",
       "default": "ubuntu",
       "type": "string",
       "minLength": 1

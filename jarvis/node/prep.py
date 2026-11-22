@@ -14,6 +14,7 @@ import argparse
 import getpass
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,6 @@ from jarvis.secrets import age as _age
 REPO_ROOT = PRODUCT_ROOT
 
 _TOOLS = ("ssh", "ssh-keygen", "git", "age-keygen")
-_PUB_NAMES = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
 _SUDOERS = "/etc/sudoers.d/jarvis-ansible"
 _STRICT = ("-o", "StrictHostKeyChecking=yes")
 
@@ -86,21 +86,14 @@ def _redact(text: str, secret: str | None) -> str:
 
 
 def assert_host_resolves(host: str, *, unchanged: bool) -> None:
-    """Fail if getent cannot resolve host. Does not write /etc/hosts."""
+    """Fail if the controller cannot resolve host, as doctor asks. Does not write /etc/hosts."""
     try:
-        result = subprocess.run(
-            ["getent", "hosts", host],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise PrepError("getent is required to check DNS") from exc
-    if result.returncode != 0 or not result.stdout.strip():
+        socket.getaddrinfo(host, None)
+    except OSError as exc:
         message = f"{host} does not resolve. Add it on the router."
         if unchanged:
             message += " Nothing was changed."
-        raise PrepError(message)
+        raise PrepError(message) from exc
 
 
 def require_tools() -> None:
@@ -122,23 +115,28 @@ def known_hosts_path() -> Path:
     return ssh_dir() / "known_hosts"
 
 
-def ensure_public_key() -> Path:
-    directory = ssh_dir()
-    for name in _PUB_NAMES:
-        path = directory / name
-        if path.is_file():
-            print(f"Using SSH public key {path}")
-            return path
+def ensure_public_key(user: str, host: str) -> Path:
+    """The first key ssh offers for user@host (ssh -G, as Ansible logs in) that has its .pub, or a
+    new ed25519 key where ssh looks for one."""
+    shown = subprocess.run(["ssh", "-G", f"{user}@{host}"], capture_output=True, text=True, check=False)
+    offered = [Path(line.split(None, 1)[1]).expanduser() for line in shown.stdout.splitlines() if line.startswith("identityfile ")]
+    for private in offered:
+        public = private.with_name(private.name + ".pub")
+        if private.is_file() and public.is_file():
+            print(f"Using SSH public key {public}")
+            return public
+    if not offered:
+        raise PrepError(shown.stderr.strip() or f"ssh -G {user}@{host} names no identity file")
     if not confirm("No SSH public key found. Create an ed25519 key?"):
         raise PrepError("an SSH public key is required")
-    directory.mkdir(mode=0o700, exist_ok=True)
-    directory.chmod(0o700)
-    private = directory / "id_ed25519"
+    private = next((path for path in offered if path.name == "id_ed25519"), offered[0])
+    private.parent.mkdir(mode=0o700, exist_ok=True)
+    private.parent.chmod(0o700)
     result = subprocess.run(
         ["ssh-keygen", "-t", "ed25519", "-f", str(private), "-q"],
         check=False,
     )
-    public = private.with_suffix(".pub")
+    public = private.with_name(private.name + ".pub")
     if result.returncode != 0 or not public.is_file():
         raise PrepError("could not create an ed25519 key")
     print(f"Created SSH public key {public}")
@@ -287,13 +285,10 @@ def ssh(
     control: Path | None = None,
     batch: bool = False,
     stdin: str | None = None,
-    identity: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = ["ssh", *_STRICT, *(_BATCH if batch else _PASSWORD)]
     if control is not None:
         cmd += _opt("ControlMaster=auto", "ControlPersist=300", f"ControlPath={control}")
-    if identity is not None and identity.is_file():
-        cmd += ["-o", "IdentitiesOnly=yes", "-i", str(identity)]
     cmd += [dest, remote]
     return subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=False)
 
@@ -644,34 +639,15 @@ def report_address(session: Session) -> None:
     print(f"Primary address {address}{where} is static.")
 
 
-def _private_key(public: Path) -> Path | None:
-    if not public.name.endswith(".pub"):
-        return None
-    private = Path(str(public)[: -len(".pub")])
-    return private if private.is_file() else None
+def batch_ssh(user: str, host: str, remote: str, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    """ssh as Ansible will log in: keys only, with whatever ssh offers (the agent, ~/.ssh/config)."""
+    return ssh(f"{user}@{host}", remote, batch=True, stdin=stdin)
 
 
-def batch_ssh(
-    user: str,
-    host: str,
-    remote: str,
-    public: Path,
-    *,
-    stdin: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    return ssh(
-        f"{user}@{host}",
-        remote,
-        batch=True,
-        stdin=stdin,
-        identity=_private_key(public),
-    )
-
-
-def proof(user: str, host: str, public: Path) -> None:
-    login = batch_ssh(user, host, "true", public)
-    sudo = batch_ssh(user, host, "sudo -n true", public)
-    dns = batch_ssh(user, host, "getent hosts " + shlex.quote(host), public)
+def proof(user: str, host: str) -> None:
+    login = batch_ssh(user, host, "true")
+    sudo = batch_ssh(user, host, "sudo -n true")
+    dns = batch_ssh(user, host, "getent hosts " + shlex.quote(host))
     checks = (
         ("key login works", login.returncode == 0, login),
         ("passwordless sudo", sudo.returncode == 0, sudo),
@@ -694,13 +670,13 @@ def sshd_password_off() -> str:
     return "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
 
 
-def _sudo_script(user: str, host: str, public: Path, script: str) -> subprocess.CompletedProcess[str]:
-    return batch_ssh(user, host, "sudo -n bash -s", public, stdin=script)
+def _sudo_script(user: str, host: str, script: str) -> subprocess.CompletedProcess[str]:
+    return batch_ssh(user, host, "sudo -n bash -s", stdin=script)
 
 
-def offer_ssh_passwords_off(user: str, host: str, public: Path) -> None:
+def offer_ssh_passwords_off(user: str, host: str) -> None:
     probe = "sudo -n sshd -T | grep -i '^passwordauthentication no'"
-    if batch_ssh(user, host, probe, public).returncode == 0:
+    if batch_ssh(user, host, probe).returncode == 0:
         print("SSH password login is already off.")
         return
     if not confirm("Turn off SSH password login?"):
@@ -720,10 +696,10 @@ set -euo pipefail
 rm -f /etc/ssh/sshd_config.d/00-prep-node.conf
 systemctl reload ssh || true
 """
-    if _sudo_script(user, host, public, apply).returncode != 0:
+    if _sudo_script(user, host, apply).returncode != 0:
         raise PrepError("sshd rejected turning off password login; removed that change")
-    if batch_ssh(user, host, "true", public).returncode != 0:
-        _sudo_script(user, host, public, revert)
+    if batch_ssh(user, host, "true").returncode != 0:
+        _sudo_script(user, host, revert)
         raise PrepError("key login failed after turning off SSH passwords; removed that change")
     print("SSH password login is off.")
 
@@ -732,8 +708,8 @@ def clock_synced(value: str) -> bool:
     return value.strip() == "yes"
 
 
-def check_clock(user: str, host: str, public: Path) -> None:
-    result = batch_ssh(user, host, "timedatectl show -p NTPSynchronized --value", public)
+def check_clock(user: str, host: str) -> None:
+    result = batch_ssh(user, host, "timedatectl show -p NTPSynchronized --value")
     if result.returncode != 0:
         raise PrepError(result.stderr.strip() or "could not read whether the clock is synced")
     if clock_synced(result.stdout):
@@ -876,7 +852,7 @@ def run(argv: list[str] | None = None) -> None:
     assert_host_resolves(host, unchanged=True)
     require_inventory_host(repo, env, host)
 
-    public = ensure_public_key()
+    public = ensure_public_key(ansible_user, host)
     pubkey = public_key_text(public)
     ensure_host_key(host)
     session = open_session(login, host)
@@ -890,9 +866,9 @@ def run(argv: list[str] | None = None) -> None:
     finally:
         session.close()
 
-    proof(ansible_user, inventory_host, public)
-    offer_ssh_passwords_off(ansible_user, inventory_host, public)
-    check_clock(ansible_user, inventory_host, public)
+    proof(ansible_user, inventory_host)
+    offer_ssh_passwords_off(ansible_user, inventory_host)
+    check_clock(ansible_user, inventory_host)
     apply_env_edits(repo, env, host, inventory_host, ansible_user)
     schema_error: PrepError | None = None
     try:

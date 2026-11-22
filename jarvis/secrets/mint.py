@@ -14,6 +14,7 @@ is never minted again.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import re
 import secrets
@@ -22,10 +23,15 @@ import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import bcrypt
 import yaml
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from jarvis.apps import backups as _app_backups
 from jarvis.apps import values as _apps
@@ -41,15 +47,6 @@ CA_DAYS = 3650
 CA_SECRET_FILENAME = "cert-manager-ca.sops.yaml"
 # Not a cluster Secret. The k3s role reads it on the controller.
 K3S_TOKEN_FILENAME = "k3s-token.sops.yaml"
-# No x509_extensions. Host openssl.cnf's v3_ca sets basicConstraints without
-# keyUsage. This file makes the -addext flags the only extensions.
-_CA_REQ_CONFIG = """\
-[req]
-distinguished_name = dn
-prompt = no
-[dn]
-CN = unused
-"""
 _CERT_MARK = "-----BEGIN CERTIFICATE-----"
 _KEY_MARK = "PRIVATE KEY"
 
@@ -88,19 +85,6 @@ def _random_token(nbytes: int = 32) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
-def _run_openssl(args: list[str], *, input_bytes: bytes | None = None) -> bytes:
-    result = subprocess.run(
-        ["openssl", *args],
-        input=input_bytes,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
-        raise subprocess.CalledProcessError(result.returncode, ["openssl", *args])
-    return result.stdout
-
-
 def _cluster_vars(env: str) -> dict:
     path = _repo_root() / "envs" / env / "values" / "cluster-vars.yaml"
     try:
@@ -123,59 +107,36 @@ def _sops_child_env(env: str) -> dict[str, str]:
 
 
 def _generate_ca_material(dns_suffix: str) -> tuple[str, str]:
-    """Return (certificate PEM, key PEM). The key stays in memory."""
+    """Return (certificate PEM, key PEM). The key stays in memory. The CA signs only names under
+    dns_suffix: no IP address, mail address or URI outside it."""
     if not _DNS_SUFFIX.fullmatch(dns_suffix):
         raise SystemExit("refusing to mint a CA without a DNS suffix")
-    key_pem = _run_openssl(
-        [
-            "genpkey",
-            "-algorithm",
-            "RSA",
-            "-pkeyopt",
-            "rsa_keygen_bits:2048",
-        ]
-    ).decode("utf-8")
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        prefix="jarvis-ca-",
-        suffix=".cnf",
-    ) as cfg:
-        cfg.write(_CA_REQ_CONFIG)
-        cfg.flush()
-        cert_pem = _run_openssl(
-            [
-                "req",
-                "-x509",
-                "-new",
-                "-nodes",
-                "-key",
-                "/dev/stdin",
-                "-sha256",
-                "-days",
-                str(CA_DAYS),
-                "-subj",
-                "/CN=jarvis-internal-ca/O=jarvis",
-                "-config",
-                cfg.name,
-                "-addext",
-                "basicConstraints=critical,CA:TRUE,pathlen:0",
-                "-addext",
-                "keyUsage=critical,keyCertSign,cRLSign",
-                "-addext",
-                "subjectKeyIdentifier=hash",
-                "-addext",
-                "nameConstraints=critical,"
-                f"permitted;DNS:{dns_suffix},"
-                "excluded;IP:0.0.0.0/0.0.0.0,"
-                "excluded;IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0,"
-                "permitted;email:none@nameconstraint.invalid,"
-                f"permitted;URI:{dns_suffix},"
-                f"permitted;URI:.{dns_suffix}",
-            ],
-            input_bytes=key_pem.encode("utf-8"),
-        ).decode("utf-8")
-    return cert_pem, key_pem
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "jarvis-internal-ca"), x509.NameAttribute(NameOID.ORGANIZATION_NAME, "jarvis")])
+    usage = dict.fromkeys(("digital_signature", "content_commitment", "key_encipherment", "data_encipherment", "key_agreement", "encipher_only", "decipher_only"), False)
+    constraints = x509.NameConstraints(
+        permitted_subtrees=[
+            x509.DNSName(dns_suffix),
+            x509.RFC822Name("none@nameconstraint.invalid"),
+            x509.UniformResourceIdentifier(dns_suffix),
+            x509.UniformResourceIdentifier(f".{dns_suffix}"),
+        ],
+        excluded_subtrees=[x509.IPAddress(ipaddress.ip_network("0.0.0.0/0")), x509.IPAddress(ipaddress.ip_network("::/0"))],
+    )
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder(issuer_name=name, subject_name=name, public_key=key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=CA_DAYS))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.KeyUsage(key_cert_sign=True, crl_sign=True, **usage), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(constraints, critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    return cert.public_bytes(serialization.Encoding.PEM).decode("ascii"), key_pem.decode("ascii")
 
 
 def _ca_root_path(env: str) -> Path:

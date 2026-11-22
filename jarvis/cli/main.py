@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import importlib
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -86,11 +85,11 @@ def split_globals(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
 
 
 def find_instance(start: Path) -> Path:
-    """The nearest folder at or above start that holds envs/."""
-    for folder in (start, *start.parents):
-        if (folder / "envs").is_dir():
-            return folder
-    raise UsageError("run jarvis from inside an instance repo (a folder that holds envs/)")
+    """The git repository start is in, which holds envs/ when it is an instance repo."""
+    proc = subprocess.run(["git", "-C", str(start), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+    if proc.returncode or not (Path(proc.stdout.strip()) / "envs").is_dir():
+        raise UsageError("run jarvis from inside an instance repo (a git repository that holds envs/)")
+    return Path(proc.stdout.strip())
 
 
 def choose_env(instance: Path, name: str | None) -> str:
@@ -107,12 +106,9 @@ def choose_env(instance: Path, name: str | None) -> str:
 
 
 def activate_toolchain(core: Path) -> None:
-    """Put the core checkout's pinned CLIs (mise) and its venv first on PATH."""
-    paths: list[str] = []
-    if shutil.which("mise"):
-        proc = subprocess.run(["mise", "bin-paths"], cwd=core, capture_output=True, text=True, check=False)
-        if proc.returncode == 0:
-            paths = [line for line in proc.stdout.splitlines() if line.strip()]
+    """Put the core checkout's pinned CLIs (mise) and its venv first on PATH. Without mise, the
+    machine's own CLIs run, and jarvis doctor says so."""
+    paths = _core.pinned_tool_paths(core) or []
     paths.append(str(Path(sys.executable).parent))
     os.environ["PATH"] = os.pathsep.join([*paths, os.environ.get("PATH", "")])
 

@@ -20,7 +20,6 @@ Roles: control_plane, workers, backup, edge, gpu. A lone --node <host> gets ever
 from __future__ import annotations
 
 import argparse
-import getpass
 import os
 import shutil
 import sys
@@ -55,7 +54,7 @@ def parser(command: str) -> argparse.ArgumentParser:
         p.add_argument("name", help="The new env's name (a DNS label)")
     p.add_argument("--domain", help="The env's DNS suffix, e.g. home.lan")
     p.add_argument("--node", action="append", default=[], help="<host> or <host>:<role>,<role> (repeat per node)")
-    p.add_argument("--ssh-user", help="The user Ansible logs in as on the nodes (default: you)")
+    p.add_argument("--ssh-user", help="The user Ansible logs in as on the nodes (asked for from a terminal; default: the schema's)")
     p.add_argument("--time-zone", default="Etc/UTC", help="The nodes' time zone (default: Etc/UTC)")
     p.add_argument("--feature", action="append", default=[], choices=tuple(_switches.FEATURE_COMPONENTS), help="Turn a feature on (repeat)")
     p.add_argument("--apps-repo-url", default="", help="The hosted apps repository, if the env will host apps")
@@ -83,6 +82,16 @@ def _ask(value: str | None, question: str) -> str:
     return answer
 
 
+def _ssh_user(given: str | None) -> str:
+    """--ssh-user, or the answer from a terminal. Blank, or no terminal, writes none: the schema's
+    default holds."""
+    from jarvis.schema.env import DEFAULT_SSH_USER
+
+    if given or not sys.stdin.isatty():
+        return given or ""
+    return input(f"the user Ansible logs in to the nodes as (--ssh-user; blank for {DEFAULT_SSH_USER}): ").strip()
+
+
 def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, core: tuple[str, str]) -> scaffold.EnvSpec:
     domain = _ask(args.domain, "the env's DNS suffix (--domain)")
     raw_nodes = args.node or [_ask(None, "the first node's host name (--node)")]
@@ -97,7 +106,7 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
         core_tag=core[1],
         nodes=nodes,
         branch=branch,
-        ssh_user=args.ssh_user or getpass.getuser(),
+        ssh_user=_ssh_user(args.ssh_user),
         time_zone=args.time_zone,
         features=features,
         apps_repo_url=apps_repo_url,

@@ -37,7 +37,7 @@ To keep the tools on your `PATH` in new shells, add `eval "$(~/.local/bin/mise a
 ## 3. Write your repository
 
 ```bash
-jarvis init my-clusters --env home --domain home.lan --repo-url "$REPO_URL" --branch "$BRANCH" --node "$NODE"
+jarvis init my-clusters --env home --domain home.lan --repo-url "$REPO_URL" --branch "$BRANCH" --node "$NODE" --ssh-user "$LOGIN"
 cd my-clusters
 ```
 
@@ -54,7 +54,7 @@ This writes a whole repository for one cluster, `home`, whose services are named
 jarvis node prep "$NODE" --login-user "$LOGIN"
 ```
 
-It logs in as `$LOGIN` and creates the user Ansible will use (you, by default), with your SSH key and passwordless `sudo`. It also installs the few packages Ansible needs and records the host in your inventory. It asks four things:
+It logs in as `$LOGIN`, the user Ansible will use too (`--ssh-user` above), and gives it your SSH key and passwordless `sudo`. It also installs the few packages Ansible needs and records the host in your inventory. It asks four things:
 
 1. Whether to use the recorded Ansible user: press Enter.
 2. Whether to add the node's SSH host key: check the fingerprint against the node's console, then `y`.

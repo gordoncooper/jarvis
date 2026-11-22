@@ -105,13 +105,10 @@ def at_tag(core_root: Path, tag: str) -> bool:
 def own_release() -> tuple[str, str] | None:
     """(core URL, tag) of the core this CLI came from, or None when it cannot tell.
 
-    A core checkout at a tag knows its origin and tag. An installed CLI (uv tool install
-    git+<url>@<tag>) knows both from its install record (PEP 610 direct_url.json).
+    An installed CLI (uv tool install git+<url>@<tag>) knows both from its install record (PEP 610
+    direct_url.json). A core checkout's remotes are its own business: it is told --core-url and
+    --core-ref.
     """
-    tag = _git_out(PRODUCT_ROOT, "describe", "--exact-match", "--tags", "HEAD")
-    url = _git_out(PRODUCT_ROOT, "remote", "get-url", "origin")
-    if tag and url:
-        return https_url(url), tag
     try:
         record = json.loads(distribution("jarvis").read_text("direct_url.json") or "{}")
     except (PackageNotFoundError, ValueError):
@@ -120,20 +117,15 @@ def own_release() -> tuple[str, str] | None:
     url, tag = str(record.get("url", "")), str(vcs.get("requested_revision", ""))
     if vcs.get("vcs") != "git" or not url or not tag:
         return None
-    return https_url(url.removeprefix("git+")), tag
+    return url.removeprefix("git+").removesuffix(".git"), tag
 
 
-def https_url(url: str) -> str:
-    """A GitHub remote as the https:// URL Flux reads core from; any other URL as it is."""
-    for prefix in ("git@github.com:", "ssh://git@github.com/"):
-        if url.startswith(prefix):
-            url = "https://github.com/" + url.removeprefix(prefix)
-    return url.removesuffix(".git")
-
-
-def _git_out(root: Path, *args: str) -> str | None:
-    proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=False)
-    return proc.stdout.strip() or None if proc.returncode == 0 else None
+def pinned_tool_paths(core: Path) -> list[str] | None:
+    """The folders of core's pinned CLIs (mise.toml), or None when mise is missing or cannot list them."""
+    if shutil.which("mise") is None:
+        return None
+    proc = subprocess.run(["mise", "bin-paths"], cwd=core, capture_output=True, text=True, check=False)
+    return [line for line in proc.stdout.splitlines() if line.strip()] if proc.returncode == 0 else None
 
 
 def setup(core: Path) -> None:
