@@ -3,7 +3,7 @@
   jarvis [--env <env>] [--core <path>] <command> [<args>]
   jarvis --version
 
-Run it from inside an instance repo (the folder that holds envs/). --env is needed only when
+Run it from inside an instance repo (the git repository that holds envs/). --env is needed only when
 the repo holds more than one env; it may come before or after the command. A command runs at
 the core release its env pins (core_git_ref): this checkout when it is that tag, otherwise a
 checkout of the tag cached under ~/.cache/jarvis/core/, set up from that release's own lockfiles.
