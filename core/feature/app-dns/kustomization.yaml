@@ -1,7 +1,20 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+# A Component, because it adds to an object platform-configs has: core's load-balancers rule
+# lets its Service through.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
 resources:
   - namespace.yaml
   - oci-repository.yaml
   - helmrelease.yaml
   - coredns-custom.yaml
+patches:
+  - target:
+      group: policies.kyverno.io
+      kind: ValidatingPolicy
+      name: load-balancers
+    patch: |-
+      - op: add
+        path: /spec/matchConditions
+        value:
+          - name: not-app-dns
+            expression: object.metadata.namespace + '/' + object.metadata.name != 'platform-app-dns/k8s-gateway'

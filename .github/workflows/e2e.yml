@@ -2,8 +2,9 @@ name: e2e
 
 # A real cluster from this commit: k3d (k3s in Docker), the env's FluxInstance and sync.yaml
 # applied by the flux-operator role, every Kustomization and HelmRelease Ready, the sample hosted
-# apps running at their pinned tags from the apps repository, one app's volume backed up and
-# restored, then jarvis verify --smoke, one alert delivered, and jarvis drill.
+# apps running at their pinned tags from the apps repository, an app kept off core's door and
+# core's backups, one app's lost volume restored, then jarvis verify --smoke, one alert delivered,
+# and jarvis drill.
 # The env is a throwaway one written by jarvis init's code (ci/e2e/make-env), whose root source is
 # a temporary branch of this repository; its core source is that branch too, or on a release tag
 # push the tag itself. The job deletes the branch.
@@ -229,6 +230,36 @@ jobs:
           echo "${host}: / ${root}, /notes/ ${notes}, /blocked/ ${blocked}" | tee -a "${GITHUB_STEP_SUMMARY}"
           [[ "${root}" == 200 && "${notes}" == 200 && "${blocked}" =~ ^50[24]$ ]]
 
+      # The core door admits routes only from namespaces labelled with a core layer, which an app's
+      # never is: one offered from an app's namespace, for a name the core listener covers, is refused.
+      - name: An app's route does not attach to the core door
+        run: |
+          set -euo pipefail
+          host="notes.apps.$(sed -n 's/^dns_suffix:[[:space:]]*//p' "envs/${E2E_ENV}/values/cluster-vars.yaml")"
+          kubectl apply -f - <<EOF
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: e2e-core-door
+            namespace: app-notes
+          spec:
+            parentRefs:
+              - {name: jarvis, namespace: platform-gateway, sectionName: core}
+            hostnames: ["${host}"]
+          EOF
+          accepted() {
+            kubectl -n app-notes get httproute e2e-core-door -o json \
+              | jq -r '.status.parents[]? | select(.parentRef.sectionName == "core") | .conditions[]? | select(.type == "Accepted") | .status'
+          }
+          for attempt in $(seq 1 30); do
+            [[ -n "$(accepted)" ]] && break
+            [ "${attempt}" -lt 30 ] || { kubectl -n app-notes get httproute e2e-core-door -o yaml || true; exit 1; }
+            sleep 5
+          done
+          [[ "$(accepted)" == False ]] || { echo "::error::the core door accepted a route from app-notes"; exit 1; }
+          kubectl -n app-notes delete httproute e2e-core-door
+          echo "core door: a route from app-notes is not accepted" | tee -a "${GITHUB_STEP_SUMMARY}"
+
       # A granted LAN port by its app's name: App DNS answers lan-demo.apps.<dns suffix> with its
       # LoadBalancer's address. With App DNS off the LAN's DNS names it; here the address stands in.
       - name: lan-demo's LAN port answers at its name
@@ -253,7 +284,8 @@ jobs:
           echo "${host}:8080 answers at ${address}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # A hosted app's backup and restore, with its own credential on the apps rest-server: a file
-      # written to notes reaches a fresh backup, is deleted, and jarvis restore puts it back.
+      # written to notes reaches a fresh backup. jarvis restore puts it back twice: once deleted
+      # while notes runs, which restore quiesces and brings back, and once with its volume lost.
       - name: A hosted app's volume backs up and restores
         run: |
           set -euo pipefail
@@ -278,16 +310,44 @@ jobs:
             [ "${attempt}" -lt 60 ] || { kubectl -n app-notes describe replicationsource data || true; exit 1; }
             sleep 10
           done
+          # Core's pvc-backup enrolls only core's namespaces: the source is the app's own, on the apps server.
+          core_password="$(kubectl -n platform-backups get secret backups-restic -o jsonpath='{.data.RESTIC_PASSWORD}')"
+          app_password="$(kubectl -n app-notes get secret restic-data -o jsonpath='{.data.RESTIC_PASSWORD}')"
+          repository="$(kubectl -n app-notes get secret restic-data -o jsonpath='{.data.RESTIC_REPOSITORY}' | base64 -d)"
+          [[ -n "${app_password}" && "${app_password}" != "${core_password}" && "${repository}" == rest:http://restic-apps.* ]] \
+            || { echo "::error::core's backup credential reached app-notes"; exit 1; }
+          back() {
+            for attempt in $(seq 1 30); do
+              [[ "$(get "${url}" || true)" == "${marker}" ]] && return
+              [ "${attempt}" -lt 30 ] || { echo "::error::${url} did not come back ($1)"; exit 1; }
+              sleep 5
+            done
+          }
+          # In place: restore suspends notes' wiring, scales it down, restores, and undoes both.
           get -f -X DELETE "${url}"
           [[ "$(get -o /dev/null -w '%{http_code}' "${url}")" == 404 ]]
-          .venv/bin/jarvis --env "${E2E_ENV}" restore --app app-notes --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          .venv/bin/jarvis --env "${E2E_ENV}" restore --namespace app-notes --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           kubectl -n app-notes wait --for=condition=Available deployment/notes --timeout=5m
-          for attempt in $(seq 1 30); do
-            [[ "$(get "${url}" || true)" == "${marker}" ]] && break
-            [ "${attempt}" -lt 30 ] || { echo "::error::${url} did not come back"; exit 1; }
-            sleep 5
-          done
-          echo "notes: ${url} backed up, deleted and restored" | tee -a "${GITHUB_STEP_SUMMARY}"
+          [[ "$(kubectl -n flux-system get kustomization app-notes -o jsonpath='{.spec.suspend}')" != true ]]
+          back "deleted"
+          # Lose the volume: its claim deleted and made again, unbound, with notes stopped and its
+          # wiring suspended. The API server defaults what it defaulted before, so Flux's manifest
+          # still owns the claim. jarvis restore binds it with a pod that admission holds to notes'
+          # own PriorityClass, then restores into it.
+          kubectl -n flux-system patch kustomization app-notes --type merge -p '{"spec":{"suspend":true}}'
+          kubectl -n app-notes scale deployment notes --replicas=0
+          kubectl -n app-notes get pvc data -o json | jq '{apiVersion, kind,
+            metadata: {name: .metadata.name, namespace: .metadata.namespace, labels: (.metadata.labels // {}),
+              annotations: ((.metadata.annotations // {}) | with_entries(select(.key | test("^(pv|volume)\\.(beta\\.)?kubernetes\\.io/") | not)))},
+            spec: (.spec | del(.volumeName, .storageClassName, .volumeMode))}' > "${RUNNER_TEMP}/claim.json"
+          kubectl -n app-notes delete pvc data --wait --timeout=5m
+          kubectl create -f "${RUNNER_TEMP}/claim.json"
+          .venv/bin/jarvis --env "${E2E_ENV}" restore --namespace app-notes
+          kubectl -n app-notes scale deployment notes --replicas=1
+          kubectl -n flux-system patch kustomization app-notes --type merge -p '{"spec":{"suspend":false}}'
+          kubectl -n app-notes wait --for=condition=Available deployment/notes --timeout=5m
+          back "volume lost"
+          echo "notes: ${url} backed up, then restored deleted and with its volume lost" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # The standing checks, then each enabled capability's short-lived probe (jarvis/verify/smoke.py).
       - name: jarvis verify --smoke

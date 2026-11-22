@@ -1,6 +1,7 @@
 # Core's rules (rules.yaml) installed for admission, on platform-configs once Kyverno's CRDs are
-# up. The CLI reads rules.yaml without these patches, so it checks every object an env deploys.
-# At admission:
+# up. A feature that needs an exception adds it from its own Component. jarvis validate reads the
+# rules as the env's build makes them, without the namespace scope, so it checks every object an
+# env deploys. At admission:
 # - they hold only in namespaces labelled with a core layer. Hosted apps have their own admission
 #   (core/feature/app-hosting), and k3s's and Flux's namespaces carry no layer;
 # - a workload rule skips an object with an owner: a controller made it from a template that was

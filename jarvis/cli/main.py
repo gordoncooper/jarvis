@@ -25,7 +25,7 @@ Commands:
   up                     doctor, validate, secrets, site, wait for Flux, verify
   verify                 Standing checks of the running cluster; --smoke adds short-lived probes
   drill                  Scratch-volume and etcd restore drill
-  restore (--app <ns> | --all) [--as-of <time>]
+  restore (--namespace <ns> | --all) [--as-of <time>]
                          Restore backed-up volumes
 
 Each command's own options: jarvis <command> --help, from inside the instance repo (they are

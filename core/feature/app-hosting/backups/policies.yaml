@@ -3,7 +3,8 @@
 # ns-<namespace>/. An app's backups are on unless its entry in values/apps.yaml says backups:
 # false; jarvis secrets --env mints its credential and the render registers it
 # (core/feature/app-hosting/CONTRACT.md).
-# Core's pvc-backup skips app- namespaces, so core's credential never reaches one.
+# Core's pvc-backup enrolls only namespaces labelled with a core layer, which an app's never is,
+# so core's credential never reaches one.
 #
 # pvc-backup-app: a hosted app's PVC. Its Secret comes only from that app's own credential, so
 # an app with no registered credential gets neither object.

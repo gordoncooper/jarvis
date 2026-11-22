@@ -31,6 +31,7 @@ class Cluster:
         self.dry_runs: list[dict] = []
         # Each dry run's refusal in turn, "" admitting; None alternates plain and risky as above.
         self.refusals: list[str] | None = None
+        self.route_accepted = {"type": "Accepted", "status": "True", "reason": "Accepted"}
 
     def __call__(self, args, input=None):  # noqa: A002 - kubectl's own keyword
         args = list(args)
@@ -53,6 +54,9 @@ class Cluster:
             self.reads += 1
             status = "True" if self.reads >= self.ready_after else "False"
             return ok({"status": {"conditions": [{"type": "Ready", "status": status}]}})
+        if args[:2] == ["get", "httproute"]:
+            parent = {"parentRef": {"name": "jarvis", "namespace": "platform-gateway", "sectionName": "core"}}
+            return ok({"status": {"parents": [{**parent, "conditions": [self.route_accepted]}]}})
         if args[:3] == ["get", "service", "-n"]:
             return ok({"status": {"loadBalancer": {"ingress": [{"ip": TRAEFIK}]}}})
         if args[:2] == ["get", "services"]:
@@ -105,7 +109,7 @@ def test_the_scratch_namespace_is_made_and_removed(tmp_path: Path) -> None:
     cluster = Cluster()
     ctx = _ctx(tmp_path, cluster)
     smoke.open_scratch(ctx)
-    assert cluster.namespace["metadata"]["labels"] == {smoke.OWNER_LABEL: smoke.OWNER}
+    assert cluster.namespace["metadata"]["labels"] == {smoke.OWNER_LABEL: smoke.OWNER, "jarvis.io/layer": "platform"}
     smoke.close_scratch(ctx)
     assert cluster.namespace is None
 
@@ -154,6 +158,18 @@ def test_the_app_dns_probe_wants_traefiks_address_for_the_new_name(tmp_path: Pat
     monkeypatch.setattr(smoke, "_resolve", lambda server, name: ["192.0.2.1"])
     with pytest.raises(CheckError, match="did not answer"):
         smoke.probe_app_dns(_ctx(tmp_path / "again", cluster))
+
+
+def test_the_app_dns_probe_refuses_a_route_the_core_door_does_not_accept(tmp_path: Path, monkeypatch) -> None:
+    """Rule: App DNS answers a route's name whether or not Traefik serves it, so the name is not
+    asked until the core door reads the route Accepted."""
+    asked: list[str] = []
+    monkeypatch.setattr(smoke, "_resolve", lambda server, name: asked.append(name) or [TRAEFIK])
+    cluster = Cluster()
+    cluster.route_accepted = {"type": "Accepted", "status": "False", "reason": "NotAllowedByListeners"}
+    with pytest.raises(CheckError, match=r"not Accepted on platform-gateway/jarvis section core \(last: Accepted=False \(NotAllowedByListeners\)\)"):
+        smoke.probe_app_dns(_ctx(tmp_path, cluster))
+    assert asked == []
 
 
 def test_admission_admits_the_copy_and_refuses_the_risky_one(tmp_path: Path) -> None:
