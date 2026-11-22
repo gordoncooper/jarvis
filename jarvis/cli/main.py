@@ -208,7 +208,7 @@ def _version() -> int:
     """The release this CLI came from, and inside an instance repo the release each env pins:
     every command runs the env's, so a difference is fine, but it is worth seeing."""
     own = _core.own_release()
-    print(f"jarvis {own[1]} ({own[0]})" if own else "jarvis: release unknown (neither a core checkout at a tag nor installed from git+<url>@<tag>)")
+    print(f"jarvis {own[1]} ({own[0]})" if own else "jarvis: release unknown (not installed from git+<url>@<tag>)")
     try:
         instance = find_instance(Path.cwd())
     except UsageError:

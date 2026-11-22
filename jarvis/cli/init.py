@@ -98,6 +98,13 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
     nodes = [scaffold.Node.parse(text, only=len(raw_nodes) == 1) for text in raw_nodes]
     features = list(dict.fromkeys(args.feature + (["app-hosting"] if args.with_examples else [])))
     apps_repo_url = args.apps_repo_url or (scaffold.apps_repo_beside(core[0]) if args.with_examples else "")
+    age_key_file = args.age_key_file or os.environ.get("SOPS_AGE_KEY_FILE") or scaffold.DEFAULT_KEY_FILE
+    if _age.key_path(age_key_file) != Path(age_key_file).expanduser():
+        # Every command reads SOPS_AGE_KEY_FILE before age_key_file, so the env must record that key.
+        raise scaffold.ScaffoldError(
+            f"SOPS_AGE_KEY_FILE ({os.environ['SOPS_AGE_KEY_FILE']}) is not the age_key_file the env would record "
+            f"({age_key_file}); unset it, or pass the same path as --age-key-file"
+        )
     return scaffold.EnvSpec(
         name=name,
         domain=domain,
@@ -110,7 +117,7 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
         time_zone=args.time_zone,
         features=features,
         apps_repo_url=apps_repo_url,
-        age_key_file=args.age_key_file or os.environ.get("SOPS_AGE_KEY_FILE") or scaffold.DEFAULT_KEY_FILE,
+        age_key_file=age_key_file,
         examples=args.with_examples,
     )
 

@@ -10,7 +10,8 @@ the upgrade.
 ### Changed
 
 - `age_key_file` is required, with no default: `jarvis init` writes the path of the key it used,
-  and `jarvis env add` the first env's. `SOPS_AGE_KEY_FILE` still overrides it, in `doctor` too.
+  and `jarvis env add` the first env's. `SOPS_AGE_KEY_FILE` still overrides it, in `doctor` too,
+  and `init` and `env add` refuse when it names another file than the one they would record.
 - `jarvis validate` checks that `jarvis_env` is a DNS label, as `init` required, and fails any
   `.sops.yaml` creation rule that is not exactly the one jarvis writes for an env folder. jarvis
   writes `.sops.yaml` as plain YAML, so the next `env add` or recipient change re-lays it out.
