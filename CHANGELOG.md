@@ -7,6 +7,32 @@ the upgrade.
 
 ## Unreleased
 
+### Changed
+
+- Core acts only on its own namespaces, those labelled `jarvis.io/layer` `platform` or
+  `feature`: the core door admits routes only from them, and core's backups (`pvc-backup`)
+  enroll only their volumes. A namespace with neither that label nor a hosted app's (one made by
+  hand) no longer reaches the core door or gets core's backups, and `jarvis verify` fails each of
+  its volumes (`no ReplicationSource`) unless it is marked `backup: none`. `jarvis drill` labels
+  its own namespace, `platform-drill`.
+- `jarvis restore --app <namespace>` is `jarvis restore --namespace <namespace>`. Its pod that
+  binds an unbound volume runs at the PriorityClass of the workloads that mount it, so a restore
+  into a hosted app's namespace works with `--node` too.
+- `jarvis validate` checks core's admission rules as the env's build makes them, so it holds
+  what the cluster runs, a feature's exception included. App DNS brings its own exception to the
+  `load-balancers` rule, whose message for any other LoadBalancer is now `not a LoadBalancer
+  Service: core publishes through Traefik's`.
+- `restic-check` prints `no backup credential registered for it` (was `for its app`) for an
+  app repository with no registered credential.
+
+### Upgrading
+
+- Before moving the pin, list any namespace of yours that is neither core's nor a hosted app's:
+  `kubectl get ns -L jarvis.io/layer,hosting.jarvis.io/app`, the ones with both columns empty,
+  leaving out k3s's (`kube-*`, `default`) and Flux's (`flux-system`). Move each one's workload
+  in as a hosted app, or mark each of its volumes `backup: none`; nothing else is needed.
+- Use `jarvis restore --namespace` where a script or runbook says `--app`.
+
 ## v0.8.1
 
 ### Fixed

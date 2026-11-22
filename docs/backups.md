@@ -7,7 +7,7 @@ Do not merge a change to the `pvc-backup` policies during a restore: Flux recrea
 ## Restore one namespace
 
 ```bash
-jarvis restore --env <env> --app <namespace> [--as-of <RFC3339>]
+jarvis restore --env <env> --namespace <namespace> [--as-of <RFC3339>]
 ```
 
 The default `--as-of` is one second before the PVC's `creationTimestamp`, right for a claim that was deleted and recreated; a volume that was not recreated needs `--as-of`. For each PVC, restore suspends its Flux Kustomization, CronJobs and writers, annotates `backup: paused` and waits until nothing mounts it, binds an unbound PVC with a short-lived pod placed like its workload (`NODE=<node>` to pin), applies a Direct ReplicationDestination, and fails on `No eligible snapshots found` or an empty mover log. On success it undoes every step, except the pause while the rebuild hold exists. On failure it leaves the quiesced state and prints one command per undo step.
@@ -209,5 +209,5 @@ Put the off-host restic password on the offline keep-safe list ([secrets.md](sec
              hostPath: {path: <backup_path>/restic, type: Directory}
    ```
 
-3. On `PASS`, delete the Job and run `jarvis restore --env <env> --app platform-drill --node <node>`.
+3. On `PASS`, delete the Job and run `jarvis restore --env <env> --namespace platform-drill --node <node>`.
 4. Compare PVC `drill`'s files with the source, then `jarvis drill --cleanup-only --env <env>`.

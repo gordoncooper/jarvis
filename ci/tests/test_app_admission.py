@@ -262,8 +262,9 @@ def test_pod_baseline_refuses_risky_items_without_a_grant(tmp_path: Path) -> Non
     host_path = {"volumes": [{"name": "h", "hostPath": {"path": "/srv"}}]}
     cases = [
         (_pod("restricted", "web-demo"), PASS),
-        # jarvis restore's binder, which mounts an unbound claim so it binds on the right node.
-        (_binder_body("app-web-demo", "data", "registry.example/x@sha256:" + "0" * 64, {}), PASS),
+        # jarvis restore's binder, which mounts an unbound claim so it binds on the right node, at
+        # the class of the app workload that mounts it.
+        (_binder_body("app-web-demo", "data", "registry.example/x@sha256:" + "0" * 64, {"priorityClassName": "hosted-app"}), PASS),
         (_pod("privileged", "web-demo", **_PRIVILEGED), BOTH_FAIL),
         (_pod("root", "web-demo", securityContext={}), BOTH_FAIL),
         (_pod("uid-zero", "web-demo", securityContext={"runAsNonRoot": True, "runAsUser": 0}), BOTH_FAIL),

@@ -22,6 +22,14 @@ resources:
   - grant-revoke.yaml
   - certificate.yaml
 patches:
+  # A hosted app's repositories open only with that app's own password, which its registration
+  # mounts in restic-check (jarvis/apps/backups.py); core's never reaches them.
+  - patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata: {name: restic-check, namespace: platform-backups}
+      spec: {jobTemplate: {spec: {template: {spec: {containers: [
+        {name: restic, env: [{name: OWN_PASSWORD_REPOSITORIES, value: "ns-app-*/*"}]}]}}}}}
   # The apps door: HTTPS for <name>.apps.${dns_suffix}, and apps-granted for a custom hostname
   # the env grants (outside dns_suffix, so no core name falls to it), from app namespaces only.
   # Its own listeners, so moving it to its own address later is a listener move, not a reroute.

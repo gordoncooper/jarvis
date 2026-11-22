@@ -576,27 +576,26 @@ def _node_placement(node: str) -> dict:
 
 
 def binder_placement(kubectl: Kubectl, namespace: str, pvc: str, node: str | None) -> dict:
-    """Where the binder runs: the named node, or the placement of the workloads that mount the PVC."""
-    if node is not None:
-        return _node_placement(node)
+    """Where the binder runs: the named node, or the placement of the workloads that mount the PVC.
+    It runs at their PriorityClass, if they share one: a namespace may refuse a pod without it."""
     owns: dict[str, Callable[[dict], bool]] = {
         "deployment": lambda obj: _claim_in_pod_spec(_pod_template(obj, "deployment"), pvc),
         "statefulset": lambda obj: _sts_owns(obj, pvc),
         "cronjob": lambda obj: _cronjob_owns(obj, pvc),
     }
-    placements: list[dict] = []
-    for kind, mounts in owns.items():
-        for obj in _items(kubectl, kind, namespace):
-            if not mounts(obj):
-                continue
-            template = _pod_template(obj, kind)
-            if template.get("nodeName"):
-                # nodeName skips the scheduler, so the binder gets the same node by affinity.
-                placements.append(_node_placement(str(template["nodeName"])))
-            else:
-                placements.append(
-                    {key: template[key] for key in _PLACEMENT_KEYS if template.get(key)}
-                )
+    templates = [
+        _pod_template(obj, kind) for kind, mounts in owns.items() for obj in _items(kubectl, kind, namespace) if mounts(obj)
+    ]
+    classes = {template.get("priorityClassName") for template in templates}
+    priority = {"priorityClassName": next(iter(classes))} if len(classes) == 1 and None not in classes else {}
+    if node is not None:
+        return {**_node_placement(node), **priority}
+    placements = [
+        # nodeName skips the scheduler, so the binder gets the same node by affinity.
+        _node_placement(str(template["nodeName"])) if template.get("nodeName")
+        else {key: template[key] for key in _PLACEMENT_KEYS if template.get(key)}
+        for template in templates
+    ]
     if not placements:
         raise Fail(
             f"{namespace}/{pvc}: unbound and no Deployment, StatefulSet or CronJob mounts it;"
@@ -607,7 +606,7 @@ def binder_placement(kubectl: Kubectl, namespace: str, pvc: str, node: str | Non
             f"{namespace}/{pvc}: the workloads that mount it ask for different placement;"
             " pass NODE=<node> (--node)"
         )
-    return placements[0]
+    return {**placements[0], **priority}
 
 
 def _check_node(kubectl: Kubectl, node: str) -> None:
@@ -617,9 +616,9 @@ def _check_node(kubectl: Kubectl, node: str) -> None:
 
 
 def _binder_body(namespace: str, pvc: str, image: str, placement: dict) -> dict:
-    """A pod that only mounts the claim, so the volume binds where placement puts it. It meets
-    core's rules everywhere (sized, run to completion) and a hosted app's baseline in its
-    namespace: Pod Security restricted, memory request equal to its limit, PriorityClass hosted-app."""
+    """A pod that only mounts the claim, so the volume binds where placement (with its priority
+    class) puts it. It meets core's rules everywhere (sized, run to completion) and the strictest
+    pod baseline: Pod Security restricted, memory request equal to its limit."""
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -627,7 +626,6 @@ def _binder_body(namespace: str, pvc: str, image: str, placement: dict) -> dict:
         "spec": {
             "restartPolicy": "Never",
             **placement,
-            **({"priorityClassName": "hosted-app"} if namespace.startswith("app-") else {}),
             "securityContext": {"runAsNonRoot": True, "runAsUser": 65534, "seccompProfile": {"type": "RuntimeDefault"}},
             "containers": [
                 {
@@ -876,13 +874,13 @@ def _restore_one(
 
 
 def _select(
-    kubectl: Kubectl, app: str | None
+    kubectl: Kubectl, in_namespace: str | None
 ) -> tuple[list[tuple[str, str, str]], set[tuple[str, str]], set[tuple[str, str]]]:
     args = ["get", "pvc", "-o", "json"]
-    if app is None:
+    if in_namespace is None:
         args[2:2] = ["-A"]
     else:
-        args[2:2] = ["-n", app]
+        args[2:2] = ["-n", in_namespace]
     body = _load(kubectl(args), "list pvc")
     chosen: list[tuple[str, str, str]] = []
     present: set[tuple[str, str]] = set()
@@ -1049,7 +1047,7 @@ def run(
     kubectl: Kubectl,
     *,
     env: str,
-    app: str | None,
+    in_namespace: str | None,
     all_pvcs: bool,
     as_of: str | None = None,
     retire: Sequence[str] | None = None,
@@ -1062,8 +1060,8 @@ def run(
     pause_budget_s: float = PAUSE_BUDGET_SECONDS,
     restore_budget_s: float = RESTORE_BUDGET_SECONDS,
 ) -> int:
-    if all_pvcs == (app is not None):
-        _line("pass APP=<namespace> or --all")
+    if all_pvcs == (in_namespace is not None):
+        _line("pass --namespace <namespace> or --all")
         return 1
     clock = monotonic or time.monotonic
     pause = sleep or time.sleep
@@ -1086,7 +1084,7 @@ def run(
             image = etcd_snapshot_image(kubectl)
         except ImageError as exc:
             raise Fail(exc.message) from exc
-        chosen, present, unbound = _select(kubectl, None if all_pvcs else app)
+        chosen, present, unbound = _select(kubectl, None if all_pvcs else in_namespace)
         hold = _hold_repos(kubectl)
         retired = _names(retire)
         accepted_names = _names(accept_empty)
@@ -1180,7 +1178,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", required=True, help="Environment under envs/")
     which = parser.add_mutually_exclusive_group(required=True)
-    which.add_argument("--app", help="Namespace whose PVCs to restore")
+    which.add_argument("--namespace", help="Namespace whose PVCs to restore")
     which.add_argument("--all", action="store_true", help="Restore every enrolled PVC")
     parser.add_argument(
         "--as-of",
@@ -1203,7 +1201,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Node for every unbound PVC this run binds (default: where its workload runs)",
     )
     args = parser.parse_args(argv)
-    app = args.app or None
     kubeconfig = Path.home() / ".kube" / f"jarvis-{args.env}.yaml"
     if not kubeconfig.is_file():
         _line(f"FAIL kubeconfig does not exist: {kubeconfig}")
@@ -1215,7 +1212,7 @@ def main(argv: list[str] | None = None) -> int:
     return run(
         kubectl,
         env=args.env,
-        app=app,
+        in_namespace=args.namespace or None,
         all_pvcs=args.all,
         as_of=args.as_of,
         retire=args.retire,
