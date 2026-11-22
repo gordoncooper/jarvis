@@ -25,10 +25,13 @@ Core ships as tags (`v<major>.<minor>.<patch>`). An env runs exactly one: `core_
 
 ## Move an env to a release
 
-1. Follow the release's **Upgrading** notes in the instance repository.
+1. Follow the release's **Upgrading** notes in the instance repository, up to the move.
 2. Set `core_git_ref` and the core source's `spec.ref.name` to `refs/tags/<tag>`, and merge.
    env-schema checks the two match.
-3. Nothing else: every jarvis command runs the release the env pins, from a cached checkout of
-   the tag when the installed CLI is not it, and refuses an env that follows a branch.
-   `jarvis --core <path>` runs a local checkout anyway, with a warning, for a deliberate run of
-   unreleased core.
+3. Wait until `jarvis verify` passes on the new tag before any step on the cluster, an
+   **Upgrading** step included. For up to one Flux interval after the merge, Flux reads Ready
+   on the old core's content; `verify` fails until every layer has applied the new tag.
+
+Every jarvis command runs the release the env pins, from a cached checkout of the tag when the
+installed CLI is not it, and refuses an env that follows a branch. `jarvis --core <path>` runs a
+local checkout anyway, with a warning, for a deliberate run of unreleased core.

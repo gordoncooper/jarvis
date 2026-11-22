@@ -26,6 +26,9 @@ the upgrade.
   Service: core publishes through Traefik's`.
 - `restic-check` prints `no backup credential registered for it` (was `for its app`) for an
   app repository with no registered credential.
+- `jarvis verify --smoke` labels its namespace, `platform-smoke`, `jarvis.io/layer: platform`,
+  and its App DNS probe waits for its route to read `Accepted` on the core door before it asks
+  the name, failing `was not Accepted on platform-gateway/jarvis section core` otherwise.
 
 ### Upgrading
 
@@ -46,7 +49,9 @@ the upgrade.
   the app's LoadBalancer Service. Core names each app LoadBalancer (MutatingPolicy
   `app-lan-name`), and admission refuses an app Service that is unnamed or names any other
   hostname. An app LoadBalancer made before this release gets its name the next time it is
-  written; for a chart app, `flux reconcile helmrelease app-<name> -n flux-system --force`.
+  written; for a chart app, once `jarvis verify` passes on this release,
+  `flux reconcile helmrelease app-<name> -n flux-system --force`. Run before that, the reconcile
+  writes the Service before `app-lan-name` exists, and it stays unnamed.
 - `jarvis verify` warns, instead of failing, while a restored volume's backup waits for its
   first scheduled sync.
 - `jarvis verify` right after a boot: while a node's kubelet has not renewed its Lease, it prints
