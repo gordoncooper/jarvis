@@ -36,12 +36,8 @@ These are the tests a choice must pass; [AGENTS.md](../AGENTS.md) has how code i
 
 ## How the work runs
 
-- **Batches.** The owner starts each builder session with one batch of the current step ([AGENTS.md](../AGENTS.md), Workflow). Renovate PRs are handled between batches, not during one.
-- **The standing reviewer prompt,** the same every time, so no PR is missed:
-
-  > Review every open PR that has no APPROVE at its current head. Skip Renovate PRs whose commits are all Renovate's own, and a PR whose only commits since its APPROVE are clean **Update branch** merges of `main`. Use `docs/review.md`, against `docs/charter.md`. For a PR with an earlier review, check that the changes it asked for are done, then review only the commits since. Post one review comment per PR, then reply with one line per PR: verdict, head commit, merge order.
-
-- **Renovate:** patches, digests and pins merge themselves overnight once every check is green. Minors and majors wait for the owner, who clicks **Update branch** and merges each one on green. One that stays red after a re-run goes to a session to fix or close.
+- **Sessions start from [prompts.md](prompts.md).** The owner starts each builder session with one batch of the current step ([AGENTS.md](../AGENTS.md), Workflow), then a review session with the standing reviewer prompt. Renovate PRs are handled between batches, not during one.
+- **Renovate:** patches, digests and pins merge themselves overnight once every check is green. Minors and majors wait for the owner, who clicks **Update branch** and merges each one on green. One that stays red after a re-run goes to the Renovate sweep.
 - **Follow-ups are tagged with where they land:** a step in Next, their own named trigger, or the sweep. Before each release, one batch takes the sweep list and fixes or deletes each item. If the list passes 10, the next batch is the sweep.
 - **Releases:** only a release PR leads to a tag ([releasing.md](releasing.md)).
 - **Audits,** before a major release: one session per question (does the code guess? does each switch work both ways? what's left over?). An audit reports and fixes nothing. The owner picks which findings to fix. A finding that only moves code, without removing lines or risk, is dropped.
