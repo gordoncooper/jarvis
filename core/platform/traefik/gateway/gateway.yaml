@@ -1,7 +1,7 @@
-# The core door: HTTPS for *.${dns_suffix}, from any namespace that is not a hosted app's.
-# Only core's wiring creates namespaces and only it sets hosting.jarvis.io/app, so a tenant
-# can neither attach here nor shed the label. app-hosting adds the apps door beside it
-# (core/feature/app-hosting/kustomization.yaml). Both doors share Traefik's websecure
+# The core door: HTTPS for *.${dns_suffix}, from core's own namespaces: those labelled with a
+# core layer. Only core's wiring creates namespaces and sets that label, so a tenant cannot
+# attach here, and a namespace without it (a feature's left after it is switched off, or one
+# made by hand) gets nothing. A feature adds its own door beside it from its own Component. Both doors share Traefik's websecure
 # entrypoint (container port 8443, published on 443): shared-address mode.
 # platform-configs postBuild fills ${dns_suffix}.
 apiVersion: gateway.networking.k8s.io/v1
@@ -27,8 +27,9 @@ spec:
           from: Selector
           selector:
             matchExpressions:
-              - key: hosting.jarvis.io/app
-                operator: DoesNotExist
+              - key: jarvis.io/layer
+                operator: In
+                values: [platform, feature]
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

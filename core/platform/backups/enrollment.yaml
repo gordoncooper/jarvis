@@ -3,8 +3,9 @@
 # ReplicationSource. A PVC opts out with annotation backup: none. Prune stays off. Deleting a
 # policy deletes the objects it generated (synchronize).
 #
-# A hosted app's namespace (app-*) is app-hosting's: it enrolls those PVCs with each app's own
-# credential (core/feature/app-hosting/backups). Core's credential never reaches one.
+# Only core's own namespaces, those labelled with a core layer, are enrolled. A namespace without
+# the label (a feature's that keeps its own credentials, or one made by hand) never gets core's
+# credential; jarvis verify fails its volumes unless they are marked backup: none.
 #
 # Schedule and retention are the env's cluster-wide values. The rebuild hold
 # (kube-system/backup-rebuild-hold) and annotation backup: paused pause the source.
@@ -30,6 +31,11 @@ spec:
         apiVersions: [v1]
         operations: [CREATE, UPDATE]
         resources: [persistentvolumeclaims]
+    namespaceSelector:
+      matchExpressions:
+        - key: jarvis.io/layer
+          operator: In
+          values: [platform, feature]
   matchConditions:
     # volumeName is empty until the claim binds; that UPDATE triggers generation.
     - name: bound
@@ -38,8 +44,6 @@ spec:
       expression: object.metadata.?annotations["backup"].orValue("") != "none"
     - name: not-a-mover
       expression: object.metadata.?labels["app.kubernetes.io/created-by"].orValue("") != "volsync"
-    - name: core-namespace
-      expression: "!object.metadata.namespace.startsWith('app-')"
   variables:
     - name: credential
       expression: resource.get("v1", "secrets", "platform-backups", "backups-restic").data

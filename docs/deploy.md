@@ -108,7 +108,7 @@ The `alerts` feature posts every failed Kustomization or HelmRelease reconcile t
 
 ## Drill and restore
 
-`jarvis drill --env <env>`, `jarvis restore --env <env> --app <namespace>` and `jarvis restore --all --env <env>`: [backups.md](backups.md).
+`jarvis drill --env <env>`, `jarvis restore --env <env> --namespace <namespace>` and `jarvis restore --all --env <env>`: [backups.md](backups.md).
 
 ## Age key
 

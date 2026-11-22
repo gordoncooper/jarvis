@@ -7,7 +7,8 @@ Core ships as tags (`v<major>.<minor>.<patch>`). An env runs exactly one: `core_
 ## Cut a release
 
 1. On `main`, rename `## Unreleased` in `CHANGELOG.md` to `## <tag>` and open a new empty
-   `## Unreleased` above it. A minor release lists every env change under **Upgrading**. In the
+   `## Unreleased` above it. A minor release lists every env change under **Upgrading**, and until
+   v0.9.0 a patch release may list them too. In the
    same PR, set `JARVIS_VERSION` in [quickstart.md](quickstart.md)'s choices to `<tag>`.
 2. Merge that, then tag the merge commit and push the tag:
 

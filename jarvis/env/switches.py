@@ -44,7 +44,7 @@ APP_DNS = "app-dns"
 APP_DNS_DIR = "core/feature/app-dns"
 FEATURE_COMPONENTS: dict[str, dict[str, tuple[str, ...]]] = {
     ALERTS: {"resources": (_CORE_PATH + ALERTS_DIR,), "sealed": ("alerts-notify.sops.yaml",)},
-    APP_DNS: {"resources": (_CORE_PATH + APP_DNS_DIR,)},
+    APP_DNS: {"components": (_CORE_PATH + APP_DNS_DIR,)},
     APP_HOSTING: {"components": (_CORE_PATH + APP_HOSTING_DIR,)},
     OFFSITE_COPY: {"resources": (_CORE_PATH + OFFSITE_COPY_DIR,), "sealed": ("backups-offsite.sops.yaml",)},
 }
