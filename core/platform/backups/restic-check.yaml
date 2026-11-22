@@ -59,14 +59,18 @@ spec:
                 capabilities:
                   drop: ["ALL"]
               env:
-                # Credential source: core's one password for core repositories. A hosted app's
-                # repository (ns-app-*) opens only with that app's own password, which an env's
-                # app registration mounts at /credentials/<namespace>/RESTIC_PASSWORD.
+                # Credential source: core's one password, but for repositories that match
+                # OWN_PASSWORD_REPOSITORIES (one glob, none by default). Each of those opens only with
+                # its own password, mounted at /credentials/<namespace>/RESTIC_PASSWORD, and core's
+                # never reaches its command. A feature that keeps such repositories sets the glob
+                # from its own Component.
                 - name: RESTIC_PASSWORD
                   valueFrom:
                     secretKeyRef:
                       name: backups-restic
                       key: RESTIC_PASSWORD
+                - name: OWN_PASSWORD_REPOSITORIES
+                  value: ""
                 # Repository list: paths under the rest-server data directory; globs expand there.
                 - name: REPOSITORIES
                   value: "host-etcd-snapshots ns-*/pvc-*"
@@ -87,14 +91,13 @@ spec:
                   for repo in $REPOSITORIES; do
                     # A glob that matched nothing; a plain name that is missing still fails below.
                     case "$repo" in *'*'*) continue ;; esac
-                    # Core's password never reaches an app repository command.
                     run=
                     key=
                     case "$repo" in
-                      ns-app-*/*)
+                      $OWN_PASSWORD_REPOSITORIES)
                         key=/credentials/$(dirname "$repo" | cut -c4-)/RESTIC_PASSWORD
                         if [ ! -f "$key" ]; then
-                          echo "FAIL $repo: no backup credential registered for its app"
+                          echo "FAIL $repo: no backup credential registered for it"
                           failed=1
                           continue
                         fi

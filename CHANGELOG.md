@@ -7,6 +7,39 @@ the upgrade.
 
 ## Unreleased
 
+## v0.8.2
+
+### Changed
+
+- Core acts only on its own namespaces, those labelled `jarvis.io/layer` `platform` or
+  `feature`: the core door admits routes only from them, and core's backups (`pvc-backup`)
+  enroll only their volumes. A namespace with neither that label nor a hosted app's (one made by
+  hand) no longer reaches the core door or gets core's backups, and `jarvis verify` fails each of
+  its volumes (`no ReplicationSource`) unless it is marked `backup: none`. `jarvis drill` labels
+  its own namespace, `platform-drill`.
+- `jarvis restore --app <namespace>` is `jarvis restore --namespace <namespace>`. Its pod that
+  binds an unbound volume runs at the PriorityClass of the workloads that mount it, so a restore
+  into a hosted app's namespace works with `--node` too.
+- `jarvis validate` checks core's admission rules as the env's build makes them, so it holds
+  what the cluster runs, a feature's exception included. App DNS brings its own exception to the
+  `load-balancers` rule, whose message for any other LoadBalancer is now `not a LoadBalancer
+  Service: core publishes through Traefik's`.
+- `restic-check` prints `no backup credential registered for it` (was `for its app`) for an
+  app repository with no registered credential.
+- `jarvis verify --smoke` labels its namespace, `platform-smoke`, `jarvis.io/layer: platform`,
+  and its App DNS probe waits for its route to read `Accepted` on the core door before it asks
+  the name, failing `was not Accepted on platform-gateway/jarvis section core` otherwise.
+
+### Upgrading
+
+- Before moving the pin, list any namespace of yours that is neither core's nor a hosted app's:
+  `kubectl get ns -L jarvis.io/layer,hosting.jarvis.io/app`, the ones with both columns empty,
+  leaving out k3s's (`kube-*`, `default`) and Flux's (`flux-system`). Move each one's workload
+  in as a hosted app, or mark each of its volumes `backup: none`; nothing else is needed.
+- Use `jarvis restore --namespace` where a script or runbook says `--app`.
+
+## v0.8.1
+
 ### Fixed
 
 - `jarvis site` and `jarvis node prep` work on an env that lists hosted apps. The CLI fetched the
@@ -16,7 +49,9 @@ the upgrade.
   the app's LoadBalancer Service. Core names each app LoadBalancer (MutatingPolicy
   `app-lan-name`), and admission refuses an app Service that is unnamed or names any other
   hostname. An app LoadBalancer made before this release gets its name the next time it is
-  written; for a chart app, `flux reconcile helmrelease app-<name> -n flux-system --force`.
+  written; for a chart app, once `jarvis verify` passes on this release,
+  `flux reconcile helmrelease app-<name> -n flux-system --force`. Run before that, the reconcile
+  writes the Service before `app-lan-name` exists, and it stays unnamed.
 - `jarvis verify` warns, instead of failing, while a restored volume's backup waits for its
   first scheduled sync.
 - `jarvis verify` right after a boot: while a node's kubelet has not renewed its Lease, it prints

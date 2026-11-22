@@ -111,7 +111,8 @@ spec:
     - expression: size(variables.toFile) == 0
       messageExpression: "'logs to a file, not stdout: ' + variables.toFile.join(', ')"
 ---
-# App DNS's Service (core/feature/app-dns). Traefik's comes from k3s's own chart, which is not rendered.
+# Traefik's LoadBalancer comes from k3s's own chart, in a namespace with no layer, and is not rendered.
+# A feature that publishes its own lets it through from its own Component.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -122,7 +123,5 @@ spec:
     resourceRules:
       - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [services]}
   validations:
-    - expression: >-
-        object.spec.?type.orValue('ClusterIP') != 'LoadBalancer' ||
-        object.metadata.namespace + '/' + object.metadata.name == 'platform-app-dns/k8s-gateway'
-      message: "only App DNS is a LoadBalancer Service"
+    - expression: object.spec.?type.orValue('ClusterIP') != 'LoadBalancer'
+      message: "not a LoadBalancer Service: core publishes through Traefik's"

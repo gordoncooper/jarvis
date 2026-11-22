@@ -216,14 +216,20 @@ def test_app_hosting_off_renders_none_of_it(tmp_path: Path) -> None:
 
 
 def test_app_hosting_on_renders_all_of_it(tmp_path: Path) -> None:
-    """Rule: with the switch, the env gets every app-hosting object and the apps door beside the
-    core one; nothing else changes (pvc-backup's credential guard is core's, on or off)."""
+    """Rule: with the switch, the env gets every app-hosting object, the apps door beside the
+    core one, and restic-check opening app repositories only with their own passwords; nothing
+    else changes (pvc-backup's credential guard is core's layer label, on or off)."""
     on, off = render_platform(tmp_path, hosting=True), render_platform(tmp_path, hosting=False)
     assert _APP_PIECES <= set(on)
     assert set(on) - _APP_PIECES == set(off)
-    gateway = ("Gateway", "jarvis")
+    gateway, check = ("Gateway", "jarvis"), ("CronJob", "restic-check")
     assert on[gateway]["spec"]["listeners"][0] == off[gateway]["spec"]["listeners"][0]
     assert [listener["name"] for listener in on[gateway]["spec"]["listeners"]] == ["core", "apps", "apps-granted"]
+    envs = [{item["name"]: item for item in doc[check]["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0].pop("env")}
+            for doc in (on, off)]  # fmt: skip
+    for env in envs:
+        env.pop("OWN_PASSWORD_REPOSITORIES")
+    assert envs[0] == envs[1]
     for key in set(off) - {gateway}:
         assert on[key] == off[key], key
 
