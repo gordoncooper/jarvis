@@ -280,7 +280,13 @@ jobs:
             done
             [[ "${address}" == "${lb}" ]] || { echo "::error::App DNS answered ${host} with '${address}', not ${lb}"; exit 1; }
           fi
-          curl -sS -f -o /dev/null --max-time 20 --resolve "${host}:8080:${address}" "http://${host}:8080/health"
+          # The LoadBalancer can refuse for a moment after k3s gives it its address: retry, within the
+          # same bound as the dig loop.
+          for attempt in $(seq 1 30); do
+            curl -sS -f -o /dev/null --max-time 20 --resolve "${host}:8080:${address}" "http://${host}:8080/health" && break
+            [ "${attempt}" -lt 30 ] || exit 1
+            sleep 5
+          done
           echo "${host}:8080 answers at ${address}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
       # A hosted app's backup and restore, with its own credential on the apps rest-server: a file
