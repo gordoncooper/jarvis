@@ -95,7 +95,7 @@ It validates the env first. It installs k3s and node labels, writes `~/.kube/jar
 jarvis verify --env <env> [--smoke]
 ```
 
-Each standing check prints `PASS`, `WARN` or `FAIL`; any `FAIL` exits 1. `WARN` is a scheduled job or a restored volume's backup whose first run is still due. Right after a boot, until every node's kubelet reports again, verify prints `FAIL too freshly started to judge` and runs no check, since the cluster still holds status from before the boot. `--smoke` adds one short-lived probe per enabled capability in namespace `platform-smoke`: a Certificate from the internal CA, a new App DNS name (asked on port 53 from the controller), a hosted app's pod admitted and the same pod with an ungranted risk refused, and each add-on's own probe.
+Each standing check prints `PASS`, `WARN` or `FAIL`; any `FAIL` exits 1. `WARN` is a scheduled job or a restored volume's backup whose first run is still due. Right after a boot, until every node's kubelet reports again, verify prints `FAIL too freshly started to judge` and runs no check, since the cluster still holds status from before the boot. `--smoke` adds one short-lived probe per enabled capability in namespace `platform-smoke`: a Certificate from the internal CA, a new App DNS name for a route the core door accepted (asked on port 53 from the controller), a hosted app's pod admitted and the same pod with an ungranted risk refused, and each add-on's own probe.
 
 ## Alerts
 
