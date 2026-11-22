@@ -7,7 +7,7 @@ The platform canary at `https://testapp.<dns_suffix>/`. It depends on no service
 | What | Detail |
 | --- | --- |
 | Namespace `platform-testapp` | Layer `platform`, Pod Security `restricted`. Deployment, ClusterIP Service on 8080 and HTTPRoute `testapp` |
-| `GET /` | ConfigMap `testapp` key `index.html`: `testapp` and a newline, sha256 `60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7` |
+| `GET /` | ConfigMap `testapp` key `index.html`: `testapp` and a newline |
 | Image | `nginxinc/nginx-unprivileged` (uid 101), digest-pinned, read-only root, `/tmp` emptyDir |
 | HTTPRoute | Hostname `testapp.${dns_suffix}` on the core door (`parentRefs` Gateway `platform-gateway/jarvis`, `sectionName: core`), no certificate of its own: the pattern every core service and add-on follows; the core door's first user |
 

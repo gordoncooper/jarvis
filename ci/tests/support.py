@@ -69,35 +69,18 @@ def _default_hosts() -> str:
     )
 
 
-# A sealed file's shape for the schema: SOPS metadata naming the recipient _write_env's rule names.
-SEALED_PLACEHOLDER = "sops:\n  age:\n    - recipient: age1fixture\n"
+# The recipient _write_env's rule names, and a sealed file's shape for the schema: SOPS metadata
+# naming it.
+FIXTURE_RECIPIENT = "age1" + "q" * 58
+SEALED_PLACEHOLDER = f"sops:\n  age:\n    - recipient: {FIXTURE_RECIPIENT}\n"
 
 
 def _ensure_sops_creation_rule(root: Path, env_name: str) -> None:
-    import yaml
+    from jarvis.secrets import age
 
     path = root / ".sops.yaml"
-    rules: list[dict[str, object]] = []
-    if path.is_file():
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if isinstance(loaded, dict) and isinstance(loaded.get("creation_rules"), list):
-            rules = list(loaded["creation_rules"])
-    needle = f"envs/{env_name}/secrets/"
-    if any(
-        isinstance(rule, dict) and needle in str(rule.get("path_regex", ""))
-        for rule in rules
-    ):
-        return
-    rules.append(
-        {
-            "path_regex": f"envs/{env_name}/secrets/.*\\.sops\\.yaml$",
-            "age": "age1fixture",
-        }
-    )
-    path.write_text(
-        yaml.safe_dump({"creation_rules": rules}, sort_keys=False),
-        encoding="utf-8",
-    )
+    if not age.recipients(path, env_name):
+        age.write_creation_rules(path, [*age.creation_rules(path), age.creation_rule(env_name, [FIXTURE_RECIPIENT])])
 
 
 def _valid_cluster_vars() -> dict:

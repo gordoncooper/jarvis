@@ -101,40 +101,25 @@ def _run_openssl(args: list[str], *, input_bytes: bytes | None = None) -> bytes:
     return result.stdout
 
 
-def _cluster_text(env: str) -> str:
+def _cluster_vars(env: str) -> dict:
     path = _repo_root() / "envs" / env / "values" / "cluster-vars.yaml"
     try:
-        return path.read_text(encoding="utf-8")
-    except OSError as exc:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
         raise SystemExit("cluster-vars.yaml is required") from exc
-
-
-def _yaml_scalar(text: str, key: str) -> str | None:
-    match = re.search(rf"^{re.escape(key)}:\s*(\S+)\s*$", text, re.M)
-    return match.group(1) if match else None
+    return data if isinstance(data, dict) else {}
 
 
 def _dns_suffix(env: str) -> str:
-    suffix = _yaml_scalar(_cluster_text(env), "dns_suffix") or ""
+    suffix = str(_cluster_vars(env).get("dns_suffix") or "")
     if not _DNS_SUFFIX.fullmatch(suffix):
         raise SystemExit("refusing to mint a CA without a DNS suffix")
     return suffix
 
 
-def _expand_path(raw: str) -> str:
-    if raw == "~" or raw.startswith("~/"):
-        return str(Path.home() / raw.removeprefix("~/"))
-    return raw
-
-
 def _sops_child_env(env: str) -> dict[str, str]:
-    """Prefer SOPS_AGE_KEY_FILE. Otherwise use the env's age_key_file."""
-    child = os.environ.copy()
-    if child.get("SOPS_AGE_KEY_FILE"):
-        return child
-    configured = _yaml_scalar(_cluster_text(env), "age_key_file") or _age.DEFAULT_KEY_FILE
-    child["SOPS_AGE_KEY_FILE"] = _expand_path(configured)
-    return child
+    """sops opens the env's files with its working key (age.key_path)."""
+    return {**os.environ, "SOPS_AGE_KEY_FILE": str(_key_file(env))}
 
 
 def _generate_ca_material(dns_suffix: str) -> tuple[str, str]:
@@ -574,7 +559,10 @@ def _apps_needing_credentials(env: str) -> list[str]:
 
 
 def _key_file(env: str) -> Path:
-    return _age.key_path(_yaml_scalar(_cluster_text(env), "age_key_file"))
+    try:
+        return _age.key_path(_cluster_vars(env).get("age_key_file"))
+    except _age.AgeError as exc:
+        raise SystemExit(f"secrets: {exc}") from exc
 
 
 def _lifecycle(args: argparse.Namespace) -> int:

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import re
 import shlex
 import shutil
 import subprocess
@@ -25,7 +24,6 @@ import yaml
 
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
-from jarvis.render.cluster_vars import render_document
 from jarvis.schema.env import (
     DEFAULT_SSH_USER,
     ValidationError,
@@ -745,59 +743,33 @@ def check_clock(user: str, host: str, public: Path) -> None:
         raise PrepError("stopped because the clock is not synced")
 
 
-def _host_key_match(line: str, name: str) -> re.Match[str] | None:
-    return re.match(rf"^(\s*){re.escape(name)}(\s*):(.*)$", line.rstrip("\n"))
-
-
-def _has_host_key(text: str, name: str) -> bool:
-    return any(_host_key_match(line, name) for line in text.splitlines())
+def _host_key(text: str, host: str) -> yaml.Node | None:
+    """The inventory's key node for host, as the YAML parser reads it; its marks locate its text."""
+    node = yaml.compose(text, Loader=yaml.SafeLoader)
+    key = None
+    for step in ("all", "hosts", host):
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        key, node = next(((k, v) for k, v in node.value if k.value == step), (None, None))
+        if key is None:
+            return None
+    return key
 
 
 def require_inventory_host(repo: Path, env: str, host: str) -> None:
     path = repo / "envs" / env / "inventory" / "hosts.yml"
-    if not path.is_file() or not _has_host_key(path.read_text(encoding="utf-8"), host):
+    if not path.is_file() or _host_key(path.read_text(encoding="utf-8"), host) is None:
         raise PrepError(f"{host} is not a host in the inventory. Add it with node_roles first.")
 
 
 def rename_inventory_host(text: str, old: str, new: str) -> str:
-    """Rename one host key. Leave comments, roles, and other hosts as they are."""
-    if old == new:
-        if not _has_host_key(text, old):
-            raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
+    """Rename one host key, in place. Leave comments, roles, and other hosts as they are."""
+    if _host_key(text, new) is not None and (old == new or _host_key(text, old) is None):
         return text
-    old_present = _has_host_key(text, old)
-    new_present = _has_host_key(text, new)
-    if new_present and not old_present:
-        return text
-    if not old_present:
+    key = _host_key(text, old)
+    if key is None:
         raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
-    lines = text.splitlines(keepends=True)
-    replaced = False
-    out: list[str] = []
-    for line in lines:
-        match = None if replaced else _host_key_match(line, old)
-        if match is None:
-            out.append(line)
-            continue
-        newline = "\n" if line.endswith("\n") else ""
-        out.append(f"{match.group(1)}{new}{match.group(2)}:{match.group(3)}{newline}")
-        replaced = True
-    if not replaced:
-        raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
-    return "".join(out)
-
-
-def set_yaml_scalar(text: str, key: str, value: str) -> str:
-    """Replace one scalar in place, or append it. Keeps a trailing comment."""
-    if not value or any(char.isspace() for char in value):
-        raise PrepError(f"invalid {key}")
-    match = re.search(rf"^(\s*{re.escape(key)}:\s*)(\S+)(.*)$", text, re.M)
-    if match is None:
-        suffix = "" if text.endswith("\n") or text == "" else "\n"
-        return f"{text}{suffix}{key}: {value}\n"
-    if match.group(2) == value:
-        return text
-    return f"{text[: match.start()]}{match.group(1)}{value}{match.group(3)}{text[match.end() :]}"
+    return text[: key.start_mark.index] + new + text[key.end_mark.index :]
 
 
 def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user: str) -> None:
@@ -815,44 +787,23 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
         current = effective_ssh_user(repo, env)
         if ssh_user != current:
             raise _ssh_user_locked(current, change=False)
-    cluster_text = cluster.read_text(encoding="utf-8")
     new_inv = rename_inventory_host(inventory.read_text(encoding="utf-8"), old_host, new_host)
-    new_cv = (
-        cluster_text
-        if host_user is not None
-        else set_yaml_scalar(cluster_text, "ssh_user", ssh_user)
-    )
     if new_inv != inventory.read_text(encoding="utf-8"):
         inventory.write_text(new_inv, encoding="utf-8")
-    if new_cv != cluster.read_text(encoding="utf-8"):
-        cluster.write_text(new_cv, encoding="utf-8")
-    _render_cluster_vars_configmap(repo, env)
-
-
-def _yaml_scalar(text: str, key: str) -> str | None:
-    match = re.search(rf"^{re.escape(key)}:\s*(\S+)", text, re.M)
-    return match.group(1) if match else None
-
-
-def _render_cluster_vars_configmap(repo: Path, env: str) -> None:
-    """Rewrite the Flux ConfigMap from cluster-vars when that generated file exists."""
-    generated = repo / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    if not generated.is_file():
-        return
-    source = repo / "envs" / env / "values" / "cluster-vars.yaml"
-    try:
-        rendered = render_document(source)
-    except SystemExit as exc:
-        raise PrepError(str(exc) or "cluster-vars render failed") from exc
-    if generated.read_text(encoding="utf-8") != rendered:
-        generated.write_text(rendered, encoding="utf-8")
+    if host_user is None and recorded_ssh_user(repo, env) is None:
+        # The schema's default, recorded: one line added, the rest of the file as it was.
+        text = cluster.read_text(encoding="utf-8")
+        separator = "" if not text or text.endswith("\n") else "\n"
+        cluster.write_text(f"{text}{separator}ssh_user: {ssh_user}\n", encoding="utf-8")
 
 
 def check_age_key(repo: Path, env: str) -> None:
     """The env's working age key is on this controller and is one of its recipients in
     .sops.yaml (jarvis init made both). Changes nothing."""
-    text = (repo / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
-    path = _age.key_path(_yaml_scalar(text, "age_key_file"))
+    try:
+        path = _age.key_path(_cluster_vars(repo / "envs" / env / "values" / "cluster-vars.yaml").get("age_key_file"))
+    except _age.AgeError as exc:
+        raise PrepError(str(exc)) from exc
     if not path.is_file():
         raise PrepError(f"age key {path} is missing; copy it here from where you keep it (mode 0600)")
     try:
@@ -888,7 +839,6 @@ def show_git_diff(repo: Path, env: str) -> None:
             "--",
             f"envs/{env}/inventory/hosts.yml",
             f"envs/{env}/values/cluster-vars.yaml",
-            f"envs/{env}/flux/generated/cluster-vars-configmap.yaml",
             f"envs/{env}/secrets",
             ".sops.yaml",
         ],

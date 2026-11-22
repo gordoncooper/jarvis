@@ -14,7 +14,8 @@ from pathlib import Path
 
 import yaml
 
-DEFAULT_KEY_FILE = "~/.config/sops/age/keys.txt"
+from jarvis.schema.values import env_name_ok
+
 PUBLIC_KEY = re.compile(r"age1[0-9a-z]{58}")
 
 
@@ -23,8 +24,11 @@ class AgeError(Exception):
 
 
 def key_path(raw: str | None) -> Path:
-    """The working key's path: SOPS_AGE_KEY_FILE when set, else age_key_file, else the default."""
-    return Path(os.environ.get("SOPS_AGE_KEY_FILE") or raw or DEFAULT_KEY_FILE).expanduser()
+    """The working key's path: SOPS_AGE_KEY_FILE when set, else the env's age_key_file."""
+    found = os.environ.get("SOPS_AGE_KEY_FILE") or raw
+    if not found:
+        raise AgeError("the env names no working age key: set age_key_file in values/cluster-vars.yaml")
+    return Path(found).expanduser()
 
 
 def public_keys(path: Path) -> list[str]:
@@ -66,25 +70,44 @@ def new_key_in_memory() -> tuple[str, str]:
     return secret, found.group(0)
 
 
-def recipients(sops_config: Path, env: str) -> list[str]:
-    """The age recipients of the env's creation rule in .sops.yaml, in order; empty when none."""
+def _rule_for(env: str) -> dict[str, str]:
+    """The creation rule jarvis writes for env, but its recipients."""
+    return {"path_regex": f"envs/{env}/secrets/.*\\.sops\\.yaml$", "encrypted_regex": "^(data|stringData)$"}
+
+
+def is_rule_for(rule: object, env: str) -> bool:
+    """True when rule is exactly the creation rule jarvis writes for env, whatever its recipients.
+    A rule edited by hand is no env's, so it fails validate rather than being half read."""
+    return isinstance(rule, dict) and {key: value for key, value in rule.items() if key != "age"} == _rule_for(env)
+
+
+def creation_rules(sops_config: Path) -> list:
+    """.sops.yaml's creation rules; empty when the file is missing or unreadable."""
     try:
         data = yaml.safe_load(sops_config.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return []
-    needle = f"envs/{env}/secrets/"
-    for rule in data.get("creation_rules") or []:
-        if isinstance(rule, dict) and needle in str(rule.get("path_regex", "")):
+    rules = data.get("creation_rules") if isinstance(data, dict) else None
+    return rules if isinstance(rules, list) else []
+
+
+def write_creation_rules(sops_config: Path, rules: list) -> None:
+    """Write .sops.yaml's creation rules, keeping its other keys. jarvis writes it as YAML, with no
+    comments."""
+    data = (yaml.safe_load(sops_config.read_text(encoding="utf-8")) or {}) if sops_config.is_file() else {}
+    sops_config.write_text(yaml.safe_dump({**data, "creation_rules": rules}, sort_keys=False), encoding="utf-8")
+
+
+def recipients(sops_config: Path, env: str) -> list[str]:
+    """The age recipients of the env's creation rule in .sops.yaml, in order; empty when none."""
+    for rule in creation_rules(sops_config):
+        if is_rule_for(rule, env):
             return [part.strip() for part in str(rule.get("age", "")).split(",") if part.strip()]
     return []
 
 
-def creation_rule(env: str, public_keys: list[str]) -> str:
-    """The .sops.yaml creation rule block for one env, encrypting to every key given."""
-    if not re.fullmatch(r"[a-z0-9-]+", env) or not public_keys or not all(PUBLIC_KEY.fullmatch(k) for k in public_keys):
+def creation_rule(env: str, public_keys: list[str]) -> dict[str, str]:
+    """The .sops.yaml creation rule for one env, encrypting to every key given."""
+    if not env_name_ok(env) or not public_keys or not all(PUBLIC_KEY.fullmatch(k) for k in public_keys):
         raise AgeError("could not write an age creation rule")
-    return (
-        f"  - path_regex: envs/{env}/secrets/.*\\.sops\\.yaml$\n"
-        f"    encrypted_regex: ^(data|stringData)$\n"
-        f"    age: {','.join(public_keys)}\n"
-    )
+    return {**_rule_for(env), "age": ",".join(public_keys)}

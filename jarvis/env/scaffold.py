@@ -22,6 +22,7 @@ from pathlib import Path
 
 import yaml
 
+from jarvis.schema.values import env_name_ok
 from jarvis.secrets import age as _age
 
 # What init copies into a new instance as is: the agent kit, the devcontainer, the example apps.
@@ -32,7 +33,9 @@ EXAMPLE_APPS = KIT / "examples-apps.yaml"
 ROLES = ("control_plane", "workers", "backup", "edge", "gpu")
 # One node with every role but gpu: the smallest whole cluster.
 SINGLE_NODE_ROLES = ("control_plane", "workers", "backup", "edge")
-_DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+# The working key's path when neither --age-key-file nor SOPS_AGE_KEY_FILE names one. The env
+# records the path it was made with (age_key_file), so nothing else holds a default.
+DEFAULT_KEY_FILE = "~/.config/sops/age/keys.txt"
 _HOST = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?")
 _DOMAIN = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
 _GITHUB = re.compile(r"https://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?")
@@ -79,7 +82,7 @@ class EnvSpec:
     time_zone: str = "Etc/UTC"
     features: list[str] = field(default_factory=list)
     apps_repo_url: str = ""
-    age_key_file: str = ""
+    age_key_file: str = DEFAULT_KEY_FILE
     # The example hosted apps (jarvis/kit/examples-apps.yaml) on, for a first-run tour.
     examples: bool = False
     # The full core_git_ref when it is not refs/tags/<core_tag> (e2e pins the commit under test by
@@ -87,7 +90,7 @@ class EnvSpec:
     core_ref: str = ""
 
     def check(self) -> None:
-        if not _DNS_LABEL.fullmatch(self.name):
+        if not env_name_ok(self.name):
             raise ScaffoldError(f"env name {self.name!r} is not a DNS label (lowercase letters, digits, -)")
         if not _DOMAIN.fullmatch(self.domain):
             raise ScaffoldError(f"--domain {self.domain!r} is not a DNS name")
@@ -128,8 +131,7 @@ def cluster_vars(spec: EnvSpec) -> str:
     ]
     if spec.ssh_user:
         lines.append(f"ssh_user: {spec.ssh_user}")
-    if spec.age_key_file:
-        lines.append(f"age_key_file: {spec.age_key_file}")
+    lines.append(f"age_key_file: {spec.age_key_file}")
     lines += [
         "",
         "# Backups: local restic repositories on the backup node, and their retention.",
@@ -281,14 +283,9 @@ mise, uv and the jarvis CLI, and mounts your age key, kubeconfigs and SSH keys f
 
 def write_sops_rule(instance: Path, env: str, public_keys: list[str]) -> None:
     path = instance / ".sops.yaml"
-    block = _age.creation_rule(env, public_keys)
-    if not path.is_file():
-        path.write_text("creation_rules:\n" + block, encoding="utf-8")
-        return
-    text = path.read_text(encoding="utf-8")
     if _age.recipients(path, env):
         raise ScaffoldError(f".sops.yaml already has a creation rule for envs/{env}/secrets/")
-    path.write_text(text.rstrip("\n") + "\n" + block, encoding="utf-8")
+    _age.write_creation_rules(path, [*_age.creation_rules(path), _age.creation_rule(env, public_keys)])
 
 
 def write_env(instance: Path, spec: EnvSpec) -> Path:

@@ -34,6 +34,7 @@ from jarvis.env.runtime import (
     kubectl as run_kubectl,
 )
 from jarvis.paths import PRODUCT_ROOT
+from jarvis.schema.values import env_name_ok
 
 REPO_ROOT = PRODUCT_ROOT
 
@@ -1073,7 +1074,7 @@ def run(
     accepted: list[tuple[str, str]] = []
     retired_count = 0
     try:
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", env):
+        if not env_name_ok(env):
             raise Fail(f"invalid ENV={env}")
         if node is not None and not _NODE_NAME.fullmatch(node):
             raise Fail(f"invalid node name: {node}")

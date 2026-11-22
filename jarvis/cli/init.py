@@ -64,7 +64,11 @@ def parser(command: str) -> argparse.ArgumentParser:
         action="store_true",
         help="Turn on app-hosting with the example apps, for a first-run tour (apps repository: jarvis-apps beside core, unless --apps-repo-url)",
     )
-    p.add_argument("--age-key-file", default="", help=f"The working age key (default: {_age.DEFAULT_KEY_FILE})")
+    p.add_argument(
+        "--age-key-file",
+        default="",
+        help=f"The working age key, recorded as the env's age_key_file (default: SOPS_AGE_KEY_FILE, else {scaffold.DEFAULT_KEY_FILE})",
+    )
     return p
 
 
@@ -97,13 +101,13 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
         time_zone=args.time_zone,
         features=features,
         apps_repo_url=apps_repo_url,
-        age_key_file=args.age_key_file,
+        age_key_file=args.age_key_file or os.environ.get("SOPS_AGE_KEY_FILE") or scaffold.DEFAULT_KEY_FILE,
         examples=args.with_examples,
     )
 
 
 def _working_key(spec: scaffold.EnvSpec) -> str:
-    path = _age.key_path(spec.age_key_file or None)
+    path = _age.key_path(spec.age_key_file)
     if path.exists():
         public = _age.public_key(path)
         print(f"PASS age key {path} (public key {public})")
@@ -226,6 +230,8 @@ def run_env_add(instance: Path, argv: list[str], core: tuple[str, str]) -> int:
         return 3
     cluster_vars = (instance / "envs" / existing[0] / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
     first = yaml.safe_load(cluster_vars) or {}
+    # The new env's secrets open for the first env's recipients, so its working key is that env's.
+    args.age_key_file = args.age_key_file or str(first.get("age_key_file") or "")
     branch = str(first.get("flux_git_ref", "refs/heads/main")).removeprefix("refs/heads/")
     spec = _spec(args, name=args.name, repo_url=str(first.get("flux_git_repo_url", "")), branch=branch, core=core)
     spec.check()

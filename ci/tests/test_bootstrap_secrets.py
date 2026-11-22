@@ -659,7 +659,8 @@ def test_single_label_dns_suffix_is_not_a_ca_constraint(tmp_path: Path) -> None:
 
 
 def test_age_key_file_is_used_when_sops_age_key_file_is_unset(tmp_path, monkeypatch):
-    """A missing ca.crt is restored with age_key_file when SOPS_AGE_KEY_FILE is unset."""
+    """A missing ca.crt is restored with age_key_file when SOPS_AGE_KEY_FILE is unset. Each value is
+    read as YAML reads it: quoted, with a comment after it."""
     mod = _load_module()
     public, keyfile = _generate_throwaway_age_keypair(tmp_path)
     _write_test_sops_yaml(tmp_path, public)
@@ -667,7 +668,7 @@ def test_age_key_file_is_used_when_sops_age_key_file_is_unset(tmp_path, monkeypa
     monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
     monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
     sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path, age_key_file=str(keyfile))
+    _prepare_env(tmp_path, dns_suffix='"app.example"  # the suffix', age_key_file=f'"{keyfile}"  # the working key')
     mod.bootstrap("env-test", sops_bin=sops_bin)
     root = tmp_path / "envs" / "env-test" / "ca.crt"
     secret = tmp_path / "envs" / "env-test" / "secrets" / "cert-manager-ca.sops.yaml"

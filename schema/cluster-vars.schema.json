@@ -5,6 +5,7 @@
   "description": "An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the CIDRs, the App DNS address, LAN ranges, known hosts, the time zone, paths) are checked by jarvis validate.",
   "type": "object",
   "required": [
+    "age_key_file",
     "jarvis_env",
     "dns_suffix",
     "time_zone",
@@ -36,8 +37,7 @@
   },
   "properties": {
     "age_key_file": {
-      "description": "The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. SOPS_AGE_KEY_FILE overrides it.",
-      "default": "~/.config/sops/age/keys.txt",
+      "description": "The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. jarvis init writes the path it used. SOPS_AGE_KEY_FILE overrides it.",
       "type": "string",
       "pattern": "\\S"
     },
@@ -135,9 +135,9 @@
       "pattern": "^\\s*\\S+ (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+=*(\\s*\\n\\s*\\S+ (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+=*)*\\s*$"
     },
     "jarvis_env": {
-      "description": "The env's name: its folder under envs/, the /etc/jarvis/env marker on its nodes, and the name its guards check.",
+      "description": "The env's name, a DNS label: its folder under envs/, the /etc/jarvis/env marker on its nodes, and the name its guards check.",
       "type": "string",
-      "pattern": "\\S"
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
     },
     "k3s_kubelet_eviction_hard": {
       "description": "kubelet eviction-hard. Its memory.available is raised to node_memory_reserve_percent when that is larger. A host may override it.",

@@ -49,24 +49,19 @@ def _load():
     return importlib.import_module("jarvis.node.prep")
 
 
-def test_env_update_renames_host_keeps_comments_and_rerenders_cluster_vars(tmp_path: Path) -> None:
-    """The rename keeps every comment and re-renders the ConfigMap; a second run writes nothing."""
+def test_env_update_renames_host_and_keeps_comments(tmp_path: Path) -> None:
+    """The rename keeps every comment and changes nothing else; a second run writes nothing."""
     module = _load()
     env = tmp_path / "envs" / "env-test"
     inventory = env / "inventory" / "hosts.yml"
     cluster = env / "values" / "cluster-vars.yaml"
-    generated = env / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    for path, text in ((inventory, _HOSTS), (cluster, _CLUSTER), (generated, "stale\n")):
+    for path, text in ((inventory, _HOSTS), (cluster, _CLUSTER)):
         path.parent.mkdir(parents=True)
         path.write_text(text, encoding="utf-8")
 
     module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
 
-    from jarvis.render.cluster_vars import render_document
-
-    rendered = render_document(cluster)
-    assert "backup_path: /var/lib/jarvis/backup" in rendered and "ssh_user" not in rendered
-    after = {inventory: _HOSTS_RENAMED, cluster: _CLUSTER, generated: rendered}
+    after = {inventory: _HOSTS_RENAMED, cluster: _CLUSTER}
     assert {path: path.read_text(encoding="utf-8") for path in after} == after
     mtimes = {path: path.stat().st_mtime_ns for path in after}
 
@@ -260,13 +255,16 @@ def test_inventory_name_keeps_the_connected_domain() -> None:
 
 
 def test_age_key_create_does_not_overwrite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Creating an age key refuses to replace an existing file. SOPS_AGE_KEY_FILE overrides the path."""
+    """Creating an age key refuses to replace an existing file. The env names the path, with no
+    default, and SOPS_AGE_KEY_FILE overrides it."""
     require_cli("age-keygen")
     from jarvis.secrets import age
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    path = age.key_path(None)
+    with pytest.raises(age.AgeError):
+        age.key_path(None)
+    path = age.key_path("~/.config/sops/age/keys.txt")
     assert path == tmp_path / ".config" / "sops" / "age" / "keys.txt"
     public = age.create_key(path)
     assert public.startswith("age1")
@@ -292,11 +290,10 @@ def test_show_git_diff_does_not_page(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     module.show_git_diff(tmp_path, "env-test")
     assert seen["argv"][:3] == ["git", "--no-pager", "diff"]
-    assert "envs/env-test/flux/generated/cluster-vars-configmap.yaml" in seen["argv"]
 
 
 def _keyed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, recipients: str) -> tuple[Path, Path, str]:
-    """An env whose cluster-vars name the default key path, and that key at SOPS_AGE_KEY_FILE."""
+    """An env whose cluster-vars name a key path, and a key at SOPS_AGE_KEY_FILE, which overrides it."""
     require_cli("age-keygen")
     from jarvis.secrets import age
 
@@ -307,11 +304,7 @@ def _keyed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, recipients: s
     env = repo / "envs" / "env-test"
     (env / "values").mkdir(parents=True)
     (env / "values" / "cluster-vars.yaml").write_text("age_key_file: ~/.config/sops/age/keys.txt\n", encoding="utf-8")
-    (repo / ".sops.yaml").write_text(
-        "creation_rules:\n  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$\n"
-        f"    age: {recipients.format(public=public)}\n",
-        encoding="utf-8",
-    )
+    age.write_creation_rules(repo / ".sops.yaml", [age.creation_rule("env-test", recipients.format(public=public).split(","))])
     return repo, key, public
 
 

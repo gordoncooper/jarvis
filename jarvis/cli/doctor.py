@@ -49,8 +49,12 @@ def check_tools() -> list[tuple[str, str]]:
 
 
 def check_age_key(env_dir: Path) -> list[tuple[str, str]]:
-    raw = _values(env_dir).get("age_key_file") or "~/.config/sops/age/keys.txt"
-    path = Path(str(raw)).expanduser()
+    from jarvis.secrets.age import AgeError, key_path
+
+    try:
+        path = key_path(_values(env_dir).get("age_key_file"))
+    except AgeError as exc:
+        return [("FAIL", str(exc))]
     try:
         info = path.stat()
     except OSError:

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -17,15 +16,15 @@ from pathlib import Path
 
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
+from jarvis.schema.values import env_name_ok
 
 REPO_ROOT = PRODUCT_ROOT
 
-_SEGMENT = re.compile(r"^[a-z0-9-]+$")
 _MODE_0600 = 0o600
 
 
 def _one_secret(env: str) -> Path | None:
-    if not _SEGMENT.fullmatch(env):
+    if not env_name_ok(env):
         return None
     secrets = (instance_root(REPO_ROOT) / "envs" / env / "secrets").resolve()
     if not secrets.is_dir():

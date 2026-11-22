@@ -54,23 +54,20 @@ def test_pre_host_rejects_invalid_sops_yaml(tmp_path: Path):
 
 
 def test_sops_creation_rule_for_missing_env_fails(tmp_path: Path):
-    """A .sops.yaml rule must name an env folder that exists."""
+    """Each .sops.yaml rule must be the one jarvis writes for an env folder that exists: one for a
+    missing folder fails, and so does an env's rule edited by hand, which SOPS would also apply."""
+    from jarvis.secrets import age
+    from support import FIXTURE_RECIPIENT
+
     _write_env(tmp_path)
     path = tmp_path / ".sops.yaml"
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict)
-    loaded["creation_rules"].append(
-        {
-            "path_regex": "envs/env-ghost/secrets/.*\\.sops\\.yaml$",
-            "age": "age1fixture",
-        }
-    )
-    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    edited = {**age.creation_rule("env-test", [FIXTURE_RECIPIENT]), "path_regex": "^envs/(env-test|env-x)/secrets/"}
+    age.write_creation_rules(path, [*age.creation_rules(path), age.creation_rule("env-ghost", [FIXTURE_RECIPIENT]), edited])
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     msg = "\n".join(excinfo.value.messages)
     assert "env-ghost" in msg
-    assert "does not exist" in msg
+    assert "env-test|env-x" in msg
 
 
 def test_ssh_user_defaults_to_ubuntu_when_omitted(tmp_path: Path):
@@ -374,9 +371,11 @@ def test_cli_requires_env() -> None:
 
 def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
     """An existing env with a .sops.yaml creation-rule error fails validate_one_env."""
+    from jarvis.secrets import age
+
     copy_sample(tmp_path)
-    rule = "  - path_regex: envs/env-00/secrets/.*\\.sops\\.yaml$\n    age: age1fixture\n"
-    (tmp_path / ".sops.yaml").write_text("creation_rules:\n" + rule + rule)
+    rules = age.creation_rules(tmp_path / ".sops.yaml")
+    age.write_creation_rules(tmp_path / ".sops.yaml", [*rules, *rules])
     with pytest.raises(ValidationError) as excinfo:
         env_schema.validate_one_env(tmp_path, "env-00")
     assert "expected exactly one creation rule" in str(excinfo.value)
