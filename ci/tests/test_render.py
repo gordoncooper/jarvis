@@ -5,15 +5,13 @@ from __future__ import annotations
 import os
 import subprocess
 
-from support import REPO_ROOT, RUN_MODULE, ExampleCopy
-
-FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
+from support import RUN_MODULE, ExampleCopy
 
 
 def _check(copy: ExampleCopy) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [*RUN_MODULE, "jarvis.render.env", "--env", copy.name, "--check"],
-        env={**os.environ, "INSTANCE": str(copy.root), "APPS_REPO": str(FIXTURE_APPS)},
+        env={**os.environ, "INSTANCE": str(copy.root)},
         capture_output=True,
         text=True,
         check=False,
@@ -47,7 +45,7 @@ def test_check_passes_a_rendered_env_and_names_each_stale_file(example_copy: Exa
 def _render(copy: ExampleCopy) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [*RUN_MODULE, "jarvis.render.env", "--env", copy.name],
-        env={**os.environ, "INSTANCE": str(copy.root), "APPS_REPO": str(FIXTURE_APPS)},
+        env={**os.environ, "INSTANCE": str(copy.root)},
         capture_output=True,
         text=True,
         check=False,

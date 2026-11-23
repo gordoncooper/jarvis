@@ -9,6 +9,16 @@ the upgrade.
 
 ### Changed
 
+- `jarvis validate` holds every env to what `jarvis init` and `env add` make: `values/switches.yaml`,
+  the sealed `k3s-token`, `cert-manager-ca` and `backups-restic`, one `.sops.yaml` rule, and each
+  feature's, add-on's and app's sealed files. It no longer checks less for an env with no sealed
+  file. `jarvis node prep` runs that whole check before it touches the host, not a lighter one.
+- `APPS_REPO` must be a git checkout holding each pinned tag, as the one the CLI fetches is: every
+  app is read at its tag, never as the folder holds it.
+- `jarvis restore` and `jarvis drill` run the restic image that `etcd-snapshots.yaml` names in the
+  env's pinned core. Restore no longer reads the live CronJob, and neither checks the image's shape.
+- The `addons` check no longer guesses an object's scope from its kind; the tenant's namespaced
+  Roles keep an add-on from anything cluster-scoped.
 - `age_key_file` is required, with no default: `jarvis init` writes the path of the key it used,
   and `jarvis env add` the first env's. `SOPS_AGE_KEY_FILE` still overrides it, in `doctor` too,
   and `init` and `env add` refuse when it names another file than the one they would record.

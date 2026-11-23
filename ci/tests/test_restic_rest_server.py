@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -47,57 +46,6 @@ def _docs(path: Path) -> list[dict]:
         for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
         if isinstance(doc, dict)
     ]
-
-
-def _etcd_kubectl(image: str):
-    from jarvis.backups.etcd_image import etcd_snapshot_image
-
-    body = {
-        "spec": {
-            "jobTemplate": {
-                "spec": {
-                    "template": {"spec": {"containers": [{"image": image}]}},
-                }
-            }
-        }
-    }
-
-    def kubectl(args: list[str]) -> CompletedProcess[str]:
-        return CompletedProcess(args, 0, json.dumps(body), "")
-
-    return etcd_snapshot_image, kubectl
-
-
-def test_versioned_etcd_image_is_accepted() -> None:
-    """restore and drill accept a release tag or a digest-only restic image."""
-    digest = "sha256:" + ("ab" * 32)
-    for image in (
-        f"restic/restic:0.19.1@{digest}",
-        f"restic/restic:v0.19.1@{digest}",
-        f"restic/restic@{digest}",
-    ):
-        read, kubectl = _etcd_kubectl(image)
-        assert read(kubectl) == image
-    committed = next(
-        line.strip().removeprefix("image:").strip()
-        for line in (ROOT / "core/platform/backups/etcd-snapshots.yaml")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip().startswith("image:") and "restic/restic" in line
-    )
-    read, kubectl = _etcd_kubectl(committed)
-    assert read(kubectl) == committed
-
-
-@pytest.mark.parametrize("tag", ["latest", "edge", "Latest", "0.18"])
-def test_nonrelease_etcd_tag_is_rejected(tag: str) -> None:
-    """latest, edge, Latest, and a partial tag are not a restic release."""
-    image = f"restic/restic:{tag}@sha256:" + ("ab" * 32)
-    read, kubectl = _etcd_kubectl(image)
-    from jarvis.backups.etcd_image import ImageError
-
-    with pytest.raises(ImageError, match="must be restic/restic@sha256:"):
-        read(kubectl)
 
 
 def _restic_check(root: Path, env: str) -> dict:

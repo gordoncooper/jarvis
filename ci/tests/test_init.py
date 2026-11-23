@@ -16,7 +16,6 @@ from jarvis.env import scaffold
 from jarvis.secrets import age
 from support import REPO_ROOT, RUN_MODULE, checks_without_charts
 
-FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 CORE = ("https://github.com/example-owner/example-core", "v0.5.0")
 
 
@@ -49,7 +48,7 @@ def _validate(instance: Path, env: str, *, charts: bool = True) -> subprocess.Co
     return subprocess.run(
         [*RUN_MODULE, "jarvis.env.validate", *only],
         cwd=REPO_ROOT,
-        env={**os.environ, "INSTANCE": str(instance), "ENVS": env, "APPS_REPO": str(FIXTURE_APPS)},
+        env={**os.environ, "INSTANCE": str(instance), "ENVS": env},
         capture_output=True,
         text=True,
         check=False,
@@ -192,7 +191,6 @@ def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch
 def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_path: Path, controller: Path, monkeypatch) -> None:
     """Rule: --with-examples turns on app-hosting and the example apps, reads them from jarvis-apps
     beside core, and the env still passes validate as written."""
-    monkeypatch.setenv("APPS_REPO", str(FIXTURE_APPS))
     code, dest = _init(tmp_path, "--with-examples")
     assert code == 0
     switches = yaml.safe_load((dest / "envs/home/values/switches.yaml").read_text())

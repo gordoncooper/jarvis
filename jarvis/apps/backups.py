@@ -2,8 +2,8 @@
 
 values/apps.yaml says whether an app's backups are on (backups, default on). An app with them on
 whose file keeps a backup: true volume needs its credential: jarvis secrets mints it, and
-validate requires it once the env is bootstrapped. jarvis render registers the sealed credential
-of each app with backups on (core/feature/app-hosting/CONTRACT.md).
+validate requires it. jarvis render registers the sealed credential of each app with backups on
+(core/feature/app-hosting/CONTRACT.md).
 """
 
 from __future__ import annotations

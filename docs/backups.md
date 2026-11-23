@@ -128,7 +128,7 @@ Core repositories only: skip every `ns-app-*` directory and every PVC in an `app
 
 ## App credentials
 
-An app's backups are on unless its entry in `values/apps.yaml` sets `backups: false`. With them on, an app whose file keeps a `backup: true` volume has its own credential: `jarvis validate` requires it once the env is bootstrapped, the render registers it, and app-hosting's apps server (`restic-apps`) serves it ([app-hosting](../core/feature/app-hosting/CONTRACT.md)). Schedule and retention are the env's. With them off, nothing is sealed and `jarvis verify` does not check the app's volumes.
+An app's backups are on unless its entry in `values/apps.yaml` sets `backups: false`. With them on, an app whose file keeps a `backup: true` volume has its own credential: `jarvis validate` requires it, the render registers it, and app-hosting's apps server (`restic-apps`) serves it ([app-hosting](../core/feature/app-hosting/CONTRACT.md)). Schedule and retention are the env's. With them off, nothing is sealed and `jarvis verify` does not check the app's volumes.
 
 **Add an app.**
 

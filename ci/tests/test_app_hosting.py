@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import sample
 import yaml
 
 from jarvis.apps import values as _apps
@@ -15,8 +16,6 @@ from jarvis.checks.flux_identity import scan_flux_identity
 from jarvis.env import switches as _switches
 from jarvis.schema import env as env_schema
 from support import REPO_ROOT, core_at, sample_root
-
-FIXTURE_APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 
 EXAMPLE = sample_root() / "envs" / "env-00"
 
@@ -155,10 +154,10 @@ def test_env_grants_that_fit_pass() -> None:
     assert _apps.validate(_env(web=lines), "env-00.example", ["10.200.0.0/24"]) == []
 
 
-def _schema_errors(instance: Path, *, bootstrapped: bool = False) -> list[str]:
+def _schema_errors(instance: Path) -> list[str]:
     env_dir = instance / "envs" / "env-00"
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    return env_schema._apps_problems(env_dir, instance, cluster_vars, bootstrapped)
+    return env_schema._apps_problems(env_dir, instance, cluster_vars)
 
 
 _APP_PIECES = {
@@ -252,23 +251,25 @@ def test_each_app_is_checked_at_its_pinned_tag(tmp_path: Path, monkeypatch: pyte
     """Rule: validate reads each listed app as the env pins it and holds it to core's app rules:
     an app that core's release refuses fails the env, so a core pin move past an app fails CI."""
     _product, instance = _tree(tmp_path)
-    apps = tmp_path / "apps"
-    shutil.copytree(FIXTURE_APPS, apps)
+    apps = sample.apps_repo(tmp_path / "apps")
     monkeypatch.setenv("APPS_REPO", str(apps))
     assert _schema_errors(instance) == []
+    # A new release of hello-web that core refuses, and the env's pin moved to it.
     _edit(apps / "hello-web" / "app.yaml", "        port: 80\n", "")
-    assert any("hello-web v0.3.0: hello-web/app.yaml: spec.network.web[0]" in error for error in _schema_errors(instance))
+    sample.tag_apps(apps, {"hello-web": "v0.3.1"})
+    _edit(instance / "envs" / "env-00" / _apps.APPS_VALUES, "hello-web:\n  version: v0.3.0\n", "hello-web:\n  version: v0.3.1\n")
+    assert any("hello-web v0.3.1: hello-web/app.yaml: spec.network.web[0]" in error for error in _schema_errors(instance))
 
 
 def test_two_apps_making_one_web_name_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Rule: no two apps make the same web name: app notes' entry admin and an app notes-admin both
     make notes-admin.apps.<dns suffix>."""
     _product, instance = _tree(tmp_path)
-    apps = tmp_path / "apps"
-    shutil.copytree(FIXTURE_APPS, apps)
+    apps = sample.apps_repo(tmp_path / "apps")
     shutil.copytree(apps / "hello-web", apps / "notes-admin")
     _edit(apps / "notes-admin" / "app.yaml", "name: hello-web", "name: notes-admin")
     _edit(apps / "notes" / "app.yaml", "        port: 80\n", "        port: 80\n      - name: admin\n        service: notes\n        port: 80\n")
+    sample.tag_apps(apps, {"notes": "v0.3.0", "notes-admin": "v0.3.0"})
     monkeypatch.setenv("APPS_REPO", str(apps))
     values = instance / "envs" / "env-00" / _apps.APPS_VALUES
     values.write_text(values.read_text(encoding="utf-8") + "notes-admin:\n  version: v0.3.0\n", encoding="utf-8")
@@ -277,13 +278,12 @@ def test_two_apps_making_one_web_name_fail(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_an_app_with_backups_on_needs_its_credential(tmp_path: Path) -> None:
-    """Rule: once the env is bootstrapped, an app whose backups are on and that keeps a backup: true
-    volume has its credential sealed; with backups off it needs none."""
+    """Rule: an app whose backups are on and that keeps a backup: true volume has its credential
+    sealed; with backups off it needs none."""
     _product, instance = _tree(tmp_path)
     values = instance / "envs" / "env-00" / _apps.APPS_VALUES
-    assert _schema_errors(instance, bootstrapped=True) == []
-    (instance / "envs" / "env-00" / "secrets" / "app-notes" / "backups-restic-app-notes.sops.yaml").unlink()
-    assert any("notes: backups are on" in error for error in _schema_errors(instance, bootstrapped=True))
     assert _schema_errors(instance) == []
+    (instance / "envs" / "env-00" / "secrets" / "app-notes" / "backups-restic-app-notes.sops.yaml").unlink()
+    assert any("notes: backups are on" in error for error in _schema_errors(instance))
     _edit(values, "notes:\n  version: v0.3.0\n", "notes:\n  version: v0.3.0\n  backups: false\n")
-    assert _schema_errors(instance, bootstrapped=True) == []
+    assert _schema_errors(instance) == []

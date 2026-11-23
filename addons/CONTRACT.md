@@ -22,7 +22,7 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | Namespaces | Named `<name>` or `<name>-<part>`, labelled `addons.jarvis.io/name: <name>`, `prune: disabled`. Not `app-*`, `platform-*`, `kube-*`, `flux-*` or `default` |
 | Tenant | One ServiceAccount `flux-system/addon-<name>` and Roles and RoleBindings in its own namespaces only, `prune: disabled`. A Role grants nothing on RBAC, Flux, admission, CRDs or `namespaces`, and no wildcard. No pod mounts the token |
 | Flux Kustomizations | In `flux-system`, named `addon-<name>[-<part>]`, as the tenant, from root source `flux-system`, path under `./addons/<name>/` or `./envs/${jarvis_env}/secrets/<namespace>` for its own namespace. No `patches`, `images`, `components`, prefix, suffix, `kubeConfig` or `substituteFrom`; `dependsOn` only its own |
-| Applied objects | Namespaced, in its own namespaces, no RBAC or Flux objects. Nothing cluster-scoped but its Namespaces |
+| Applied objects | In its own namespaces, no RBAC or Flux objects. The tenant's Roles admit nothing cluster-scoped |
 | Secrets | Sealed under `envs/<env>/secrets/<namespace>/` with `jarvis encrypt --env <env> --namespace <namespace> --name <name>-<purpose>`, `prune: disabled`; decrypted only by its Kustomization in `flux-system` |
 | HTTPRoute | Hostname `<name>.${dns_suffix}` or `<part>.<name>.${dns_suffix}`, on Gateway `platform-gateway/jarvis` section `core`. No LoadBalancer |
 | Slot | Label `addons.jarvis.io/slot: <slot>` on its Kustomizations; the slot exists |

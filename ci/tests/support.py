@@ -21,14 +21,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 
 
 def instance_apps_repo_for_checks(instance_root: Path) -> Path:
-    """Apps checkout beside a tmp instance — same content as CI fixtures, not the forbidden core path."""
+    """The fixture apps repository beside a tmp instance, tagged at the sample's pins."""
+    import sample
+
     dest = instance_root / "example-apps"
     if not dest.is_dir():
-        shutil.copytree(_FIXTURE_APPS_REPO, dest)
+        sample.apps_repo(dest)
     return dest
 
 
@@ -122,6 +123,11 @@ def _write_env(
         hosts_yml if hosts_yml is not None else _default_hosts(),
         encoding="utf-8",
     )
+    (env / "values" / "switches.yaml").write_text("features: []\naddons: []\n", encoding="utf-8")
+    # The secrets jarvis init seals, as placeholders that name the rule's recipient.
+    (env / "secrets").mkdir()
+    for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
+        (env / "secrets" / f"{name}.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     _ensure_sops_creation_rule(root, env_name)
     return env
 
