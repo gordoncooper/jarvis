@@ -14,6 +14,16 @@ PINNED = "registry.example/app:1.0@sha256:" + "a" * 64
 PROBE = {"httpGet": {"path": "/", "port": 80}}
 SIZED = {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"memory": "32Mi"}}
 RULES = list(yaml.safe_load_all((REPO_ROOT / "core/platform/kyverno/rules/rules.yaml").read_text(encoding="utf-8")))
+FLUX = {"kustomize.toolkit.fluxcd.io/name": "platform-configs", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}
+KEPT = {"kustomize.toolkit.fluxcd.io/prune": "disabled"}
+
+
+def _applied(kind: str, name: str, *, api: str = "v1", namespace: str | None = None, flux: bool = True,
+             kept: bool = False, spec: dict | None = None) -> dict:
+    """An object as Flux's build gives it (its name label), or as a chart renders it (flux=False)."""
+    meta = {"name": name, **({"namespace": namespace} if namespace else {}),
+            **({"labels": FLUX} if flux else {}), **({"annotations": KEPT} if kept else {})}
+    return {"apiVersion": api, "kind": kind, "metadata": meta, **({"spec": spec} if spec else {})}
 
 
 def _deployment(namespace: str = "demo", name: str = "web", **container: object) -> dict:
@@ -27,7 +37,7 @@ def _deployment(namespace: str = "demo", name: str = "web", **container: object)
 
 
 def test_each_rule_fails_its_seeded_object_and_passes_a_sound_one() -> None:
-    """One seeded object per rule fails that rule; a sound workload and a chart's listed exception pass."""
+    """One seeded object per rule fails that rule; a sound workload and each rule's exceptions pass."""
     unprobed = _deployment(name="unprobed")
     for probe in ("livenessProbe", "readinessProbe"):
         unprobed["spec"]["template"]["spec"]["containers"][0].pop(probe)
@@ -39,11 +49,11 @@ def test_each_rule_fails_its_seeded_object_and_passes_a_sound_one() -> None:
         "images-pinned": _deployment(name="tagged", image="registry.example/app:1.0"),
         "resources": _deployment(name="unsized", resources={"requests": {"cpu": "10m"}}),
         "probes": unprobed,
-        "stdout-logs": _deployment(name="file-logs", args=["--log-file=/var/log/app.log"]),
         "load-balancers": {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "web", "namespace": "demo"},
                            "spec": {"type": "LoadBalancer", "ports": [{"port": 80}]}},
         "backups": {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource",
                     "metadata": {"name": "data", "namespace": "demo"}, "spec": {"sourcePVC": "data"}},
+        "flux-prune": _applied("PersistentVolumeClaim", "data", namespace="demo"),
     }  # fmt: skip
     failed = policies(list(seeded.values()), RULES)
     assert {line.split(":")[0] for line in failed} == set(seeded), failed
@@ -51,7 +61,15 @@ def test_each_rule_fails_its_seeded_object_and_passes_a_sound_one() -> None:
     assert [line.split(":")[0] for line in policies([throttled], RULES)] == ["resources"]
     excepted = copy.deepcopy(unprobed)
     excepted["metadata"] = {"name": "cert-manager-cainjector", "namespace": "platform-cert-manager"}
-    assert policies([_deployment(), job, excepted], RULES) == []
+    # Flux keeps its protected kinds, but not a chart's objects, a tenant's release or the canary's namespace.
+    kept = [
+        _applied("PersistentVolumeClaim", "data", namespace="demo", kept=True),
+        _applied("CustomResourceDefinition", "widgets.example.io", api="apiextensions.k8s.io/v1", flux=False),
+        _applied("HelmRelease", "app-web", api="helm.toolkit.fluxcd.io/v2", namespace="flux-system",
+                 spec={"serviceAccountName": "app-web"}),
+        _applied("Namespace", "platform-testapp"),
+    ]  # fmt: skip
+    assert policies([_deployment(), job, excepted, *kept], RULES) == []
 
 
 def test_a_feature_brings_its_own_exception(example_copy: ExampleCopy, tmp_path: Path) -> None:

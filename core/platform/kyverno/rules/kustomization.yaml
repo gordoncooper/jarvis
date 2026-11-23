@@ -28,7 +28,7 @@ patches:
   - target:
       group: policies.kyverno.io
       kind: ValidatingPolicy
-      name: images-pinned|resources|stdout-logs
+      name: images-pinned|resources
     patch: |-
       - op: add
         path: /spec/matchConditions

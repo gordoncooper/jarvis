@@ -20,7 +20,7 @@ A component is reachable at `<svc>.<dns_suffix>` by adding one HTTPRoute on the 
 | Gateway API CRDs (standard channel) | k3s's `traefik-crd` chart |
 | `dns_suffix` | `values/cluster-vars.yaml` |
 | ClusterIssuer `internal-ca` | [cert-manager](../cert-manager/CONTRACT.md) |
-| Exposed workloads set probes, log to stdout, set a memory request and limit and a CPU request without a limit | `policies` (`jarvis validate`) |
+| Exposed workloads set probes, set a memory request and limit and a CPU request without a limit | `policies` (`jarvis validate`) |
 
 ## Health
 

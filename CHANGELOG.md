@@ -36,6 +36,15 @@ the upgrade.
 - `jarvis doctor` warns when mise is missing.
 - The internal CA is made by the `cryptography` package, not the controller's `openssl`, with the
   same extensions.
+- `jarvis validate` has no `flux-prune` check. Its rule is now ValidatingPolicy `flux-prune`
+  among the Git-only rules, so a miss prints under `FAIL policies`: what a Flux Kustomization
+  applies of a kind Flux keeps carries `kustomize.toolkit.fluxcd.io/prune: disabled`, as before.
+  A HelmRelease is exempt when it runs as any account but `flux-platform` (a tenant's). The five
+  objects the check also named (the root Kustomization, ClusterRole `kyverno:backup-generate`,
+  ConfigMap `coredns-custom`, Deployment `platform-backups/restic`, Traefik's HelmChartConfig)
+  keep their annotation where they are written, and are no longer checked by name.
+- Core's admission rule `stdout-logs` is gone. It guessed from five flag spellings whether a
+  container logs to a file, and could refuse a flag that means something else.
 
 ### Upgrading
 

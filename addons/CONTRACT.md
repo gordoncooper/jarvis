@@ -36,7 +36,7 @@ An add-on is a namespaced, swappable service on top of core (a chat bot, the cod
 | --- | --- |
 | Its Flux Kustomizations | Ready (`jarvis verify` waits on every Kustomization) |
 | Its `verify.py`, if any | its component passes in `jarvis verify` |
-| `addons`, `flux-identity`, `flux-prune` (`jarvis validate`) | its wiring and applied objects meet the table above |
+| `addons`, `flux-identity`, `policies` (`jarvis validate`) | its wiring and applied objects meet the table above |
 
 ## Limits
 
