@@ -56,7 +56,7 @@ def test_validate_runs_every_env_check_and_names_each_failure(tmp_path: Path, mo
     def check(name: str):
         def run(instance: Path) -> list[str]:
             ran.append((name, instance))
-            return ["it broke"] if name == "flux-prune" else []
+            return ["it broke"] if name == "flux-identity" else []
 
         return run
 
@@ -64,7 +64,7 @@ def test_validate_runs_every_env_check_and_names_each_failure(tmp_path: Path, mo
     assert validate.run(tmp_path) == 1
     assert ran == [(name, tmp_path) for name in validate.CHECKS]
     out = capsys.readouterr().out
-    assert "FAIL flux-prune\n  it broke" in out
+    assert "FAIL flux-identity\n  it broke" in out
     assert "PASS env-schema" in out
 
 

@@ -19,12 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from jarvis import paths as _paths
-from jarvis.checks import (
-    addons,
-    app_hosting,
-    flux_identity,
-    flux_prune,
-)
+from jarvis.checks import addons, app_hosting, flux_identity
 from jarvis.checks.rendered import scan_kubeconform, scan_policies
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
@@ -84,7 +79,6 @@ CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "addons": lambda instance: addons.format_violations(addons.scan_addons(_paths.core_root(), instance)),
     "app-hosting": _scan(app_hosting),
     "flux-identity": _scan(flux_identity),
-    "flux-prune": _scan(flux_prune),
     "secret-scan": _secret_scan,
 }
 
