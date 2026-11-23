@@ -45,6 +45,13 @@ the upgrade.
   keep their annotation where they are written, and are no longer checked by name.
 - Core's admission rule `stdout-logs` is gone. It guessed from five flag spellings whether a
   container logs to a file, and could refuse a flag that means something else.
+- A controller installs only the CLIs and Python packages the jarvis CLI runs, about 440 MB less
+  for each core release it caches: core's test tools (rest-server, k3d, kube-apiserver, etcd) and
+  test packages move to `mise.dev.toml` and uv.lock's dev group, which `make deps` installs. An
+  instance's CI installs the same set as a controller. actionlint, which nothing ran, is no longer
+  pinned.
+- The Quickstart installs the CLI with `mise exec uv --` and no longer adds uv to your global mise
+  config or asks for `mise activate`; `~/.local/bin` on `PATH` is enough.
 
 ### Upgrading
 

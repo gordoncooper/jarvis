@@ -46,7 +46,7 @@ jobs:
           run=true
           if [[ "${GITHUB_EVENT_NAME}" == pull_request ]]; then
             changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-            pattern='^(core/|addons/|envs/|infra/ansible/roles/(flux-operator|backups)/|jarvis/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$|mise\.(toml|lock)$|uv\.lock$|pyproject\.toml$)'
+            pattern='^(core/|addons/|envs/|infra/ansible/roles/(flux-operator|backups)/|jarvis/|schema/|ci/e2e/|\.github/workflows/e2e\.yml$|mise(\.dev)?\.(toml|lock)$|uv\.lock$|pyproject\.toml$)'
             grep -Eq "${pattern}" <<<"${changed}" || run=false
           fi
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
@@ -83,6 +83,8 @@ jobs:
         with:
           version: 2026.11.12
           install_args: --locked
+          # mise.dev.toml's tools too (k3d), for this step and every later one (MISE_ENV).
+          mise_env: dev
           # The tools' own directories on PATH, not shims, which resolve per directory.
           add_shims_to_path: false
 

@@ -190,9 +190,12 @@ jobs:
           version: 2026.11.12
           install: false
 
-      # The pinned core's own tools, from its mise.toml and uv.lock, and its jarvis CLI.
+      # The pinned core's own tools, from its mise.toml and uv.lock, and its jarvis CLI: the same
+      # deps task the CLI runs for a pinned release, without core's test tools.
       - name: Install the pinned core's tools
-        run: make -C .core deps
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.core/.venv
+        run: mise -C .core run deps
 
       # The chart archives and kubeconform schemas jarvis validate downloads, as core's own CI keeps
       # them: the newest cache restores and each leg saves its own, so a run reaches a chart host
