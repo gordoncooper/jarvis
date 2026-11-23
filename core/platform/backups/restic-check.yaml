@@ -110,8 +110,7 @@ spec:
                       echo "PASS $repo"
                     else
                       code=$?
-                      # 12 is restic's wrong password: a repository another credential wrote,
-                      # such as one left on disk after what backed it up was removed.
+                      # 12 is restic's wrong password: a repository another credential wrote.
                       if [ "$code" = 12 ] && [ -z "$key" ]; then
                         echo "FAIL $repo: core's password does not open it; remove it once its data is not needed (docs/backups.md)"
                       else
