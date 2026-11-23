@@ -57,10 +57,10 @@ Each needs a key that opens the env's files, changes only the instance repositor
 After `--rotate age`:
 
 1. Commit and push.
-2. `kubectl -n flux-system delete secret sops-age && jarvis site --tags flux-operator`. Flux decrypts nothing between steps 1 and 2.
+2. `kubectl --kubeconfig ~/.kube/jarvis-<env>.yaml -n flux-system delete secret sops-age && jarvis site --tags flux-operator`. Flux decrypts nothing between steps 1 and 2.
 3. Once Flux is Ready, delete every other key's lines from the key file.
 
-After `--rotate deploy-key`: add the printed key to the forge (read-only), commit and push, then `kubectl -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator`. Once Flux reads the repository, remove the old key from the forge.
+After `--rotate deploy-key`: add the printed key to the forge (read-only), commit and push, then `kubectl --kubeconfig ~/.kube/jarvis-<env>.yaml -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator`. Once Flux reads the repository, remove the old key from the forge.
 
 The restic passwords, the CA and the k3s tokens live in running systems too, so no command rotates them: [backups.md](backups.md#rotate-the-restic-password) and [Rotate the CA](#rotate-the-ca). The k3s server token is the datastore passphrase and does not change.
 

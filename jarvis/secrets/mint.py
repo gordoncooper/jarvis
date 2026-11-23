@@ -18,6 +18,7 @@ import ipaddress
 import os
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -35,7 +36,7 @@ from cryptography.x509.oid import NameOID
 
 from jarvis.apps import backups as _app_backups
 from jarvis.apps import values as _apps
-from jarvis.env.runtime import instance_root
+from jarvis.env.runtime import instance_root, kubeconfig_for
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.secrets import age as _age
 from jarvis.secrets import sops as _sops
@@ -565,13 +566,18 @@ def _lifecycle(args: argparse.Namespace) -> int:
     if args.rotate == "age":
         print(
             "Next: commit and push, then put the new key in the cluster: "
-            "kubectl -n flux-system delete secret sops-age && jarvis site --tags flux-operator "
+            f"{_kubectl(env)} -n flux-system delete secret sops-age && jarvis site --tags flux-operator "
             f"(it recreates sops-age from {_key_file(env)}). Once Flux is Ready, delete every other "
             "key's lines from that file, so it holds the new working key only."
         )
     elif changed:
         print("Next: commit and push the re-encrypted files.")
     return 0
+
+
+def _kubectl(env: str) -> str:
+    """kubectl for the env's own cluster, never the controller's default kubeconfig."""
+    return f"kubectl --kubeconfig {shlex.quote(str(kubeconfig_for(env)))}"
 
 
 def _snapshot(paths: list[Path]) -> dict[Path, bytes | None]:
@@ -613,7 +619,7 @@ def _rotate_deploy_key(env: str) -> int:
     print(f"PASS sealed a new envs/{env}/secrets/flux-deploy-key.sops.yaml")
     print(
         "Next: add this read-only deploy key to the repository on the forge, commit and push, then "
-        "kubectl -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator; "
+        f"{_kubectl(env)} -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator; "
         f"once Flux reads the repo again, remove the old deploy key from the forge.\n  {public}"
     )
     return 0

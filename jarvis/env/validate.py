@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,7 @@ from jarvis.checks.rendered import scan_kubeconform, scan_policies
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.render import env as _render
-from jarvis.schema.env import ValidationError, env_dirs, validate_env_tree
+from jarvis.schema.env import ENVS_VAR, ValidationError, env_dirs, validate_env_tree
 
 
 def _env_schema(instance: Path) -> list[str]:
@@ -98,6 +99,13 @@ def run(instance: Path, only: list[str] | None = None) -> int:
         else:
             print(f"PASS {name}", flush=True)
     return 1 if failed else 0
+
+
+def run_env(instance: Path, env: str) -> int:
+    """jarvis validate and jarvis up: the env's own checks only, since each env is checked by the
+    core release it pins."""
+    os.environ[ENVS_VAR] = env
+    return run(instance)
 
 
 def main(argv: list[str] | None = None) -> int:
