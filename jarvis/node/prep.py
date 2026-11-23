@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -25,7 +25,6 @@ import yaml
 
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
-from jarvis.render.cluster_vars import render_document
 from jarvis.schema.env import (
     DEFAULT_SSH_USER,
     ValidationError,
@@ -36,7 +35,6 @@ from jarvis.secrets import age as _age
 REPO_ROOT = PRODUCT_ROOT
 
 _TOOLS = ("ssh", "ssh-keygen", "git", "age-keygen")
-_PUB_NAMES = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
 _SUDOERS = "/etc/sudoers.d/jarvis-ansible"
 _STRICT = ("-o", "StrictHostKeyChecking=yes")
 
@@ -88,21 +86,14 @@ def _redact(text: str, secret: str | None) -> str:
 
 
 def assert_host_resolves(host: str, *, unchanged: bool) -> None:
-    """Fail if getent cannot resolve host. Does not write /etc/hosts."""
+    """Fail if the controller cannot resolve host, as doctor asks. Does not write /etc/hosts."""
     try:
-        result = subprocess.run(
-            ["getent", "hosts", host],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise PrepError("getent is required to check DNS") from exc
-    if result.returncode != 0 or not result.stdout.strip():
+        socket.getaddrinfo(host, None)
+    except OSError as exc:
         message = f"{host} does not resolve. Add it on the router."
         if unchanged:
             message += " Nothing was changed."
-        raise PrepError(message)
+        raise PrepError(message) from exc
 
 
 def require_tools() -> None:
@@ -124,23 +115,28 @@ def known_hosts_path() -> Path:
     return ssh_dir() / "known_hosts"
 
 
-def ensure_public_key() -> Path:
-    directory = ssh_dir()
-    for name in _PUB_NAMES:
-        path = directory / name
-        if path.is_file():
-            print(f"Using SSH public key {path}")
-            return path
+def ensure_public_key(user: str, host: str) -> Path:
+    """The first key ssh offers for user@host (ssh -G, as Ansible logs in) that has its .pub, or a
+    new ed25519 key where ssh looks for one."""
+    shown = subprocess.run(["ssh", "-G", f"{user}@{host}"], capture_output=True, text=True, check=False)
+    offered = [Path(line.split(None, 1)[1]).expanduser() for line in shown.stdout.splitlines() if line.startswith("identityfile ")]
+    for private in offered:
+        public = private.with_name(private.name + ".pub")
+        if private.is_file() and public.is_file():
+            print(f"Using SSH public key {public}")
+            return public
+    if not offered:
+        raise PrepError(shown.stderr.strip() or f"ssh -G {user}@{host} names no identity file")
     if not confirm("No SSH public key found. Create an ed25519 key?"):
         raise PrepError("an SSH public key is required")
-    directory.mkdir(mode=0o700, exist_ok=True)
-    directory.chmod(0o700)
-    private = directory / "id_ed25519"
+    private = next((path for path in offered if path.name == "id_ed25519"), offered[0])
+    private.parent.mkdir(mode=0o700, exist_ok=True)
+    private.parent.chmod(0o700)
     result = subprocess.run(
         ["ssh-keygen", "-t", "ed25519", "-f", str(private), "-q"],
         check=False,
     )
-    public = private.with_suffix(".pub")
+    public = private.with_name(private.name + ".pub")
     if result.returncode != 0 or not public.is_file():
         raise PrepError("could not create an ed25519 key")
     print(f"Created SSH public key {public}")
@@ -289,13 +285,10 @@ def ssh(
     control: Path | None = None,
     batch: bool = False,
     stdin: str | None = None,
-    identity: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = ["ssh", *_STRICT, *(_BATCH if batch else _PASSWORD)]
     if control is not None:
         cmd += _opt("ControlMaster=auto", "ControlPersist=300", f"ControlPath={control}")
-    if identity is not None and identity.is_file():
-        cmd += ["-o", "IdentitiesOnly=yes", "-i", str(identity)]
     cmd += [dest, remote]
     return subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=False)
 
@@ -646,34 +639,15 @@ def report_address(session: Session) -> None:
     print(f"Primary address {address}{where} is static.")
 
 
-def _private_key(public: Path) -> Path | None:
-    if not public.name.endswith(".pub"):
-        return None
-    private = Path(str(public)[: -len(".pub")])
-    return private if private.is_file() else None
+def batch_ssh(user: str, host: str, remote: str, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    """ssh as Ansible will log in: keys only, with whatever ssh offers (the agent, ~/.ssh/config)."""
+    return ssh(f"{user}@{host}", remote, batch=True, stdin=stdin)
 
 
-def batch_ssh(
-    user: str,
-    host: str,
-    remote: str,
-    public: Path,
-    *,
-    stdin: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    return ssh(
-        f"{user}@{host}",
-        remote,
-        batch=True,
-        stdin=stdin,
-        identity=_private_key(public),
-    )
-
-
-def proof(user: str, host: str, public: Path) -> None:
-    login = batch_ssh(user, host, "true", public)
-    sudo = batch_ssh(user, host, "sudo -n true", public)
-    dns = batch_ssh(user, host, "getent hosts " + shlex.quote(host), public)
+def proof(user: str, host: str) -> None:
+    login = batch_ssh(user, host, "true")
+    sudo = batch_ssh(user, host, "sudo -n true")
+    dns = batch_ssh(user, host, "getent hosts " + shlex.quote(host))
     checks = (
         ("key login works", login.returncode == 0, login),
         ("passwordless sudo", sudo.returncode == 0, sudo),
@@ -696,13 +670,13 @@ def sshd_password_off() -> str:
     return "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
 
 
-def _sudo_script(user: str, host: str, public: Path, script: str) -> subprocess.CompletedProcess[str]:
-    return batch_ssh(user, host, "sudo -n bash -s", public, stdin=script)
+def _sudo_script(user: str, host: str, script: str) -> subprocess.CompletedProcess[str]:
+    return batch_ssh(user, host, "sudo -n bash -s", stdin=script)
 
 
-def offer_ssh_passwords_off(user: str, host: str, public: Path) -> None:
+def offer_ssh_passwords_off(user: str, host: str) -> None:
     probe = "sudo -n sshd -T | grep -i '^passwordauthentication no'"
-    if batch_ssh(user, host, probe, public).returncode == 0:
+    if batch_ssh(user, host, probe).returncode == 0:
         print("SSH password login is already off.")
         return
     if not confirm("Turn off SSH password login?"):
@@ -722,10 +696,10 @@ set -euo pipefail
 rm -f /etc/ssh/sshd_config.d/00-prep-node.conf
 systemctl reload ssh || true
 """
-    if _sudo_script(user, host, public, apply).returncode != 0:
+    if _sudo_script(user, host, apply).returncode != 0:
         raise PrepError("sshd rejected turning off password login; removed that change")
-    if batch_ssh(user, host, "true", public).returncode != 0:
-        _sudo_script(user, host, public, revert)
+    if batch_ssh(user, host, "true").returncode != 0:
+        _sudo_script(user, host, revert)
         raise PrepError("key login failed after turning off SSH passwords; removed that change")
     print("SSH password login is off.")
 
@@ -734,8 +708,8 @@ def clock_synced(value: str) -> bool:
     return value.strip() == "yes"
 
 
-def check_clock(user: str, host: str, public: Path) -> None:
-    result = batch_ssh(user, host, "timedatectl show -p NTPSynchronized --value", public)
+def check_clock(user: str, host: str) -> None:
+    result = batch_ssh(user, host, "timedatectl show -p NTPSynchronized --value")
     if result.returncode != 0:
         raise PrepError(result.stderr.strip() or "could not read whether the clock is synced")
     if clock_synced(result.stdout):
@@ -745,59 +719,33 @@ def check_clock(user: str, host: str, public: Path) -> None:
         raise PrepError("stopped because the clock is not synced")
 
 
-def _host_key_match(line: str, name: str) -> re.Match[str] | None:
-    return re.match(rf"^(\s*){re.escape(name)}(\s*):(.*)$", line.rstrip("\n"))
-
-
-def _has_host_key(text: str, name: str) -> bool:
-    return any(_host_key_match(line, name) for line in text.splitlines())
+def _host_key(text: str, host: str) -> yaml.Node | None:
+    """The inventory's key node for host, as the YAML parser reads it; its marks locate its text."""
+    node = yaml.compose(text, Loader=yaml.SafeLoader)
+    key = None
+    for step in ("all", "hosts", host):
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        key, node = next(((k, v) for k, v in node.value if k.value == step), (None, None))
+        if key is None:
+            return None
+    return key
 
 
 def require_inventory_host(repo: Path, env: str, host: str) -> None:
     path = repo / "envs" / env / "inventory" / "hosts.yml"
-    if not path.is_file() or not _has_host_key(path.read_text(encoding="utf-8"), host):
+    if not path.is_file() or _host_key(path.read_text(encoding="utf-8"), host) is None:
         raise PrepError(f"{host} is not a host in the inventory. Add it with node_roles first.")
 
 
 def rename_inventory_host(text: str, old: str, new: str) -> str:
-    """Rename one host key. Leave comments, roles, and other hosts as they are."""
-    if old == new:
-        if not _has_host_key(text, old):
-            raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
+    """Rename one host key, in place. Leave comments, roles, and other hosts as they are."""
+    if _host_key(text, new) is not None and (old == new or _host_key(text, old) is None):
         return text
-    old_present = _has_host_key(text, old)
-    new_present = _has_host_key(text, new)
-    if new_present and not old_present:
-        return text
-    if not old_present:
+    key = _host_key(text, old)
+    if key is None:
         raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
-    lines = text.splitlines(keepends=True)
-    replaced = False
-    out: list[str] = []
-    for line in lines:
-        match = None if replaced else _host_key_match(line, old)
-        if match is None:
-            out.append(line)
-            continue
-        newline = "\n" if line.endswith("\n") else ""
-        out.append(f"{match.group(1)}{new}{match.group(2)}:{match.group(3)}{newline}")
-        replaced = True
-    if not replaced:
-        raise PrepError(f"{old} is not a host in the inventory. Add it with node_roles first.")
-    return "".join(out)
-
-
-def set_yaml_scalar(text: str, key: str, value: str) -> str:
-    """Replace one scalar in place, or append it. Keeps a trailing comment."""
-    if not value or any(char.isspace() for char in value):
-        raise PrepError(f"invalid {key}")
-    match = re.search(rf"^(\s*{re.escape(key)}:\s*)(\S+)(.*)$", text, re.M)
-    if match is None:
-        suffix = "" if text.endswith("\n") or text == "" else "\n"
-        return f"{text}{suffix}{key}: {value}\n"
-    if match.group(2) == value:
-        return text
-    return f"{text[: match.start()]}{match.group(1)}{value}{match.group(3)}{text[match.end() :]}"
+    return text[: key.start_mark.index] + new + text[key.end_mark.index :]
 
 
 def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user: str) -> None:
@@ -815,44 +763,23 @@ def apply_env_edits(repo: Path, env: str, old_host: str, new_host: str, ssh_user
         current = effective_ssh_user(repo, env)
         if ssh_user != current:
             raise _ssh_user_locked(current, change=False)
-    cluster_text = cluster.read_text(encoding="utf-8")
     new_inv = rename_inventory_host(inventory.read_text(encoding="utf-8"), old_host, new_host)
-    new_cv = (
-        cluster_text
-        if host_user is not None
-        else set_yaml_scalar(cluster_text, "ssh_user", ssh_user)
-    )
     if new_inv != inventory.read_text(encoding="utf-8"):
         inventory.write_text(new_inv, encoding="utf-8")
-    if new_cv != cluster.read_text(encoding="utf-8"):
-        cluster.write_text(new_cv, encoding="utf-8")
-    _render_cluster_vars_configmap(repo, env)
-
-
-def _yaml_scalar(text: str, key: str) -> str | None:
-    match = re.search(rf"^{re.escape(key)}:\s*(\S+)", text, re.M)
-    return match.group(1) if match else None
-
-
-def _render_cluster_vars_configmap(repo: Path, env: str) -> None:
-    """Rewrite the Flux ConfigMap from cluster-vars when that generated file exists."""
-    generated = repo / "envs" / env / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    if not generated.is_file():
-        return
-    source = repo / "envs" / env / "values" / "cluster-vars.yaml"
-    try:
-        rendered = render_document(source)
-    except SystemExit as exc:
-        raise PrepError(str(exc) or "cluster-vars render failed") from exc
-    if generated.read_text(encoding="utf-8") != rendered:
-        generated.write_text(rendered, encoding="utf-8")
+    if host_user is None and recorded_ssh_user(repo, env) is None:
+        # The schema's default, recorded: one line added, the rest of the file as it was.
+        text = cluster.read_text(encoding="utf-8")
+        separator = "" if not text or text.endswith("\n") else "\n"
+        cluster.write_text(f"{text}{separator}ssh_user: {ssh_user}\n", encoding="utf-8")
 
 
 def check_age_key(repo: Path, env: str) -> None:
     """The env's working age key is on this controller and is one of its recipients in
     .sops.yaml (jarvis init made both). Changes nothing."""
-    text = (repo / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
-    path = _age.key_path(_yaml_scalar(text, "age_key_file"))
+    try:
+        path = _age.key_path(_cluster_vars(repo / "envs" / env / "values" / "cluster-vars.yaml").get("age_key_file"))
+    except _age.AgeError as exc:
+        raise PrepError(str(exc)) from exc
     if not path.is_file():
         raise PrepError(f"age key {path} is missing; copy it here from where you keep it (mode 0600)")
     try:
@@ -888,7 +815,6 @@ def show_git_diff(repo: Path, env: str) -> None:
             "--",
             f"envs/{env}/inventory/hosts.yml",
             f"envs/{env}/values/cluster-vars.yaml",
-            f"envs/{env}/flux/generated/cluster-vars-configmap.yaml",
             f"envs/{env}/secrets",
             ".sops.yaml",
         ],
@@ -926,7 +852,7 @@ def run(argv: list[str] | None = None) -> None:
     assert_host_resolves(host, unchanged=True)
     require_inventory_host(repo, env, host)
 
-    public = ensure_public_key()
+    public = ensure_public_key(ansible_user, host)
     pubkey = public_key_text(public)
     ensure_host_key(host)
     session = open_session(login, host)
@@ -940,9 +866,9 @@ def run(argv: list[str] | None = None) -> None:
     finally:
         session.close()
 
-    proof(ansible_user, inventory_host, public)
-    offer_ssh_passwords_off(ansible_user, inventory_host, public)
-    check_clock(ansible_user, inventory_host, public)
+    proof(ansible_user, inventory_host)
+    offer_ssh_passwords_off(ansible_user, inventory_host)
+    check_clock(ansible_user, inventory_host)
     apply_env_edits(repo, env, host, inventory_host, ansible_user)
     schema_error: PrepError | None = None
     try:

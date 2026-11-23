@@ -79,6 +79,7 @@ def test_an_env_pinned_elsewhere_runs_from_a_cached_checkout_of_its_tag(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.delenv(cli_core.DELEGATED_VAR, raising=False)
     monkeypatch.delenv(cli_core.UNPINNED_VAR, raising=False)
+    _git(env.parents[1], "init", "-q")
     monkeypatch.chdir(env.parents[1])
     set_up: list[Path] = []
     handed: list[tuple[Path, list[str]]] = []
@@ -130,6 +131,7 @@ def test_a_branch_pin_is_refused_before_anything_runs(tmp_path: Path, monkeypatc
     """Rule: an env that follows a branch is refused (exit 3): there is no release to run."""
     env = _env(tmp_path, "refs/heads/main")
     monkeypatch.delenv(cli_core.UNPINNED_VAR, raising=False)
+    _git(env.parents[1], "init", "-q")
     monkeypatch.chdir(env.parents[1])
     assert cli_main.main(["render"]) == 3
     assert "not a tag" in capsys.readouterr().err

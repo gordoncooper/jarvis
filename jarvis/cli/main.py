@@ -3,7 +3,7 @@
   jarvis [--env <env>] [--core <path>] <command> [<args>]
   jarvis --version
 
-Run it from inside an instance repo (the folder that holds envs/). --env is needed only when
+Run it from inside an instance repo (the git repository that holds envs/). --env is needed only when
 the repo holds more than one env; it may come before or after the command. A command runs at
 the core release its env pins (core_git_ref): this checkout when it is that tag, otherwise a
 checkout of the tag cached under ~/.cache/jarvis/core/, set up from that release's own lockfiles.
@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import importlib
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -86,11 +85,11 @@ def split_globals(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
 
 
 def find_instance(start: Path) -> Path:
-    """The nearest folder at or above start that holds envs/."""
-    for folder in (start, *start.parents):
-        if (folder / "envs").is_dir():
-            return folder
-    raise UsageError("run jarvis from inside an instance repo (a folder that holds envs/)")
+    """The git repository start is in, which holds envs/ when it is an instance repo."""
+    proc = subprocess.run(["git", "-C", str(start), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+    if proc.returncode or not (Path(proc.stdout.strip()) / "envs").is_dir():
+        raise UsageError("run jarvis from inside an instance repo (a git repository that holds envs/)")
+    return Path(proc.stdout.strip())
 
 
 def choose_env(instance: Path, name: str | None) -> str:
@@ -107,12 +106,9 @@ def choose_env(instance: Path, name: str | None) -> str:
 
 
 def activate_toolchain(core: Path) -> None:
-    """Put the core checkout's pinned CLIs (mise) and its venv first on PATH."""
-    paths: list[str] = []
-    if shutil.which("mise"):
-        proc = subprocess.run(["mise", "bin-paths"], cwd=core, capture_output=True, text=True, check=False)
-        if proc.returncode == 0:
-            paths = [line for line in proc.stdout.splitlines() if line.strip()]
+    """Put the core checkout's pinned CLIs (mise) and its venv first on PATH. Without mise, the
+    machine's own CLIs run, and jarvis doctor says so."""
+    paths = _core.pinned_tool_paths(core) or []
     paths.append(str(Path(sys.executable).parent))
     os.environ["PATH"] = os.pathsep.join([*paths, os.environ.get("PATH", "")])
 
@@ -212,7 +208,7 @@ def _version() -> int:
     """The release this CLI came from, and inside an instance repo the release each env pins:
     every command runs the env's, so a difference is fine, but it is worth seeing."""
     own = _core.own_release()
-    print(f"jarvis {own[1]} ({own[0]})" if own else "jarvis: release unknown (neither a core checkout at a tag nor installed from git+<url>@<tag>)")
+    print(f"jarvis {own[1]} ({own[0]})" if own else "jarvis: release unknown (not installed from git+<url>@<tag>)")
     try:
         instance = find_instance(Path.cwd())
     except UsageError:

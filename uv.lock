@@ -662,6 +662,7 @@ name = "jarvis"
 source = { editable = "." }
 dependencies = [
     { name = "bcrypt" },
+    { name = "cryptography" },
     { name = "dnspython" },
     { name = "jsonschema" },
     { name = "pyyaml" },
@@ -685,6 +686,7 @@ ops = [
 [package.metadata]
 requires-dist = [
     { name = "bcrypt", specifier = "==5.0.0" },
+    { name = "cryptography", specifier = "==50.0.2" },
     { name = "dnspython", specifier = "==2.9.2" },
     { name = "jsonschema", specifier = "==4.26.0" },
     { name = "pyyaml", specifier = "==6.0.4" },

@@ -7,6 +7,33 @@ the upgrade.
 
 ## Unreleased
 
+### Changed
+
+- `age_key_file` is required, with no default: `jarvis init` writes the path of the key it used,
+  and `jarvis env add` the first env's. `SOPS_AGE_KEY_FILE` still overrides it, in `doctor` too,
+  and `init` and `env add` refuse when it names another file than the one they would record.
+- `jarvis validate` checks that `jarvis_env` is a DNS label, as `init` required, and fails any
+  `.sops.yaml` creation rule that is not exactly the one jarvis writes for an env folder. jarvis
+  writes `.sops.yaml` as plain YAML, so the next `env add` or recipient change re-lays it out.
+- A quoted `dns_suffix` or `age_key_file`, or one with a comment, works in `secrets` and
+  `node prep`.
+- `jarvis node prep` installs the key ssh offers for the Ansible user (`ssh -G`), proves login as
+  Ansible makes it, resolves the host without `getent`, and leaves `flux/` alone.
+- `jarvis up` and `jarvis doctor` read `flux_git_repo_url`, not the clone's `origin`.
+- `jarvis` runs only inside a git repository with `envs/` at its top.
+- `jarvis init` and `env add` run from a core checkout need `--core-url` and `--core-ref`.
+- `jarvis init` asks for `ssh_user` at a terminal, else writes none (the schema's `ubuntu`).
+- `jarvis doctor` warns when mise is missing.
+- The internal CA is made by the `cryptography` package, not the controller's `openssl`, with the
+  same extensions.
+
+### Upgrading
+
+- An env without `age_key_file`: add your working key's path (the old default was
+  `~/.config/sops/age/keys.txt`).
+- The controller that runs `jarvis up` must read `flux_git_repo_url` with git, as Flux does (for
+  `ssh://`, with a key the forge accepts). `jarvis doctor` checks it.
+
 ## v0.8.2
 
 ### Changed

@@ -20,7 +20,6 @@ Roles: control_plane, workers, backup, edge, gpu. A lone --node <host> gets ever
 from __future__ import annotations
 
 import argparse
-import getpass
 import os
 import shutil
 import sys
@@ -55,7 +54,7 @@ def parser(command: str) -> argparse.ArgumentParser:
         p.add_argument("name", help="The new env's name (a DNS label)")
     p.add_argument("--domain", help="The env's DNS suffix, e.g. home.lan")
     p.add_argument("--node", action="append", default=[], help="<host> or <host>:<role>,<role> (repeat per node)")
-    p.add_argument("--ssh-user", help="The user Ansible logs in as on the nodes (default: you)")
+    p.add_argument("--ssh-user", help="The user Ansible logs in as on the nodes (asked for from a terminal; default: the schema's)")
     p.add_argument("--time-zone", default="Etc/UTC", help="The nodes' time zone (default: Etc/UTC)")
     p.add_argument("--feature", action="append", default=[], choices=tuple(_switches.FEATURE_COMPONENTS), help="Turn a feature on (repeat)")
     p.add_argument("--apps-repo-url", default="", help="The hosted apps repository, if the env will host apps")
@@ -64,7 +63,11 @@ def parser(command: str) -> argparse.ArgumentParser:
         action="store_true",
         help="Turn on app-hosting with the example apps, for a first-run tour (apps repository: jarvis-apps beside core, unless --apps-repo-url)",
     )
-    p.add_argument("--age-key-file", default="", help=f"The working age key (default: {_age.DEFAULT_KEY_FILE})")
+    p.add_argument(
+        "--age-key-file",
+        default="",
+        help=f"The working age key, recorded as the env's age_key_file (default: SOPS_AGE_KEY_FILE, else {scaffold.DEFAULT_KEY_FILE})",
+    )
     return p
 
 
@@ -79,12 +82,29 @@ def _ask(value: str | None, question: str) -> str:
     return answer
 
 
+def _ssh_user(given: str | None) -> str:
+    """--ssh-user, or the answer from a terminal. Blank, or no terminal, writes none: the schema's
+    default holds."""
+    from jarvis.schema.env import DEFAULT_SSH_USER
+
+    if given or not sys.stdin.isatty():
+        return given or ""
+    return input(f"the user Ansible logs in to the nodes as (--ssh-user; blank for {DEFAULT_SSH_USER}): ").strip()
+
+
 def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, core: tuple[str, str]) -> scaffold.EnvSpec:
     domain = _ask(args.domain, "the env's DNS suffix (--domain)")
     raw_nodes = args.node or [_ask(None, "the first node's host name (--node)")]
     nodes = [scaffold.Node.parse(text, only=len(raw_nodes) == 1) for text in raw_nodes]
     features = list(dict.fromkeys(args.feature + (["app-hosting"] if args.with_examples else [])))
     apps_repo_url = args.apps_repo_url or (scaffold.apps_repo_beside(core[0]) if args.with_examples else "")
+    age_key_file = args.age_key_file or os.environ.get("SOPS_AGE_KEY_FILE") or scaffold.DEFAULT_KEY_FILE
+    if _age.key_path(age_key_file) != Path(age_key_file).expanduser():
+        # Every command reads SOPS_AGE_KEY_FILE before age_key_file, so the env must record that key.
+        raise scaffold.ScaffoldError(
+            f"SOPS_AGE_KEY_FILE ({os.environ['SOPS_AGE_KEY_FILE']}) is not the age_key_file the env would record "
+            f"({age_key_file}); unset it, or pass the same path as --age-key-file"
+        )
     return scaffold.EnvSpec(
         name=name,
         domain=domain,
@@ -93,17 +113,17 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
         core_tag=core[1],
         nodes=nodes,
         branch=branch,
-        ssh_user=args.ssh_user or getpass.getuser(),
+        ssh_user=_ssh_user(args.ssh_user),
         time_zone=args.time_zone,
         features=features,
         apps_repo_url=apps_repo_url,
-        age_key_file=args.age_key_file,
+        age_key_file=age_key_file,
         examples=args.with_examples,
     )
 
 
 def _working_key(spec: scaffold.EnvSpec) -> str:
-    path = _age.key_path(spec.age_key_file or None)
+    path = _age.key_path(spec.age_key_file)
     if path.exists():
         public = _age.public_key(path)
         print(f"PASS age key {path} (public key {public})")
@@ -226,6 +246,8 @@ def run_env_add(instance: Path, argv: list[str], core: tuple[str, str]) -> int:
         return 3
     cluster_vars = (instance / "envs" / existing[0] / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")
     first = yaml.safe_load(cluster_vars) or {}
+    # The new env's secrets open for the first env's recipients, so its working key is that env's.
+    args.age_key_file = args.age_key_file or str(first.get("age_key_file") or "")
     branch = str(first.get("flux_git_ref", "refs/heads/main")).removeprefix("refs/heads/")
     spec = _spec(args, name=args.name, repo_url=str(first.get("flux_git_repo_url", "")), branch=branch, core=core)
     spec.check()

@@ -10,7 +10,9 @@ from pathlib import Path
 
 import yaml
 
-# One path segment. Rejects "..", slashes, and uppercase.
+from jarvis.schema.values import env_name_ok
+
+# A Secret's name, and its namespace's folder: one path segment. Rejects "..", slashes, and uppercase.
 _SEGMENT = re.compile(r"^[a-z0-9-]+$")
 
 
@@ -21,8 +23,8 @@ def secret_path(repo_root: Path, env: str, name: str, namespace: str | None = No
     exist. The resolved file's parent must be that folder, so a symlinked secrets/
     cannot leave the repo.
     """
-    segments = (env, name) if namespace is None else (env, name, namespace)
-    if not all(_SEGMENT.fullmatch(segment) for segment in segments):
+    segments = (name,) if namespace is None else (name, namespace)
+    if not env_name_ok(env) or not all(_SEGMENT.fullmatch(segment) for segment in segments):
         raise SystemExit("refusing env, namespace or name: only [a-z0-9-] segments are allowed")
     root = repo_root.resolve()
     env_dir = root / "envs" / env

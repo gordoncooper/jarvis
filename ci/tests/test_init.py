@@ -165,10 +165,20 @@ def test_a_lone_node_gets_every_role_but_gpu() -> None:
     assert scaffold.Node.parse("n1", only=True).roles == ("control_plane", "workers", "backup", "edge")
 
 
-def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Rule: init pins the release the CLI came from: a checkout's tag and origin, or the install
-    record uv tool install writes (PEP 610)."""
-    monkeypatch.setattr(cli_core, "PRODUCT_ROOT", tmp_path)  # not a git checkout
+def test_a_key_path_sops_would_not_read_is_refused_before_anything_is_written(
+    tmp_path: Path, controller: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule: the env records the working key SOPS_AGE_KEY_FILE names, or nothing is made: with the
+    two naming different files, init would seal to one and record the other."""
+    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(tmp_path / "other.txt"))
+    with pytest.raises(scaffold.ScaffoldError, match="SOPS_AGE_KEY_FILE"):
+        _init(tmp_path, "--age-key-file", str(tmp_path / "recorded.txt"))
+    assert not any(path.exists() for path in (tmp_path / "lab", tmp_path / "other.txt", tmp_path / "recorded.txt"))
+
+
+def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: init pins the release the CLI came from, by the install record uv tool install writes
+    (PEP 610)."""
 
     class Dist:
         def read_text(self, name: str) -> str:
@@ -177,7 +187,6 @@ def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(cli_core, "distribution", lambda name: Dist())
     assert cli_core.own_release() == ("https://github.com/o/jarvis", "v9.1.0")
-    assert cli_core.https_url("git@github.com:o/jarvis.git") == "https://github.com/o/jarvis"
 
 
 def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_path: Path, controller: Path, monkeypatch) -> None:

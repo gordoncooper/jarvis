@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -12,8 +11,9 @@ from subprocess import CompletedProcess
 
 import yaml
 
+from jarvis.schema.values import env_name_ok
+
 Kubectl = Callable[..., CompletedProcess[str]]
-ENV_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # Names an instance checkout. Its envs/<env> and .sops.yaml are the ones tools act on.
 INSTANCE_VAR = "INSTANCE"
 
@@ -98,7 +98,7 @@ def json_object(proc: CompletedProcess[str], what: str) -> dict:
 
 
 def repository_values(repo_root: Path, env: str) -> dict:
-    if not ENV_NAME.fullmatch(env):
+    if not env_name_ok(env):
         raise EnvError(f"invalid ENV={env}")
     path = repo_root / "envs" / env / "values" / "cluster-vars.yaml"
     try:

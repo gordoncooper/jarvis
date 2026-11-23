@@ -28,6 +28,7 @@ from jarvis.env import switches as _switches
 from jarvis.env.k3s import release
 from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE resolver)
 from jarvis.schema import values as _values
+from jarvis.secrets import age as _age
 from jarvis.secrets import recipients as _recipients
 
 _DEFAULTS = _values.defaults(_values.CLUSTER_VARS)
@@ -60,8 +61,6 @@ _FILES = {
 # instance CI can check each env against the core tag that env pins. Unset, every env.
 ENVS_VAR = "ENVS"
 
-_ENV_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_SOPS_ENV_SECRETS = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/secrets/")
 _K3S_VERSION = re.compile(r"^v(\d+\.\d+\.\d+)\+k3s\d+$")
 _SINGLETON_ROLES = ("control_plane", "backup")
 
@@ -127,7 +126,7 @@ def validate_env_tree(repo_root: Path | str, *, pre_host: bool = False) -> dict[
 
 def validate_one_env(repo_root: Path | str, name: str, *, pre_host: bool = False) -> dict[str, Any]:
     """Validate one env and its .sops.yaml creation rules. jarvis site runs this first."""
-    if not _ENV_NAME.fullmatch(name) or name in {".", ".."}:
+    if not _values.env_name_ok(name):
         raise ValidationError([f"invalid env name: {name}"])
     root = Path(repo_root).resolve()
     env_dir = root / "envs" / name
@@ -141,8 +140,8 @@ def validate_one_env(repo_root: Path | str, name: str, *, pre_host: bool = False
 
 
 def _sops_problems(root: Path, checked: list[str], *, pre_host: bool) -> list[str]:
-    """One age creation rule per checked env (at most one before its keys exist), and no rule
-    for an env folder that does not exist."""
+    """One age creation rule per checked env (at most one before its keys exist), and no rule but
+    the ones jarvis writes for the env folders that exist."""
     path = root / ".sops.yaml"
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
@@ -151,16 +150,16 @@ def _sops_problems(root: Path, checked: list[str], *, pre_host: bool) -> list[st
     rules = (data or {}).get("creation_rules", []) if isinstance(data or {}, dict) else None
     if not isinstance(rules, list):
         return [".sops.yaml: creation_rules must be a list"]
-    regexes = [rule["path_regex"] for rule in rules if isinstance(rule, dict) and isinstance(rule.get("path_regex"), str)]
     errors = []
     for name in checked:
-        count = sum(f"envs/{name}/secrets/" in regex for regex in regexes)
+        count = sum(_age.is_rule_for(rule, name) for rule in rules)
         if count > 1 or (not pre_host and count != 1):
             errors.append(f".sops.yaml: expected exactly one creation rule for envs/{name}/secrets/, found {count}")
-    existing = {p.name for p in (root / "envs").iterdir() if p.is_dir()}
-    for name in dict.fromkeys(found for regex in regexes for found in _SOPS_ENV_SECRETS.findall(regex)):
-        if name not in existing:
-            errors.append(f".sops.yaml: creation rule names envs/{name}/secrets/, but that env folder does not exist; remove the rule")
+    existing = [p.name for p in (root / "envs").iterdir() if p.is_dir()]
+    for rule in rules:
+        if not any(_age.is_rule_for(rule, name) for name in existing):
+            where = rule.get("path_regex") if isinstance(rule, dict) else rule
+            errors.append(f".sops.yaml: creation rule {where!r} is not the rule jarvis writes for an env folder under envs/; remove it")
     return errors
 
 

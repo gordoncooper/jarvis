@@ -33,19 +33,24 @@ def _git(instance: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(instance), *args], capture_output=True, text=True, check=False)
 
 
+def flux_source(instance: Path, env: str) -> tuple[str, str]:
+    """(flux_git_repo_url, flux_git_ref): the repository and ref Flux reads the env from."""
+    data = yaml.safe_load((instance / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")) or {}
+    return str(data.get("flux_git_repo_url") or ""), str(data.get("flux_git_ref") or "")
+
+
 def unpushed(instance: Path, env: str) -> str | None:
     """Why Flux would not read what this checkout holds for the env, or None when it would."""
     env_rel = f"envs/{env}"
     if _git(instance, "status", "--porcelain", "--", env_rel, ".sops.yaml").stdout.strip():
         return f"{env_rel} or .sops.yaml has uncommitted changes; commit and push them first"
-    data = yaml.safe_load((instance / env_rel / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    ref = str((data or {}).get("flux_git_ref") or "")
-    if not ref:
-        return f"{env_rel}/values/cluster-vars.yaml sets no flux_git_ref"
-    if _git(instance, "fetch", "--quiet", "origin", ref).returncode:
-        return f"cannot fetch {ref} from origin"
+    url, ref = flux_source(instance, env)
+    if not url or not ref:
+        return f"{env_rel}/values/cluster-vars.yaml sets no flux_git_repo_url or flux_git_ref"
+    if _git(instance, "fetch", "--quiet", url, ref).returncode:
+        return f"cannot fetch {ref} from {url}"
     if _git(instance, "merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD").returncode:
-        return f"this checkout has commits that {ref} on origin lacks; push them first"
+        return f"this checkout has commits that {ref} on {url} lacks; push them first"
     return None
 
 
@@ -70,10 +75,9 @@ def expected_kustomizations(instance: Path, env: str) -> tuple[dict[str, bool], 
 
 
 def pushed_revision(instance: Path, env: str) -> str | None:
-    """The commit Flux reads for the env: the tip of its flux_git_ref on origin."""
-    data = yaml.safe_load((instance / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    ref = str((data or {}).get("flux_git_ref") or "")
-    proc = _git(instance, "ls-remote", "origin", ref)
+    """The commit Flux reads for the env: the tip of its flux_git_ref at its flux_git_repo_url."""
+    url, ref = flux_source(instance, env)
+    proc = _git(instance, "ls-remote", url, ref)
     line = proc.stdout.split("\n", 1)[0].split() if proc.returncode == 0 else []
     return line[0] if line else None
 
@@ -103,7 +107,7 @@ def wait_for_flux(instance: Path, env: str) -> int:
     expected, error = expected_kustomizations(instance, env)
     revision = pushed_revision(instance, env)
     if error or revision is None:
-        print(f"FAIL up: {error or 'cannot read the pushed commit of flux_git_ref from origin'}", flush=True)
+        print(f"FAIL up: {error or 'cannot read the pushed commit of flux_git_ref at flux_git_repo_url'}", flush=True)
         return 1
     deadline = _clock() + FLUX_READY_TIMEOUT_SECONDS
     waiting = {name: "not created yet" for name in expected}
