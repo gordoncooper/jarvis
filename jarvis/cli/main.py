@@ -15,7 +15,7 @@ Commands:
   doctor                 Check this controller: CLIs, the age key, the remote, host names
   validate               Every env check: schema, wiring, committed files, secret scan
   render [--check]       Write the env's flux/ from its values; --check lists stale files
-  secrets                Mint the env's missing secrets (--rotate-restic: a new restic password)
+  secrets                Mint the env's missing secrets (--rotate age|deploy-key: a new key)
   encrypt --name <n>     Encrypt a Secret manifest (a file or stdin) into the env's secrets/
   age-key-check --key-file <file>
                          Prove an age key copy decrypts one of the env's secrets
@@ -28,8 +28,9 @@ Commands:
   restore (--namespace <ns> | --all) [--as-of <time>]
                          Restore backed-up volumes
 
-Each command's own options: jarvis <command> --help, from inside the instance repo (they are
-those of the release the env pins). jarvis passes --env itself when the repo holds one env.
+Each command's own options: jarvis <command> --help or jarvis help <command>, from inside the
+instance repo (they are those of the release the env pins). jarvis passes --env itself when the
+repo holds one env.
 
 Exit codes: 0 ok, 1 a check failed, 2 usage error, 3 refused for safety (nothing changed),
 4 the environment is wrong (a missing tool, key or access).
@@ -144,7 +145,7 @@ def _node(instance: Path, env: str, args: list[str]) -> int:
         raise UsageError("usage: jarvis node prep <host> [--login-user <user>]")
     from jarvis.node import prep
 
-    return prep.main(["--env", env, "--host", args[1], *args[2:]])
+    return prep.main(["--env", env, *args[1:]])
 
 
 def _doctor(instance: Path, env: str) -> int:
@@ -293,6 +294,8 @@ def _main(argv: list[str]) -> int:
     env_name, core, rest = split_globals(argv)
     if rest[:1] == ["--version"]:
         return _version()
+    if rest[:1] == ["help"] and rest[1:]:
+        rest = [*rest[1:], "--help"]
     if not rest or rest[0] in ("-h", "--help", "help"):
         print(__doc__)
         return 0 if rest else USAGE

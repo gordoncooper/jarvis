@@ -79,8 +79,8 @@ def check(env: str, key_file: Path) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Env under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis age-key-check", description=__doc__)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--key-file", required=True, type=Path, help="Age private key file")
     args = parser.parse_args(argv)
     try:

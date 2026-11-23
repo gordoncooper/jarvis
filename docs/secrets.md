@@ -14,7 +14,7 @@ Encryption uses the public recipients in `.sops.yaml`. Decryption (only to resto
 | --- | --- | --- |
 | `k3s-token` | `server_token`, `agent_token`; read by `site.yml`, not applied | Refused once any other file exists: the cluster already has a token, which the owner seals ([backups.md](backups.md#rebuild-a-dead-node)). Keep it as long as any etcd snapshot it encrypts. |
 | `cert-manager-ca` | The internal CA, constrained to `dns_suffix`; public root `envs/<env>/ca.crt` | Refused while `ca.crt` exists; delete both only to rotate ([Rotate the CA](#rotate-the-ca)) |
-| `backups-restic` | Core's restic password and rest-server login | Refused once git records it; `--rotate-restic` mints a new one, which opens no existing repository ([backups.md](backups.md#rotate-the-restic-password)) |
+| `backups-restic` | Core's restic password and rest-server login | Refused once git records it; `--new-restic-password` mints a new one, which opens no existing repository ([backups.md](backups.md#rotate-the-restic-password)) |
 | `app-<name>/backups-restic-app-<name>` | A hosted app's own password and `ns-app-<name>` login, minted by `jarvis secrets --env <env>` while the app's backups are on and it keeps a `backup: true` volume | Refused once git records it ([backups.md](backups.md#app-credentials)) |
 | `flux-deploy-key` | The read-only deploy key of an `ssh://` root | `jarvis secrets --rotate deploy-key` |
 | `backups-offsite` | The off-host target, sealed by the owner with `jarvis encrypt` | ([backups.md](backups.md#off-host-copy)) |

@@ -78,7 +78,8 @@ def _jarvis(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_usage_errors_exit_2_and_help_needs_no_instance(tmp_path: Path) -> None:
-    """Rule: exit 2 for a usage error; jarvis --help and jarvis <command> --help work anywhere."""
+    """Rule: exit 2 for a usage error; jarvis --help, and a command's help as jarvis <command> --help
+    or jarvis help <command>, work anywhere."""
     assert _jarvis(cwd=tmp_path).returncode == 2
     assert _jarvis("bogus", cwd=tmp_path).returncode == 2
     outside = _jarvis("verify", cwd=tmp_path)
@@ -86,8 +87,9 @@ def test_usage_errors_exit_2_and_help_needs_no_instance(tmp_path: Path) -> None:
     top = _jarvis("--help", cwd=tmp_path)
     assert top.returncode == 0 and "Exit codes" in top.stdout
     for command, words in (("restore", "--as-of"), ("site", "--tags"), ("up", "doctor, validate")):
-        done = _jarvis(command, "--help", cwd=tmp_path)
-        assert done.returncode == 0 and words in done.stdout, (command, done.stdout + done.stderr)
+        for form in ((command, "--help"), ("help", command)):
+            done = _jarvis(*form, cwd=tmp_path)
+            assert done.returncode == 0 and words in done.stdout, (form, done.stdout + done.stderr)
 
 
 def test_every_command_names_a_module_that_has_its_entry(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@
       "description": "A core release is one PR: every env's core_git_ref, plus the instance workflow and this preset (the two rules below share its group). Core's instance workflow renders each env's flux/ at the new tag and pushes it to the PR. To move one env later than the rest, add a packageRule with matchFileNames [\"envs/<env>/**\"] and enabled false, and remove it when that env should follow.",
       "groupName": "jarvis core",
       "matchDepTypes": ["jarvis-core"],
-      "prBodyNotes": ["Follow this release's **Upgrading** notes in core's `CHANGELOG.md`, then run operator commands from a checkout of the new tag."]
+      "prBodyNotes": ["Follow this release's **Upgrading** notes in core's `CHANGELOG.md`."]
     },
     {
       "description": "The instance workflow (uses: <owner>/jarvis/.github/workflows/instance.yml@<tag>) and this preset's own ref move with the core release.",

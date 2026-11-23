@@ -3,7 +3,8 @@
 jarvis validate runs these for the instance it is run from; core's own CI runs each one by name
 on core's own envs. Each check reads every env under envs/.
 
-  python -m jarvis.env.validate [--only <name>]...
+  jarvis validate
+  python -m jarvis.env.validate [--only <name>]...   (core's own tests: one check by name)
 
 Exit 0 when every check passes, 1 when one fails.
 """

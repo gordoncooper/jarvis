@@ -824,8 +824,7 @@ def show_git_diff(repo: Path, env: str) -> None:
 
 
 def _fill_args(args: argparse.Namespace) -> tuple[str, str, str]:
-    env = args.env or prompt("Env")
-    host = args.host or prompt("Host")
+    env, host = args.env, args.host
     login = args.login_user or prompt("Login user")
     require_token(env, "env")
     require_token(host, "host")
@@ -835,10 +834,11 @@ def _fill_args(args: argparse.Namespace) -> tuple[str, str, str]:
 
 def run(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
+        prog="jarvis node prep",
         description="Prepare a fresh Ubuntu Server node for site.yml and record it in the env.",
     )
-    parser.add_argument("--env", help="env directory name under envs/")
-    parser.add_argument("--host", help="inventory hostname; must resolve in DNS")
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
+    parser.add_argument("host", help="inventory hostname; must resolve in DNS")
     parser.add_argument("--login-user", help="existing user on the node")
     env, host, login = _fill_args(parser.parse_args(argv))
 

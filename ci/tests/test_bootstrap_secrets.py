@@ -409,7 +409,7 @@ def _sign_leaf(
 
 
 def test_tracked_restic_is_not_recreated_without_rotate(tmp_path, monkeypatch):
-    """Deleting a git-recorded backups-restic file refuses unless --rotate-restic is set."""
+    """Deleting a git-recorded backups-restic file refuses unless --new-restic-password is set."""
     mod = _load_module()
     public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
     _write_test_sops_yaml(tmp_path, public)
@@ -432,7 +432,7 @@ def test_tracked_restic_is_not_recreated_without_rotate(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="refusing to recreate backups-restic"):
         mod.bootstrap("env-test", sops_bin=sops_bin)
     assert not (tmp_path / rel).exists()
-    mod.bootstrap("env-test", sops_bin=sops_bin, rotate_restic=True)
+    mod.bootstrap("env-test", sops_bin=sops_bin, new_restic_password=True)
     assert (tmp_path / rel).read_bytes() != recorded
 
 

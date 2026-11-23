@@ -26,8 +26,8 @@ Core ships as tags (`v<major>.<minor>.<patch>`). An env runs exactly one: `core_
 ## Move an env to a release
 
 1. Follow the release's **Upgrading** notes in the instance repository, up to the move.
-2. Set `core_git_ref` and the core source's `spec.ref.name` to `refs/tags/<tag>`, and merge.
-   env-schema checks the two match.
+2. Set `core_git_ref` to `refs/tags/<tag>`, run `jarvis render`, which writes the core source's
+   ref from it, and merge. Renovate's core PR does both.
 3. Wait until `jarvis verify` passes on the new tag before any step on the cluster, an
    **Upgrading** step included. For up to one Flux interval after the merge, Flux reads Ready
    on the old core's content; `verify` fails until every layer has applied the new tag.

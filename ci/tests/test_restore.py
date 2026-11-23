@@ -555,7 +555,7 @@ def test_node_override_wins_over_the_workload_placement() -> None:
 @pytest.mark.parametrize(
     ("workloads", "node", "message"),
     [
-        ({}, None, "no Deployment, StatefulSet or CronJob mounts it; pass NODE=<node>"),
+        ({}, None, "no Deployment, StatefulSet or CronJob mounts it; pass --node <node>"),
         (
             {
                 "deployments": [_mounting("deployment", _PLACED)],
