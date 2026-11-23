@@ -6,7 +6,7 @@ What each env under `envs/<env>/` may set. Run from an instance repository, the 
 
 | What | Where |
 | --- | --- |
-| The shape of each values file: keys, types, patterns, defaults. A file names its schema on its first line (`# yaml-language-server: $schema=…`), so an editor checks it as you type. | `schema/cluster-vars.schema.json`, `hosts.schema.json`, `switches.schema.json`, `apps.schema.json` |
+| The shape of each values file: keys, types, patterns, defaults. | `schema/cluster-vars.schema.json`, `hosts.schema.json`, `switches.schema.json`, `apps.schema.json` |
 | The rules that span fields or files | `jarvis/schema/env.py`, the `env-schema` check of `jarvis validate` |
 | That the committed `flux/` is the render of the values | `jarvis render --check`, the `render` check of `jarvis validate` |
 | Resolved cluster-vars: the file with each schema `default` filled in | `resolve_cluster_vars` |
