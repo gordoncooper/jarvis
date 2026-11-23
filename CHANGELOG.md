@@ -9,6 +9,19 @@ the upgrade.
 
 ### Changed
 
+- Each command's help names it (`usage: jarvis render …`) and no longer lists `--env`, which is
+  still taken as before; its errors start `jarvis <command>:`. `jarvis help <command>` shows that
+  command's help, and `init --help` and `env add --help` name `--core-url` and `--core-ref`.
+  `jarvis node prep <host>` is unchanged.
+- `jarvis secrets --rotate-restic` is `jarvis secrets --new-restic-password`, which is what it
+  does: it mints a new password for a lost `backups-restic` file, and that password opens no
+  existing repository. The restic rotation is still `docs/backups.md`'s procedure.
+- `jarvis restore` no longer reads `AS_OF` from the environment; `--as-of` is the one way.
+- `jarvis init` and `env add` write no `$schema` editor hint at the top of each values file. It
+  named the release `init` ran from, and nothing moved it. A hint in an existing file is a
+  comment: delete it or leave it.
+- `python -m jarvis.render.apps`, `jarvis.render.cluster_vars` and `jarvis.render.switches` no
+  longer run: `jarvis render` writes the whole `flux/`, where `jarvis.render.switches` wrote part of it.
 - `jarvis validate` holds every env to what `jarvis init` and `env add` make: `values/switches.yaml`,
   the sealed `k3s-token`, `cert-manager-ca` and `backups-restic`, one `.sops.yaml` rule, and each
   feature's, add-on's and app's sealed files. It no longer checks less for an env with no sealed
@@ -45,19 +58,6 @@ the upgrade.
   keep their annotation where they are written, and are no longer checked by name.
 - Core's admission rule `stdout-logs` is gone. It guessed from five flag spellings whether a
   container logs to a file, and could refuse a flag that means something else.
-- Each command's help names it (`usage: jarvis render …`) and no longer lists `--env`, which is
-  still taken as before; its errors start `jarvis <command>:`. `jarvis help <command>` shows that
-  command's help, and `init --help` and `env add --help` name `--core-url` and `--core-ref`.
-  `jarvis node prep <host>` is unchanged.
-- `jarvis secrets --rotate-restic` is `jarvis secrets --new-restic-password`, which is what it
-  does: it mints a new password for a lost `backups-restic` file, and that password opens no
-  existing repository. The restic rotation is still `docs/backups.md`'s procedure.
-- `jarvis restore` no longer reads `AS_OF` from the environment; `--as-of` is the one way.
-- `jarvis init` and `env add` write no `$schema` editor hint at the top of each values file. It
-  named the release `init` ran from, and nothing moved it. A hint in an existing file is a
-  comment: delete it or leave it.
-- `python -m jarvis.render.apps`, `jarvis.render.cluster_vars` and `jarvis.render.switches` no
-  longer run: `jarvis render` writes the whole `flux/`, where `jarvis.render.switches` wrote part of it.
 
 ### Upgrading
 
