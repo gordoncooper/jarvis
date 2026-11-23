@@ -109,7 +109,7 @@ def test_core_runs_this_checkout_unpinned_and_says_so(tmp_path: Path, monkeypatc
     # The CLI sets these in place; register them so they are restored after the test.
     for name in ("PATH", "INSTANCE", cli_core.UNPINNED_VAR):
         monkeypatch.setenv(name, os.environ.get(name, ""))
-    monkeypatch.setenv("APPS_REPO", str(REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"))
+    monkeypatch.setenv("APPS_REPO", os.environ["APPS_REPO"])
     assert cli.main(["--core", str(REPO_ROOT), "render", "--check"]) == 0
     assert "WARN jarvis: unpinned run with --core: env-00 pins core v0.2.0" in capsys.readouterr().err
     assert os.environ["INSTANCE"] == str(instance)
@@ -118,9 +118,9 @@ def test_core_runs_this_checkout_unpinned_and_says_so(tmp_path: Path, monkeypatc
 def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_path: Path, monkeypatch, capsys) -> None:
     """Rule: every command whose run reads app files gets the apps checkout, with no APPS_REPO set:
     jarvis site validates an env that lists apps, at their pinned tags, then runs the playbook."""
-    import shutil
     import types
 
+    import sample
     import yaml
 
     from jarvis.apps import checkout
@@ -129,10 +129,7 @@ def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_pat
     from support import copy_sample
 
     values = copy_sample(instance := tmp_path / "instance") / "envs" / "env-00" / "values"
-    remote = shutil.copytree(REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps", tmp_path / "remote")
-    pins = [f"{app}/{entry['version']}" for app, entry in yaml.safe_load((values / "apps.yaml").read_text()).items()]
-    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "apps"], *(["tag", pin] for pin in pins)):
-        subprocess.run([*_GIT, *args], cwd=remote, check=True, capture_output=True)
+    remote = sample.apps_repo(tmp_path / "remote")
     # The env's https URL, served from the local repository.
     count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
     monkeypatch.setenv(f"GIT_CONFIG_KEY_{count}", f"url.file://{remote}.insteadOf")

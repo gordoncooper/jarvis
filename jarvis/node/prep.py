@@ -795,10 +795,10 @@ def check_age_key(repo: Path, env: str) -> None:
     print(f"Age public key: {public}")
 
 
-def run_env_schema(repo: Path, *, pre_host: bool = False) -> None:
+def run_env_schema(repo: Path) -> None:
     """Validate the env tree in-process. Failures are a PrepError, not a traceback."""
     try:
-        validate_env_tree(repo, pre_host=pre_host)
+        validate_env_tree(repo)
     except ValidationError as exc:
         detail = str(exc).strip() or "env schema check failed"
         raise PrepError(detail) from exc
@@ -845,7 +845,7 @@ def run(argv: list[str] | None = None) -> None:
     require_tools()
     repo = instance_root(REPO_ROOT)
     require_env_dir(repo, env)
-    run_env_schema(repo, pre_host=True)
+    run_env_schema(repo)
     ansible_user = settle_ansible_user(repo, env, login, host)
     # The key site needs, checked before any host is touched.
     check_age_key(repo, env)

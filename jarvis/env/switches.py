@@ -38,7 +38,7 @@ _CORE_PATH = "../../../../"
 _SECRETS_PATH = "../../secrets/"
 # What each feature adds to the env's platform-configs. One name, one row. "sealed" names the
 # files under the env's secrets/ the feature applies; the owner seals each, and validate
-# requires it once the env is bootstrapped.
+# requires it.
 # App DNS (k8s_gateway): the LAN resolves app hostnames through it. Off, the LAN's own DNS does.
 APP_DNS = "app-dns"
 APP_DNS_DIR = "core/feature/app-dns"

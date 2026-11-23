@@ -59,11 +59,11 @@ def test_a_listed_app_takes_its_name_and_its_pin(tmp_path: Path) -> None:
     before = _tree(copy)
     assert "app-hello-web-wiring" not in before["flux/generated/apps.yaml"]
 
-    _set_app(copy.env_dir, "hello-web", {"version": "v0.1.0"})
+    _set_app(copy.env_dir, "hello-web", {"version": "v0.3.0"})
     render_switches(copy.env_dir, copy.root)
     after = _tree(copy)
     assert "app-hello-web-wiring" in after["flux/generated/apps.yaml"]
-    assert "refs/tags/hello-web/v0.1.0" in after["flux/generated/apps.yaml"]
+    assert "refs/tags/hello-web/v0.3.0" in after["flux/generated/apps.yaml"]
     assert {path for path in after if after[path] != before.get(path)} == {"values/apps.yaml", "flux/generated/apps.yaml"}
     validate_one_env(copy.root, copy.name)
     render_switches(copy.env_dir, copy.root)

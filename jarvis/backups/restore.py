@@ -21,7 +21,7 @@ from subprocess import CompletedProcess
 
 import yaml
 
-from jarvis.backups.etcd_image import ImageError, etcd_snapshot_image
+from jarvis.backups.etcd_image import etcd_snapshot_image
 from jarvis.env.runtime import (
     EnvError,
     instance_root,
@@ -1081,10 +1081,7 @@ def run(
         _validate_environment(kubectl, env)
         if override is not None:
             override = normalize_as_of(override)
-        try:
-            image = etcd_snapshot_image(kubectl)
-        except ImageError as exc:
-            raise Fail(exc.message) from exc
+        image = etcd_snapshot_image()
         chosen, present, unbound = _select(kubectl, None if all_pvcs else in_namespace)
         hold = _hold_repos(kubectl)
         retired = _names(retire)

@@ -434,10 +434,10 @@ def _stub_host_steps(
 
     real_schema = module.run_env_schema
 
-    def schema(repo: Path, *, pre_host: bool = False) -> None:
+    def schema(repo: Path) -> None:
         called.append("run_env_schema")
-        if pre_host:
-            real_schema(repo, pre_host=True)
+        if called.count("run_env_schema") == 1:
+            real_schema(repo)
 
     monkeypatch.setattr(module, "run_env_schema", schema)
     monkeypatch.setattr(module, "assert_host_resolves", track("assert_host_resolves"))
@@ -586,12 +586,12 @@ def test_run_calls_full_schema_after_host_steps(
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     _accept_default_ansible_user(module, monkeypatch)
     _stub_host_steps(module, monkeypatch)
-    schema_modes: list[bool] = []
+    schema_runs: list[Path] = []
 
-    def track_schema(repo: Path, *, pre_host: bool = False) -> None:
-        schema_modes.append(pre_host)
-        if pre_host:
-            module.validate_env_tree(repo, pre_host=True)
+    def track_schema(repo: Path) -> None:
+        schema_runs.append(repo)
+        if len(schema_runs) == 1:
+            module.validate_env_tree(repo)
             return
         raise module.PrepError("full schema failed")
 
@@ -600,6 +600,6 @@ def test_run_calls_full_schema_after_host_steps(
 
     with pytest.raises(module.PrepError, match="full schema failed"):
         module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
-    assert schema_modes == [True, False]
+    assert len(schema_runs) == 2
 
 

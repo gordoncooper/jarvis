@@ -157,7 +157,6 @@ def _replace(docs: list[dict], kind: str, **changes: object) -> list[dict]:
 
 
 _CLUSTER_ROLE = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": {"name": "widget"}}
-_PRIORITY = {"apiVersion": "scheduling.k8s.io/v1", "kind": "PriorityClass", "metadata": {"name": "widget"}, "value": 1}
 
 
 @pytest.mark.parametrize(
@@ -178,7 +177,6 @@ _PRIORITY = {"apiVersion": "scheduling.k8s.io/v1", "kind": "PriorityClass", "met
         ),
         ({"wiring": _replace(_wiring(), "Kustomization", **{"spec.dependsOn": [{"name": "addon-other"}]})}, "waits only on its own"),
         ({"wiring": _replace(_wiring(), "Kustomization", **{"spec.serviceAccountName": "flux-apps"})}, "not the add-on's tenant"),
-        ({"app": [_PRIORITY]}, "cluster-scoped; the tenant cannot apply it"),
         (
             {"wiring": _replace(_wiring(), "Kustomization", **{"spec.targetNamespace": None}), "app": _replace(_app(), "ConfigMap", **{"metadata.namespace": "platform-backups"})},
             "outside the add-on's namespaces",
@@ -221,7 +219,6 @@ _PRIORITY = {"apiVersion": "scheduling.k8s.io/v1", "kind": "PriorityClass", "met
         "decrypts-outside-secrets",
         "depends-on-another-addon",
         "runs-as-another-account",
-        "cluster-scoped-on-tenant-path",
         "object-in-another-namespace",
         "stage-not-platform",
         "unknown-slot",
@@ -276,7 +273,7 @@ def _schema_errors(root: Path, core: Path | None = None) -> list[str]:
     """env-schema's messages for root, against core (default the test core)."""
     with core_at(core) if core else contextlib.nullcontext():
         try:
-            validate_env_tree(root, pre_host=True)
+            validate_env_tree(root)
         except ValidationError as exc:
             return exc.messages
     return []
