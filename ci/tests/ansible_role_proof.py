@@ -57,8 +57,15 @@ def env_name() -> str:
     return "env-00"
 
 
-def cluster_vars_playbook_path() -> str:
-    return str(sample_root() / "envs" / env_name() / "values" / "cluster-vars.yaml")
+def site_vars_file(dest: Path, repo_root: Path | None = None, *, env: str | None = None, **override: object) -> Path:
+    """dest, holding what jarvis site passes every play (jarvis.node.site.site_vars) for the
+    sample env, or env at repo_root, with override's keys set; None drops a key."""
+    from jarvis.node.site import site_vars
+
+    root, name = repo_root or sample_root(), env or env_name()
+    found = {**site_vars(root, name, load_cluster_vars(root, env=name)), **override}
+    dest.write_text(json.dumps({key: value for key, value in found.items() if value is not None}), encoding="utf-8")
+    return dest
 
 
 def inventory_path(repo_root: Path | None = None) -> Path:
@@ -206,11 +213,12 @@ def ansible_render_template(
     templates_dir: Path,
     inventory: Path | None = None,
 ) -> str:
-    """Render a role template via ansible.builtin.template (same engine as the role)."""
+    """Render a role template via ansible.builtin.template (same engine as the role), with what
+    jarvis site passes for the sample env beneath variables."""
     src = templates_dir / template_name
     with tempfile.NamedTemporaryFile(delete=False) as handle:
         dest = Path(handle.name)
-    extra: list[str] = []
+    extra = ["-e", f"@{site_vars_file(dest.with_suffix('.json'))}"]
     if variables:
         extra.extend(["-e", json.dumps(variables)])
     cmd = ["ansible", "localhost"]
@@ -244,6 +252,7 @@ def ansible_render_template(
         return dest.read_text(encoding="utf-8")
     finally:
         dest.unlink(missing_ok=True)
+        dest.with_suffix(".json").unlink(missing_ok=True)
 
 
 def playbook_recap_field(output: str, field: str) -> int:

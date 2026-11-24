@@ -25,7 +25,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | `dns_suffix` | yes | string |  | The env's internal DNS zone: services are &lt;name&gt;.&lt;dns_suffix&gt;, hosted apps &lt;app&gt;.apps.&lt;dns_suffix&gt;. A lowercase DNS name. |
 | `flux_git_ref` | yes | string |  | The root source's Git ref, e.g. refs/heads/main. |
 | `flux_git_repo_url` | yes | string |  | The env repository, Flux's root source. https:// with no userinfo, query or fragment, or ssh://&lt;user&gt;@&lt;host&gt;/&lt;owner&gt;/&lt;repo&gt;, read with the sealed deploy key. |
-| `flux_known_hosts` | no; yes for an ssh:// root not on github.com | string |  | SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. Unset, GitHub's published key. Host-only (Ansible). |
+| `flux_known_hosts` | no | string | `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl` | SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. The default is GitHub's published key (api.github.com/meta), which serves only github.com. Host-only (Ansible). |
 | `jarvis_env` | yes | string |  | The env's name, a DNS label: its folder under envs/, the /etc/jarvis/env marker on its nodes, and the name its guards check. |
 | `k3s_kubelet_eviction_hard` | yes | string |  | kubelet eviction-hard. Its memory.available is raised to node_memory_reserve_percent when that is larger. A host may override it. |
 | `k3s_kubelet_kube_reserved` | yes | string |  | kubelet kube-reserved, without the kube-reserved= prefix. A host may override it. |

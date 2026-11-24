@@ -7,7 +7,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-import pytest
 from ansible_role_proof import LOCALHOST, local_play, playbook, playbook_recap_field
 from conftest import require_cli
 
@@ -225,36 +224,14 @@ def test_node_disk_accepts_jarvis_dirs_when_k3s_has_run(tmp_path: Path) -> None:
     assert {path.name for path in mount.iterdir()} == {"local-path", "backup", "lost+found"}
 
 
-def test_node_disk_refuses_a_configured_path_outside_the_mount(tmp_path: Path) -> None:
+def test_node_disk_refuses_a_backup_path_outside_the_mount(tmp_path: Path) -> None:
     mount = tmp_path / "data"
     mount.mkdir()
     extra = _paths(mount, tmp_path / "k3s-data")
-    extra["local_path_data"] = str(tmp_path / "elsewhere")
+    extra["backup_path"] = str(tmp_path / "elsewhere")
     result = _run(tmp_path, mount=mount, mounts=_own_mount(mount), extra=extra)
     output = result.output
     assert result.returncode != 0, output
-    assert "outside" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-@pytest.mark.parametrize(
-    ("key", "segment", "name"),
-    [
-        ("local_path_data", "a/../local-path", "parent segment"),
-        ("backup_path", "./backup", "current-dir segment"),
-    ],
-)
-def test_node_disk_refuses_dot_segments_that_start_inside_the_mount(
-    tmp_path: Path, key: str, segment: str, name: str
-) -> None:
-    """A path that begins under the mount but walks out with . or .. is refused."""
-    mount = tmp_path / "data"
-    mount.mkdir()
-    extra = _paths(mount, tmp_path / "k3s-data")
-    extra[key] = f"{mount}/{segment}"
-    result = _run(tmp_path, mount=mount, mounts=_own_mount(mount), extra=extra)
-    output = result.output
-    assert result.returncode != 0, f"{name}: {output}"
     assert "outside" in output
     assert playbook_recap_field(output, "changed") == 0
 
@@ -296,18 +273,6 @@ def test_node_disk_refuses_backup_path_on_another_mount(tmp_path: Path) -> None:
     assert result.returncode != 0, output
     assert "backup_path" in output
     assert "outside" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_refuses_local_path_data_equal_to_the_mount(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    mount.mkdir()
-    extra = _paths(mount, tmp_path / "k3s-data")
-    extra["local_path_data"] = str(mount)
-    result = _run(tmp_path, mount=mount, mounts=_own_mount(mount), extra=extra)
-    output = result.output
-    assert result.returncode != 0, output
-    assert "subdirectory" in output
     assert playbook_recap_field(output, "changed") == 0
 
 

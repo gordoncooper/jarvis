@@ -40,9 +40,8 @@ REPO_ROOT = PRODUCT_ROOT
 PAUSE_BUDGET_SECONDS = 120
 RESTORE_BUDGET_SECONDS = 30 * 60
 _POLL_SECONDS = 5.0
-# VolSync 0.17 job prefix. Longer than 63 characters, the rest is crc32 of the owner name.
-_JOB_NAME_MAX = 63
-_SRC_JOB_PREFIX = "volsync-src-"
+# Restore's binder pods: restore-bind-<claim>, or the claim's crc32 where that passes 63 characters.
+_NAME_MAX = 63
 _BIND_PREFIX = "restore-bind-"
 _NO_SNAPSHOT = "No eligible snapshots found"
 # VolSync's restic log filter keeps a line that starts with "restoring" after a real restore.
@@ -123,12 +122,9 @@ def _load_if_present(proc: CompletedProcess[str], what: str) -> dict | None:
     return _load(proc, what)
 
 
-def job_name(owner: str, *, prefix: str = _SRC_JOB_PREFIX) -> str:
-    plain = prefix + owner
-    if len(plain) <= _JOB_NAME_MAX:
-        return plain
-    digest = zlib.crc32(owner.encode()) & 0xFFFFFFFF
-    return f"{prefix}{digest:08x}"
+def _binder_name(pvc: str) -> str:
+    plain = _BIND_PREFIX + pvc
+    return plain if len(plain) <= _NAME_MAX else f"{_BIND_PREFIX}{zlib.crc32(pvc.encode()) & 0xFFFFFFFF:08x}"
 
 
 def restore_as_of(created: str) -> str:
@@ -224,15 +220,16 @@ def _source_unpaused(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
     return (body.get("spec") or {}).get("paused") is not True
 
 
-def _job_parallelism_zero(kubectl: Kubectl, namespace: str, name: str) -> bool:
-    body = _load_if_present(
-        kubectl(["get", "job", name, "-n", namespace, "-o", "json"]),
-        f"get job {namespace}/{name}",
+def _mover_stopped(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
+    """The source's mover Job, if any, has parallelism 0, as VolSync sets it once the source is
+    paused. VolSync makes the Job with the source as its controller owner."""
+    body = _load(kubectl(["get", "jobs", "-n", namespace, "-o", "json"]), f"list jobs {namespace}")
+    return all(
+        (job.get("spec") or {}).get("parallelism", 1) == 0
+        for job in body.get("items") or []
+        if any(ref.get("controller") and ref.get("kind") == "ReplicationSource" and ref.get("name") == pvc
+               for ref in (job.get("metadata") or {}).get("ownerReferences") or [])
     )
-    if body is None:
-        return True
-    parallelism = (body.get("spec") or {}).get("parallelism", 1)
-    return parallelism == 0
 
 
 def _pod_mounts(pod: dict, pvc: str) -> bool:
@@ -276,7 +273,7 @@ def _secret_ready(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
 def _paused(kubectl: Kubectl, namespace: str, pvc: str) -> bool:
     return (
         _source_paused(kubectl, namespace, pvc)
-        and _job_parallelism_zero(kubectl, namespace, job_name(pvc))
+        and _mover_stopped(kubectl, namespace, pvc)
         and not volume_holders(kubectl, namespace, pvc)
         and _secret_ready(kubectl, namespace, pvc)
     )
@@ -542,10 +539,6 @@ def _print_left(
             f"{command} delete replicationdestination restore-{pvc}"
             f" -n {namespace} --wait=true"
         )
-
-
-def _binder_name(pvc: str) -> str:
-    return job_name(pvc, prefix=_BIND_PREFIX)
 
 
 def _pod_template(obj: dict, kind: str) -> dict:

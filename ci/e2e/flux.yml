@@ -1,6 +1,6 @@
 ---
 # The e2e job's Flux bootstrap: the real flux-operator role, on the runner, against the k3d
-# cluster at k3s_kubeconfig_path. The job passes the env's cluster-vars as extra vars.
+# cluster at k3s_kubeconfig_path. The job passes what jarvis site would (jarvis.node.site.write_vars).
 - name: Install Flux Operator on the e2e cluster
   hosts: localhost
   gather_facts: false

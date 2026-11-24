@@ -1,14 +1,6 @@
 ---
-# Resolves and stats the controller's age private key. Shared with the k3s role.
-- name: Record the age private key path
-  ansible.builtin.set_fact:
-    sops_age_key_file: "{{ _sops_age_from_env | default(_sops_age_from_vars, true) | regex_replace('^~/', lookup('env', 'HOME') ~ '/') }}"
-  vars:
-    _sops_age_from_env: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
-    _sops_age_from_vars: "{{ age_key_file | default('', true) }}"
-  no_log: true
-  changed_when: false
-
+# Stats the controller's age private key, sops_age_key_file, which jarvis site resolves.
+# Shared with the k3s role.
 - name: Stat the age private key file
   ansible.builtin.stat:
     path: "{{ sops_age_key_file }}"

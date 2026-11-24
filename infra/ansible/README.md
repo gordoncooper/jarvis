@@ -1,6 +1,6 @@
 # Ansible (node bootstrap)
 
-`jarvis site --env <env>` runs `site.yml` from the instance repository, after the env schema passes. Settings come from the env's `cluster-vars.yaml`, passed once as extra vars (`-e @…`); the inventory is the env's hosts file, then core's `infra/inventory/roles`, which turns each `node_roles` entry into a group.
+`jarvis site --env <env>` runs `site.yml` from the instance repository, after the env schema passes. Settings come from the env's `cluster-vars.yaml` as validation resolves it (the schema's defaults, the age key's path and the env's `.sops.yaml` recipients), passed once as one extra-vars file (`-e @…`); the inventory is the env's hosts file, then core's `infra/inventory/roles`, which turns each `node_roles` entry into a group.
 
 1. The opening play (tag `always`) checks every host before any change: one control-plane host, amd64, the required cluster-vars, core's `core/flux/flux-instance.yaml` and the env's `flux/sync.yaml`, no foreign or unmarked k3s, and each declared data disk.
 2. `base-os` on every host.
