@@ -13,6 +13,7 @@ test_app_admission_apiserver.py proves both real ones.
 from __future__ import annotations
 
 import copy
+import datetime
 import ipaddress
 import json
 import shutil
@@ -171,7 +172,7 @@ def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, d
             grants = next(item for item in policy["spec"]["variables"] if item["name"] == "grants")
             grants["expression"] = f"{json.dumps(annotations)}[namespaceObject.metadata.name]"
     (work / "policies.yaml").write_text(
-        yaml.safe_dump_all([*policies, *(app_file_binding(app) for app in _ENV)]), encoding="utf-8"
+        yaml.safe_dump_all([*policies, *(_resolved(app_file_binding(app), app) for app in _ENV)]), encoding="utf-8"
     )
     (work / "params.yaml").write_text(yaml.safe_dump_all([app for app, _ in _ENV.values()]), encoding="utf-8")
     (work / "resources.yaml").write_text(yaml.safe_dump_all([doc for doc, _ in cases]), encoding="utf-8")
@@ -200,6 +201,12 @@ def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, d
                           capture_output=True, text=True, check=False)
     wrong = [line for line in proc.stdout.splitlines() if "Want " in line]
     assert proc.returncode == 0, "\n".join(wrong) or proc.stdout + proc.stderr
+
+
+def _resolved(binding: dict, app: str) -> dict:
+    """One binding per app in one run, each held to its own namespace, as the API server reads one App per request."""
+    spec = {**binding["spec"], "matchResources": {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"app-{app}"}}}}
+    return {**binding, "metadata": {"name": f"app-file-{app}"}, "spec": spec}
 
 
 PASS = {"app-file": "pass", "app-grants": "pass"}
@@ -542,14 +549,17 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
         ("web-demo", _job("j", "web-demo", **_PRIVILEGED), "app-file: app-web-demo/Job/j: grant: anything beyond Pod Security restricted"),
         ("web-demo", _object("NetworkPolicy", "n", "web-demo", "networking.k8s.io/v1"), "app-tenant: app-web-demo/NetworkPolicy: an app ships only"),
         ("web-demo", _object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "app-file: app-web-demo/Service/s: an app's Services are ClusterIP"),
+        ("web-demo", _named(_object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "since", datetime.date(2026, 1, 1)),
+         "app-file: app-web-demo/Service/s: an app's Services are ClusterIP"),
         ("notes", _route("r", "notes", f"notes.apps.{SUFFIX}"), "app-file: app-notes/HTTPRoute/r: an app ships an HTTPRoute only for a web entry marked ownRoute"),
         ("web-demo", _object("IngressRoute", "r", "web-demo", "traefik.io/v1alpha1"), 'no matches for kind "IngressRoute"'),
     ],
-    ids=["privileged", "networkpolicy", "nodeport", "stray-route", "ingressroute"],
+    ids=["privileged", "networkpolicy", "nodeport", "dated-value", "stray-route", "ingressroute"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
     """Rule: the app check holds the folder's objects to app-tenant and app-file as the app's
-    tenant applies them (its route at ${app_host}), and a kind the CLI cannot map stops it."""
+    tenant applies them (its route at ${app_host}, a YAML date as its string), and a kind the
+    CLI cannot map stops it."""
     problems = check_folder(_folder(tmp_path, _ENV[app][0], [obj]))
     assert any(expected in problem for problem in problems), problems
 

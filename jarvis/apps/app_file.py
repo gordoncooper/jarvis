@@ -127,7 +127,7 @@ def app_problems(app: dict, name: str, k3s: str | None = None) -> list[str]:
         return ["metadata holds the name only; core sets the namespace"]
     if metadata.get("name") != name:
         return [f"metadata.name is {metadata.get('name')!r}; an app's name is its folder name, {name}"]
-    errors = list(_schema_problems(json.dumps(app, sort_keys=True), k3s or core_release()[0]))
+    errors = list(_schema_problems(json.dumps(app, sort_keys=True, default=str), k3s or core_release()[0]))
     if not errors:
         for entry in ((app["spec"].get("network") or {}).get("web") or []):
             if entry.get("name") and len(name) + 1 + len(entry["name"]) > 63:
@@ -195,13 +195,13 @@ def stand_in_crd(group: str, version: str, kind: str) -> dict:
 
 
 def app_file_binding(name: str) -> dict:
-    """What the cluster-wide app-file binding resolves to in app-<name>: the CLI resolves no
-    selector paramRef, so this names the App (test_app_admission_apiserver.py proves the real one)."""
-    return {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingAdmissionPolicyBinding",
-            "metadata": {"name": f"app-file-{name}"},
-            "spec": {"policyName": "app-file", "validationActions": ["Deny"],
-                     "paramRef": {"name": name, "namespace": f"app-{name}", "parameterNotFoundAction": "Deny"},
-                     "matchResources": {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"app-{name}"}}}}}
+    """The shipped app-file binding as it resolves in app-<name>: the CLI resolves no selector
+    paramRef, so its paramRef names the App (test_app_admission_apiserver.py proves the shipped one)."""
+    binding = next(doc for doc in yaml.safe_load_all((HOSTING / "policies" / "admission.yaml").read_text(encoding="utf-8"))
+                   if (doc["kind"], doc["metadata"]["name"]) == ("ValidatingAdmissionPolicyBinding", "app-file"))
+    action = binding["spec"]["paramRef"]["parameterNotFoundAction"]
+    binding["spec"]["paramRef"] = {"name": name, "namespace": f"app-{name}", "parameterNotFoundAction": action}
+    return binding
 
 
 def userinfo(username: str) -> dict:
@@ -240,7 +240,7 @@ def admission_problems(app: dict, name: str, objects: list[dict]) -> list[str]:
     """What app-tenant and app-file refuse of objects as the app's tenant applies them, once
     app-priority has set each workload's class: one message per policy and object. An object
     with no namespace lands in app-<name>, the release's or the Kustomization's."""
-    return list(_admission(json.dumps([app, name, objects], sort_keys=True)))
+    return list(_admission(json.dumps([app, name, objects], sort_keys=True, default=str)))
 
 
 @functools.cache
