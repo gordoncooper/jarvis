@@ -35,8 +35,7 @@
       - sops_age_key_stat.stat.exists | default(false)
     fail_msg: >-
       Set SOPS_AGE_KEY_FILE or age_key_file to the age private key on the
-      controller (default ~/.config/sops/age/keys.txt) before running
-      flux-operator (bootstrap secret flux-system/sops-age).
+      controller before running flux-operator (bootstrap secret flux-system/sops-age).
   when: not (flux_sops_age_present | bool)
   no_log: true
 

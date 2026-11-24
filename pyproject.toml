@@ -16,6 +16,8 @@ dependencies = [
   "PyYAML==6.0.4",
   "jsonschema==4.26.0",
   "bcrypt==5.0.0",
+  # The env's internal CA, made the same on every controller.
+  "cryptography==50.0.2",
   # jarvis verify --smoke asks App DNS for a new name directly.
   "dnspython==2.9.2",
 ]

@@ -15,7 +15,6 @@ secret value.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,18 +67,13 @@ def problems(instance: Path, env_dir: Path) -> list[str]:
 
 
 def set_rule(sops_config: Path, env: str, keys: list[str]) -> None:
-    """Replace the recipients of the env's creation rule, keeping the rest of the file as it is."""
-    lines = sops_config.read_text(encoding="utf-8").splitlines(keepends=True)
-    needle, in_rule = f"envs/{env}/secrets/", False
-    for i, line in enumerate(lines):
-        if "path_regex:" in line:
-            in_rule = needle in line
-        elif in_rule and re.match(r"\s*age:\s*\S", line):
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[i] = f"{indent}age: {','.join(keys)}\n"
-            sops_config.write_text("".join(lines), encoding="utf-8")
-            return
-    raise RecipientsError(f".sops.yaml has no age line in a creation rule for envs/{env}/secrets/")
+    """Replace the recipients of the env's creation rule, keeping every other rule as it is."""
+    rules = _age.creation_rules(sops_config)
+    rule = next((rule for rule in rules if _age.is_rule_for(rule, env)), None)
+    if rule is None:
+        raise RecipientsError(f".sops.yaml has no creation rule for envs/{env}/secrets/")
+    rule["age"] = ",".join(keys)
+    _age.write_creation_rules(sops_config, rules)
 
 
 def update(instance: Path, env: str) -> list[str]:

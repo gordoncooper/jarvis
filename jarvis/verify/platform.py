@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 from collections.abc import Sequence
@@ -10,6 +9,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
 
+import yaml
+
+from jarvis import paths as _paths
 from jarvis.env import flux_state
 from jarvis.env.runtime import json_object, reason, tool_env
 from jarvis.paths import PRODUCT_ROOT
@@ -23,7 +25,6 @@ FLUX_RESOURCES = (
     "helmreleases.helm.toolkit.fluxcd.io",
 )
 ENABLELB = "svccontroller.k3s.cattle.io/enablelb"
-CANARY_SHA256 = "60eea60c805ba09c287eead2e6f0c7f04b5b8e1f66634f941216527e41c8bcc7"
 HTTP_TIMEOUT_SECONDS = 30
 # k3s's bundled Traefik, which ServiceLB serves on the edge hosts.
 TRAEFIK_NAMESPACE = "kube-system"
@@ -297,6 +298,13 @@ def traefik_address(kubectl: Kubectl) -> str:
     return str(address)
 
 
+def canary_body() -> str:
+    """What the canary serves: ConfigMap testapp's index.html in the env's pinned core."""
+    path = _paths.core_root() / "core" / "platform" / "testapp" / "testapp.yaml"
+    config = next(doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc and doc["kind"] == "ConfigMap")
+    return config["data"]["index.html"]
+
+
 def check_https(
     repo_root: Path, env: str, dns_suffix: str, fetch: Fetch, issuer: Issuer, *, address: str | None = None
 ) -> str:
@@ -310,7 +318,7 @@ def check_https(
     code, body = fetch(host, ca_file, *via)
     if code or not body:
         raise CheckError(f"LAN HTTPS {host}: {body or 'empty body'}")
-    if hashlib.sha256(body.encode()).hexdigest() != CANARY_SHA256:
+    if body != canary_body():
         raise CheckError(f"LAN HTTPS {host}: unexpected body")
     code, cert_issuer = issuer(host, ca_file, *via)
     if code or not cert_issuer:

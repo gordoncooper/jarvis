@@ -12,13 +12,18 @@ in the instance's own .age/ folder.
 
 from __future__ import annotations
 
+import atexit
 import dataclasses
+import functools
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -27,6 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 from jarvis.env import scaffold  # noqa: E402
 
 FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
+EXAMPLE_PINS = REPO_ROOT / "jarvis" / "kit" / "examples-apps.yaml"
 FIXTURE_ADDONS = REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"
 NAME = "env-00"
 # The alerts feature's sealed target: testapp in the cluster, at a path only alerts POST to.
@@ -64,6 +70,36 @@ def spec(name: str = NAME, *, features: list[str] | None = None) -> scaffold.Env
     )
 
 
+def example_pins() -> dict[str, str]:
+    """{app: version} that jarvis init --with-examples pins."""
+    return {app: entry["version"] for app, entry in yaml.safe_load(EXAMPLE_PINS.read_text(encoding="utf-8")).items()}
+
+
+def tag_apps(repo: Path, pins: dict[str, str] | None = None) -> Path:
+    """Commit repo's tree and tag each app <app>/<version> at that commit, as the apps repository
+    releases one: by default example_pins()."""
+    pins = example_pins() if pins is None else pins
+    git = ["git", "-C", str(repo), "-c", "user.email=sample@example.invalid", "-c", "user.name=sample"]
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "--allow-empty", "-m", "apps"],
+                 *(["tag", "-f", f"{app}/{version}"] for app, version in pins.items())):  # fmt: skip
+        subprocess.run([*git, *args], check=True, capture_output=True)
+    return repo
+
+
+def apps_repo(dest: Path) -> Path:
+    """The fixture apps repository at dest, as a git repository with the example pins tagged."""
+    shutil.copytree(FIXTURE_APPS_REPO, dest)
+    return tag_apps(dest)
+
+
+@functools.cache
+def fixture_apps_checkout() -> Path:
+    """One tagged copy of the fixture apps repository per process: the default APPS_REPO."""
+    base = Path(tempfile.mkdtemp(prefix="jarvis-apps-"))
+    atexit.register(shutil.rmtree, base, True)
+    return apps_repo(base / "jarvis-apps")
+
+
 def test_core(dest: Path) -> Path:
     """Core as the tests run it, at dest: core's core/ tree, and its add-ons with the fixture one
     (hello) beside them. The product ships no sample add-on, so the add-on rules run on the
@@ -83,9 +119,6 @@ def test_core(dest: Path) -> Path:
 def use_test_core() -> Path:
     """Point jarvis.paths.core_root at a test core for this process, once. Every test and the
     sample-instance check run against it."""
-    import atexit
-    import tempfile
-
     from jarvis import paths
 
     if getattr(paths.core_root, "test_core", None) is None:
@@ -183,7 +216,7 @@ def add_env_from_spec(
         text = text.replace("addons: []\n", "addons:\n" + "".join(f"  - {name}\n" for name in names))
     switches.write_text(text, encoding="utf-8")
     previous = os.environ.get("APPS_REPO")
-    os.environ.setdefault("APPS_REPO", str(FIXTURE_APPS_REPO))
+    os.environ.setdefault("APPS_REPO", str(fixture_apps_checkout()))
     try:
         _render_sealed(root, sample, env_dir)
     finally:
@@ -231,6 +264,7 @@ if __name__ == "__main__":
     # sample.py --validate <dest>  then runs jarvis validate on it, against the test core
     validate = sys.argv[1] == "--validate"
     dest = Path(sys.argv[-1]).resolve()
+    os.environ.setdefault("APPS_REPO", str(fixture_apps_checkout()))
     subprocess.run(["git", "init", "-q", str(dest)], check=True)
     build(dest)
     for args in (["add", "-A"], ["-c", "user.email=sample@example.invalid", "-c", "user.name=sample", "commit", "-q", "-m", "sample"]):

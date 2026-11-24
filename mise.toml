@@ -1,7 +1,8 @@
-# Every CLI the jarvis CLI, core's checks and CI use, one version each. The deps task installs
-# them with mise (https://mise.jdx.dev); mise.lock records each one's checksum for every platform an operator or
-# CI runs on, and Renovate updates both files in one PR. CI fails when mise.lock no longer
-# matches this file: run `mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64`.
+# Every CLI the jarvis CLI runs on an operator's controller, one version each. The deps task installs
+# them with mise (https://mise.jdx.dev); mise.lock records each one's checksum for every platform an
+# operator or CI runs on, and Renovate updates both files in one PR. mise.dev.toml adds the CLIs only
+# core's tests and CI run (MISE_ENV=dev). CI fails when a lock no longer matches its file: run
+# `mise -E dev lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64`, which writes both.
 [settings]
 lockfile = true
 
@@ -21,23 +22,18 @@ helm = "4.3.2"
 kubeconform = "0.8.0"
 kyverno = "1.20.0"
 gitleaks = "8.30.1"
-# Backups: the same releases as the restic and rest-server images (a test checks they match).
+# Backups: the same release as the restic image (a test checks they match).
 restic = "0.20.0"
-# rest-server is not in mise's registry; the github backend still records its checksums.
-# bin names the binary so mise marks it executable (the release tarball ships it 0644).
-"github:restic/rest-server" = { version = "0.14.0", bin = "rest-server" }
-# CI: the e2e cluster and the workflow linter.
-k3d = "5.9.0"
-actionlint = "1.7.12"
-# The admission test's loopback API server (Linux only): kube-apiserver at kubectl's release,
-# and the etcd kubeadm pairs with that minor.
-"aqua:kubernetes/kubernetes/kube-apiserver" = { version = "1.36.6", os = ["linux"] }
-etcd = { version = "3.6.17", os = ["linux"] }
+
+[vars]
+# The operator's Python packages from uv.lock: the jarvis CLI and Ansible (the ops group).
+# mise.dev.toml sets the whole dev group.
+uv_groups = "--no-default-groups --group ops"
 
 [tasks.deps]
-# The one way a core checkout installs itself: make deps, CI and the jarvis CLI (for the core
-# release an env pins) all run it. Every pinned CLI, then every Python package from uv.lock into
-# .venv, the jarvis CLI included.
+# The one way a core checkout installs itself: the jarvis CLI (for the core release an env pins)
+# and an instance's CI run it as is; make deps and core's CI run it with MISE_ENV=dev. Every pinned
+# CLI, then the Python packages from uv.lock into .venv, the jarvis CLI included.
 description = "Install the pinned CLIs and Python packages"
-run = ["mise install --locked", "uv sync --frozen"]
+run = ["mise install --locked", "uv sync --frozen {{vars.uv_groups}}"]
 

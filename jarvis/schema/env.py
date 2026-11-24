@@ -8,7 +8,6 @@ flux/ is the render of the values is jarvis render --check's, which jarvis valid
 
 from __future__ import annotations
 
-import argparse
 import ipaddress
 import os
 import re
@@ -28,6 +27,7 @@ from jarvis.env import switches as _switches
 from jarvis.env.k3s import release
 from jarvis.env.runtime import instance_root  # noqa: F401  (the one INSTANCE resolver)
 from jarvis.schema import values as _values
+from jarvis.secrets import age as _age
 from jarvis.secrets import recipients as _recipients
 
 _DEFAULTS = _values.defaults(_values.CLUSTER_VARS)
@@ -60,8 +60,6 @@ _FILES = {
 # instance CI can check each env against the core tag that env pins. Unset, every env.
 ENVS_VAR = "ENVS"
 
-_ENV_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_SOPS_ENV_SECRETS = re.compile(r"envs/([A-Za-z0-9][A-Za-z0-9._-]*)/secrets/")
 _K3S_VERSION = re.compile(r"^v(\d+\.\d+\.\d+)\+k3s\d+$")
 _SINGLETON_ROLES = ("control_plane", "backup")
 
@@ -100,12 +98,8 @@ def resolve_cluster_vars(data: dict[str, Any]) -> dict[str, Any]:
     return {**_DEFAULTS, **data}
 
 
-def validate_env_tree(repo_root: Path | str, *, pre_host: bool = False) -> dict[str, dict[str, Any]]:
-    """Validate every env under envs/. Returns resolved cluster-vars per env name.
-
-    pre_host skips what holds only once the env's keys exist: the .sops.yaml rule for each env,
-    and that every sealed file opens for exactly the env's recipients.
-    """
+def validate_env_tree(repo_root: Path | str) -> dict[str, dict[str, Any]]:
+    """Validate every env under envs/. Returns resolved cluster-vars per env name."""
     root = Path(repo_root).resolve()
     if not (root / "envs").is_dir():
         raise ValidationError(["missing envs directory: envs"])
@@ -115,34 +109,34 @@ def validate_env_tree(repo_root: Path | str, *, pre_host: bool = False) -> dict[
     errors: list[str] = []
     resolved: dict[str, dict[str, Any]] = {}
     for env_dir in selected:
-        env_errors, env_resolved = _validate_env(env_dir, root, pre_host=pre_host)
+        env_errors, env_resolved = _validate_env(env_dir, root)
         errors.extend(env_errors)
         if env_resolved is not None:
             resolved[env_dir.name] = env_resolved
-    errors.extend(_sops_problems(root, [path.name for path in selected], pre_host=pre_host))
+    errors.extend(_sops_problems(root, [path.name for path in selected]))
     if errors:
         raise ValidationError(errors)
     return resolved
 
 
-def validate_one_env(repo_root: Path | str, name: str, *, pre_host: bool = False) -> dict[str, Any]:
+def validate_one_env(repo_root: Path | str, name: str) -> dict[str, Any]:
     """Validate one env and its .sops.yaml creation rules. jarvis site runs this first."""
-    if not _ENV_NAME.fullmatch(name) or name in {".", ".."}:
+    if not _values.env_name_ok(name):
         raise ValidationError([f"invalid env name: {name}"])
     root = Path(repo_root).resolve()
     env_dir = root / "envs" / name
     if not env_dir.is_dir():
         raise ValidationError([f"unknown env: {name}"])
-    errors, resolved = _validate_env(env_dir, root, pre_host=pre_host)
-    errors.extend(_sops_problems(root, [name], pre_host=pre_host))
+    errors, resolved = _validate_env(env_dir, root)
+    errors.extend(_sops_problems(root, [name]))
     if errors or resolved is None:
         raise ValidationError(errors or [f"{name}: invalid env"])
     return resolved
 
 
-def _sops_problems(root: Path, checked: list[str], *, pre_host: bool) -> list[str]:
-    """One age creation rule per checked env (at most one before its keys exist), and no rule
-    for an env folder that does not exist."""
+def _sops_problems(root: Path, checked: list[str]) -> list[str]:
+    """One age creation rule per checked env, and no rule but the ones jarvis writes for the env
+    folders that exist."""
     path = root / ".sops.yaml"
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
@@ -151,16 +145,16 @@ def _sops_problems(root: Path, checked: list[str], *, pre_host: bool) -> list[st
     rules = (data or {}).get("creation_rules", []) if isinstance(data or {}, dict) else None
     if not isinstance(rules, list):
         return [".sops.yaml: creation_rules must be a list"]
-    regexes = [rule["path_regex"] for rule in rules if isinstance(rule, dict) and isinstance(rule.get("path_regex"), str)]
     errors = []
     for name in checked:
-        count = sum(f"envs/{name}/secrets/" in regex for regex in regexes)
-        if count > 1 or (not pre_host and count != 1):
+        count = sum(_age.is_rule_for(rule, name) for rule in rules)
+        if count != 1:
             errors.append(f".sops.yaml: expected exactly one creation rule for envs/{name}/secrets/, found {count}")
-    existing = {p.name for p in (root / "envs").iterdir() if p.is_dir()}
-    for name in dict.fromkeys(found for regex in regexes for found in _SOPS_ENV_SECRETS.findall(regex)):
-        if name not in existing:
-            errors.append(f".sops.yaml: creation rule names envs/{name}/secrets/, but that env folder does not exist; remove the rule")
+    existing = [p.name for p in (root / "envs").iterdir() if p.is_dir()]
+    for rule in rules:
+        if not any(_age.is_rule_for(rule, name) for name in existing):
+            where = rule.get("path_regex") if isinstance(rule, dict) else rule
+            errors.append(f".sops.yaml: creation rule {where!r} is not the rule jarvis writes for an env folder under envs/; remove it")
     return errors
 
 
@@ -179,19 +173,15 @@ def _load(path: Path, repo_root: Path, errors: list[str]) -> Any:
         return None
 
 
-def _validate_env(env_dir: Path, repo_root: Path, *, pre_host: bool = False) -> tuple[list[str], dict[str, Any] | None]:
+def _validate_env(env_dir: Path, repo_root: Path) -> tuple[list[str], dict[str, Any] | None]:
     name = env_dir.name
     secrets = env_dir / "secrets"
-    # Once bootstrap-secrets has run, the k3s tokens are sealed too. prep-node checks before that.
-    bootstrapped = any(secrets.glob("*.sops.yaml"))
     cluster_path = env_dir / "values" / "cluster-vars.yaml"
-    required = [cluster_path, env_dir / "inventory" / "hosts.yml"]
-    if bootstrapped:
-        required += [secrets / f"{item}.sops.yaml" for item in _BOOTSTRAP_SEALED]
+    # jarvis init and env add seal the bootstrap secrets before they return.
+    required = [cluster_path, env_dir / "inventory" / "hosts.yml", env_dir / _switches.SWITCHES_FILE]
+    required += [secrets / f"{item}.sops.yaml" for item in _BOOTSTRAP_SEALED]
     if cluster_path.is_file() and _ssh_root(cluster_path):
         required.append(secrets / DEPLOY_KEY_FILE)
-    if (env_dir / "flux").is_dir() or bootstrapped:
-        required.append(env_dir / _switches.SWITCHES_FILE)
     errors = [f"{name}: missing required file {_rel(path, repo_root)}" for path in required if not path.is_file()]
     if errors:
         return errors, None
@@ -212,11 +202,10 @@ def _validate_env(env_dir: Path, repo_root: Path, *, pre_host: bool = False) -> 
     errors.extend(switches_problems(env_dir, repo_root))
     if app_dns_listed(env_dir) and not cluster_vars.get("app_dns_cluster_ip"):
         errors.append(f"{cluster_rel}: app_dns_cluster_ip is required while {_switches.SWITCHES_FILE} lists {_switches.APP_DNS}")
-    errors.extend(_apps_problems(env_dir, repo_root, cluster_vars, bootstrapped))
-    errors.extend(_sealed_problems(env_dir, repo_root, bootstrapped, cluster_path))
-    if not pre_host:
-        # Every sealed file opens for exactly the env's recipients: the working and recovery keys.
-        errors.extend(_recipients.problems(repo_root, env_dir))
+    errors.extend(_apps_problems(env_dir, repo_root, cluster_vars))
+    errors.extend(_sealed_problems(env_dir, repo_root, cluster_path))
+    # Every sealed file opens for exactly the env's recipients: the working and recovery keys.
+    errors.extend(_recipients.problems(repo_root, env_dir))
     if errors:
         return errors, None
     return [], resolve_cluster_vars(cluster_vars)
@@ -440,7 +429,7 @@ def apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) 
     for app in apps:
         where = f"{rel}: {app} {data[app]['version']}"
         if not (apps_root / app / "app.yaml").is_file():
-            errors.append(f"{where}: no {app}/app.yaml in the apps repository{_apps_checkout.STALE_HINT}")
+            errors.append(f"{where}: no {app}/app.yaml at tag {app}/{data[app]['version']}")
             continue
         env_values = data[app].get("values")
         problems = check_folder(apps_root / app, env_values, release(cluster_vars)[0])
@@ -456,12 +445,12 @@ def apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) 
     return errors
 
 
-def _apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any], bootstrapped: bool) -> list[str]:
-    """apps_problems, and once the env is bootstrapped, each app that needs a backup credential
-    (backups on, a backup: true volume) has it sealed."""
+def _apps_problems(env_dir: Path, repo_root: Path, cluster_vars: dict[str, Any]) -> list[str]:
+    """apps_problems, and each app that needs a backup credential (backups on, a backup: true
+    volume) has it sealed."""
     errors = apps_problems(env_dir, repo_root, cluster_vars)
     data, _ = _apps.load_values(env_dir)
-    if errors or not bootstrapped or not _apps.app_names(data):
+    if errors or not _apps.app_names(data):
         return errors
     rel = _rel(env_dir / _apps.APPS_VALUES, repo_root)
     needing = _app_backups.needing_credentials(data, _apps_checkout.apps_repo_root(repo_root, env_dir))
@@ -493,27 +482,25 @@ def sealed_readers(env_dir: Path, repo_root: Path, cluster_vars_path: Path) -> s
     return read
 
 
-def _sealed_problems(env_dir: Path, repo_root: Path, bootstrapped: bool, cluster_path: Path) -> list[str]:
-    """Once bootstrapped, each thing that reads a sealed file has it: a listed feature, an
-    add-on's namespace folder. An app credential is sealed only in its own folder. A sealed file
-    nothing reads is a credential with no owner, so it fails."""
+def _sealed_problems(env_dir: Path, repo_root: Path, cluster_path: Path) -> list[str]:
+    """Each thing that reads a sealed file has it: a listed feature, an add-on's namespace folder.
+    An app credential is sealed only in its own folder. A sealed file nothing reads is a
+    credential with no owner, so it fails."""
     name = env_dir.name
     secrets = env_dir / "secrets"
-    errors: list[str] = []
-    if bootstrapped:
-        errors.extend(
-            f"{name}: {_switches.SWITCHES_FILE} lists {feature}, missing required file {_rel(secrets / file, repo_root)}"
-            for feature, file in _feature_sealed(env_dir)
-            if not (secrets / file).is_file()
-        )
-        core = _paths.core_root()
-        for addon in set(enabled_addons(env_dir)) & set(addon_names(core)):
-            for namespace in addon_secret_namespaces(addon_documents(core, addon)):
-                if not any((secrets / namespace).glob("*.sops.yaml")):
-                    errors.append(
-                        f"{name}: add-on {addon} decrypts {_rel(secrets / namespace, repo_root)}, "
-                        f"which holds no sealed file; seal one with jarvis encrypt --namespace {namespace}"
-                    )
+    errors = [
+        f"{name}: {_switches.SWITCHES_FILE} lists {feature}, missing required file {_rel(secrets / file, repo_root)}"
+        for feature, file in _feature_sealed(env_dir)
+        if not (secrets / file).is_file()
+    ]
+    core = _paths.core_root()
+    for addon in set(enabled_addons(env_dir)) & set(addon_names(core)):
+        for namespace in addon_secret_namespaces(addon_documents(core, addon)):
+            if not any((secrets / namespace).glob("*.sops.yaml")):
+                errors.append(
+                    f"{name}: add-on {addon} decrypts {_rel(secrets / namespace, repo_root)}, "
+                    f"which holds no sealed file; seal one with jarvis encrypt --namespace {namespace}"
+                )
     for path in sorted(secrets.rglob(f"{_app_backups.secret_name('app-')}*.sops.yaml")):
         namespace = path.name.removeprefix(_app_backups.secret_name("")).removesuffix(".sops.yaml")
         if path.parent != secrets / namespace:
@@ -526,15 +513,3 @@ def _sealed_problems(env_dir: Path, repo_root: Path, bootstrapped: bool, cluster
         for path in sorted(secrets.rglob("*.sops.yaml"))
         if path.resolve() not in read
     ]
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--env", required=True)
-    ns = parser.parse_args(argv)
-    try:
-        validate_one_env(instance_root(Path(".")), ns.env)
-    except ValidationError as exc:
-        print(exc, flush=True)
-        return 1
-    return 0

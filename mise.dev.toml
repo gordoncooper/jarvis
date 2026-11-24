@@ -1,0 +1,18 @@
+# The CLIs only core's tests and CI run, on top of mise.toml's. MISE_ENV=dev (or mise -E dev)
+# selects this file: make deps, core's workflows and core's devcontainer set it; the jarvis CLI and
+# an instance's CI don't. mise.dev.lock holds these tools' checksums.
+[tools]
+# The backup isolation tests: the same release as the rest-server image (a test checks they match).
+# rest-server is not in mise's registry; the github backend still records its checksums.
+# bin names the binary so mise marks it executable (the release tarball ships it 0644).
+"github:restic/rest-server" = { version = "v0.15.0", bin = "rest-server" }
+# CI: the e2e cluster.
+k3d = "5.9.0"
+# The admission test's loopback API server (Linux only): kube-apiserver at kubectl's release,
+# and the etcd kubeadm pairs with that minor.
+"aqua:kubernetes/kubernetes/kube-apiserver" = { version = "1.36.6", os = ["linux"] }
+etcd = { version = "3.6.17", os = ["linux"] }
+
+[vars]
+# uv's default group, dev, which includes ops: the test and lint tooling with Ansible.
+uv_groups = ""

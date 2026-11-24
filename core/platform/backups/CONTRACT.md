@@ -26,7 +26,7 @@ Every PVC is backed up by VolSync's restic mover to a rest-server on the backup-
 | HelmRelease `flux-system/volsync` Ready before the policies apply | `platform-controllers` health check |
 | Kyverno's background controller may list ConfigMaps (the hold) and Secrets in `platform-backups` | [kyverno](../kyverno/CONTRACT.md) |
 | Namespaces with enrolled PVCs set `volsync.backube/privileged-movers: "true"` (local-path ignores `fsGroup`) | the namespace's own manifest |
-| `jarvis restore` and `jarvis drill` find CronJob `etcd-snapshots` with a digest-pinned `restic/restic` image | this component |
+| `jarvis restore` and `jarvis drill` run the `restic/restic` image `etcd-snapshots.yaml` names in the env's pinned core; `drill` finds CronJob `etcd-snapshots` | this component |
 
 ## Health
 

@@ -5,7 +5,7 @@
     sops_age_key_file: "{{ _sops_age_from_env | default(_sops_age_from_vars, true) | regex_replace('^~/', lookup('env', 'HOME') ~ '/') }}"
   vars:
     _sops_age_from_env: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') }}"
-    _sops_age_from_vars: "{{ age_key_file | default('~/.config/sops/age/keys.txt', true) }}"
+    _sops_age_from_vars: "{{ age_key_file | default('', true) }}"
   no_log: true
   changed_when: false
 

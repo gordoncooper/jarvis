@@ -7,18 +7,6 @@ import shutil
 
 import pytest
 
-from support import REPO_ROOT as _ROOT
-
-# Test/CI only: default APPS_REPO for pytest when unset and not simulating an instance.
-# Production eligibility uses apps_repo_root() — real checkout or explicit APPS_REPO.
-_FIXTURE_APPS = _ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
-if (
-    not os.environ.get("INSTANCE")
-    and "APPS_REPO" not in os.environ
-    and _FIXTURE_APPS.is_dir()
-):
-    os.environ["APPS_REPO"] = str(_FIXTURE_APPS)
-
 # Background git maintenance holds locks inside a test's repo while the test deletes it.
 _count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
 for _key, _value in (("maintenance.auto", "false"), ("gc.auto", "0")):
@@ -32,6 +20,9 @@ os.environ["GIT_CONFIG_COUNT"] = str(_count)
 import sample  # noqa: E402
 
 sample.use_test_core()
+# The default APPS_REPO: the fixture apps repository, tagged at the pins the sample env lists.
+if not os.environ.get("INSTANCE") and "APPS_REPO" not in os.environ:
+    os.environ["APPS_REPO"] = str(sample.fixture_apps_checkout())
 
 
 # The test files that prove the Ansible roles by running ansible-playbook. They are over half the

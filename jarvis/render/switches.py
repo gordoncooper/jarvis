@@ -9,7 +9,6 @@ such as sealed files. A second run changes nothing.
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import yaml
@@ -17,11 +16,8 @@ import yaml
 from jarvis.apps import backups as _app_backups
 from jarvis.apps import values as _apps
 from jarvis.env import switches as _switches
-from jarvis.paths import PRODUCT_ROOT
 from jarvis.render import apps as render_apps
-from jarvis.schema.env import instance_root, switches_problems
-
-REPO_ROOT = PRODUCT_ROOT
+from jarvis.schema.env import switches_problems
 
 
 def render_env(env_dir: Path, repo_root: Path) -> None:
@@ -50,15 +46,3 @@ def render_env(env_dir: Path, repo_root: Path) -> None:
     else:
         generated.parent.mkdir(parents=True, exist_ok=True)
         generated.write_text(apps, encoding="utf-8")
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Env name under envs/")
-    args = parser.parse_args(argv)
-    repo_root = instance_root(REPO_ROOT)
-    render_env(repo_root / "envs" / args.env, repo_root)
-
-
-if __name__ == "__main__":
-    main()

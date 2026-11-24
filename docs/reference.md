@@ -1,7 +1,6 @@
 # Reference: an env's values
 
 Generated from the JSON Schemas in `schema/` by `python -m jarvis.schema.reference`; edit the schemas, not this page.
-Each values file names its schema on its first line, so an editor shows the same descriptions as you type.
 Rules that span keys or files are in [schema/CONTRACT.md](../schema/CONTRACT.md), and `jarvis validate` checks them all.
 
 ## `values/cluster-vars.yaml`
@@ -10,7 +9,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 
 | Key | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
-| `age_key_file` | no | string | `~/.config/sops/age/keys.txt` | The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. SOPS_AGE_KEY_FILE overrides it. |
+| `age_key_file` | yes | string |  | The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. jarvis init writes the path it used. SOPS_AGE_KEY_FILE overrides it. |
 | `alerts_provider` | no | string | `generic` | The type of the Flux Provider the alerts feature posts to, such as discord, slack, msteams or googlechat; its whole target is the address in the sealed alerts-notify Secret. generic posts each event as JSON. Flux's Provider CRD lists the types. |
 | `app_dns_cluster_ip` | no; yes when switches.yaml lists app-dns | string |  | ClusterIP of the App DNS Service, which cluster DNS forwards the zone to. A host address inside service_cidr, not its first address (the Kubernetes API) or its tenth (cluster DNS). |
 | `apps_git_repo_url` | no; yes when apps.yaml lists an app | string |  | The hosted apps repository, https, read with no credential. Anyone's: the example apps beside core, or your own. |
@@ -27,7 +26,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | `flux_git_ref` | yes | string |  | The root source's Git ref, e.g. refs/heads/main. |
 | `flux_git_repo_url` | yes | string |  | The env repository, Flux's root source. https:// with no userinfo, query or fragment, or ssh://&lt;user&gt;@&lt;host&gt;/&lt;owner&gt;/&lt;repo&gt;, read with the sealed deploy key. |
 | `flux_known_hosts` | no; yes for an ssh:// root not on github.com | string |  | SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. Unset, GitHub's published key. Host-only (Ansible). |
-| `jarvis_env` | yes | string |  | The env's name: its folder under envs/, the /etc/jarvis/env marker on its nodes, and the name its guards check. |
+| `jarvis_env` | yes | string |  | The env's name, a DNS label: its folder under envs/, the /etc/jarvis/env marker on its nodes, and the name its guards check. |
 | `k3s_kubelet_eviction_hard` | yes | string |  | kubelet eviction-hard. Its memory.available is raised to node_memory_reserve_percent when that is larger. A host may override it. |
 | `k3s_kubelet_kube_reserved` | yes | string |  | kubelet kube-reserved, without the kube-reserved= prefix. A host may override it. |
 | `k3s_kubelet_system_reserved` | yes | string |  | kubelet system-reserved, without the system-reserved= prefix. A host may override it. |
@@ -39,7 +38,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | `ntp_pools` | yes | array |  | Chrony pool hostnames for the nodes, one pool line each (with nts while chrony_nts is on). |
 | `pod_cidr` | yes | string |  | The pod network, set once per env. |
 | `service_cidr` | yes | string |  | The service network, set once per env. |
-| `ssh_user` | no | string | `ubuntu` | The user Ansible logs in to the nodes as; tasks run as root through sudo. jarvis init writes the user who ran it. A host's own ssh_user overrides it. |
+| `ssh_user` | no | string | `ubuntu` | The user Ansible logs in to the nodes as; tasks run as root through sudo. jarvis init writes the one it is given or asked for. A host's own ssh_user overrides it. |
 | `time_zone` | yes | string |  | IANA time zone for the nodes and for every schedule (VolSync, the restic check). Unknown names fail. |
 
 ## `values/switches.yaml`

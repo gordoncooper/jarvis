@@ -21,14 +21,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 
 
 def instance_apps_repo_for_checks(instance_root: Path) -> Path:
-    """Apps checkout beside a tmp instance — same content as CI fixtures, not the forbidden core path."""
+    """The fixture apps repository beside a tmp instance, tagged at the sample's pins."""
+    import sample
+
     dest = instance_root / "example-apps"
     if not dest.is_dir():
-        shutil.copytree(_FIXTURE_APPS_REPO, dest)
+        sample.apps_repo(dest)
     return dest
 
 
@@ -69,35 +70,18 @@ def _default_hosts() -> str:
     )
 
 
-# A sealed file's shape for the schema: SOPS metadata naming the recipient _write_env's rule names.
-SEALED_PLACEHOLDER = "sops:\n  age:\n    - recipient: age1fixture\n"
+# The recipient _write_env's rule names, and a sealed file's shape for the schema: SOPS metadata
+# naming it.
+FIXTURE_RECIPIENT = "age1" + "q" * 58
+SEALED_PLACEHOLDER = f"sops:\n  age:\n    - recipient: {FIXTURE_RECIPIENT}\n"
 
 
 def _ensure_sops_creation_rule(root: Path, env_name: str) -> None:
-    import yaml
+    from jarvis.secrets import age
 
     path = root / ".sops.yaml"
-    rules: list[dict[str, object]] = []
-    if path.is_file():
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if isinstance(loaded, dict) and isinstance(loaded.get("creation_rules"), list):
-            rules = list(loaded["creation_rules"])
-    needle = f"envs/{env_name}/secrets/"
-    if any(
-        isinstance(rule, dict) and needle in str(rule.get("path_regex", ""))
-        for rule in rules
-    ):
-        return
-    rules.append(
-        {
-            "path_regex": f"envs/{env_name}/secrets/.*\\.sops\\.yaml$",
-            "age": "age1fixture",
-        }
-    )
-    path.write_text(
-        yaml.safe_dump({"creation_rules": rules}, sort_keys=False),
-        encoding="utf-8",
-    )
+    if not age.recipients(path, env_name):
+        age.write_creation_rules(path, [*age.creation_rules(path), age.creation_rule(env_name, [FIXTURE_RECIPIENT])])
 
 
 def _valid_cluster_vars() -> dict:
@@ -139,6 +123,11 @@ def _write_env(
         hosts_yml if hosts_yml is not None else _default_hosts(),
         encoding="utf-8",
     )
+    (env / "values" / "switches.yaml").write_text("features: []\naddons: []\n", encoding="utf-8")
+    # The secrets jarvis init seals, as placeholders that name the rule's recipient.
+    (env / "secrets").mkdir()
+    for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
+        (env / "secrets" / f"{name}.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     _ensure_sops_creation_rule(root, env_name)
     return env
 

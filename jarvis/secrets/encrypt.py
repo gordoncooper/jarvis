@@ -89,8 +89,8 @@ def seal_app_credential(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Env under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis encrypt", description=__doc__)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--name", help="Secret name (<component>-<purpose>)")
     parser.add_argument(
         "--namespace",

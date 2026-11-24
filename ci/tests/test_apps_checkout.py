@@ -9,13 +9,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import sample
 import yaml
 
 from support import (
     REPO_ROOT,
     RUN_MODULE,
     copy_sample,
-    instance_apps_repo_for_checks,
     render_switches,
 )
 
@@ -65,7 +65,7 @@ def test_instance_listing_apps_refuses_an_empty_checkout(tmp_path: Path) -> None
     checkout.mkdir()
     proc = _env_schema(instance, checkout)
     assert proc.returncode != 0
-    assert "not an apps repository" in proc.stdout + proc.stderr
+    assert "not a git repository" in proc.stdout + proc.stderr
 
 
 def _apps_remote(path: Path) -> str:
@@ -182,11 +182,10 @@ def test_fetch_refuses_envs_reading_different_repositories(tmp_path: Path) -> No
 def test_an_app_missing_from_the_checkout_names_the_pinned_tag(tmp_path: Path) -> None:
     """Rule: when the checkout cannot answer for a listed app, the failure says it reads the pinned tag."""
     instance = _instance(tmp_path, core_only=False)
-    stale = instance_apps_repo_for_checks(tmp_path)
-    shutil.rmtree(stale / "notes")
+    stale = sample.tag_apps(shutil.copytree(sample.FIXTURE_APPS_REPO, tmp_path / "apps", ignore=shutil.ignore_patterns("notes")))
     proc = _env_schema(instance, stale)
     assert proc.returncode != 0
-    assert "no notes/app.yaml" in proc.stdout + proc.stderr and "pinned tag" in proc.stdout + proc.stderr
+    assert "no tag notes/v0.3.0 with an notes/ folder" in proc.stdout + proc.stderr
 
 
 def test_instance_listing_apps_without_a_checkout_fails(tmp_path: Path) -> None:

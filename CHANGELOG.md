@@ -7,6 +7,88 @@ the upgrade.
 
 ## Unreleased
 
+## v0.8.3
+
+### Changed
+
+- Each command's help names it (`usage: jarvis render …`) and no longer lists `--env`, which is
+  still taken as before; its errors start `jarvis <command>:`. `jarvis help <command>` shows that
+  command's help, and `init --help` and `env add --help` name `--core-url` and `--core-ref`.
+  `jarvis node prep <host>` is unchanged.
+- `jarvis secrets --rotate-restic` is `jarvis secrets --new-restic-password`, which is what it
+  does: it mints a new password for a lost `backups-restic` file, and that password opens no
+  existing repository. The restic rotation is still `docs/backups.md`'s procedure.
+- `jarvis restore` no longer reads `AS_OF` from the environment; `--as-of` is the one way.
+- `jarvis init` and `env add` write no `$schema` editor hint at the top of each values file. It
+  named the release `init` ran from, and nothing moved it. A hint in an existing file is a
+  comment: delete it or leave it.
+- `python -m jarvis.render.apps`, `jarvis.render.cluster_vars` and `jarvis.render.switches` no
+  longer run: `jarvis render` writes the whole `flux/`, where `jarvis.render.switches` wrote part of it.
+- `jarvis validate` holds every env to what `jarvis init` and `env add` make: `values/switches.yaml`,
+  the sealed `k3s-token`, `cert-manager-ca` and `backups-restic`, one `.sops.yaml` rule, and each
+  feature's, add-on's and app's sealed files. It no longer checks less for an env with no sealed
+  file. `jarvis node prep` runs that whole check before it touches the host, not a lighter one.
+- `APPS_REPO` must be a git checkout holding each pinned tag, as the one the CLI fetches is: every
+  app is read at its tag, never as the folder holds it.
+- `jarvis restore` and `jarvis drill` run the restic image that `etcd-snapshots.yaml` names in the
+  env's pinned core. Restore no longer reads the live CronJob, and neither checks the image's shape.
+- The `addons` check no longer guesses an object's scope from its kind; the tenant's namespaced
+  Roles keep an add-on from anything cluster-scoped.
+- `age_key_file` is required, with no default: `jarvis init` writes the path of the key it used,
+  and `jarvis env add` the first env's. `SOPS_AGE_KEY_FILE` still overrides it, in `doctor` too,
+  and `init` and `env add` refuse when it names another file than the one they would record.
+- `jarvis validate` checks that `jarvis_env` is a DNS label, as `init` required, and fails any
+  `.sops.yaml` creation rule that is not exactly the one jarvis writes for an env folder. jarvis
+  writes `.sops.yaml` as plain YAML, so the next `env add` or recipient change re-lays it out.
+- A quoted `dns_suffix` or `age_key_file`, or one with a comment, works in `secrets` and
+  `node prep`.
+- `jarvis node prep` installs the key ssh offers for the Ansible user (`ssh -G`), proves login as
+  Ansible makes it, resolves the host without `getent`, and leaves `flux/` alone.
+- `jarvis up` and `jarvis doctor` read `flux_git_repo_url`, not the clone's `origin`.
+- `jarvis` runs only inside a git repository with `envs/` at its top.
+- `jarvis init` and `env add` run from a core checkout need `--core-url` and `--core-ref`.
+- `jarvis init` asks for `ssh_user` at a terminal, else writes none (the schema's `ubuntu`).
+- `jarvis doctor` warns when mise is missing.
+- A controller installs only the CLIs and Python packages the jarvis CLI runs, about 440 MB less
+  for each core release it caches: core's test tools (rest-server, k3d, kube-apiserver, etcd) and
+  test packages move to `mise.dev.toml` and uv.lock's dev group, which `make deps` installs. An
+  instance's CI installs the same set as a controller. actionlint, which nothing ran, is no longer
+  pinned.
+- The Quickstart installs the CLI with `mise exec uv --` and no longer adds uv to your global mise
+  config or asks for `mise activate`; `~/.local/bin` on `PATH` is enough.
+- The internal CA is made by the `cryptography` package, not the controller's `openssl`, with the
+  same extensions.
+- `jarvis validate` has no `flux-prune` check. Its rule is now ValidatingPolicy `flux-prune`
+  among the Git-only rules, so a miss prints under `FAIL policies`: what a Flux Kustomization
+  applies of a kind Flux keeps carries `kustomize.toolkit.fluxcd.io/prune: disabled`, as before.
+  A HelmRelease is exempt when it runs as any account but `flux-platform` (a tenant's). The five
+  objects the check also named (the root Kustomization, ClusterRole `kyverno:backup-generate`,
+  ConfigMap `coredns-custom`, Deployment `platform-backups/restic`, Traefik's HelmChartConfig)
+  keep their annotation where they are written, and are no longer checked by name.
+- Core's admission rule `stdout-logs` is gone. It guessed from five flag spellings whether a
+  container logs to a file, and could refuse a flag that means something else.
+- `jarvis up` validates only its own env, as `jarvis validate` does, so in a repo with envs on
+  different core tags each env is checked by the release it pins.
+- `jarvis secrets --rotate age` and `--rotate deploy-key` print their `kubectl` step with
+  `--kubeconfig ~/.kube/jarvis-<env>.yaml`, so a pasted step reaches the env's cluster, not the
+  controller's default one.
+- Traefik reads a request on 443 for up to an hour (`readTimeout: 1h` on `websecure`), not
+  Traefik 3's 60 s, which cut off an upload that took longer.
+- `restic-check` prints `core's password does not open it` for a repository restic can't open
+  with core's password (restic's exit 12), such as an app's left on the backup disk once app
+  hosting is off. Other failures still print `restic check exited <code>`.
+
+### Upgrading
+
+- An env without `age_key_file`: add your working key's path (the old default was
+  `~/.config/sops/age/keys.txt`).
+- The controller that runs `jarvis up` must read `flux_git_repo_url` with git, as Flux does (for
+  `ssh://`, with a key the forge accepts). `jarvis doctor` checks it.
+- In your own scripts and runbooks: `jarvis secrets --rotate-restic` is
+  `jarvis secrets --new-restic-password`, `AS_OF=<time> jarvis restore` is
+  `jarvis restore --as-of <time>`, and `python -m jarvis.render.apps`, `.cluster_vars` or
+  `.switches` is `jarvis render`.
+
 ## v0.8.2
 
 ### Changed

@@ -1,6 +1,6 @@
 """jarvis doctor: is this controller ready to run the env? Changes nothing but a missing hook.
 
-Checks the pinned CLIs, the age key's mode and owner, the instance repo's remote, and that
+Checks the pinned CLIs, the age key's mode and owner, the repository Flux reads, and that
 every inventory host resolves, and installs the pre-commit hook in a clone that lacks it. Exit 0
 when nothing fails, 4 when something does.
 """
@@ -42,15 +42,27 @@ def _hosts(env_dir: Path) -> list[str]:
 
 
 def check_tools() -> list[tuple[str, str]]:
+    from jarvis.cli.core import pinned_tool_paths
+    from jarvis.paths import PRODUCT_ROOT
+
+    unpinned = [] if pinned_tool_paths(PRODUCT_ROOT) is not None else [(
+        "WARN",
+        "mise is missing or cannot list core's pinned CLIs, so this machine's own versions run: "
+        "local results may differ from CI's, which run on mise.toml's",
+    )]  # fmt: skip
     missing = [tool for tool in TOOLS if shutil.which(tool) is None]
     if missing:
-        return [("FAIL", f"not on PATH: {', '.join(missing)} (git and ssh come from the system; the rest from mise)")]
-    return [("PASS", "every CLI is on PATH")]
+        return [("FAIL", f"not on PATH: {', '.join(missing)} (git and ssh come from the system; the rest from mise)"), *unpinned]
+    return [("PASS", "every CLI is on PATH"), *unpinned]
 
 
 def check_age_key(env_dir: Path) -> list[tuple[str, str]]:
-    raw = _values(env_dir).get("age_key_file") or "~/.config/sops/age/keys.txt"
-    path = Path(str(raw)).expanduser()
+    from jarvis.secrets.age import AgeError, key_path
+
+    try:
+        path = key_path(_values(env_dir).get("age_key_file"))
+    except AgeError as exc:
+        return [("FAIL", str(exc))]
     try:
         info = path.stat()
     except OSError:
@@ -65,17 +77,13 @@ def check_age_key(env_dir: Path) -> list[tuple[str, str]]:
     return [("PASS", f"age key {path} is yours and mode 0600")]
 
 
-def check_remote(instance: Path) -> list[tuple[str, str]]:
-    proc = subprocess.run(
-        ["git", "-C", str(instance), "ls-remote", "--exit-code", "origin", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-    )
-    if proc.returncode:
-        return [("FAIL", "cannot read the instance repo's origin remote (git ls-remote origin)")]
-    return [("PASS", "the instance repo's origin remote is readable")]
+def check_remote(env_dir: Path) -> list[tuple[str, str]]:
+    """This controller reads the repository Flux reads the env from, as jarvis up must."""
+    url = str(_values(env_dir).get("flux_git_repo_url") or "")
+    command = ["git", "ls-remote", "--exit-code", url, "HEAD"]
+    if url and subprocess.run(command, capture_output=True, text=True, check=False, timeout=60).returncode == 0:
+        return [("PASS", f"flux_git_repo_url {url} is readable")]
+    return [("FAIL", f"cannot read flux_git_repo_url {url or '(unset)'} from here (git ls-remote)")]
 
 
 def check_hosts(env_dir: Path) -> list[tuple[str, str]]:
@@ -120,7 +128,7 @@ def run(instance: Path, env_dir: Path) -> int:
     results = (
         check_tools()
         + check_age_key(env_dir)
-        + check_remote(instance)
+        + check_remote(env_dir)
         + check_hosts(env_dir)
         + check_recovery(instance, env_dir)
         + check_hook(instance)

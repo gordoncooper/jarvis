@@ -27,6 +27,16 @@ def _validator(name: str) -> Draft202012Validator:
     return Draft202012Validator(schema(name))
 
 
+@cache
+def _env_name_validator() -> Draft202012Validator:
+    return Draft202012Validator(schema(CLUSTER_VARS)["properties"]["jarvis_env"])
+
+
+def env_name_ok(name: str) -> bool:
+    """The schema's rule for jarvis_env, for the guards that act on an env before its files are read."""
+    return _env_name_validator().is_valid(name)
+
+
 def defaults(name: str) -> dict[str, Any]:
     """Each top-level key's default, as the schema states it."""
     return {key: spec["default"] for key, spec in schema(name)["properties"].items() if "default" in spec}

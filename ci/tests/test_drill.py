@@ -700,26 +700,6 @@ def _mutating(calls: list[list[str]]) -> list[list[str]]:
     return [call for call in calls if call and call[0] in verbs]
 
 
-def test_trailing_restic_image_fails_before_any_change(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A restic image with trailing text changes nothing, including cleanup-only."""
-    image = "restic/restic@sha256:" + ("a" * 64) + "\n"
-    drill = Cluster(etcd_image=image)
-    code, restores = _run(tmp_path / "drill", monkeypatch, drill)
-    assert code != 0
-    assert restores == []
-    assert _mutating(drill.calls) == []
-    assert "must be restic/restic@sha256:" in capsys.readouterr().out
-
-    cleanup = Cluster(namespace=True, etcd_image=image)
-    assert _run_cleanup_only(tmp_path / "cleanup", monkeypatch, cleanup) != 0
-    assert _mutating(cleanup.calls) == []
-    assert "must be restic/restic@sha256:" in capsys.readouterr().out
-
-
 def test_missing_etcd_cronjob_fails_before_any_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -731,12 +711,12 @@ def test_missing_etcd_cronjob_fails_before_any_change(
     assert code != 0
     assert restores == []
     assert _mutating(drill.calls) == []
-    assert "CronJob platform-backups/etcd-snapshots not found" in capsys.readouterr().out
+    assert "read etcd-snapshots CronJob" in capsys.readouterr().out
 
     cleanup = Cluster(namespace=True, etcd_present=False)
     assert _run_cleanup_only(tmp_path / "cleanup", monkeypatch, cleanup) != 0
     assert _mutating(cleanup.calls) == []
-    assert "CronJob platform-backups/etcd-snapshots not found" in capsys.readouterr().out
+    assert "read etcd-snapshots CronJob" in capsys.readouterr().out
 
 
 def test_etcd_checksum_mismatch_fails(
