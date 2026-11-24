@@ -40,7 +40,7 @@
       ]
     },
     {
-      "description": "The restic and rest-server images and the matching CLI pins in mise.toml move in one PR, because the rest-server isolation test requires them equal. Renovate updates mise.lock in the same PR.",
+      "description": "The restic and rest-server images and the matching CLI pins in mise.toml and mise.dev.toml move in one PR, because the rest-server isolation test requires them equal. Renovate updates both locks in the same PR.",
       "groupName": "restic",
       "matchDepNames": ["restic/restic", "restic/rest-server", "restic", "github:restic/rest-server"]
     },
@@ -72,7 +72,7 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "kubectl and the admission test's kube-apiserver (mise.toml) move together and stay on the k3s minor. Raise this cap in the same PR that moves k3s_version to the next minor. A test fails if they drift apart.",
+      "description": "kubectl (mise.toml) and the admission test's kube-apiserver (mise.dev.toml) move together and stay on the k3s minor. Raise this cap in the same PR that moves k3s_version to the next minor. A test fails if they drift apart.",
       "groupName": "kubernetes",
       "matchManagers": ["mise"],
       "matchDepNames": ["kubectl", "aqua:kubernetes/kubernetes/kube-apiserver"],

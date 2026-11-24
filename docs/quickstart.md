@@ -23,16 +23,15 @@ LOGIN=ubuntu                                     # the user you log in to the no
 
 ## 2. Install the tools
 
-mise installs uv, uv installs the jarvis CLI, and jarvis installs everything else it needs at the versions your cluster's core release pins, on first use.
+mise runs uv, uv installs the jarvis CLI, and jarvis installs everything else it needs at the versions your cluster's core release pins, on first use.
 
 ```bash
 curl -fsSL https://mise.run | sh
 export PATH="$HOME/.local/bin:$PATH"
-mise use -g uv
-mise exec -- uv tool install "git+https://github.com/gordoncooper/jarvis@$JARVIS_VERSION"
+mise exec uv -- uv tool install "git+https://github.com/gordoncooper/jarvis@$JARVIS_VERSION"
 ```
 
-To keep the tools on your `PATH` in new shells, add `eval "$(~/.local/bin/mise activate bash)"` (or `zsh`) to your shell's startup file.
+`jarvis` and `mise` both live in `~/.local/bin`. Ubuntu puts it on your `PATH` at login; on macOS, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`.
 
 ## 3. Write your repository
 

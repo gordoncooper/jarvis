@@ -34,6 +34,13 @@ the upgrade.
 - `jarvis init` and `env add` run from a core checkout need `--core-url` and `--core-ref`.
 - `jarvis init` asks for `ssh_user` at a terminal, else writes none (the schema's `ubuntu`).
 - `jarvis doctor` warns when mise is missing.
+- A controller installs only the CLIs and Python packages the jarvis CLI runs, about 440 MB less
+  for each core release it caches: core's test tools (rest-server, k3d, kube-apiserver, etcd) and
+  test packages move to `mise.dev.toml` and uv.lock's dev group, which `make deps` installs. An
+  instance's CI installs the same set as a controller. actionlint, which nothing ran, is no longer
+  pinned.
+- The Quickstart installs the CLI with `mise exec uv --` and no longer adds uv to your global mise
+  config or asks for `mise activate`; `~/.local/bin` on `PATH` is enough.
 - The internal CA is made by the `cryptography` package, not the controller's `openssl`, with the
   same extensions.
 - `jarvis validate` has no `flux-prune` check. Its rule is now ValidatingPolicy `flux-prune`

@@ -27,9 +27,9 @@ _MAPPED = {
     "infra/ansible/roles/flux-operator/defaults/main.yml": ["test_flux_operator.py"],
 }
 # A change here can reach any test.
-# The tool and Python pins (mise.toml, mise.lock, pyproject.toml, uv.lock) reach every test that runs a CLI or imports a package.
+# The tool and Python pins (mise.toml, mise.dev.toml, their locks, pyproject.toml, uv.lock) reach every test that runs a CLI or imports a package.
 _EVERYTHING = (
-    "mise.toml", "mise.lock", "pyproject.toml", "uv.lock", ".python-version",
+    "mise.toml", "mise.lock", "mise.dev.toml", "mise.dev.lock", "pyproject.toml", "uv.lock", ".python-version",
     "pytest.ini", "ci/tests/support.py", "ci/tests/conftest.py",
 )
 
