@@ -76,7 +76,6 @@ def render() -> str:
         "# Reference: an env's values",
         "",
         "Generated from the JSON Schemas in `schema/` by `python -m jarvis.schema.reference`; edit the schemas, not this page.",
-        "Each values file names its schema on its first line, so an editor shows the same descriptions as you type.",
         "Rules that span keys or files are in [schema/CONTRACT.md](../schema/CONTRACT.md), and `jarvis validate` checks them all.",
     ]
     for name, title, path in FILES:

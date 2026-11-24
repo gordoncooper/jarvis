@@ -784,8 +784,8 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Environment under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis drill", description=__doc__)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--cleanup-only", action="store_true", help="Only retry the drill namespace and repository cleanup")
     args = parser.parse_args(argv)
     kubeconfig = kubeconfig_for(args.env)

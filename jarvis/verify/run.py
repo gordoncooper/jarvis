@@ -191,8 +191,8 @@ def _run_smoke(ctx: Context, names: Sequence[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Environment under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis verify", description=__doc__)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument(
         "--smoke",
         action="store_true",

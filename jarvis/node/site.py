@@ -1,6 +1,6 @@
 """Apply an env's hosts with core's Ansible playbook (infra/ansible/site.yml).
 
-  python -m jarvis.node.site --env <env> [--tags <tags>] [--limit <hosts>] [--check]
+  jarvis site [--tags <tags>] [--limit <hosts>] [--check]
 
 The env schema runs first and refuses before Ansible on any error. The playbook reads the
 env's inventory and cluster-vars from the instance repo (INSTANCE, default this checkout).
@@ -45,8 +45,8 @@ def playbook_command(instance: Path, env: str, *, tags: str | None, limit: str |
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--env", required=True, help="Env under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis site", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--tags", help="Run only these play tags (comma-separated)")
     parser.add_argument("--limit", help="Run only on these hosts")
     parser.add_argument("--check", action="store_true", help="Dry run: show what would change")
