@@ -19,13 +19,9 @@ helm_version: 4.3.2
 helm_linux_amd64_tarball_sha256: d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983
 helm_archive_member_linux_amd64: linux-amd64/helm
 helm_download_url: "https://get.helm.sh/helm-v{{ helm_version }}-linux-amd64.tar.gz"
-# The instance checkout's SOPS config. Its creation rule for envs/<jarvis_env>/secrets/ names the env's age recipients.
-flux_sops_config_file: "{{ jarvis_instance_root }}/.sops.yaml"
 # An ssh:// root reads the env repo with this sealed read-only deploy key, created once as
 # flux-system/<flux_deploy_key_secret_name>, which sync.yaml's root GitRepository names.
 flux_deploy_key_file: "{{ jarvis_env_dir }}/secrets/flux-deploy-key.sops.yaml"
 flux_deploy_key_secret_name: flux-deploy-key
-# GitHub's published SSH host key (api.github.com/meta, ssh_keys). Public, not user-specific.
-flux_known_hosts: "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
 # The FluxInstance installs the source and kustomize CRDs before sync.yaml can apply. Seconds.
 flux_crd_wait_timeout: 300

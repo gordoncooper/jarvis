@@ -23,8 +23,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import yaml
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -32,7 +30,6 @@ if str(REPO_ROOT) not in sys.path:
 from jarvis.env import scaffold  # noqa: E402
 
 FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
-EXAMPLE_PINS = REPO_ROOT / "jarvis" / "kit" / "examples-apps.yaml"
 FIXTURE_ADDONS = REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"
 NAME = "env-00"
 # The alerts feature's sealed target: testapp in the cluster, at a path only alerts POST to.
@@ -72,7 +69,7 @@ def spec(name: str = NAME, *, features: list[str] | None = None) -> scaffold.Env
 
 def example_pins() -> dict[str, str]:
     """{app: version} that jarvis init --with-examples pins."""
-    return {app: entry["version"] for app, entry in yaml.safe_load(EXAMPLE_PINS.read_text(encoding="utf-8")).items()}
+    return {app: entry["version"] for app, entry in scaffold.example_apps().items()}
 
 
 def tag_apps(repo: Path, pins: dict[str, str] | None = None) -> Path:

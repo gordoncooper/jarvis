@@ -12,7 +12,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | `age_key_file` | yes | string |  | The working age key on the controller: Flux's sops-age is made from it, and the k3s tokens are read with it. jarvis init writes the path it used. SOPS_AGE_KEY_FILE overrides it. |
 | `alerts_provider` | no | string | `generic` | The type of the Flux Provider the alerts feature posts to, such as discord, slack, msteams or googlechat; its whole target is the address in the sealed alerts-notify Secret. generic posts each event as JSON. Flux's Provider CRD lists the types. |
 | `app_dns_cluster_ip` | no; yes when switches.yaml lists app-dns | string |  | ClusterIP of the App DNS Service, which cluster DNS forwards the zone to. A host address inside service_cidr, not its first address (the Kubernetes API) or its tenth (cluster DNS). |
-| `apps_git_repo_url` | no; yes when apps.yaml lists an app | string |  | The hosted apps repository, https, read with no credential. Anyone's: the example apps beside core, or your own. |
+| `apps_git_repo_url` | no; yes when apps.yaml lists an app | string |  | The hosted apps repository, https, read with no credential. Anyone's: the example apps' (jarvis/kit/examples-apps.yaml), or your own. |
 | `backup_check_schedule` | no | string | `30 6 * * 3` | Five-field cron for the weekly restic repository check (CronJob platform-backups/restic-check), in time_zone. The check takes no lock, so it never blocks a backup; a prune at the same time can fail one run, and the Job retries. |
 | `backup_path` | yes | string |  | Absolute path on the backup node: etcd snapshots under backup_path/etcd-snapshots, and one restic repository per PVC under backup_path/restic/ns-&lt;namespace&gt;/pvc-&lt;pvc&gt;. |
 | `backup_retention_daily` | yes | integer |  | Daily snapshots restic keeps, per PVC. |
@@ -25,7 +25,7 @@ An env's cluster values: values/cluster-vars.yaml. Rules that span fields (the C
 | `dns_suffix` | yes | string |  | The env's internal DNS zone: services are &lt;name&gt;.&lt;dns_suffix&gt;, hosted apps &lt;app&gt;.apps.&lt;dns_suffix&gt;. A lowercase DNS name. |
 | `flux_git_ref` | yes | string |  | The root source's Git ref, e.g. refs/heads/main. |
 | `flux_git_repo_url` | yes | string |  | The env repository, Flux's root source. https:// with no userinfo, query or fragment, or ssh://&lt;user&gt;@&lt;host&gt;/&lt;owner&gt;/&lt;repo&gt;, read with the sealed deploy key. |
-| `flux_known_hosts` | no; yes for an ssh:// root not on github.com | string |  | SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. Unset, GitHub's published key. Host-only (Ansible). |
+| `flux_known_hosts` | no | string | `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl` | SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. The default is GitHub's published key (api.github.com/meta), which serves only github.com. Host-only (Ansible). |
 | `jarvis_env` | yes | string |  | The env's name, a DNS label: its folder under envs/, the /etc/jarvis/env marker on its nodes, and the name its guards check. |
 | `k3s_kubelet_eviction_hard` | yes | string |  | kubelet eviction-hard. Its memory.available is raised to node_memory_reserve_percent when that is larger. A host may override it. |
 | `k3s_kubelet_kube_reserved` | yes | string |  | kubelet kube-reserved, without the kube-reserved= prefix. A host may override it. |

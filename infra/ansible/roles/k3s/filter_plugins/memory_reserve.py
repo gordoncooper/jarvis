@@ -21,13 +21,6 @@ _FACTOR = {"": 1, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15, 
            "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50, "Ei": 2**60}
 
 
-def _percent(value: object) -> int:
-    text = str(value).strip()
-    if not text.isdigit() or not 0 <= int(text) <= 50:
-        raise AnsibleFilterError(f"node_memory_reserve_percent is a whole number from 0 to 50, not {value!r}")
-    return int(text)
-
-
 def _bytes(threshold: str, memtotal_mb: int) -> float:
     if threshold.endswith("%"):
         try:
@@ -41,9 +34,10 @@ def _bytes(threshold: str, memtotal_mb: int) -> float:
 
 
 def with_memory_reserve(eviction_hard: object, memtotal_mb: object, percent: object) -> str:
-    """eviction-hard with memory.available at least percent of the node's memory."""
+    """eviction-hard with memory.available at least percent of the node's memory. The schema holds
+    percent to a whole number from 0 to 50."""
     entries = [entry.strip() for entry in str(eviction_hard).split(",") if entry.strip()]
-    reserve = _percent(percent)
+    reserve = int(percent)
     if reserve == 0:
         return ",".join(entries)
     try:

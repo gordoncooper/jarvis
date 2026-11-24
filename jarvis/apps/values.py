@@ -45,12 +45,13 @@ LAN_GRANTS = ("lan-all", "lan-target")
 LAN_CIDRS = "lan_cidrs"
 _PRIVATE = tuple(ipaddress.IPv4Network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 # Ports no lan-port grant takes. In shared-address mode an app's LAN port listens on each edge
-# node's own address, beside core's doors and the node's own services (k3s's inbound ports).
+# node's own address, beside core's doors and the node's own services: the inbound ports k3s
+# opens with core's config (infra/ansible/roles/k3s/templates), which turns on no embedded
+# registry and keeps flannel's VXLAN backend.
 RESERVED_PORTS = {
     "53/TCP": "App DNS", "53/UDP": "App DNS", "80/TCP": "core's web door", "443/TCP": "core's web door",
     "22/TCP": "SSH", "6443/TCP": "the Kubernetes API", "10250/TCP": "the kubelet",
-    "2379/TCP": "etcd", "2380/TCP": "etcd", "5001/TCP": "k3s's embedded registry",
-    "8472/UDP": "flannel's VXLAN", "51820/UDP": "flannel's WireGuard", "51821/UDP": "flannel's WireGuard",
+    "2379/TCP": "etcd", "2380/TCP": "etcd", "8472/UDP": "flannel's VXLAN",
 }
 
 

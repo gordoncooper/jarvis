@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 import json
 import subprocess
-import zlib
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -52,6 +51,12 @@ def _pvc(
     return {"metadata": meta, "spec": {"volumeName": volume}}
 
 
+def _mover(source: str, parallelism: int) -> dict:
+    """A VolSync mover Job, which its ReplicationSource controls."""
+    owner = {"apiVersion": "volsync.backube/v1alpha1", "kind": "ReplicationSource", "name": source, "controller": True}
+    return {"metadata": {"name": f"mover-{parallelism}", "ownerReferences": [owner]}, "spec": {"parallelism": parallelism}}
+
+
 _SNAPSHOT_LOG = "restoring abc to /data\n"
 _NO_SNAPSHOT_LOG = "No eligible snapshots found\n=== No data will be restored ===\n"
 _FAKE_RESTIC_IMAGE = "restic/restic@sha256:" + ("a" * 64)
@@ -74,8 +79,10 @@ class _Cluster:
         interrupt_resume: bool = False,
         env: str = "env-00",
         destination_done: bool = True,
+        jobs: list[dict] | None = None,
     ) -> None:
         self.destination_done = destination_done
+        self.jobs = [_mover("drill", 0)] if jobs is None else jobs
         self.nodes = {"node-a", "node-b"}
         self.items = items
         self.will_pause = will_pause
@@ -187,8 +194,8 @@ class _Cluster:
             return _completed(
                 argv, json.dumps({"spec": {"paused": self._source_paused(argv[2])}})
             )
-        if argv[:2] == ["get", "job"]:
-            return _completed(argv, json.dumps({"spec": {"parallelism": 0}, "status": {}}))
+        if argv[:2] == ["get", "jobs"]:
+            return _completed(argv, json.dumps({"items": self.jobs}))
         if argv[:2] == ["get", "secret"]:
             return _completed(argv, f"secret/{argv[2]}\n")
         if argv[0] == "logs":
@@ -285,12 +292,6 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
         assert refused.value.code == 2
     assert "one of the arguments --namespace --all is required" in capsys.readouterr().err
 
-    long_name = "p" * 60
-    assert restore_tool.job_name("drill") == "volsync-src-drill"
-    assert restore_tool.job_name(long_name) == (
-        "volsync-src-" + f"{zlib.crc32(long_name.encode()) & 0xFFFFFFFF:08x}"
-    )
-
     items = [
         _pvc("demo", "drill"),
         _pvc("other", "keep"),
@@ -317,7 +318,10 @@ def test_restore_pauses_before_direct_destination(capsys) -> None:
              lambda call: call[:2] == ["delete", "replicationdestination"], lambda call: "backup-" in call]  # fmt: skip
     indexes = [_index(cluster.calls, pred) for pred in order]
     assert indexes == sorted(indexes)
-    assert any(call[2] == "volsync-src-drill" for call in cluster.calls if call[:2] == ["get", "job"])
+    # The source's mover, found by its controller owner whatever VolSync names it, still runs.
+    running = _Cluster(items, will_pause=True, jobs=[_mover("drill", 1), _mover("keep", 0)])
+    assert _run(running, pause_budget_s=0) != 0
+    assert running.applied == []
 
     stuck = _Cluster(items, will_pause=False)
     assert _run(stuck, pause_budget_s=0) != 0

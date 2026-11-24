@@ -27,6 +27,7 @@ from ansible_role_proof import (
     playbook_recap_field,
     role_tasks,
     roles_inventory_path,
+    site_vars_file,
 )
 from conftest import require_cli
 
@@ -58,7 +59,6 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
     )
     dest = tmp_path / "out"
     dest.mkdir()
-    cluster_vars = sample_root() / "envs" / env_name() / "values" / "cluster-vars.yaml"
     play = tmp_path / "play.yml"
     play.write_text(
         "---\n- hosts: all\n  gather_facts: false\n  become: false\n  vars:\n"
@@ -75,7 +75,7 @@ def test_host_overrides_win_on_that_host_only(tmp_path: Path) -> None:
         f"    - ansible.builtin.copy:\n        dest: {dest}/{{{{ inventory_hostname }}}}.user\n"
         "        content: '{{ ansible_user }}'\n"
     )
-    proc = playbook(play, "-i", hosts, "-i", roles_inventory_path(), "-e", f"@{cluster_vars}")
+    proc = playbook(play, "-i", hosts, "-i", roles_inventory_path(), "-e", f"@{site_vars_file(tmp_path / 'vars.json')}")
     assert proc.returncode == 0, proc.output
     over = [(dest / f"over{s}").read_text() for s in (".yaml", ".agent.yaml")]
     plain = [(dest / f"plain{s}").read_text() for s in (".yaml", ".agent.yaml")]
@@ -117,12 +117,11 @@ def test_agent_fails_when_control_plane_name_does_not_resolve(tmp_path: Path) ->
     assert "cp.invalid does not resolve on wk-1" in proc.output
 
 
-def _agent_play_section(env: str, root: Path | None = None) -> str:
+def _agent_play_section(vars_path: Path, env: str, root: Path) -> str:
     require_cli("ansible-playbook")
-    repo = REPO_ROOT if root is None else root
     proc = playbook(
-        "site.yml", "--list-hosts", "-i", repo / "envs" / env / "inventory" / "hosts.yml", "-i", roles_inventory_path(),
-        "-e", f"@{repo / 'envs' / env / 'values' / 'cluster-vars.yaml'}",
+        "site.yml", "--list-hosts", "-i", root / "envs" / env / "inventory" / "hosts.yml", "-i", roles_inventory_path(),
+        "-e", f"@{site_vars_file(vars_path, root, env=env)}",
     )  # fmt: skip
     assert proc.returncode == 0, proc.output
     parts = proc.stdout.split("play #")
@@ -167,12 +166,12 @@ def _listed_play_hosts(section: str) -> set[str]:
     return set(listed)
 
 
-def test_agent_play_host_pattern(example_copy: ExampleCopy) -> None:
+def test_agent_play_host_pattern(tmp_path: Path, example_copy: ExampleCopy) -> None:
     """The agent play is every host except the control plane."""
     targets = [(sample_root(), env_name())]
     targets.append((example_copy.root, example_copy.name))
-    for root, env in targets:
-        assert _listed_play_hosts(_agent_play_section(env, root)) == _hosts_outside_control_plane(
+    for index, (root, env) in enumerate(targets):
+        assert _listed_play_hosts(_agent_play_section(tmp_path / f"{index}.json", env, root)) == _hosts_outside_control_plane(
             env, root
         )
 
@@ -587,10 +586,6 @@ def _sealed_tokens(tmp_path: Path, server: str = _SERVER_TOKEN) -> tuple[Path, P
     return path, keyfile
 
 
-def _play_env(keyfile: Path) -> dict[str, str]:
-    return {"SOPS_AGE_KEY_FILE": str(keyfile)}
-
-
 def _run_token_read(
     tmp_path: Path, *, mode: str, node_token: str | None = None
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
@@ -622,8 +617,9 @@ def _run_token_read(
         """), "    "))  # fmt: skip
     extra = {**load_role_defaults(K3S_ROLE_DIR), **{key: cluster[key] for key in _CONFIG_KEYS}, **_MEMORY_FACT,
              "local_path_data": "/fixture/local", "backup_path": "/fixture/backup", "jarvis_env": "fixture",
-             "k3s_mode": mode, "k3s_token_file": str(token_file), "k3s_data_dir": str(data_dir)}
-    return playbook(play, "-i", inventory, "-e", json.dumps(extra), env=_play_env(keyfile)), facts
+             "k3s_mode": mode, "k3s_token_file": str(token_file), "k3s_data_dir": str(data_dir),
+             "sops_age_key_file": str(keyfile)}
+    return playbook(play, "-i", inventory, "-e", json.dumps(extra)), facts
 
 
 @pytest.mark.parametrize("mode", ["server", "agent"])
@@ -744,10 +740,10 @@ def _run_role(
         "k3s_binary_path": str(binary), "k3s_version": "v0.0.0+k3s1",
         "k3s_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "local_path_data": str(tmp_path / "local"), "backup_path": str(tmp_path / "backup"),
-        **{key: cluster[key] for key in _CONFIG_KEYS}, **_MEMORY_FACT,
+        **{key: cluster[key] for key in _CONFIG_KEYS}, **_MEMORY_FACT, "sops_age_key_file": str(keyfile),
     }
     play = _role_play(tmp_path, bin_dir)
-    return playbook(play, *LOCALHOST, "-e", json.dumps(extra), "--check", env=_play_env(keyfile))
+    return playbook(play, *LOCALHOST, "-e", json.dumps(extra), "--check")
 
 
 def test_a_token_mismatch_stops_the_role_before_its_config(tmp_path: Path) -> None:
@@ -787,7 +783,7 @@ def _render_reserve(tmp_path: Path, cluster_vars: str, memtotal_mb: int) -> subp
              "k3s_server_token": "fixture-server", "k3s_agent_token": "fixture-agent", "pod_cidr": "10.80.0.0/16",
              "service_cidr": "10.81.0.0/16", "local_path_data": "/fixture/local", "backup_path": "/fixture/backup",
              **{key: value for key, value in load_role_defaults(K3S_ROLE_DIR).items() if key.startswith("k3s_etcd")}}
-    return playbook(play, *LOCALHOST, "-e", json.dumps(extra), env=_play_env(tmp_path / "no-key"))
+    return playbook(play, *LOCALHOST, "-e", json.dumps(extra))
 
 
 _RESERVES = "k3s_kubelet_kube_reserved: cpu=100m,memory=128Mi\nk3s_kubelet_system_reserved: 'cpu=100m,memory=128Mi'\n"
@@ -800,16 +796,16 @@ _RESERVES = "k3s_kubelet_kube_reserved: cpu=100m,memory=128Mi\nk3s_kubelet_syste
         # A quoted percent: env-schema refuses it in an env, and the role still reads it.
         ('k3s_kubelet_eviction_hard: "memory.available<100Mi,nodefs.available<10%"\nnode_memory_reserve_percent: "15"\n',
          16384, "memory.available<15%,nodefs.available<10%"),
-        ("k3s_kubelet_eviction_hard: 'nodefs.available<10%'\n", 4096, "nodefs.available<10%,memory.available<10%"),
+        ("k3s_kubelet_eviction_hard: 'nodefs.available<10%'\nnode_memory_reserve_percent: 10\n", 4096, "nodefs.available<10%,memory.available<10%"),
         ("k3s_kubelet_eviction_hard: memory.available<2Gi\nnode_memory_reserve_percent: 10\n", 16384, "memory.available<2Gi"),
         ("k3s_kubelet_eviction_hard: memory.available<100Mi\nnode_memory_reserve_percent: 0\n", 16384, "memory.available<100Mi"),
     ],
-    ids=["reserve-wins", "quoted-keeps-other-signals", "default-appended", "larger-env-value-stays", "off"],
+    ids=["reserve-wins", "quoted-keeps-other-signals", "appended", "larger-env-value-stays", "off"],
 )
 def test_node_memory_reserve_sets_the_kubelet_eviction_threshold(
     tmp_path: Path, lines: str, memtotal_mb: int, eviction: str
 ) -> None:
-    """Rule: every node's kubelet keeps node_memory_reserve_percent (default 10) of its memory
+    """Rule: every node's kubelet keeps node_memory_reserve_percent of its memory
     out of allocatable as memory.available<N%, unless the env's eviction-hard is larger; the
     other reserves stay as written."""
     first = _render_reserve(tmp_path, _RESERVES + lines, memtotal_mb)
@@ -820,15 +816,12 @@ def test_node_memory_reserve_sets_the_kubelet_eviction_threshold(
                         f"eviction-hard={eviction}"], src
 
 
-@pytest.mark.parametrize("bad", ["node_memory_reserve_percent: 60\n", "node_memory_reserve_percent: ten\n",
-                                 "k3s_kubelet_eviction_hard: memory.available<lots\n"], ids=["too-large", "not-a-number", "bad-quantity"])
-def test_node_memory_reserve_refuses_what_it_cannot_apply(tmp_path: Path, bad: str) -> None:
-    """Rule: a reserve outside 0 to 50, or an eviction-hard memory.available it cannot compare,
-    stops the render and writes no config."""
-    base = "k3s_kubelet_eviction_hard: memory.available<100Mi\n" if "eviction" not in bad else ""
-    proc = _render_reserve(tmp_path, _RESERVES + base + bad, 16384)
+def test_node_memory_reserve_refuses_what_it_cannot_apply(tmp_path: Path) -> None:
+    """Rule: an eviction-hard memory.available it cannot compare stops the render and writes no config."""
+    bad = "k3s_kubelet_eviction_hard: memory.available<lots\nnode_memory_reserve_percent: 10\n"
+    proc = _render_reserve(tmp_path, _RESERVES + bad, 16384)
     assert proc.returncode != 0, proc.stdout
-    assert "node_memory_reserve_percent is a whole number" in proc.stdout or "not a quantity" in proc.stdout, proc.stdout
+    assert "not a quantity" in proc.stdout, proc.stdout
     assert not (tmp_path / f"{K3S_CONFIG_TEMPLATE}.out").exists()
 
 

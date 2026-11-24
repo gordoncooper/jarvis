@@ -15,13 +15,13 @@ from ansible_role_proof import (
     ANSIBLE_DIR,
     LOCALHOST,
     ansible_render_template,
-    cluster_vars_playbook_path,
     env_inventory_args,
     load_cluster_vars,
     local_play,
     playbook,
     playbook_recap_field,
     role_tasks,
+    site_vars_file,
 )
 from conftest import require_cli
 
@@ -66,7 +66,7 @@ def test_resolv_conf_link_does_not_touch_its_target(tmp_path: Path) -> None:
     link.symlink_to(target)
     before = target.stat()
 
-    first = _run_file_module(params, src=target, dest=link)
+    first = _run_file_module(tmp_path, params, src=target, dest=link)
     assert first["changed"] is False
     assert _same_file(target.stat(), before)
 
@@ -74,7 +74,7 @@ def test_resolv_conf_link_does_not_touch_its_target(tmp_path: Path) -> None:
     target.unlink()
     target.write_text("nameserver replaced\n", encoding="utf-8")
     replaced = target.stat()
-    second = _run_file_module(params, src=target, dest=link)
+    second = _run_file_module(tmp_path, params, src=target, dest=link)
     assert second["changed"] is False
     assert _same_file(target.stat(), replaced)
     assert os.readlink(link) == str(target)
@@ -93,12 +93,13 @@ def _resolv_link_params() -> dict[str, object]:
     return links[0]
 
 
-def _run_file_module(params: dict[str, object], *, src: Path, dest: Path) -> dict[str, object]:
+def _run_file_module(tmp_path: Path, params: dict[str, object], *, src: Path, dest: Path) -> dict[str, object]:
     args = dict(params)
     args["src"] = str(src)
     args["dest"] = str(dest)
+    site_vars = site_vars_file(tmp_path / "vars.json")
     run = subprocess.run(
-        ["ansible", "localhost", "-c", "local", "-m", "ansible.builtin.file", "-a", json.dumps(args)],
+        ["ansible", "localhost", "-c", "local", "-m", "ansible.builtin.file", "-a", json.dumps(args), "-e", f"@{site_vars}"],
         cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False,
         env={**os.environ, "ANSIBLE_BECOME": "false", "ANSIBLE_CONFIG": str(ANSIBLE_DIR / "ansible.cfg")},
     )  # fmt: skip
@@ -139,9 +140,9 @@ def _block_text(task: dict[str, object], needle: str) -> bool:
     return needle in yaml.safe_dump(task.get("block"))
 
 
-def test_site_yml_syntax_check() -> None:
+def test_site_yml_syntax_check(tmp_path: Path) -> None:
     require_cli("ansible-playbook")
-    proc = playbook("--syntax-check", "site.yml", *env_inventory_args(), "-e", f"@{cluster_vars_playbook_path()}")
+    proc = playbook("--syntax-check", "site.yml", *env_inventory_args(), "-e", f"@{site_vars_file(tmp_path / 'vars.json')}")
     assert proc.returncode == 0, proc.output
 
 
@@ -192,7 +193,7 @@ def test_chrony_template_notifies_restart_only_when_changed(tmp_path: Path) -> N
     pools = load_cluster_vars()["ntp_pools"]
     # Defaults are root:root. This play does not become root, and the template module chowns before the dest write.
     extra = json.dumps({"chrony_config_dir": str(config_dir), "chrony_config_owner": getpass.getuser(),
-                        "chrony_config_group": grp.getgrgid(os.getgid()).gr_name, "ntp_pools": pools})  # fmt: skip
+                        "chrony_config_group": grp.getgrgid(os.getgid()).gr_name, "ntp_pools": pools, "chrony_nts": True})  # fmt: skip
     first = playbook(play, *LOCALHOST, "-e", extra)
     output = first.output
     assert first.returncode == 0, output

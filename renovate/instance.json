@@ -37,33 +37,38 @@
   ],
   "customManagers": [
     {
-      "customType": "regex",
-      "description": "The core tag an env pins: core_git_ref in values/cluster-vars.yaml, after core_git_repo_url.",
+      "customType": "jsonata",
+      "description": "The core tag an env pins: core_git_ref in values/cluster-vars.yaml, from core_git_repo_url on GitHub. Renovate reads the file as YAML, so key order and layout don't matter.",
+      "fileFormat": "yaml",
       "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
       "matchStrings": [
-        "core_git_repo_url:\\s*https://github\\.com/(?<depName>[^/\\s]+/[^/\\s]+?)(?:\\.git)?\\s*\\n(?:[^\\n]*\\n)*?core_git_ref:\\s*refs/tags/(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+        "$[$contains(core_git_repo_url, /^https:\\/\\/github\\.com\\/[^\\/\\s]+\\/[^\\/\\s]+$/) and $contains(core_git_ref, /^refs\\/tags\\/v\\d+\\.\\d+\\.\\d+$/)].{\"depName\": $replace(core_git_repo_url, /^https:\\/\\/github\\.com\\/|\\.git$/, \"\"), \"currentValue\": $substringAfter(core_git_ref, \"refs/tags/\")}"
       ],
       "datasourceTemplate": "github-tags",
       "depTypeTemplate": "jarvis-core"
     },
     {
-      "customType": "regex",
-      "description": "Each hosted app's pinned release in an env's values/apps.yaml: the version under the app's own key, v<version>, the apps repository's tag <app>/v<version>.",
+      "customType": "jsonata",
+      "description": "Each hosted app's pinned release in an env's values/apps.yaml: its version, v<version>, the apps repository's tag <app>/v<version>.",
+      "fileFormat": "yaml",
       "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/apps\\.yaml$/"],
-      "matchStrings": ["(?m)^(?<depName>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?):[ \\t]*\\n(?:(?:[ \\t]+|[ \\t]*#)[^\\n]*\\n)*?[ \\t]+version:[ \\t]*(?<currentValue>v\\d+\\.\\d+\\.\\d+)[ \\t]*$"],
+      "matchStrings": [
+        "($apps := $[0]; $keys($apps)[$contains($lookup($apps, $).version, /^v\\d+\\.\\d+\\.\\d+$/)].{\"depName\": $, \"currentValue\": $lookup($apps, $).version})"
+      ],
       "datasourceTemplate": "git-tags",
       "packageNameTemplate": "{{{depName}}}",
       "extractVersionTemplate": "^{{{depName}}}/(?<version>v\\d+\\.\\d+\\.\\d+)$",
       "depTypeTemplate": "jarvis-app"
     },
     {
-      "customType": "regex",
-      "description": "k3s version in an env's cluster-vars.yaml.",
+      "customType": "jsonata",
+      "description": "k3s_version in an env's cluster-vars.yaml, when the env sets one.",
+      "fileFormat": "yaml",
+      "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
+      "matchStrings": ["$[$exists(k3s_version)].{\"currentValue\": k3s_version}"],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "k3s-io/k3s",
-      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$",
-      "managerFilePatterns": ["/^envs\\/[^/]+\\/values\\/cluster-vars\\.yaml$/"],
-      "matchStrings": ["k3s_version:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+\\+k3s\\d+)"]
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$"
     },
     {
       "customType": "regex",
