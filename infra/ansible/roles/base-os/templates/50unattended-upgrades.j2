@@ -1,4 +1,4 @@
-// Managed by Ansible (base-os): unattended upgrades from the distro security origin only; no auto-removals; no automatic reboot.
+// Managed by Ansible (base-os): unattended upgrades from the distro security origin only; removes only unused kernels; no automatic reboot.
 // A reboot-required file marks a node that needs a reboot; site.yml reports it.
 Unattended-Upgrade::Allowed-Origins {
         "${distro_id}:${distro_codename}-security";
@@ -8,7 +8,7 @@ Unattended-Upgrade::Package-Blacklist {
 };
 
 Unattended-Upgrade::DevRelease "false";
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-New-Unused-Dependencies "false";
 Unattended-Upgrade::Remove-Unused-Dependencies "false";
 Unattended-Upgrade::Automatic-Reboot "false";

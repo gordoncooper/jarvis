@@ -41,6 +41,14 @@ the upgrade.
 - `app-file` refuses an app Service that is not ClusterIP or LoadBalancer, or that sets
   `externalIPs`, where `app-grants` did; the cluster's refusal now names `app-file`.
 - The app-check Action installs flux, kubeconform and kyverno at the core pins.
+- Both rest-servers (`restic`, `restic-apps`) are probed on `/healthz`, which needs no login, not
+  on their open port, so one that takes connections but stops answering leaves its Service and
+  restarts. Each restarts once when an env moves.
+- Nodes' unattended-upgrades removes the kernels apt no longer needs, and nothing else, so old
+  security kernels no longer fill `/boot`. A node gets it at its next `jarvis site`, which
+  `jarvis up` runs.
+- Core's lock file maintenance PR merges on its own once green, overnight Pacific, like its patch
+  PRs, and can open any night instead of once a week.
 
 ## v0.8.3
 

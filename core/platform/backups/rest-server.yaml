@@ -1,4 +1,4 @@
-# rest-server 0.14.0. Version and digest pin; Renovate updates both (renovate.json).
+# rest-server, pinned by version and digest; Renovate updates both (renovate.json).
 # No --append-only: the mover forgets and prunes with these credentials.
 # No --private-repos: one user, and repos are ns-<namespace>/pvc-<pvc>.
 apiVersion: apps/v1
@@ -49,10 +49,12 @@ spec:
             - name: http
               containerPort: 8000
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: http
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: http
           resources:
             requests:
