@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shlex
 import sys
@@ -21,7 +20,7 @@ from subprocess import CompletedProcess
 
 import yaml
 
-from jarvis.backups.etcd_image import ImageError, etcd_snapshot_image
+from jarvis.backups.etcd_image import etcd_snapshot_image
 from jarvis.env.runtime import (
     EnvError,
     instance_root,
@@ -34,6 +33,7 @@ from jarvis.env.runtime import (
     kubectl as run_kubectl,
 )
 from jarvis.paths import PRODUCT_ROOT
+from jarvis.schema.values import env_name_ok
 
 REPO_ROOT = PRODUCT_ROOT
 
@@ -141,9 +141,9 @@ def normalize_as_of(value: str) -> str:
     try:
         stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise Fail(f"AS_OF must be RFC3339: {value}") from exc
+        raise Fail(f"--as-of must be RFC3339: {value}") from exc
     if stamp.tzinfo is None:
-        raise Fail(f"AS_OF must include a timezone: {value}")
+        raise Fail(f"--as-of must include a timezone: {value}")
     return stamp.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -599,12 +599,12 @@ def binder_placement(kubectl: Kubectl, namespace: str, pvc: str, node: str | Non
     if not placements:
         raise Fail(
             f"{namespace}/{pvc}: unbound and no Deployment, StatefulSet or CronJob mounts it;"
-            " pass NODE=<node> (--node) to choose the node its volume lives on"
+            " pass --node <node> to choose the node its volume lives on"
         )
     if any(placement != placements[0] for placement in placements[1:]):
         raise Fail(
             f"{namespace}/{pvc}: the workloads that mount it ask for different placement;"
-            " pass NODE=<node> (--node)"
+            " pass --node <node>"
         )
     return {**placements[0], **priority}
 
@@ -1066,24 +1066,19 @@ def run(
     clock = monotonic or time.monotonic
     pause = sleep or time.sleep
     stamp = now or time.time
-    override = as_of if as_of is not None else os.environ.get("AS_OF") or None
-    if override == "":
-        override = None
+    override = as_of or None
     restored: list[tuple[str, str]] = []
     accepted: list[tuple[str, str]] = []
     retired_count = 0
     try:
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", env):
+        if not env_name_ok(env):
             raise Fail(f"invalid ENV={env}")
         if node is not None and not _NODE_NAME.fullmatch(node):
             raise Fail(f"invalid node name: {node}")
         _validate_environment(kubectl, env)
         if override is not None:
             override = normalize_as_of(override)
-        try:
-            image = etcd_snapshot_image(kubectl)
-        except ImageError as exc:
-            raise Fail(exc.message) from exc
+        image = etcd_snapshot_image()
         chosen, present, unbound = _select(kubectl, None if all_pvcs else in_namespace)
         hold = _hold_repos(kubectl)
         retired = _names(retire)
@@ -1175,8 +1170,8 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Environment under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis restore", description=__doc__)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--namespace", help="Namespace whose PVCs to restore")
     which.add_argument("--all", action="store_true", help="Restore every enrolled PVC")

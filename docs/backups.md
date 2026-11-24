@@ -10,7 +10,7 @@ Do not merge a change to the `pvc-backup` policies during a restore: Flux recrea
 jarvis restore --env <env> --namespace <namespace> [--as-of <RFC3339>]
 ```
 
-The default `--as-of` is one second before the PVC's `creationTimestamp`, right for a claim that was deleted and recreated; a volume that was not recreated needs `--as-of`. For each PVC, restore suspends its Flux Kustomization, CronJobs and writers, annotates `backup: paused` and waits until nothing mounts it, binds an unbound PVC with a short-lived pod placed like its workload (`NODE=<node>` to pin), applies a Direct ReplicationDestination, and fails on `No eligible snapshots found` or an empty mover log. On success it undoes every step, except the pause while the rebuild hold exists. On failure it leaves the quiesced state and prints one command per undo step.
+The default `--as-of` is one second before the PVC's `creationTimestamp`, right for a claim that was deleted and recreated; a volume that was not recreated needs `--as-of`. For each PVC, restore suspends its Flux Kustomization, CronJobs and writers, annotates `backup: paused` and waits until nothing mounts it, binds an unbound PVC with a short-lived pod placed like its workload (`--node <node>` to pin), applies a Direct ReplicationDestination, and fails on `No eligible snapshots found` or an empty mover log. On success it undoes every step, except the pause while the rebuild hold exists. On failure it leaves the quiesced state and prints one command per undo step.
 
 Done: `PASS restore <namespace>/<pvc> snapshot <id>`, `SUMMARY …`, exit 0.
 
@@ -69,7 +69,7 @@ Done: `jarvis site` and `jarvis restore --all` exit 0, then `jarvis verify --env
 
 ## Rotate the restic password
 
-Core repositories only: skip every `ns-app-*` directory and every PVC in an `app-` namespace, and skip the drill repository `ns-platform-drill/pvc-drill`. `jarvis secrets` never replaces an existing `backups-restic` file; `--rotate-restic` only mints a new one for a lost file and adds it to no repository. Keep the old key until the last step. Run `restic` and `find` as root on the backup node; password files are mode `0600`.
+Core repositories only: skip every `ns-app-*` directory and every PVC in an `app-` namespace, and skip the drill repository `ns-platform-drill/pvc-drill`. `jarvis secrets` never replaces an existing `backups-restic` file; `--new-restic-password` only mints a new one for a lost file and adds it to no repository. Keep the old key until the last step. Run `restic` and `find` as root on the backup node; password files are mode `0600`.
 
 1. Save both passwords, list the repositories (each directory holding `config`), and add the new key to each, recording its current key id:
 
@@ -128,7 +128,7 @@ Core repositories only: skip every `ns-app-*` directory and every PVC in an `app
 
 ## App credentials
 
-An app's backups are on unless its entry in `values/apps.yaml` sets `backups: false`. With them on, an app whose file keeps a `backup: true` volume has its own credential: `jarvis validate` requires it once the env is bootstrapped, the render registers it, and app-hosting's apps server (`restic-apps`) serves it ([app-hosting](../core/feature/app-hosting/CONTRACT.md)). Schedule and retention are the env's. With them off, nothing is sealed and `jarvis verify` does not check the app's volumes.
+An app's backups are on unless its entry in `values/apps.yaml` sets `backups: false`. With them on, an app whose file keeps a `backup: true` volume has its own credential: `jarvis validate` requires it, the render registers it, and app-hosting's apps server (`restic-apps`) serves it ([app-hosting](../core/feature/app-hosting/CONTRACT.md)). Schedule and retention are the env's. With them off, nothing is sealed and `jarvis verify` does not check the app's volumes.
 
 **Add an app.**
 
@@ -140,7 +140,7 @@ An app's backups are on unless its entry in `values/apps.yaml` sets `backups: fa
 **Retire an app.**
 
 1. Take it out of `values/apps.yaml` (or set its `backups: false`) and delete `secrets/app-<name>/` (`jarvis validate` fails a sealed file nothing reads), re-render, commit and push. Then `kubectl -n platform-backups delete secret backups-restic-app-<name>` (Flux does not prune it). Git history keeps the credential: restore the file before listing the name again, and its repositories open again.
-2. Once the data is not needed, remove `<backup_path>/restic/ns-app-<name>` as root on the backup node; until then `restic-check` and `restic-offsite` print `FAIL … no backup credential registered for its app`.
+2. Once the data is not needed, remove `<backup_path>/restic/ns-app-<name>` as root on the backup node. Until then `restic-check` prints `FAIL … no backup credential registered for it`, or, once app hosting is off, `FAIL … core's password does not open it`, and `restic-offsite` prints `FAIL … no backup credential registered for its app`.
 
 ## Off-host copy
 

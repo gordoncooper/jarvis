@@ -1,7 +1,9 @@
-# Core's rules for what Git carries, which the cluster's own controllers may still write: the
-# pvc-backup GeneratingPolicies (core/platform/backups/enrollment.yaml) make every ReplicationSource,
-# and a PVC opts out of backups only by hand. jarvis validate applies them with the Kyverno CLI
-# beside core/platform/kyverno/rules/rules.yaml; they are not installed for admission.
+# Core's rules for what Git carries. jarvis validate applies them with the Kyverno CLI beside
+# core/platform/kyverno/rules/rules.yaml; they are not installed for admission.
+#
+# backups: what the cluster's own controllers still write. The pvc-backup GeneratingPolicies
+# (core/platform/backups/enrollment.yaml) make every ReplicationSource, and a PVC opts out of
+# backups only by hand.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -20,3 +22,36 @@ spec:
         (object.kind == 'StatefulSet' ? object.spec.?volumeClaimTemplates.orValue([]).map(t, t.metadata) : [object.metadata])
         .all(m, m.?annotations['backup'].orValue('') != 'none')
       message: "a PVC in Git does not opt out of backups (backup: none)"
+---
+# kustomize-controller skips garbage collection for an object annotated prune: disabled, so a bad
+# commit or a path a core release moves cannot delete these kinds. It holds for what Flux's
+# Kustomizations apply (each carries Flux's own name label), not a chart's objects, which Helm owns.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: flux-prune
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    objectSelector:
+      matchExpressions:
+        - {key: kustomize.toolkit.fluxcd.io/name, operator: Exists}
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [namespaces, secrets, persistentvolumeclaims]}
+      - {apiGroups: [apiextensions.k8s.io], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [customresourcedefinitions]}
+      - {apiGroups: [helm.toolkit.fluxcd.io], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [helmreleases]}
+      - {apiGroups: [source.toolkit.fluxcd.io], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [helmrepositories, ocirepositories, gitrepositories]}
+      - {apiGroups: [fluxcd.controlplane.io], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [fluxinstances]}
+      - {apiGroups: [policies.kyverno.io], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [generatingpolicies, mutatingpolicies]}
+      - {apiGroups: [cert-manager.io], apiVersions: ["*"], operations: [CREATE, UPDATE], resources: [clusterissuers]}
+  matchConditions:
+    # A tenant's release keeps prune on, as its deploy/ Kustomization does: the env dropping the
+    # app from its list uninstalls it. Core's releases run as flux-platform.
+    - name: not-a-tenant-release
+      expression: object.kind != 'HelmRelease' || object.spec.?serviceAccountName.orValue('') == 'flux-platform'
+    # testapp's canary stores nothing.
+    - name: not-the-canary
+      expression: object.kind != 'Namespace' || object.metadata.name != 'platform-testapp'
+  validations:
+    - expression: object.metadata.?annotations['kustomize.toolkit.fluxcd.io/prune'].orValue('') == 'disabled'
+      message: "Flux keeps this kind: it carries kustomize.toolkit.fluxcd.io/prune: disabled, so a bad commit or a moved path cannot delete it"

@@ -3,7 +3,7 @@
   jarvis [--env <env>] [--core <path>] <command> [<args>]
   jarvis --version
 
-Run it from inside an instance repo (the folder that holds envs/). --env is needed only when
+Run it from inside an instance repo (the git repository that holds envs/). --env is needed only when
 the repo holds more than one env; it may come before or after the command. A command runs at
 the core release its env pins (core_git_ref): this checkout when it is that tag, otherwise a
 checkout of the tag cached under ~/.cache/jarvis/core/, set up from that release's own lockfiles.
@@ -15,7 +15,7 @@ Commands:
   doctor                 Check this controller: CLIs, the age key, the remote, host names
   validate               Every env check: schema, wiring, committed files, secret scan
   render [--check]       Write the env's flux/ from its values; --check lists stale files
-  secrets                Mint the env's missing secrets (--rotate-restic: a new restic password)
+  secrets                Mint the env's missing secrets (--rotate age|deploy-key: a new key)
   encrypt --name <n>     Encrypt a Secret manifest (a file or stdin) into the env's secrets/
   age-key-check --key-file <file>
                          Prove an age key copy decrypts one of the env's secrets
@@ -28,8 +28,9 @@ Commands:
   restore (--namespace <ns> | --all) [--as-of <time>]
                          Restore backed-up volumes
 
-Each command's own options: jarvis <command> --help, from inside the instance repo (they are
-those of the release the env pins). jarvis passes --env itself when the repo holds one env.
+Each command's own options: jarvis <command> --help or jarvis help <command>, from inside the
+instance repo (they are those of the release the env pins). jarvis passes --env itself when the
+repo holds one env.
 
 Exit codes: 0 ok, 1 a check failed, 2 usage error, 3 refused for safety (nothing changed),
 4 the environment is wrong (a missing tool, key or access).
@@ -39,7 +40,6 @@ from __future__ import annotations
 
 import importlib
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -86,11 +86,11 @@ def split_globals(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
 
 
 def find_instance(start: Path) -> Path:
-    """The nearest folder at or above start that holds envs/."""
-    for folder in (start, *start.parents):
-        if (folder / "envs").is_dir():
-            return folder
-    raise UsageError("run jarvis from inside an instance repo (a folder that holds envs/)")
+    """The git repository start is in, which holds envs/ when it is an instance repo."""
+    proc = subprocess.run(["git", "-C", str(start), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+    if proc.returncode or not (Path(proc.stdout.strip()) / "envs").is_dir():
+        raise UsageError("run jarvis from inside an instance repo (a git repository that holds envs/)")
+    return Path(proc.stdout.strip())
 
 
 def choose_env(instance: Path, name: str | None) -> str:
@@ -107,12 +107,9 @@ def choose_env(instance: Path, name: str | None) -> str:
 
 
 def activate_toolchain(core: Path) -> None:
-    """Put the core checkout's pinned CLIs (mise) and its venv first on PATH."""
-    paths: list[str] = []
-    if shutil.which("mise"):
-        proc = subprocess.run(["mise", "bin-paths"], cwd=core, capture_output=True, text=True, check=False)
-        if proc.returncode == 0:
-            paths = [line for line in proc.stdout.splitlines() if line.strip()]
+    """Put the core checkout's pinned CLIs (mise) and its venv first on PATH. Without mise, the
+    machine's own CLIs run, and jarvis doctor says so."""
+    paths = _core.pinned_tool_paths(core) or []
     paths.append(str(Path(sys.executable).parent))
     os.environ["PATH"] = os.pathsep.join([*paths, os.environ.get("PATH", "")])
 
@@ -148,7 +145,7 @@ def _node(instance: Path, env: str, args: list[str]) -> int:
         raise UsageError("usage: jarvis node prep <host> [--login-user <user>]")
     from jarvis.node import prep
 
-    return prep.main(["--env", env, "--host", args[1], *args[2:]])
+    return prep.main(["--env", env, *args[1:]])
 
 
 def _doctor(instance: Path, env: str) -> int:
@@ -159,11 +156,8 @@ def _doctor(instance: Path, env: str) -> int:
 
 def _validate(instance: Path, env: str) -> int:
     from jarvis.env import validate
-    from jarvis.schema.env import ENVS_VAR
 
-    # The env's own checks only: each env is checked by the core release it pins.
-    os.environ[ENVS_VAR] = env
-    return validate.run(instance)
+    return validate.run_env(instance, env)
 
 
 def _up(instance: Path, env: str) -> int:
@@ -212,7 +206,7 @@ def _version() -> int:
     """The release this CLI came from, and inside an instance repo the release each env pins:
     every command runs the env's, so a difference is fine, but it is worth seeing."""
     own = _core.own_release()
-    print(f"jarvis {own[1]} ({own[0]})" if own else "jarvis: release unknown (neither a core checkout at a tag nor installed from git+<url>@<tag>)")
+    print(f"jarvis {own[1]} ({own[0]})" if own else "jarvis: release unknown (not installed from git+<url>@<tag>)")
     try:
         instance = find_instance(Path.cwd())
     except UsageError:
@@ -297,6 +291,8 @@ def _main(argv: list[str]) -> int:
     env_name, core, rest = split_globals(argv)
     if rest[:1] == ["--version"]:
         return _version()
+    if rest[:1] == ["help"] and rest[1:]:
+        rest = [*rest[1:], "--help"]
     if not rest or rest[0] in ("-h", "--help", "help"):
         print(__doc__)
         return 0 if rest else USAGE

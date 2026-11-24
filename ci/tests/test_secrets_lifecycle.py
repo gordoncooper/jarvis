@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import sample
 
+from jarvis.env.runtime import kubeconfig_for
 from jarvis.env.validate import CHECKS
 from jarvis.secrets import age, mint, recipients
 
@@ -83,7 +84,8 @@ def test_rotating_the_working_key_retires_the_old_one_from_every_file(instance: 
     recovery_public = age.recipients(instance / ".sops.yaml", ENV)[1]
     old_public = age.public_key(key_file)
     assert mint.main(["--env", ENV, "--rotate", "age"]) == 0
-    assert "kubectl -n flux-system delete secret sops-age" in capsys.readouterr().out
+    # The printed step names this env's cluster, never the controller's default kubeconfig.
+    assert f"kubectl --kubeconfig {kubeconfig_for(ENV)} -n flux-system delete secret sops-age" in capsys.readouterr().out
     held = age.public_keys(key_file)
     assert len(held) == 2 and held[1] == old_public
     rule = age.recipients(instance / ".sops.yaml", ENV)

@@ -17,11 +17,16 @@ from support import REPO_ROOT
 _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"]
 
 
+def _repo(root: Path) -> Path:
+    subprocess.run([*_GIT, "init", "-q", str(root)], check=True)
+    return root
+
+
 def _instance(tmp_path: Path, *envs: str) -> Path:
     root = tmp_path / "instance"
     for env in envs:
         (root / "envs" / env / "values").mkdir(parents=True)
-    return root
+    return _repo(root)
 
 
 @pytest.mark.parametrize(
@@ -43,12 +48,17 @@ def test_a_missing_or_repeated_global_is_a_usage_error(argv) -> None:
         cli.split_globals(argv)
 
 
-def test_the_instance_is_the_nearest_folder_holding_envs(tmp_path: Path) -> None:
+def test_the_instance_is_the_git_repository_holding_envs(tmp_path: Path) -> None:
+    """Rule: the instance is the git repository the command runs in, not any folder above it that
+    holds envs/."""
     root = _instance(tmp_path, "home")
     deep = root / "envs" / "home" / "values"
     assert cli.find_instance(deep) == root
-    with pytest.raises(cli.UsageError, match="inside an instance repo"):
-        cli.find_instance(tmp_path)
+    other = _repo(tmp_path / "project")
+    (other / "tools" / "envs").mkdir(parents=True)
+    for start in (tmp_path, other / "tools"):
+        with pytest.raises(cli.UsageError, match="inside an instance repo"):
+            cli.find_instance(start)
 
 
 def test_the_env_is_implicit_only_when_there_is_one(tmp_path: Path) -> None:
@@ -68,7 +78,8 @@ def _jarvis(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_usage_errors_exit_2_and_help_needs_no_instance(tmp_path: Path) -> None:
-    """Rule: exit 2 for a usage error; jarvis --help and jarvis <command> --help work anywhere."""
+    """Rule: exit 2 for a usage error; jarvis --help, and a command's help as jarvis <command> --help
+    or jarvis help <command>, work anywhere."""
     assert _jarvis(cwd=tmp_path).returncode == 2
     assert _jarvis("bogus", cwd=tmp_path).returncode == 2
     outside = _jarvis("verify", cwd=tmp_path)
@@ -76,8 +87,9 @@ def test_usage_errors_exit_2_and_help_needs_no_instance(tmp_path: Path) -> None:
     top = _jarvis("--help", cwd=tmp_path)
     assert top.returncode == 0 and "Exit codes" in top.stdout
     for command, words in (("restore", "--as-of"), ("site", "--tags"), ("up", "doctor, validate")):
-        done = _jarvis(command, "--help", cwd=tmp_path)
-        assert done.returncode == 0 and words in done.stdout, (command, done.stdout + done.stderr)
+        for form in ((command, "--help"), ("help", command)):
+            done = _jarvis(*form, cwd=tmp_path)
+            assert done.returncode == 0 and words in done.stdout, (form, done.stdout + done.stderr)
 
 
 def test_every_command_names_a_module_that_has_its_entry(tmp_path: Path) -> None:
@@ -94,12 +106,12 @@ def test_core_runs_this_checkout_unpinned_and_says_so(tmp_path: Path, monkeypatc
     from jarvis.cli import core as cli_core
     from support import copy_sample
 
-    instance = copy_sample(tmp_path / "instance")
+    instance = _repo(copy_sample(tmp_path / "instance"))
     monkeypatch.chdir(instance / "envs")
     # The CLI sets these in place; register them so they are restored after the test.
     for name in ("PATH", "INSTANCE", cli_core.UNPINNED_VAR):
         monkeypatch.setenv(name, os.environ.get(name, ""))
-    monkeypatch.setenv("APPS_REPO", str(REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"))
+    monkeypatch.setenv("APPS_REPO", os.environ["APPS_REPO"])
     assert cli.main(["--core", str(REPO_ROOT), "render", "--check"]) == 0
     assert "WARN jarvis: unpinned run with --core: env-00 pins core v0.2.0" in capsys.readouterr().err
     assert os.environ["INSTANCE"] == str(instance)
@@ -108,9 +120,9 @@ def test_core_runs_this_checkout_unpinned_and_says_so(tmp_path: Path, monkeypatc
 def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_path: Path, monkeypatch, capsys) -> None:
     """Rule: every command whose run reads app files gets the apps checkout, with no APPS_REPO set:
     jarvis site validates an env that lists apps, at their pinned tags, then runs the playbook."""
-    import shutil
     import types
 
+    import sample
     import yaml
 
     from jarvis.apps import checkout
@@ -119,10 +131,7 @@ def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_pat
     from support import copy_sample
 
     values = copy_sample(instance := tmp_path / "instance") / "envs" / "env-00" / "values"
-    remote = shutil.copytree(REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps", tmp_path / "remote")
-    pins = [f"{app}/{entry['version']}" for app, entry in yaml.safe_load((values / "apps.yaml").read_text()).items()]
-    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "apps"], *(["tag", pin] for pin in pins)):
-        subprocess.run([*_GIT, *args], cwd=remote, check=True, capture_output=True)
+    remote = sample.apps_repo(tmp_path / "remote")
     # The env's https URL, served from the local repository.
     count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
     monkeypatch.setenv(f"GIT_CONFIG_KEY_{count}", f"url.file://{remote}.insteadOf")
@@ -134,7 +143,7 @@ def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_pat
     monkeypatch.setattr(checkout, "_fetch_for", None)
     monkeypatch.setattr(site, "shutil", types.SimpleNamespace(which=lambda name: name))
     monkeypatch.setattr(site, "playbook_command", lambda *a, **k: ["true"])
-    monkeypatch.chdir(instance)
+    monkeypatch.chdir(_repo(instance))
     assert cli.main(["--core", str(REPO_ROOT), "site"]) == 0, capsys.readouterr()
 
 
@@ -184,7 +193,7 @@ def _pushed_instance(tmp_path: Path) -> Path:
     subprocess.run([*_GIT, "clone", "-q", str(origin), str(clone)], check=True, capture_output=True)
     values = clone / "envs" / "home" / "values"
     values.mkdir(parents=True)
-    (values / "cluster-vars.yaml").write_text("flux_git_ref: refs/heads/main\n", encoding="utf-8")
+    (values / "cluster-vars.yaml").write_text(f"flux_git_repo_url: {origin}\nflux_git_ref: refs/heads/main\n", encoding="utf-8")
     subprocess.run([*_GIT, "add", "-A"], cwd=clone, check=True)
     subprocess.run([*_GIT, "commit", "-q", "-m", "home"], cwd=clone, check=True)
     subprocess.run([*_GIT, "push", "-q", "origin", "HEAD:main"], cwd=clone, check=True, capture_output=True)
@@ -205,19 +214,21 @@ def test_up_refuses_until_flux_reads_what_the_checkout_holds(tmp_path: Path) -> 
 
 
 def test_up_stops_at_the_first_failing_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    """Rule: each step must pass before the next; the first failure's exit code is up's."""
+    """Rule: each step must pass before the next; the first failure's exit code is up's. Validate
+    checks up's env only, as jarvis validate does, so each env is checked by the core it pins."""
     ran: list[str] = []
 
     def step(name: str, code: int = 0):
         return lambda *args, **kwargs: ran.append(name) or code
 
+    monkeypatch.setenv("ENVS", "")  # restored after the test, as up sets it in place
     monkeypatch.setattr(up.doctor, "run", step("doctor"))
-    monkeypatch.setattr(up.validate, "run", step("validate"))
+    monkeypatch.setattr(up.validate, "run", lambda instance: ran.append(f"validate {os.environ['ENVS']}") or 0)
     monkeypatch.setattr(up.mint, "main", step("secrets"))
     monkeypatch.setattr(up, "_refuse_unpushed", step("pushed", 3))
     monkeypatch.setattr(up.site, "main", step("site"))
     assert up.run(tmp_path, "home") == 3
-    assert ran == ["doctor", "validate", "secrets", "pushed"]
+    assert ran == ["doctor", "validate home", "secrets", "pushed"]
     assert "stopped at pushed" in capsys.readouterr().out
 
 
@@ -353,7 +364,7 @@ def test_doctor_finds_a_worktrees_hooks_where_git_runs_them(tmp_path: Path) -> N
 
 def test_version_names_this_release_and_each_envs_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(cli._core, "own_release", lambda: ("https://github.com/example/jarvis", "v9.9.9"))
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(_repo(tmp_path))
     assert cli.main(["--version"]) == 0
     assert capsys.readouterr().out == "jarvis v9.9.9 (https://github.com/example/jarvis)\n"
     for env, ref in (("home", "refs/tags/v9.9.8"), ("lab", "refs/heads/main")):
@@ -373,7 +384,7 @@ def test_help_in_an_instance_is_the_pinned_releases(tmp_path: Path, monkeypatch:
         (values / "cluster-vars.yaml").write_text(
             "core_git_repo_url: https://github.com/example/jarvis\ncore_git_ref: refs/tags/v9.9.9\n", encoding="utf-8"
         )
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(_repo(tmp_path))
     monkeypatch.delenv(cli._core.DELEGATED_VAR, raising=False)
     monkeypatch.delenv(cli._core.UNPINNED_VAR, raising=False)
     monkeypatch.setattr(cli._core, "checkout", lambda env_dir: tmp_path / "cached")

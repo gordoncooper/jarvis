@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import sample
 import test_app_admission as admission
 import yaml
 
@@ -31,7 +32,7 @@ def _env(tmp_path: Path, *, lan_line: bool = True) -> tuple[Path, Path, dict]:
     """An instance holding env-00, with or without lan-demo's grant, its wiring re-rendered."""
     instance = tmp_path / "instance"
     env_dir = copy_sample(instance) / "envs" / "env-00"
-    values = {app: {"version": "v0.1.0"} for app in APPS}
+    values = {app: {"version": sample.example_pins()[app]} for app in APPS}
     if lan_line:
         values["lan-demo"]["grants"] = ["lan-port 8080/TCP"]
     (env_dir / _apps.APPS_VALUES).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
@@ -70,7 +71,7 @@ def test_committed_env_00_render_wires_the_examples_and_passes_env_schema() -> N
     assert list(subs) == APPS
     assert subs["lan-demo"]["app_grant_lan_ports"] == "8080/TCP"
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    assert env_schema._apps_problems(env_dir, sample_root(), cluster_vars, True) == []
+    assert env_schema._apps_problems(env_dir, sample_root(), cluster_vars) == []
 
 
 def test_examples_pass_admission_with_the_env_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2,7 +2,7 @@
 
 Also writes envs/<env>/ca.crt, the public CA certificate, and never the key.
 A new CA permits only that env's dns_suffix. A backups-restic file git already
-records is not recreated unless --rotate-restic is set. k3s tokens are minted
+records is not recreated unless --new-restic-password is set. k3s tokens are minted
 only for a new env; an env with other secrets gets its cluster's token sealed.
 
 It also mints each hosted app's own backup credential where the app needs one (backups on in
@@ -14,6 +14,7 @@ is never minted again.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import re
 import secrets
@@ -22,14 +23,19 @@ import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import bcrypt
 import yaml
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from jarvis.apps import backups as _app_backups
 from jarvis.apps import values as _apps
-from jarvis.env.runtime import instance_root
+from jarvis.env.runtime import instance_root, kubeconfig_for
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.secrets import age as _age
 from jarvis.secrets import sops as _sops
@@ -41,15 +47,6 @@ CA_DAYS = 3650
 CA_SECRET_FILENAME = "cert-manager-ca.sops.yaml"
 # Not a cluster Secret. The k3s role reads it on the controller.
 K3S_TOKEN_FILENAME = "k3s-token.sops.yaml"
-# No x509_extensions. Host openssl.cnf's v3_ca sets basicConstraints without
-# keyUsage. This file makes the -addext flags the only extensions.
-_CA_REQ_CONFIG = """\
-[req]
-distinguished_name = dn
-prompt = no
-[dn]
-CN = unused
-"""
 _CERT_MARK = "-----BEGIN CERTIFICATE-----"
 _KEY_MARK = "PRIVATE KEY"
 
@@ -88,109 +85,58 @@ def _random_token(nbytes: int = 32) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
-def _run_openssl(args: list[str], *, input_bytes: bytes | None = None) -> bytes:
-    result = subprocess.run(
-        ["openssl", *args],
-        input=input_bytes,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
-        raise subprocess.CalledProcessError(result.returncode, ["openssl", *args])
-    return result.stdout
-
-
-def _cluster_text(env: str) -> str:
+def _cluster_vars(env: str) -> dict:
     path = _repo_root() / "envs" / env / "values" / "cluster-vars.yaml"
     try:
-        return path.read_text(encoding="utf-8")
-    except OSError as exc:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
         raise SystemExit("cluster-vars.yaml is required") from exc
-
-
-def _yaml_scalar(text: str, key: str) -> str | None:
-    match = re.search(rf"^{re.escape(key)}:\s*(\S+)\s*$", text, re.M)
-    return match.group(1) if match else None
+    return data if isinstance(data, dict) else {}
 
 
 def _dns_suffix(env: str) -> str:
-    suffix = _yaml_scalar(_cluster_text(env), "dns_suffix") or ""
+    suffix = str(_cluster_vars(env).get("dns_suffix") or "")
     if not _DNS_SUFFIX.fullmatch(suffix):
         raise SystemExit("refusing to mint a CA without a DNS suffix")
     return suffix
 
 
-def _expand_path(raw: str) -> str:
-    if raw == "~" or raw.startswith("~/"):
-        return str(Path.home() / raw.removeprefix("~/"))
-    return raw
-
-
 def _sops_child_env(env: str) -> dict[str, str]:
-    """Prefer SOPS_AGE_KEY_FILE. Otherwise use the env's age_key_file."""
-    child = os.environ.copy()
-    if child.get("SOPS_AGE_KEY_FILE"):
-        return child
-    configured = _yaml_scalar(_cluster_text(env), "age_key_file") or _age.DEFAULT_KEY_FILE
-    child["SOPS_AGE_KEY_FILE"] = _expand_path(configured)
-    return child
+    """sops opens the env's files with its working key (age.key_path)."""
+    return {**os.environ, "SOPS_AGE_KEY_FILE": str(_key_file(env))}
 
 
 def _generate_ca_material(dns_suffix: str) -> tuple[str, str]:
-    """Return (certificate PEM, key PEM). The key stays in memory."""
+    """Return (certificate PEM, key PEM). The key stays in memory. The CA signs only names under
+    dns_suffix: no IP address, mail address or URI outside it."""
     if not _DNS_SUFFIX.fullmatch(dns_suffix):
         raise SystemExit("refusing to mint a CA without a DNS suffix")
-    key_pem = _run_openssl(
-        [
-            "genpkey",
-            "-algorithm",
-            "RSA",
-            "-pkeyopt",
-            "rsa_keygen_bits:2048",
-        ]
-    ).decode("utf-8")
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        prefix="jarvis-ca-",
-        suffix=".cnf",
-    ) as cfg:
-        cfg.write(_CA_REQ_CONFIG)
-        cfg.flush()
-        cert_pem = _run_openssl(
-            [
-                "req",
-                "-x509",
-                "-new",
-                "-nodes",
-                "-key",
-                "/dev/stdin",
-                "-sha256",
-                "-days",
-                str(CA_DAYS),
-                "-subj",
-                "/CN=jarvis-internal-ca/O=jarvis",
-                "-config",
-                cfg.name,
-                "-addext",
-                "basicConstraints=critical,CA:TRUE,pathlen:0",
-                "-addext",
-                "keyUsage=critical,keyCertSign,cRLSign",
-                "-addext",
-                "subjectKeyIdentifier=hash",
-                "-addext",
-                "nameConstraints=critical,"
-                f"permitted;DNS:{dns_suffix},"
-                "excluded;IP:0.0.0.0/0.0.0.0,"
-                "excluded;IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0,"
-                "permitted;email:none@nameconstraint.invalid,"
-                f"permitted;URI:{dns_suffix},"
-                f"permitted;URI:.{dns_suffix}",
-            ],
-            input_bytes=key_pem.encode("utf-8"),
-        ).decode("utf-8")
-    return cert_pem, key_pem
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "jarvis-internal-ca"), x509.NameAttribute(NameOID.ORGANIZATION_NAME, "jarvis")])
+    usage = dict.fromkeys(("digital_signature", "content_commitment", "key_encipherment", "data_encipherment", "key_agreement", "encipher_only", "decipher_only"), False)
+    constraints = x509.NameConstraints(
+        permitted_subtrees=[
+            x509.DNSName(dns_suffix),
+            x509.RFC822Name("none@nameconstraint.invalid"),
+            x509.UniformResourceIdentifier(dns_suffix),
+            x509.UniformResourceIdentifier(f".{dns_suffix}"),
+        ],
+        excluded_subtrees=[x509.IPAddress(ipaddress.ip_network("0.0.0.0/0")), x509.IPAddress(ipaddress.ip_network("::/0"))],
+    )
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder(issuer_name=name, subject_name=name, public_key=key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=CA_DAYS))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.KeyUsage(key_cert_sign=True, crl_sign=True, **usage), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(constraints, critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    key_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    return cert.public_bytes(serialization.Encoding.PEM).decode("ascii"), key_pem.decode("ascii")
 
 
 def _ca_root_path(env: str) -> Path:
@@ -447,16 +393,16 @@ def _git_records(rel: str) -> bool:
     return bool(history.stdout.strip())
 
 
-def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
+def _refuse_unsafe_regeneration(env: str, *, new_restic_password: bool) -> None:
     """Stop before a new restic password or a CA that would not match ca.crt."""
     repo = _repo_root()
     restic_rel = f"envs/{env}/secrets/backups-restic.sops.yaml"
     restic = _sops.secret_path(repo, env, "backups-restic")
-    if not restic.exists() and _git_records(restic_rel) and not rotate_restic:
+    if not restic.exists() and _git_records(restic_rel) and not new_restic_password:
         raise SystemExit(
             "refusing to recreate backups-restic because git already records it; "
             "rotation is in docs/backups.md; "
-            "pass --rotate-restic to mint a new password"
+            "pass --new-restic-password to mint a new one, which opens no existing repository"
         )
     ca_secret = _secrets_dir(env) / CA_SECRET_FILENAME
     ca_root = _ca_root_path(env)
@@ -476,9 +422,9 @@ def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
         )
 
 
-def bootstrap(env: str, *, sops_bin: str | None = None, rotate_restic: bool = False) -> list[str]:
+def bootstrap(env: str, *, sops_bin: str | None = None, new_restic_password: bool = False) -> list[str]:
     created: list[str] = []
-    _refuse_unsafe_regeneration(env, rotate_restic=rotate_restic)
+    _refuse_unsafe_regeneration(env, new_restic_password=new_restic_password)
     apps = _apps_needing_credentials(env)
     sops = sops_bin or _sops.require_sops()
     secrets = _secrets_dir(env)
@@ -574,7 +520,10 @@ def _apps_needing_credentials(env: str) -> list[str]:
 
 
 def _key_file(env: str) -> Path:
-    return _age.key_path(_yaml_scalar(_cluster_text(env), "age_key_file"))
+    try:
+        return _age.key_path(_cluster_vars(env).get("age_key_file"))
+    except _age.AgeError as exc:
+        raise SystemExit(f"secrets: {exc}") from exc
 
 
 def _lifecycle(args: argparse.Namespace) -> int:
@@ -616,7 +565,7 @@ def _lifecycle(args: argparse.Namespace) -> int:
     if args.rotate == "age":
         print(
             "Next: commit and push, then put the new key in the cluster: "
-            "kubectl -n flux-system delete secret sops-age && jarvis site --tags flux-operator "
+            f"kubectl --kubeconfig {kubeconfig_for(env)} -n flux-system delete secret sops-age && jarvis site --tags flux-operator "
             f"(it recreates sops-age from {_key_file(env)}). Once Flux is Ready, delete every other "
             "key's lines from that file, so it holds the new working key only."
         )
@@ -664,21 +613,21 @@ def _rotate_deploy_key(env: str) -> int:
     print(f"PASS sealed a new envs/{env}/secrets/flux-deploy-key.sops.yaml")
     print(
         "Next: add this read-only deploy key to the repository on the forge, commit and push, then "
-        "kubectl -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator; "
+        f"kubectl --kubeconfig {kubeconfig_for(env)} -n flux-system delete secret flux-deploy-key && jarvis site --tags flux-operator; "
         f"once Flux reads the repo again, remove the old deploy key from the forge.\n  {public}"
     )
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Env under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis secrets", description=__doc__)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument(
-        "--rotate-restic",
+        "--new-restic-password",
         action="store_true",
         help=(
-            "Recreate a missing backups-restic file even when git already records it. "
-            "Mints a new password. This is not the restic rotation."
+            "Recreate a missing backups-restic file even when git already records it, with a new password "
+            "that opens no existing repository. The rotation is in docs/backups.md."
         ),
     )
     which = parser.add_mutually_exclusive_group()
@@ -699,10 +648,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.update_recipients or args.add_recovery_key or args.rotate:
-        if args.rotate_restic:
+        if args.new_restic_password:
             parser.error("--update-recipients, --add-recovery-key and --rotate are runs of their own")
         return _lifecycle(args)
-    created = bootstrap(args.env, rotate_restic=args.rotate_restic)
+    created = bootstrap(args.env, new_restic_password=args.new_restic_password)
     if created:
         for rel in created:
             print(f"created {rel}")

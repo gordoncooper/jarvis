@@ -25,52 +25,35 @@ from support import REPO_ROOT, RUN_MODULE, SEALED_PLACEHOLDER, _valid_cluster_va
 def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
     _write_env(tmp_path)
     (tmp_path / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
-    validate_env_tree(tmp_path, pre_host=True)
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "envs/env-test/secrets/" in "\n".join(excinfo.value.messages)
 
 
-def test_pre_host_rejects_two_sops_rules_for_one_env(tmp_path: Path):
-    """A duplicate creation rule fails before a host is touched."""
-    _write_env(tmp_path)
-    path = tmp_path / ".sops.yaml"
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict)
-    loaded["creation_rules"].append(dict(loaded["creation_rules"][0]))
-    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path, pre_host=True)
-    assert "found 2" in "\n".join(excinfo.value.messages)
-
-
-def test_pre_host_rejects_invalid_sops_yaml(tmp_path: Path):
-    """Invalid .sops.yaml is reported in pre-host, not swallowed."""
+def test_invalid_sops_yaml_is_reported(tmp_path: Path):
+    """Invalid .sops.yaml is reported, not swallowed."""
     _write_env(tmp_path)
     (tmp_path / ".sops.yaml").write_text("{\n", encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path, pre_host=True)
+        validate_env_tree(tmp_path)
     assert "invalid YAML" in "\n".join(excinfo.value.messages)
 
 
 def test_sops_creation_rule_for_missing_env_fails(tmp_path: Path):
-    """A .sops.yaml rule must name an env folder that exists."""
+    """Each .sops.yaml rule must be the one jarvis writes for an env folder that exists: one for a
+    missing folder fails, and so does an env's rule edited by hand, which SOPS would also apply."""
+    from jarvis.secrets import age
+    from support import FIXTURE_RECIPIENT
+
     _write_env(tmp_path)
     path = tmp_path / ".sops.yaml"
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict)
-    loaded["creation_rules"].append(
-        {
-            "path_regex": "envs/env-ghost/secrets/.*\\.sops\\.yaml$",
-            "age": "age1fixture",
-        }
-    )
-    path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    edited = {**age.creation_rule("env-test", [FIXTURE_RECIPIENT]), "path_regex": "^envs/(env-test|env-x)/secrets/"}
+    age.write_creation_rules(path, [*age.creation_rules(path), age.creation_rule("env-ghost", [FIXTURE_RECIPIENT]), edited])
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     msg = "\n".join(excinfo.value.messages)
     assert "env-ghost" in msg
-    assert "does not exist" in msg
+    assert "env-test|env-x" in msg
 
 
 def test_ssh_user_defaults_to_ubuntu_when_omitted(tmp_path: Path):
@@ -187,11 +170,8 @@ def test_ssh_root_requires_the_sealed_deploy_key(tmp_path: Path) -> None:
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert "missing required file envs/env-test/secrets/flux-deploy-key.sops.yaml" in str(excinfo.value)
-    (env / "secrets").mkdir()
     (env / "secrets" / "flux-deploy-key.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "flux-deploy-key" not in str(excinfo.value)
+    validate_env_tree(tmp_path)
 
 
 _OPTIONAL_CLUSTER_KEYS = (
@@ -284,31 +264,17 @@ def test_singleton_role_must_be_exactly_one(tmp_path: Path, hosts_body: str, rol
     assert f"exactly one {role} host" in "\n".join(excinfo.value.messages)
 
 
-def test_env_needs_only_cluster_vars_and_inventory(tmp_path: Path) -> None:
-    """An env with no hermes.yaml or apps.yaml validates."""
+def test_env_requires_the_secrets_init_seals(tmp_path: Path) -> None:
+    """Every env holds the secrets jarvis init seals: the k3s token, the CA and the restic login."""
     env = _write_env(tmp_path)
-    assert sorted(p.name for p in (env / "values").iterdir()) == ["cluster-vars.yaml"]
     validate_env_tree(tmp_path)
-
-
-def test_bootstrapped_env_requires_the_sealed_k3s_tokens(tmp_path: Path) -> None:
-    """Once an env has sealed files, k3s-token.sops.yaml is required. Before that it is not."""
-    env = _write_env(tmp_path)
-    secrets = env / "secrets"
-    secrets.mkdir(exist_ok=True)
-    validate_env_tree(tmp_path)
-    _copy_flux_entry(env)
-    (secrets / "cert-manager-ca.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "missing required file envs/env-test/secrets/k3s-token.sops.yaml" in excinfo.value.messages[0]
-    for name in ("k3s-token",):
-        (secrets / f"{name}.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "missing required file envs/env-test/secrets/backups-restic.sops.yaml" in excinfo.value.messages[0]
-    (secrets / "backups-restic.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
-    validate_env_tree(tmp_path)
+    for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
+        sealed = env / "secrets" / f"{name}.sops.yaml"
+        sealed.unlink()
+        with pytest.raises(ValidationError) as excinfo:
+            validate_env_tree(tmp_path)
+        assert excinfo.value.messages == [f"env-test: missing required file envs/env-test/secrets/{name}.sops.yaml"]
+        sealed.write_text(SEALED_PLACEHOLDER, encoding="utf-8")
 
 
 def _copy_flux_entry(env: Path) -> None:
@@ -345,14 +311,10 @@ def _render_core_only(env: Path, *features: str) -> None:
     [(name, file) for name, adds in FEATURE_COMPONENTS.items() for file in adds.get("sealed", ())],
 )
 def test_env_that_lists_a_feature_requires_its_sealed_secret(tmp_path: Path, feature: str, sealed: str) -> None:
-    """Once bootstrapped, an env listing a feature requires each file the feature seals."""
+    """An env listing a feature requires each file the feature seals."""
     env = _write_env(tmp_path)
     _copy_flux_entry(env)
     _render_core_only(env, feature)
-    validate_env_tree(tmp_path)
-    (env / "secrets").mkdir(exist_ok=True)
-    for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
-        (env / "secrets" / f"{name}.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
     with pytest.raises(ValidationError) as excinfo:
         validate_env_tree(tmp_path)
     assert f"missing required file envs/env-test/secrets/{sealed}" in "\n".join(excinfo.value.messages)
@@ -374,9 +336,11 @@ def test_cli_requires_env() -> None:
 
 def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
     """An existing env with a .sops.yaml creation-rule error fails validate_one_env."""
+    from jarvis.secrets import age
+
     copy_sample(tmp_path)
-    rule = "  - path_regex: envs/env-00/secrets/.*\\.sops\\.yaml$\n    age: age1fixture\n"
-    (tmp_path / ".sops.yaml").write_text("creation_rules:\n" + rule + rule)
+    rules = age.creation_rules(tmp_path / ".sops.yaml")
+    age.write_creation_rules(tmp_path / ".sops.yaml", [*rules, *rules])
     with pytest.raises(ValidationError) as excinfo:
         env_schema.validate_one_env(tmp_path, "env-00")
     assert "expected exactly one creation rule" in str(excinfo.value)

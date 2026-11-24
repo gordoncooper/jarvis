@@ -8,7 +8,7 @@ fetch() keeps one checkout per apps repository in the user's cache: the default 
 tag. Under the jarvis CLI (fetch_on_first_read), the first read of an app file fetches it and
 points APPS_REPO at it, so whichever command reads app files gets them.
 
-  python -m jarvis.apps.checkout require   fails unless core-only, or APPS_REPO is a real checkout
+  python -m jarvis.apps.checkout require   fails unless core-only, or APPS_REPO holds each pinned tag
 """
 
 from __future__ import annotations
@@ -36,17 +36,10 @@ class AppsCheckoutError(Exception):
 
 
 _APPS_REPO_ENV = "APPS_REPO"
-STALE_HINT = "; the checks read each app at its pinned tag, so check the apps checkout has its tags"
 
 
 class AppsRepoError(Exception):
     """The apps repository checkout is missing or unreadable."""
-
-
-def _looks_like_apps_repo(path: Path) -> bool:
-    if not path.is_dir():
-        return False
-    return any((path / child / "app.yaml").is_file() for child in path.iterdir() if child.is_dir())
 
 
 # The instance whose apps repository the first app read fetches; set by the jarvis CLI.
@@ -85,16 +78,10 @@ def _archive(checkout: Path, tag: str, app: str) -> subprocess.CompletedProcess[
                           capture_output=True, check=False)
 
 
-def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
-    """The app folders the env runs, each at its pinned tag, when the checkout is a git
-    repository and the env pins its apps (values/apps.yaml versions); otherwise the checkout as
-    it is (a fixture tree). A pinned tag the checkout lacks fails: the checks must read the
-    release the cluster runs, not the tip."""
-    if env_dir is None or not (checkout / ".git").exists():
-        return checkout
-    data, errors = _apps.load_values(env_dir)
-    if errors or not data:
-        return checkout
+def _pinned_view(checkout: Path, env_dir: Path) -> Path:
+    """The app folders the env runs (values/apps.yaml), each at its pinned tag. A pinned tag the
+    checkout lacks fails: the checks must read the release the cluster runs, not the tip."""
+    data, _errors = _apps.load_values(env_dir)
     pins = tuple(sorted((app, str(data[app].get("version"))) for app in _apps.app_names(data)))
     key = (checkout, pins)
     if key in _PINNED_VIEWS:
@@ -110,28 +97,24 @@ def _pinned_view(checkout: Path, env_dir: Path | None) -> Path:
             subprocess.run(["git", "-C", str(checkout), "fetch", "--quiet", "--tags"], capture_output=True, check=False)
             archive = _archive(checkout, tag, app)
         if archive.returncode:
-            raise AppsRepoError(f"{checkout}: no tag {app}/{version} with an {app}/ folder, "
-                                "even after fetching the apps repository's tags")
+            raise AppsRepoError(f"{checkout}: no tag {app}/{version} with an {app}/ folder, even after fetching "
+                                f"the apps repository's tags ({archive.stderr.decode(errors='replace').strip()})")
         with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
             tar.extractall(view, filter="data")
     _PINNED_VIEWS[key] = view
     return view
 
 
-def apps_repo_root(repo_root: Path, env_dir: Path | None = None) -> Path:
-    """Directory of app folders (<name>/app.yaml), each app as the env pins it: APPS_REPO, the
-    checkout the jarvis CLI fetches (fetch) or a test's tree, read at each app's pinned tag
-    when it is a git repository (_pinned_view)."""
+def apps_repo_root(repo_root: Path, env_dir: Path) -> Path:
+    """Directory of app folders (<name>/app.yaml), each app as the env pins it: APPS_REPO or the
+    checkout the jarvis CLI fetches (fetch), read at each app's pinned tag (_pinned_view)."""
     override = os.environ.get(_APPS_REPO_ENV) or _fetch_now()
     if not override:
         raise AppsRepoError(
             f"set {_APPS_REPO_ENV} to a checkout of the env's apps_git_repo_url with its tags; "
             "the jarvis CLI fetches one when a command reads app files"
         )
-    path = Path(override).expanduser().resolve()
-    if not _looks_like_apps_repo(path):
-        raise AppsRepoError(f"{_APPS_REPO_ENV}={override!r} is not an apps repository checkout")
-    return _pinned_view(path, env_dir)
+    return _pinned_view(Path(override).expanduser().resolve(), env_dir)
 
 
 def _envs_needing_apps(instance: Path) -> list[Path]:

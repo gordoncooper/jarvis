@@ -14,7 +14,7 @@ Set these once in your shell. Every command after uses them.
 
 ```bash
 # Your choices: every command below reads them.
-JARVIS_VERSION=v0.8.2                            # the core release to start from
+JARVIS_VERSION=v0.8.3                            # the core release to start from
 REPO_URL=ssh://git@github.com/<you>/my-clusters  # your new, empty, private repository
 BRANCH=main                                      # the branch Flux follows
 NODE=node1.home.lan                              # your node's name; your DNS resolves it
@@ -23,21 +23,20 @@ LOGIN=ubuntu                                     # the user you log in to the no
 
 ## 2. Install the tools
 
-mise installs uv, uv installs the jarvis CLI, and jarvis installs everything else it needs at the versions your cluster's core release pins, on first use.
+mise runs uv, uv installs the jarvis CLI, and jarvis installs everything else it needs at the versions your cluster's core release pins, on first use.
 
 ```bash
 curl -fsSL https://mise.run | sh
 export PATH="$HOME/.local/bin:$PATH"
-mise use -g uv
-mise exec -- uv tool install "git+https://github.com/gordoncooper/jarvis@$JARVIS_VERSION"
+mise exec uv -- uv tool install "git+https://github.com/gordoncooper/jarvis@$JARVIS_VERSION"
 ```
 
-To keep the tools on your `PATH` in new shells, add `eval "$(~/.local/bin/mise activate bash)"` (or `zsh`) to your shell's startup file.
+`jarvis` and `mise` both live in `~/.local/bin`. Ubuntu puts it on your `PATH` at login; on macOS, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`.
 
 ## 3. Write your repository
 
 ```bash
-jarvis init my-clusters --env home --domain home.lan --repo-url "$REPO_URL" --branch "$BRANCH" --node "$NODE"
+jarvis init my-clusters --env home --domain home.lan --repo-url "$REPO_URL" --branch "$BRANCH" --node "$NODE" --ssh-user "$LOGIN"
 cd my-clusters
 ```
 
@@ -54,7 +53,7 @@ This writes a whole repository for one cluster, `home`, whose services are named
 jarvis node prep "$NODE" --login-user "$LOGIN"
 ```
 
-It logs in as `$LOGIN` and creates the user Ansible will use (you, by default), with your SSH key and passwordless `sudo`. It also installs the few packages Ansible needs and records the host in your inventory. It asks four things:
+It logs in as `$LOGIN`, the user Ansible will use too (`--ssh-user` above), and gives it your SSH key and passwordless `sudo`. It also installs the few packages Ansible needs and records the host in your inventory. It asks four things:
 
 1. Whether to use the recorded Ansible user: press Enter.
 2. Whether to add the node's SSH host key: check the fingerprint against the node's console, then `y`.

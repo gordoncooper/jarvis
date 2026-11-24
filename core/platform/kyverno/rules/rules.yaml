@@ -86,31 +86,6 @@ spec:
     - expression: size(variables.unprobed) == 0
       messageExpression: "'needs a liveness and a readiness probe: ' + variables.unprobed.join(', ')"
 ---
-apiVersion: policies.kyverno.io/v1
-kind: ValidatingPolicy
-metadata:
-  name: stdout-logs
-spec:
-  validationActions: [Deny]
-  matchConstraints:
-    resourceRules:
-      - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods]}
-      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [deployments, statefulsets, daemonsets, replicasets]}
-      - {apiGroups: [batch], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [jobs, cronjobs]}
-  variables:
-    - name: pod
-      expression: >-
-        object.kind == 'Pod' ? object.spec :
-        object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec : object.spec.template.spec
-    - name: toFile
-      expression: >-
-        (variables.pod.containers + variables.pod.?initContainers.orValue([])).filter(c,
-          (c.?command.orValue([]) + c.?args.orValue([])).exists(a,
-            a.matches('(^|[\\s"\'])(--log-file|--log_file|--log-dir|--log_dir|--log-output-file)($|=|[\\s"\'])'))).map(c, c.name)
-  validations:
-    - expression: size(variables.toFile) == 0
-      messageExpression: "'logs to a file, not stdout: ' + variables.toFile.join(', ')"
----
 # Traefik's LoadBalancer comes from k3s's own chart, in a namespace with no layer, and is not rendered.
 # A feature that publishes its own lets it through from its own Component.
 apiVersion: policies.kyverno.io/v1

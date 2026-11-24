@@ -49,24 +49,19 @@ def _load():
     return importlib.import_module("jarvis.node.prep")
 
 
-def test_env_update_renames_host_keeps_comments_and_rerenders_cluster_vars(tmp_path: Path) -> None:
-    """The rename keeps every comment and re-renders the ConfigMap; a second run writes nothing."""
+def test_env_update_renames_host_and_keeps_comments(tmp_path: Path) -> None:
+    """The rename keeps every comment and changes nothing else; a second run writes nothing."""
     module = _load()
     env = tmp_path / "envs" / "env-test"
     inventory = env / "inventory" / "hosts.yml"
     cluster = env / "values" / "cluster-vars.yaml"
-    generated = env / "flux" / "generated" / "cluster-vars-configmap.yaml"
-    for path, text in ((inventory, _HOSTS), (cluster, _CLUSTER), (generated, "stale\n")):
+    for path, text in ((inventory, _HOSTS), (cluster, _CLUSTER)):
         path.parent.mkdir(parents=True)
         path.write_text(text, encoding="utf-8")
 
     module.apply_env_edits(tmp_path, "env-test", "cp-1", "node-a", "example")
 
-    from jarvis.render.cluster_vars import render_document
-
-    rendered = render_document(cluster)
-    assert "backup_path: /var/lib/jarvis/backup" in rendered and "ssh_user" not in rendered
-    after = {inventory: _HOSTS_RENAMED, cluster: _CLUSTER, generated: rendered}
+    after = {inventory: _HOSTS_RENAMED, cluster: _CLUSTER}
     assert {path: path.read_text(encoding="utf-8") for path in after} == after
     mtimes = {path: path.stat().st_mtime_ns for path in after}
 
@@ -160,7 +155,7 @@ def _host_state() -> tuple:
 def test_a_host_that_does_not_resolve_or_is_not_listed_exits_before_any_change(host: str, message: str) -> None:
     before = _host_state()
     result = subprocess.run(
-        [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", "--host", host, "--login-user", "tester"],
+        [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", host, "--login-user", "tester"],
         cwd=REPO_ROOT,
         env={**os.environ, "INSTANCE": str(sample_root()), "SOPS_AGE_KEY_FILE": str(sample_root() / ".age" / "keys.txt")},
         input="\n", capture_output=True, text=True, timeout=30, check=False,
@@ -250,7 +245,7 @@ def test_unsynced_clock_prompt_defaults_to_no(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(module, "batch_ssh", fake_batch)
     monkeypatch.setattr(module, "confirm", fake_confirm)
     with pytest.raises(module.PrepError, match="clock is not synced"):
-        module.check_clock("user", "host.example", Path("/tmp/id_ed25519.pub"))
+        module.check_clock("user", "host.example")
     assert prompts == [("Continue with the clock unsynced?", False)]
 
 
@@ -260,13 +255,16 @@ def test_inventory_name_keeps_the_connected_domain() -> None:
 
 
 def test_age_key_create_does_not_overwrite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Creating an age key refuses to replace an existing file. SOPS_AGE_KEY_FILE overrides the path."""
+    """Creating an age key refuses to replace an existing file. The env names the path, with no
+    default, and SOPS_AGE_KEY_FILE overrides it."""
     require_cli("age-keygen")
     from jarvis.secrets import age
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    path = age.key_path(None)
+    with pytest.raises(age.AgeError):
+        age.key_path(None)
+    path = age.key_path("~/.config/sops/age/keys.txt")
     assert path == tmp_path / ".config" / "sops" / "age" / "keys.txt"
     public = age.create_key(path)
     assert public.startswith("age1")
@@ -292,11 +290,10 @@ def test_show_git_diff_does_not_page(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     module.show_git_diff(tmp_path, "env-test")
     assert seen["argv"][:3] == ["git", "--no-pager", "diff"]
-    assert "envs/env-test/flux/generated/cluster-vars-configmap.yaml" in seen["argv"]
 
 
 def _keyed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, recipients: str) -> tuple[Path, Path, str]:
-    """An env whose cluster-vars name the default key path, and that key at SOPS_AGE_KEY_FILE."""
+    """An env whose cluster-vars name a key path, and a key at SOPS_AGE_KEY_FILE, which overrides it."""
     require_cli("age-keygen")
     from jarvis.secrets import age
 
@@ -307,11 +304,7 @@ def _keyed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, recipients: s
     env = repo / "envs" / "env-test"
     (env / "values").mkdir(parents=True)
     (env / "values" / "cluster-vars.yaml").write_text("age_key_file: ~/.config/sops/age/keys.txt\n", encoding="utf-8")
-    (repo / ".sops.yaml").write_text(
-        "creation_rules:\n  - path_regex: envs/env-test/secrets/.*\\.sops\\.yaml$\n"
-        f"    age: {recipients.format(public=public)}\n",
-        encoding="utf-8",
-    )
+    age.write_creation_rules(repo / ".sops.yaml", [age.creation_rule("env-test", recipients.format(public=public).split(","))])
     return repo, key, public
 
 
@@ -406,7 +399,7 @@ def _block_host_calls(module: object, monkeypatch: pytest.MonkeyPatch) -> list[s
 
     def guarded_run(argv: object, *args: object, **kwargs: object) -> object:
         command = argv[0] if argv else ""
-        if command in {"ssh", "ssh-keyscan", "getent"}:
+        if command in {"ssh", "ssh-keyscan"}:
             host_calls.append(str(command))
             raise AssertionError(f"{command} called")
         return real_run(argv, *args, **kwargs)
@@ -441,10 +434,10 @@ def _stub_host_steps(
 
     real_schema = module.run_env_schema
 
-    def schema(repo: Path, *, pre_host: bool = False) -> None:
+    def schema(repo: Path) -> None:
         called.append("run_env_schema")
-        if pre_host:
-            real_schema(repo, pre_host=True)
+        if called.count("run_env_schema") == 1:
+            real_schema(repo)
 
     monkeypatch.setattr(module, "run_env_schema", schema)
     monkeypatch.setattr(module, "assert_host_resolves", track("assert_host_resolves"))
@@ -486,7 +479,7 @@ def test_schema_error_makes_zero_host_calls(
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
 
     with pytest.raises(module.PrepError) as excinfo:
-        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-00", "cp-1", "--login-user", "ubuntu"])
     assert "dns_suffix" in str(excinfo.value)
     assert host_calls == []
 
@@ -512,7 +505,7 @@ def test_run_keeps_the_recorded_ansible_user(
     _accept_default_ansible_user(module, monkeypatch)
     called = _stub_host_steps(module, monkeypatch, hostname=host)
 
-    module.run(["--env", "env-new", "--host", host, "--login-user", login])
+    module.run(["--env", "env-new", host, "--login-user", login])
 
     assert module.recorded_ssh_user(tmp_path, "env-new") == kept
     assert module.host_ssh_user(tmp_path, "env-new", host) == per_host
@@ -537,7 +530,7 @@ def test_run_refuses_a_different_ansible_user_before_any_host_call(
     monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: asked)
 
     with pytest.raises(module.PrepError, match="set ssh_user on that host"):
-        module.run(["--env", "env-new", "--host", host, "--login-user", asked])
+        module.run(["--env", "env-new", host, "--login-user", asked])
     assert host_calls == []
     assert cluster.read_text(encoding="utf-8") == before
 
@@ -560,7 +553,7 @@ def test_a_new_env_reaches_the_host_check(
     monkeypatch.setattr(module, "assert_host_resolves", stop)
 
     with pytest.raises(module.PrepError, match="stopped after pre-host"):
-        module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-new", "cp-1", "--login-user", "ubuntu"])
     assert host_calls == ["assert_host_resolves"]
 
 
@@ -580,7 +573,7 @@ def test_missing_age_keygen_exits_before_host_calls(
     monkeypatch.setattr(module.shutil, "which", which)
 
     with pytest.raises(module.PrepError, match="age-keygen"):
-        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-00", "cp-1", "--login-user", "ubuntu"])
     assert host_calls == []
 
 
@@ -593,12 +586,12 @@ def test_run_calls_full_schema_after_host_steps(
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     _accept_default_ansible_user(module, monkeypatch)
     _stub_host_steps(module, monkeypatch)
-    schema_modes: list[bool] = []
+    schema_runs: list[Path] = []
 
-    def track_schema(repo: Path, *, pre_host: bool = False) -> None:
-        schema_modes.append(pre_host)
-        if pre_host:
-            module.validate_env_tree(repo, pre_host=True)
+    def track_schema(repo: Path) -> None:
+        schema_runs.append(repo)
+        if len(schema_runs) == 1:
+            module.validate_env_tree(repo)
             return
         raise module.PrepError("full schema failed")
 
@@ -606,7 +599,7 @@ def test_run_calls_full_schema_after_host_steps(
     monkeypatch.setattr(module, "apply_env_edits", lambda *_a, **_k: None)
 
     with pytest.raises(module.PrepError, match="full schema failed"):
-        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
-    assert schema_modes == [True, False]
+        module.run(["--env", "env-00", "cp-1", "--login-user", "ubuntu"])
+    assert len(schema_runs) == 2
 
 

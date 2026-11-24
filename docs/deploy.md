@@ -8,15 +8,14 @@ The [Quickstart](quickstart.md) is the same path in seven steps; this page is th
 - Internet on the nodes and the controller (Linux or macOS, amd64 or arm64) with [mise](https://mise.jdx.dev/getting-started.html).
 - Inventory hostnames resolve from the controller and every node.
 - An empty private instance repository. Flux reads it over `ssh://` with a read-only deploy key, or `https://` with no credential (`flux_git_repo_url`), and reads core over `https://` (`core_git_repo_url`).
-- The age private key on the controller (`age_key_file`, default `~/.config/sops/age/keys.txt`; `SOPS_AGE_KEY_FILE` overrides) for any `jarvis site` that touches k3s, mode `0600` and yours. A label-only run (`--tags labels`) needs none. Keep it offline otherwise.
+- The age private key on the controller (`age_key_file`, which `jarvis init` writes; `SOPS_AGE_KEY_FILE` overrides) for any `jarvis site` that touches k3s, mode `0600` and yours. A label-only run (`--tags labels`) needs none. Keep it offline otherwise.
 - k3s: core's release (`infra/ansible/group_vars/all.yml`) unless the env sets both `k3s_version` and `k3s_sha256` (the `k3s` line of `https://github.com/k3s-io/k3s/releases/download/<k3s_version>/sha256sum-amd64.txt`, `+` as `%2B`).
 - With App DNS, the router or LAN DNS forwards `dns_suffix` to an edge node ([app-dns](../core/feature/app-dns/CONTRACT.md)).
 
 ## Install tools
 
 ```bash
-mise use -g uv
-uv tool install git+https://github.com/<owner>/jarvis@<core tag>
+mise exec uv -- uv tool install git+https://github.com/<owner>/jarvis@<core tag>
 jarvis --help
 ```
 

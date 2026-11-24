@@ -1,10 +1,12 @@
-// Core in a container, for working on core: mise installs every pinned CLI (mise.lock) and uv the
-// Python packages (uv.lock), through mise.toml's deps task, as CI does. An instance repository gets
-// its own devcontainer from jarvis init (jarvis/kit/devcontainer/).
+// Core in a container, for working on core: mise installs every pinned CLI (mise.lock and
+// mise.dev.lock, MISE_ENV=dev) and uv the Python packages (uv.lock), through mise.toml's deps task,
+// as CI does. An instance repository gets its own devcontainer from jarvis init
+// (jarvis/kit/devcontainer/).
 {
   "name": "jarvis core",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae",
   "containerEnv": {
+    "MISE_ENV": "dev",
     // renovate: datasource=github-releases depName=jdx/mise
     "MISE_VERSION": "v2026.11.12"
   },

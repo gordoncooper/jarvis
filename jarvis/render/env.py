@@ -87,8 +87,8 @@ def stale(env_dir: Path, repo_root: Path) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--env", required=True, help="Env name under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis render", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--check", action="store_true", help="Write nothing; list each stale generated file")
     args = parser.parse_args(argv)
     repo_root = instance_root(REPO_ROOT)

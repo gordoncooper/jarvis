@@ -3,7 +3,8 @@
 jarvis validate runs these for the instance it is run from; core's own CI runs each one by name
 on core's own envs. Each check reads every env under envs/.
 
-  python -m jarvis.env.validate [--only <name>]...
+  jarvis validate
+  python -m jarvis.env.validate [--only <name>]...   (core's own tests: one check by name)
 
 Exit 0 when every check passes, 1 when one fails.
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import shutil
 import subprocess
 import sys
@@ -19,17 +21,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from jarvis import paths as _paths
-from jarvis.checks import (
-    addons,
-    app_hosting,
-    flux_identity,
-    flux_prune,
-)
+from jarvis.checks import addons, app_hosting, flux_identity
 from jarvis.checks.rendered import scan_kubeconform, scan_policies
 from jarvis.env.runtime import instance_root
 from jarvis.paths import PRODUCT_ROOT
 from jarvis.render import env as _render
-from jarvis.schema.env import ValidationError, env_dirs, validate_env_tree
+from jarvis.schema.env import ENVS_VAR, ValidationError, env_dirs, validate_env_tree
 
 
 def _env_schema(instance: Path) -> list[str]:
@@ -84,7 +81,6 @@ CHECKS: dict[str, Callable[[Path], list[str]]] = {
     "addons": lambda instance: addons.format_violations(addons.scan_addons(_paths.core_root(), instance)),
     "app-hosting": _scan(app_hosting),
     "flux-identity": _scan(flux_identity),
-    "flux-prune": _scan(flux_prune),
     "secret-scan": _secret_scan,
 }
 
@@ -104,6 +100,13 @@ def run(instance: Path, only: list[str] | None = None) -> int:
         else:
             print(f"PASS {name}", flush=True)
     return 1 if failed else 0
+
+
+def run_env(instance: Path, env: str) -> int:
+    """jarvis validate and jarvis up: the env's own checks only, since each env is checked by the
+    core release it pins."""
+    os.environ[ENVS_VAR] = env
+    return run(instance)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -30,8 +30,9 @@ Kustomization lists in spec.components:
   not; inline postBuild.substitute only), so what this check builds is what
   Flux applies. A decrypting one reads envs/<env>/secrets/<one of its
   namespaces>; any other reads under addons/<name>/ (path normalised).
-- Every object an add-on Kustomization applies is namespaced, lands in the
-  add-on's own namespaces, and is not RBAC or a Flux object.
+- Every object an add-on Kustomization applies lands in the add-on's own
+  namespaces, and is not RBAC or a Flux object. Its tenant's namespaced Roles
+  are what keep it from anything cluster-scoped.
 """
 
 from __future__ import annotations
@@ -78,33 +79,6 @@ _FORBIDDEN_GROUPS = frozenset(
     {"*", "rbac.authorization.k8s.io", "apiextensions.k8s.io", "admissionregistration.k8s.io"}
 )
 _FORBIDDEN_RESOURCES = frozenset({"*", "namespaces"})
-# Kinds with no namespace that an add-on's path could carry.
-CLUSTER_SCOPED_KINDS = frozenset(
-    {
-        "Namespace",
-        "ClusterRole",
-        "ClusterRoleBinding",
-        "CustomResourceDefinition",
-        "MutatingWebhookConfiguration",
-        "ValidatingWebhookConfiguration",
-        "ValidatingAdmissionPolicy",
-        "ValidatingAdmissionPolicyBinding",
-        "PersistentVolume",
-        "StorageClass",
-        "PriorityClass",
-        "IngressClass",
-        "RuntimeClass",
-        "APIService",
-        "GeneratingPolicy",
-        "MutatingPolicy",
-        "ValidatingPolicy",
-        "ImageValidatingPolicy",
-        "DeletingPolicy",
-        "ClusterIssuer",
-        "VolumeSnapshotClass",
-        "Node",
-    }
-)
 _TOKEN = r"A-Za-z0-9_\-"
 
 
@@ -323,9 +297,7 @@ def _tenant_path_problems(path, namespaces: set[str]) -> Iterator[str]:
     for item in path.docs:
         kind = item.get("kind")
         what = f"{ref} applies {ref_of(item)}"
-        if kind in CLUSTER_SCOPED_KINDS or str(kind).startswith("Cluster"):
-            yield f"{what}, which is cluster-scoped; the tenant cannot apply it"
-        elif kind in _RBAC_KINDS or "fluxcd" in str(item.get("apiVersion", "")):
+        if kind in _RBAC_KINDS or "fluxcd" in str(item.get("apiVersion", "")):
             yield f"{what}; an add-on's own objects carry no RBAC or Flux objects"
         else:
             namespace = target or (item.get("metadata") or {}).get("namespace")

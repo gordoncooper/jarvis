@@ -17,7 +17,7 @@ The tests' sample add-on: it proves [the add-on contract](../CONTRACT.md) end to
 | Listing | `hello` under `addons` in `values/switches.yaml` |
 | Tenant | `flux-system/addon-hello` with Role `addon-hello` in `hello`: ConfigMaps, Secrets, Services, Deployments, HTTPRoutes |
 | Kustomizations | `addon-hello` (`./addons/hello/app`, inline `dns_suffix`) and `addon-hello-secrets` (`./envs/${jarvis_env}/secrets/hello`, `sops-age`), both as the tenant, `targetNamespace: hello` |
-| Sealed file | `jarvis encrypt --env <env> --namespace hello --name hello-greeting <manifest>`, once bootstrapped |
+| Sealed file | `jarvis encrypt --env <env> --namespace hello --name hello-greeting <manifest>` |
 
 ## Health
 

@@ -6,18 +6,13 @@ Lists and maps are JSON-encoded strings so postBuild substitution can reference 
 
 from __future__ import annotations
 
-import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from jarvis.paths import PRODUCT_ROOT
-from jarvis.schema.env import instance_root, resolve_cluster_vars
-
-REPO_ROOT = PRODUCT_ROOT
+from jarvis.schema.env import resolve_cluster_vars
 
 # Keys the cluster reads. Substituted ${var}s on this tree, plus jarvis_env,
 # which verify, drill and restore read from the live ConfigMap.
@@ -83,30 +78,3 @@ def render_document(cluster_vars_path: Path) -> str:
         allow_unicode=True,
     )
     return header + body
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Env name under envs/")
-    parser.add_argument(
-        "--output",
-        type=Path,
-        help="Write file instead of stdout",
-    )
-    args = parser.parse_args(argv)
-
-    env_name = args.env
-    cluster_vars_path = instance_root(REPO_ROOT) / "envs" / env_name / "values" / "cluster-vars.yaml"
-    if not cluster_vars_path.is_file():
-        raise SystemExit(f"missing {cluster_vars_path}")
-
-    text = render_document(cluster_vars_path)
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(text, encoding="utf-8")
-    else:
-        sys.stdout.write(text)
-
-
-if __name__ == "__main__":
-    main()
