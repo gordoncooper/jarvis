@@ -5,6 +5,9 @@
 # the Ingress and CRD providers, an Ingress or a Traefik IngressRoute routes nothing.
 # The chart copies its LoadBalancer Service's address to each Gateway's status.addresses,
 # which App DNS answers with.
+# websecure's readTimeout: Traefik 3's 60 s default covers the whole request body, so it cut off
+# any upload that took longer. An hour is room for a multi-GB upload on a slow LAN link, and
+# still bounds a request's headers, which Traefik gives no timeout of their own.
 apiVersion: helm.cattle.io/v1
 kind: HelmChartConfig
 metadata:
@@ -31,6 +34,11 @@ spec:
     service:
       spec:
         type: LoadBalancer
+    ports:
+      websecure:
+        transport:
+          respondingTimeouts:
+            readTimeout: 1h
     resources:
       requests:
         cpu: 100m

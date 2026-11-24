@@ -140,7 +140,7 @@ An app's backups are on unless its entry in `values/apps.yaml` sets `backups: fa
 **Retire an app.**
 
 1. Take it out of `values/apps.yaml` (or set its `backups: false`) and delete `secrets/app-<name>/` (`jarvis validate` fails a sealed file nothing reads), re-render, commit and push. Then `kubectl -n platform-backups delete secret backups-restic-app-<name>` (Flux does not prune it). Git history keeps the credential: restore the file before listing the name again, and its repositories open again.
-2. Once the data is not needed, remove `<backup_path>/restic/ns-app-<name>` as root on the backup node; until then `restic-check` and `restic-offsite` print `FAIL … no backup credential registered for its app`.
+2. Once the data is not needed, remove `<backup_path>/restic/ns-app-<name>` as root on the backup node. Until then `restic-check` prints `FAIL … no backup credential registered for it`, or, once app hosting is off, `FAIL … core's password does not open it`, and `restic-offsite` prints `FAIL … no backup credential registered for its app`.
 
 ## Off-host copy
 
