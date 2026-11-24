@@ -109,7 +109,13 @@ spec:
                       --read-data-subset="$slice/$READ_DATA_SLICES" $key >/dev/null 2>&1; then
                       echo "PASS $repo"
                     else
-                      echo "FAIL $repo: restic check exited $?"
+                      code=$?
+                      # 12 is restic's wrong password: a repository another credential wrote.
+                      if [ "$code" = 12 ] && [ -z "$key" ]; then
+                        echo "FAIL $repo: core's password does not open it; remove it once its data is not needed (docs/backups.md)"
+                      else
+                        echo "FAIL $repo: restic check exited $code"
+                      fi
                       failed=1
                     fi
                   done

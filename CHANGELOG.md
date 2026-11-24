@@ -45,6 +45,16 @@ the upgrade.
   keep their annotation where they are written, and are no longer checked by name.
 - Core's admission rule `stdout-logs` is gone. It guessed from five flag spellings whether a
   container logs to a file, and could refuse a flag that means something else.
+- `jarvis up` validates only its own env, as `jarvis validate` does, so in a repo with envs on
+  different core tags each env is checked by the release it pins.
+- `jarvis secrets --rotate age` and `--rotate deploy-key` print their `kubectl` step with
+  `--kubeconfig ~/.kube/jarvis-<env>.yaml`, so a pasted step reaches the env's cluster, not the
+  controller's default one.
+- Traefik reads a request on 443 for up to an hour (`readTimeout: 1h` on `websecure`), not
+  Traefik 3's 60 s, which cut off an upload that took longer.
+- `restic-check` prints `core's password does not open it` for a repository restic can't open
+  with core's password (restic's exit 12), such as an app's left on the backup disk once app
+  hosting is off. Other failures still print `restic check exited <code>`.
 
 ### Upgrading
 

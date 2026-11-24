@@ -94,6 +94,7 @@ echo "$2 $5" >> "$LOG"
 echo "tree 1: file private-file-name"
 [ -d "$2" ] || exit 10
 [ ! -e "$2/broken" ] || exit 1
+[ ! -e "$2/other-password" ] || exit 12
 """
 
 
@@ -101,12 +102,13 @@ echo "tree 1: file private-file-name"
     ("repos", "code", "lines"),
     [
         (
-            ["host-etcd-snapshots", "ns-a/pvc-ok", "ns-b/pvc-bad"],
+            ["host-etcd-snapshots", "ns-a/pvc-ok", "ns-b/pvc-bad", "ns-c/pvc-other"],
             1,
             [
                 "PASS host-etcd-snapshots",
                 "PASS ns-a/pvc-ok",
                 "FAIL ns-b/pvc-bad: restic check exited 1",
+                "FAIL ns-c/pvc-other: core's password does not open it; remove it once its data is not needed (docs/backups.md)",
             ],
         ),
         (["host-etcd-snapshots"], 0, ["PASS host-etcd-snapshots"]),
@@ -117,14 +119,16 @@ def test_restic_check_script_checks_every_repository_and_prints_only_results(
     tmp_path: Path, repos: list[str], code: int, lines: list[str]
 ) -> None:
     """Every PVC repository and the etcd repository is checked on a rotating slice; a missing
-    etcd repository fails, an empty PVC glob does not, and restic's own output never reaches the log."""
+    etcd repository fails, an empty PVC glob does not, one that core's password doesn't open says
+    so, and restic's own output never reaches the log."""
     data, bindir = tmp_path / "data", tmp_path / "bin"
     bindir.mkdir()
     data.mkdir()
     for repo in repos:
         (data / repo).mkdir(parents=True)
-    if "ns-b/pvc-bad" in repos:
-        (data / "ns-b/pvc-bad/broken").touch()
+    for repo, marker in (("ns-b/pvc-bad", "broken"), ("ns-c/pvc-other", "other-password")):
+        if repo in repos:
+            (data / repo / marker).touch()
     (bindir / "restic").write_text(_FAKE_CHECK, encoding="utf-8")
     (bindir / "restic").chmod(0o755)
     job = _docs(ROOT / "core/platform/backups/restic-check.yaml")[0]["spec"]["jobTemplate"]

@@ -133,7 +133,7 @@ def run(instance: Path, env: str) -> int:
     env_dir = instance / "envs" / env
     steps: list[tuple[str, Callable[[], int]]] = [
         ("doctor", lambda: doctor.run(instance, env_dir)),
-        ("validate", lambda: validate.run(instance)),
+        ("validate", lambda: validate.run_env(instance, env)),
         ("secrets", lambda: mint.main(["--env", env])),
         ("pushed", lambda: _refuse_unpushed(instance, env)),
         ("site", lambda: site.main(["--env", env])),
