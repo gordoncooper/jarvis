@@ -21,7 +21,7 @@ APP = "app-notes"
 
 
 def _app_copy(tmp_path: Path) -> ExampleCopy:
-    copy = bootstrap_example_copy(tmp_path)
+    copy = bootstrap_example_copy(tmp_path, features=("app-hosting", "offsite-backup-copy"))
     register_copy_app(copy, APP)
     return copy
 
@@ -71,7 +71,7 @@ def test_registered_app_renders_its_credential_only_where_needed(app_copy: Examp
 
 def test_core_only_env_renders_no_app_workload(tmp_path: Path) -> None:
     """With no app credential sealed (notes' backups off), no app credential renders or is mounted anywhere."""
-    copy = bootstrap_example_copy(tmp_path)
+    copy = bootstrap_example_copy(tmp_path, features=("app-hosting", "offsite-backup-copy"))
     shutil.rmtree(copy.env_dir / "secrets" / APP)
     values = copy.env_dir / "values" / "apps.yaml"
     values.write_text(values.read_text(encoding="utf-8").replace("notes:\n", "notes:\n  backups: false\n"), encoding="utf-8")

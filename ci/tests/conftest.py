@@ -7,9 +7,10 @@ import shutil
 
 import pytest
 
-# Background git maintenance holds locks inside a test's repo while the test deletes it.
+# Background git maintenance holds locks inside a test's repo while the test deletes it, and a
+# commit a test makes (support.git) needs an identity: a fixture one.
 _count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
-for _key, _value in (("maintenance.auto", "false"), ("gc.auto", "0")):
+for _key, _value in (("maintenance.auto", "false"), ("gc.auto", "0"), ("user.email", "fixture@example.com"), ("user.name", "fixture")):
     os.environ[f"GIT_CONFIG_KEY_{_count}"] = _key
     os.environ[f"GIT_CONFIG_VALUE_{_count}"] = _value
     _count += 1
@@ -31,6 +32,7 @@ ROLE_PROOFS = frozenset(
     {
         "test_ansible_operator_tags.py",
         "test_base_os.py",
+        "test_env_shapes.py",
         "test_flux_operator.py",
         "test_inventory_roles.py",
         "test_k3s.py",
@@ -50,10 +52,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 @pytest.fixture(scope="session")
 def example_copy(tmp_path_factory: pytest.TempPathFactory):
-    """One bootstrapped copy of env-00 for the structural env rules."""
+    """One bootstrapped copy of the sample env with every feature and the fixture add-on, for the
+    structural env rules and for test_flux_entry.py, the flux build select-tests runs for every core change."""
     from support import bootstrap_example_copy
 
-    return bootstrap_example_copy(tmp_path_factory.mktemp("example-copy"))
+    return bootstrap_example_copy(tmp_path_factory.mktemp("example-copy"), features=sample.ALL_FEATURES, addons=True)
 
 
 def ci_mode() -> bool:

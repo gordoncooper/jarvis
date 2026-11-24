@@ -17,7 +17,7 @@ from jarvis.env import switches as _switches
 from jarvis.schema import env as env_schema
 from support import REPO_ROOT, core_at, sample_root
 
-EXAMPLE = sample_root() / "envs" / "env-00"
+EXAMPLE = sample_root("app-hosting") / "envs" / "env-00"
 
 
 def _tree(tmp_path: Path) -> tuple[Path, Path]:

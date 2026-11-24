@@ -52,7 +52,7 @@ def _set_app(env_dir: Path, app: str, entry: dict | None) -> None:
 def test_a_listed_app_takes_its_name_and_its_pin(tmp_path: Path) -> None:
     """Rule: an app's entry in values/apps.yaml, its name and pinned version, enables it: only that
     file and its wiring change, and a second render changes nothing."""
-    copy = bootstrap_example_copy(tmp_path)
+    copy = bootstrap_example_copy(tmp_path, features=("app-hosting",))
     _set_app(copy.env_dir, "hello-web", None)
     render_switches(copy.env_dir, copy.root)
     validate_one_env(copy.root, copy.name)
@@ -110,7 +110,7 @@ def test_an_optional_piece_renders_only_from_its_name(name: str, folder: str, ki
 
 def test_an_unlisted_optional_component_is_not_rendered(tmp_path: Path) -> None:
     """Rule: a feature is off until named; one name turns it on and brings its objects."""
-    copy = bootstrap_example_copy(tmp_path)
+    copy = bootstrap_example_copy(tmp_path, features=("app-hosting", "offsite-backup-copy"))
     assert ("CronJob", "restic-offsite") in _objects(copy, "platform-configs")
     (copy.env_dir / "values" / "apps.yaml").unlink()
     set_switches(copy.env_dir, features=[])
@@ -126,7 +126,7 @@ def test_a_sealed_app_credential_registers_on_the_apps_server(tmp_path: Path) ->
     """Rule: app-hosting brings the apps server, and each app with backups on whose credential is
     sealed registers on it: notes, whose volume jarvis secrets minted one for. An app without
     one registers nothing."""
-    copy = bootstrap_example_copy(tmp_path)
+    copy = bootstrap_example_copy(tmp_path, features=("app-hosting",))
     validate_one_env(copy.root, copy.name)
     objects = _objects(copy, "platform-configs")
     assert {("Deployment", "restic-apps"), ("Secret", "backups-restic-app-notes")} <= objects
@@ -149,7 +149,7 @@ def test_app_names_are_refused_in_the_switches_file(tmp_path: Path) -> None:
 
 def test_a_bad_grant_refuses_the_render(tmp_path: Path) -> None:
     """Rule: the render checks the env's grants before it writes."""
-    copy = bootstrap_example_copy(tmp_path)
+    copy = bootstrap_example_copy(tmp_path, features=("app-hosting",))
     _set_app(copy.env_dir, "hello-web", {"version": "v0.3.0", "grants": ["trust"]})
     before = _tree(copy)
     with pytest.raises(SystemExit, match="unknown grant"):

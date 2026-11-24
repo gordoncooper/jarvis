@@ -130,7 +130,7 @@ def test_site_validates_an_env_with_hosted_apps_from_its_apps_repository(tmp_pat
     from jarvis.node import site
     from support import copy_sample
 
-    values = copy_sample(instance := tmp_path / "instance") / "envs" / "env-00" / "values"
+    values = copy_sample(instance := tmp_path / "instance", "app-hosting") / "envs" / "env-00" / "values"
     remote = sample.apps_repo(tmp_path / "remote")
     # The env's https URL, served from the local repository.
     count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
@@ -280,7 +280,7 @@ def test_up_waits_for_everything_the_env_tree_applies() -> None:
     layers, the add-ons and every app's wiring and own Kustomizations, not a list of its own."""
     from support import sample_root
 
-    expected, error = up.expected_kustomizations(sample_root(), "env-00")
+    expected, error = up.expected_kustomizations(sample_root("app-hosting"), "env-00")
     assert error is None, error
     assert {"flux-system", "platform-controllers", "platform-configs", "services", "app-notes-wiring"} <= set(expected)
     # A hosted app's own Kustomizations read the apps repository, so they are not held to the env's commit.

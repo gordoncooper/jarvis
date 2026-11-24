@@ -18,12 +18,12 @@ from jarvis.render.cluster_vars import (
     CLUSTER_VARS_PUBLISHED,
     cluster_vars_configmap,
 )
-from support import ExampleCopy, real_and_copy_envs
+from support import ExampleCopy, real_and_copy_envs, sample_root
 
 
 def test_cluster_vars_configmap_publishes_only_the_allow_list() -> None:
     """The live ConfigMap is the allow-list. Host-only keys stay in the values file."""
-    raw = load_cluster_vars()
+    raw = load_cluster_vars(sample_root("app-dns"))
     data = cluster_vars_configmap(raw)["data"]
     assert isinstance(data, dict)
     assert set(data) == set(CLUSTER_VARS_PUBLISHED)

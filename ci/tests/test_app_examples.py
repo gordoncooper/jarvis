@@ -31,7 +31,7 @@ APPS = ["hello-web", "notes", "lan-demo"]
 def _env(tmp_path: Path, *, lan_line: bool = True) -> tuple[Path, Path, dict]:
     """An instance holding env-00, with or without lan-demo's grant, its wiring re-rendered."""
     instance = tmp_path / "instance"
-    env_dir = copy_sample(instance) / "envs" / "env-00"
+    env_dir = copy_sample(instance, "app-hosting") / "envs" / "env-00"
     values = {app: {"version": sample.example_pins()[app]} for app in APPS}
     if lan_line:
         values["lan-demo"]["grants"] = ["lan-port 8080/TCP"]
@@ -65,13 +65,13 @@ def test_app_check_passes_each_example(app: str) -> None:
 
 def test_committed_env_00_render_wires_the_examples_and_passes_env_schema() -> None:
     """Rule: env-00's committed render is the examples' wiring, and env-schema passes it."""
-    env_dir = sample_root() / "envs" / "env-00"
+    env_dir = sample_root("app-hosting") / "envs" / "env-00"
     docs = yaml.safe_load_all((env_dir / "flux" / _apps.GENERATED_REL).read_text(encoding="utf-8"))
     subs = {d["spec"]["postBuild"]["substitute"]["app_name"]: d["spec"]["postBuild"]["substitute"] for d in docs if d and d["kind"] == "Kustomization"}
     assert list(subs) == APPS
     assert subs["lan-demo"]["app_grant_lan_ports"] == "8080/TCP"
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
-    assert env_schema._apps_problems(env_dir, sample_root(), cluster_vars) == []
+    assert env_schema._apps_problems(env_dir, sample_root("app-hosting"), cluster_vars) == []
 
 
 def test_examples_pass_admission_with_the_env_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

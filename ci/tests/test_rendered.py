@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+import sample
 import yaml
 
 from jarvis.checks.rendered import core_rules, git_rules, kubeconform, policies
@@ -77,7 +78,7 @@ def test_a_feature_brings_its_own_exception(example_copy: ExampleCopy, tmp_path:
     fails them in one that does not."""
     service = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "k8s-gateway", "namespace": "platform-app-dns"},
                "spec": {"type": "LoadBalancer", "ports": [{"port": 53}]}}  # fmt: skip
-    off = bootstrap_example_copy(tmp_path)
+    off = bootstrap_example_copy(tmp_path, features=sample.ALL_FEATURES)
     set_switches(off.env_dir, features=["alerts", "app-hosting", "offsite-backup-copy"])
     render_switches(off.env_dir, off.root)
     found = [policies([service], [*core_rules(flux_built(copy.root, copy.name)), *git_rules()]) for copy in (example_copy, off)]
