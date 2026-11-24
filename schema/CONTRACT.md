@@ -20,7 +20,7 @@ What each env under `envs/<env>/` may set. Run from an instance repository, the 
 | `jarvis_env` is the env's folder name; `time_zone` is an IANA zone | env-schema |
 | `pod_cidr` and `service_cidr` are CIDRs; `app_dns_cluster_ip` is a host address in `service_cidr`, not its first or tenth | env-schema |
 | `lan_cidrs` are IPv4 CIDRs inside RFC 1918, clear of the cluster's ranges | env-schema |
-| An `ssh://` root's host is among `flux_known_hosts`; unset, only `github.com` | env-schema |
+| An `ssh://` root's host is among `flux_known_hosts` (by default GitHub's key) | env-schema |
 | Across hosts: exactly one `control_plane` and one `backup` host, at least one `edge` host | env-schema |
 | Each feature in `switches.yaml` is a row of `FEATURE_COMPONENTS` in `jarvis/env/switches.py`, its one list | env-schema, and the render refuses before it writes |
 | Each add-on in `switches.yaml` is a folder under core's `addons/`; at most one per slot (label `addons.jarvis.io/slot`) | env-schema, and the render refuses before it writes |

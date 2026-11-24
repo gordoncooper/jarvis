@@ -158,10 +158,12 @@ jobs:
         working-directory: infra/ansible
         run: |
           set -euo pipefail
-          SOPS_AGE_KEY_FILE="${RUNNER_TEMP}/age.key" ../../.venv/bin/ansible-playbook ../../ci/e2e/flux.yml \
+          # What jarvis site passes every play: the env, validated, with what it resolves.
+          ../../.venv/bin/python -c 'import sys; from pathlib import Path; from jarvis.node.site import write_vars; write_vars(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))' \
+            "${GITHUB_WORKSPACE}" "${E2E_ENV}" "${RUNNER_TEMP}/site-vars.json"
+          ../../.venv/bin/ansible-playbook ../../ci/e2e/flux.yml \
             -i ../../ci/e2e/hosts.yml \
-            -e @"${GITHUB_WORKSPACE}/envs/${E2E_ENV}/values/cluster-vars.yaml" \
-            -e jarvis_instance_root="${GITHUB_WORKSPACE}" \
+            -e @"${RUNNER_TEMP}/site-vars.json" \
             -e jarvis_env_dir="${GITHUB_WORKSPACE}/envs/${E2E_ENV}" \
             -e flux_instance_file="${GITHUB_WORKSPACE}/core/flux/flux-instance.yaml" \
             -e flux_sync_file="${GITHUB_WORKSPACE}/envs/${E2E_ENV}/flux/sync.yaml" \
@@ -223,10 +225,11 @@ jobs:
           done <<<"${pins}"
           # hello-web through Traefik, on the cluster CA's certificate; then the app-to-app rules:
           # notes is granted both ways, lan-demo is not (the default-deny egress drops it: 502 or 504).
+          # /notes/ can read 502 for a moment after / answers, so both are waited for, within one bound.
           host="hello-web.apps.$(sed -n 's/^dns_suffix:[[:space:]]*//p' "${env_dir}/values/cluster-vars.yaml")"
           code() { curl -sS --cacert "${env_dir}/ca.crt" -o /dev/null -w '%{http_code}' --max-time 20 "https://${host}$1" || true; }
           for attempt in $(seq 1 30); do
-            [[ "$(code /)" == 200 ]] && break
+            [[ "$(code /)" == 200 && "$(code /notes/)" == 200 ]] && break
             sleep 10
           done
           root="$(code /)"; notes="$(code /notes/)"; blocked="$(code /blocked/)"

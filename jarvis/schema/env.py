@@ -228,7 +228,7 @@ def _cluster_vars_problems(data: dict[str, Any], env_name: str) -> list[str]:
             errors.append(f"{key} must be a CIDR")
     errors.extend(_app_dns_ip_problems(data.get("app_dns_cluster_ip"), networks.get("service_cidr")))
     errors.extend(_apps.lan_cidrs_problems(data.get(_apps.LAN_CIDRS), data["pod_cidr"], data["service_cidr"]))
-    errors.extend(_known_hosts_problems(data.get("flux_known_hosts"), data["flux_git_repo_url"]))
+    errors.extend(_known_hosts_problems(resolve_cluster_vars(data)["flux_known_hosts"], data["flux_git_repo_url"]))
     return errors
 
 
@@ -248,16 +248,12 @@ def _app_dns_ip_problems(value: str | None, network: Any) -> list[str]:
     return []
 
 
-def _known_hosts_problems(value: str | None, root_url: str) -> list[str]:
-    """An ssh:// root's host is among flux_known_hosts, so Flux trusts the env repository's host.
-    Unset, the role's default is GitHub's key, which serves only github.com."""
+def _known_hosts_problems(value: str, root_url: str) -> list[str]:
+    """An ssh:// root's host is among flux_known_hosts (by default GitHub's key), so Flux trusts
+    the env repository's host."""
     host = urlparse(root_url).hostname if root_url.startswith("ssh://") else None
-    if host is None:
-        return []
-    if value is None:
-        return [] if host == "github.com" else [f"flux_git_repo_url is on {host}; set flux_known_hosts to its SSH host key"]
     hosts = {name for line in value.strip().splitlines() for name in line.split()[0].split(",")}
-    return [] if host in hosts else [f"flux_known_hosts holds no key for {host}, the host of flux_git_repo_url"]
+    return [] if host is None or host in hosts else [f"flux_known_hosts holds no key for {host}, the host of flux_git_repo_url"]
 
 
 def _hosts_problems(data: dict[str, Any], rel: str) -> list[str]:

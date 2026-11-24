@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-from ansible_role_proof import REPO_ROOT, env_name, playbook
+from pathlib import Path
 
-from support import sample_root
+from ansible_role_proof import REPO_ROOT, playbook, site_vars_file
 
 LIST_TASKS_INVENTORY = REPO_ROOT / "ci/tests/fixtures/ansible-list-tasks/hosts.yml"
-CLUSTER_VARS_REL = str(sample_root() / "envs" / env_name() / "values" / "cluster-vars.yaml")
 
 
-def list_tasks_for_tag(tag: str) -> str:
-    run = playbook("site.yml", "-i", LIST_TASKS_INVENTORY, "-e", f"@{CLUSTER_VARS_REL}", "--list-tasks", "--tags", tag)
+def list_tasks_for_tag(tmp_path: Path, tag: str) -> str:
+    run = playbook("site.yml", "-i", LIST_TASKS_INVENTORY, "-e", f"@{site_vars_file(tmp_path / 'vars.json')}", "--list-tasks", "--tags", tag)
     assert run.returncode == 0, run.output
     return run.stdout
 
 
-def test_kubeconfig_tag_runs_only_the_kubeconfig_role() -> None:
-    listed = list_tasks_for_tag("kubeconfig")
+def test_kubeconfig_tag_runs_only_the_kubeconfig_role(tmp_path: Path) -> None:
+    listed = list_tasks_for_tag(tmp_path, "kubeconfig")
     task_lines = [line for line in listed.splitlines() if " : " in line]
     assert task_lines, listed
     roles = {line.split(" : ", 1)[0].strip().split()[-1] for line in task_lines}
@@ -28,8 +27,8 @@ def test_kubeconfig_tag_runs_only_the_kubeconfig_role() -> None:
     assert "flux-operator :" not in listed
 
 
-def test_labels_tag_reads_no_sealed_token() -> None:
+def test_labels_tag_reads_no_sealed_token(tmp_path: Path) -> None:
     """A label-only run never reaches the task that decrypts the k3s tokens, so it needs no age key."""
-    listed = list_tasks_for_tag("labels")
+    listed = list_tasks_for_tag(tmp_path, "labels")
     assert "Reconcile role and enablelb labels" in listed, listed
     assert "sealed k3s tokens" not in listed and "age private key" not in listed, listed

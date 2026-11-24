@@ -9,6 +9,18 @@ the upgrade.
 
 ### Changed
 
+- `jarvis site` hands Ansible what validation resolved, as one extra-vars file: the env's
+  cluster-vars with the schema's defaults, the instance, the working age key's path and the env's
+  `.sops.yaml` recipients. The roles no longer work these out or restate the schema's defaults
+  and checks, so an `ansible-playbook site.yml` run by hand with `-e @cluster-vars.yaml` stops
+  at the first value it lacks. Run `jarvis site`.
+- `flux_known_hosts` defaults to GitHub's published key in the schema, where the flux-operator
+  role kept it. For an `ssh://` root on another host without it, `jarvis validate` now prints
+  `flux_known_hosts holds no key for <host>, the host of flux_git_repo_url`.
+- A `lan-port` grant may take 5001/TCP and 51820-51821/UDP: core turns on neither k3s's
+  embedded registry nor flannel's WireGuard backend, so nothing on the node holds them.
+- `jarvis restore` finds VolSync's mover Job by its controller owner, the ReplicationSource,
+  rather than by working out VolSync's Job name.
 - An instance's Renovate reads `values/cluster-vars.yaml` and `values/apps.yaml` as YAML (core's
   preset now uses JSONata managers), so it finds the core pin whatever the order of
   `core_git_repo_url` and `core_git_ref`, and takes no pin from a comment. It opens the same PRs.

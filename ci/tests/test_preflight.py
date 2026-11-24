@@ -22,22 +22,13 @@ from ansible_role_proof import (
     playbook_recap_field,
     role_tasks,
     roles_inventory_path,
+    site_vars_file,
 )
 from conftest import require_cli
 
 from support import REPO_ROOT, bootstrap_example_copy, sample_root
 
 _EXAMPLE_SYNC = sample_root() / "envs" / "env-00" / "flux" / "sync.yaml"
-
-_REQUIRED = (
-    "k3s_version",
-    "k3s_sha256",
-    "pod_cidr",
-    "service_cidr",
-    "backup_path",
-    "local_path_data",
-    "jarvis_env",
-)
 
 
 def _inventory(
@@ -62,25 +53,14 @@ def _inventory(
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
 
 
-def _vars_file(
-    path: Path,
-    *,
-    drop: str | None = None,
-    jarvis_env: str | None = None,
-    override: dict[str, object] | None = None,
-) -> None:
+def _vars_file(path: Path, *, instance: Path | None, jarvis_env: str | None = None, override: dict[str, object] | None = None) -> Path:
+    """What jarvis site passes, for an instance at instance (None passes none)."""
     from jarvis.env import k3s
 
-    cluster = load_cluster_vars()
     # The env's k3s pair is optional (core's release otherwise); the opening play reads it either way.
-    cluster["k3s_version"], cluster["k3s_sha256"] = k3s.release(cluster)
-    body = {key: cluster[key] for key in _REQUIRED}
-    body.update(override or {})
-    if jarvis_env is not None:
-        body["jarvis_env"] = jarvis_env
-    if drop is not None:
-        del body[drop]
-    path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+    version, sha256 = k3s.release(load_cluster_vars())
+    found = {"k3s_version": version, "k3s_sha256": sha256, "jarvis_instance_root": instance and str(instance), **(override or {})}
+    return site_vars_file(path, **found, **({"jarvis_env": jarvis_env} if jarvis_env else {}))
 
 
 def _assert_unchanged(output: str) -> None:
@@ -96,7 +76,6 @@ _NO_INSTANCE = Path("/nonexistent-default")
 def _run_site(
     tmp_path: Path,
     *,
-    drop: str | None = None,
     extra: list[str] | None = None,
     data_disk_hosts: set[str] | None = None,
     check: bool = True,
@@ -117,14 +96,11 @@ def _run_site(
         instance = tmp_path
     inventory = tmp_path / "hosts.yml"
     _inventory(inventory, data_disk_hosts=data_disk_hosts, control_plane=control_plane)
-    vars_path = tmp_path / "cluster-vars.yaml"
-    _vars_file(vars_path, drop=drop, jarvis_env=jarvis_env, override=override)
+    # jarvis site passes the instance repository; here, one holding no env yet.
+    vars_path = _vars_file(tmp_path / "vars.json", instance=instance, jarvis_env=jarvis_env, override=override)
     args = [
         "site.yml", "-i", inventory, "-e", "ansible_connection=local", "-e", "ansible_become=false",
-        "-e", f"@{vars_path}",
-        # jarvis site passes the instance repository; here, one holding no env yet.
-        *([] if instance is None else ["-e", f"jarvis_instance_root={instance}"]),
-        *(extra or []),
+        "-e", f"@{vars_path}", *(extra or []),
     ]  # fmt: skip
     if flux_instance:
         instance_file = example_flux_entry(tmp_path).instance_file
@@ -187,43 +163,12 @@ def test_non_x86_host_fails_before_any_change(tmp_path: Path) -> None:
     _stopped_before_base_os(result, "k3s role supports only amd64 hosts.")
 
 
-def test_missing_cluster_var_fails_before_any_change(tmp_path: Path) -> None:
-    """A required cluster-vars key that is missing fails the opening play and changes nothing."""
-    result = _run_site(tmp_path, drop="jarvis_env")
-    _stopped_before_base_os(
-        result,
-        "site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env",
-    )
-
-
 @pytest.mark.parametrize("control_plane", [(), ("cp-1", "wk-1")], ids=["none", "two"])
 def test_not_exactly_one_control_plane_fails_before_any_change(
     tmp_path: Path, control_plane: tuple[str, ...]
 ) -> None:
     result = _run_site(tmp_path, control_plane=control_plane)
     _stopped_before_base_os(result, "expected exactly one")
-
-
-@pytest.mark.parametrize(
-    "override",
-    [{"k3s_sha256": "a" * 63}, {"k3s_version": ""}],
-    ids=["sha-not-64", "empty-version"],
-)
-def test_malformed_k3s_pin_fails_before_any_change(
-    tmp_path: Path, override: dict[str, object]
-) -> None:
-    """A checksum that is not 64 characters, or an empty version, stops the opening play."""
-    result = _run_site(tmp_path, override=override)
-    _stopped_before_base_os(
-        result,
-        "site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env",
-    )
-
-
-def test_node_memory_reserve_out_of_range_fails_before_any_change(tmp_path: Path) -> None:
-    """Rule: a node memory reserve that is no whole number from 0 to 50 stops the opening play."""
-    result = _run_site(tmp_path, override={"node_memory_reserve_percent": 60})
-    _stopped_before_base_os(result, "node_memory_reserve_percent is a whole number from 0 to 50")
 
 
 @pytest.mark.parametrize("value", ["memory.available<100MB", "nodefs.available<10%,memory.available<"])
@@ -348,12 +293,11 @@ def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
     _install_systemctl(bin_dir, active_rc=4)
     inventory = tmp_path / "hosts.yml"
     _inventory(inventory)
-    vars_path = tmp_path / "cluster-vars.yaml"
-    _vars_file(vars_path)
+    vars_path = _vars_file(tmp_path / "vars.json", instance=tmp_path)
     play = tmp_path / "play.yml"
     _write_opening_play(play, bin_dir=bin_dir)
     flux_instance = example_flux_entry(tmp_path).instance_file
-    extra = ["-e", f"@{vars_path}", "-e", "ansible_connection=local", "-e", f"jarvis_instance_root={tmp_path}",
+    extra = ["-e", f"@{vars_path}", "-e", "ansible_connection=local",
              "-e", f"flux_instance_file={flux_instance}", "-e", f"flux_sync_file={_EXAMPLE_SYNC}",
              *_k3s_paths(tmp_path)]  # fmt: skip
     for check in ([], [], ["--check"]):
@@ -385,8 +329,7 @@ def test_site_reads_the_flux_instance_from_core_and_sync_from_the_instance(tmp_p
     result = playbook(
         opening, "-i", copy.env_dir / "inventory" / "hosts.yml", "-i", roles_inventory_path(),
         "-e", "ansible_connection=local", "-e", "ansible_become=false",
-        "-e", f"@{copy.env_dir / 'values' / 'cluster-vars.yaml'}",
-        "-e", f"jarvis_instance_root={copy.root}", *_k3s_paths(tmp_path),
+        "-e", f"@{site_vars_file(tmp_path / 'vars.json', copy.root, env=copy.name)}", *_k3s_paths(tmp_path),
         env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"},
     )  # fmt: skip
     output = result.output

@@ -25,7 +25,7 @@
   ansible.builtin.set_fact:
     flux_sops_age_present: "{{ flux_sops_age_lookup.resources | length > 0 }}"
 
-- name: Resolve and stat the SOPS key file
+- name: Stat the SOPS key file
   ansible.builtin.import_tasks: sops_age_key_file.yml
   no_log: true
 
@@ -72,27 +72,6 @@
   when: sops_age_key_stat.stat.exists | default(false)
   no_log: true
   block:
-    - name: Read the env's age recipients from the SOPS config
-      ansible.builtin.set_fact:
-        flux_sops_recipients: >-
-          {{ ((lookup('file', flux_sops_config_file, errors='ignore') or '{}') | from_yaml).creation_rules
-             | default([], true)
-             | selectattr('path_regex', 'defined')
-             | selectattr('path_regex', 'contains', 'envs/' ~ jarvis_env ~ '/secrets/')
-             | selectattr('age', 'defined')
-             | map(attribute='age') | flatten | join(',') | split(',')
-             | map('trim') | select | list }}
-
-    - name: Require an age recipient for this env
-      ansible.builtin.assert:
-        that:
-          - flux_sops_recipients | length > 0
-        fail_msg: >-
-          .sops.yaml has no age recipient in a creation rule for
-          envs/{{ jarvis_env }}/secrets/, so no identity in the key file can be chosen.
-      # Public recipients only, so the reason stays visible.
-      no_log: false
-
     - name: Require age private key file on the controller
       ansible.builtin.assert:
         that:
@@ -124,10 +103,11 @@
       run_once: true
       no_log: true
 
+    # sops_age_recipients: the env's .sops.yaml rule's, which jarvis site resolves.
     - name: Keep only the identities for the env's age recipients
       ansible.builtin.set_fact:
         # Double-quoted, so YAML turns the \n into a real newline.
-        flux_sops_age_key_content: "{{ flux_sops_age_publics.results | default([]) | selectattr('stdout', 'in', flux_sops_recipients) | map(attribute='item') | join('\n') }}"
+        flux_sops_age_key_content: "{{ flux_sops_age_publics.results | default([]) | selectattr('stdout', 'in', sops_age_recipients) | map(attribute='item') | join('\n') }}"
       no_log: true
 
     - name: Record whether the key file holds an identity for the env

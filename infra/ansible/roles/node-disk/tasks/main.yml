@@ -3,28 +3,6 @@
   tags: [node-disk]
   when: data_disk | default(false) is sameas true
   block:
-    - name: Require data paths and the k3s data dir
-      ansible.builtin.assert:
-        that:
-          - local_path_data is defined
-          - local_path_data is string
-          - local_path_data | length > 0
-          - backup_path is defined
-          - backup_path is string
-          - backup_path | length > 0
-          - k3s_data_dir is defined
-          - k3s_data_dir is string
-          - k3s_data_dir | length > 0
-        fail_msg: node-disk requires local_path_data, backup_path, and k3s_data_dir.
-
-    - name: Refuse local_path_data that is the data mount
-      ansible.builtin.assert:
-        that:
-          - (local_path_data | regex_replace('/+$', '')) != node_disk_mount
-        fail_msg: >-
-          local_path_data ({{ local_path_data }}) must be a subdirectory of
-          {{ node_disk_mount }}.
-
     - name: Stat the data path
       ansible.builtin.stat:
         path: "{{ node_disk_mount }}"
@@ -73,20 +51,11 @@
           - (node_disk_mount_id.stdout | trim) != (node_disk_root_id.stdout | trim)
         fail_msg: "{{ node_disk_mount }} is not its own filesystem; it is part of /."
 
-    - name: Refuse local_path_data or backup_path outside the data mount
+    # local_path_data is under the mount, and neither path has a . or .. segment, by the schema.
+    - name: Refuse a backup_path outside the data mount
       ansible.builtin.assert:
-        that:
-          - local_path_data is match('^' ~ (node_disk_mount | regex_escape) ~ '/.+')
-          - >-
-            backup_path == node_disk_mount
-            or backup_path is match('^' ~ (node_disk_mount | regex_escape) ~ '/')
-          - "'/../' not in ('/' ~ local_path_data ~ '/')"
-          - "'/./' not in ('/' ~ local_path_data ~ '/')"
-          - "'/../' not in ('/' ~ backup_path ~ '/')"
-          - "'/./' not in ('/' ~ backup_path ~ '/')"
-        fail_msg: >-
-          local_path_data ({{ local_path_data }}) or backup_path ({{ backup_path }})
-          is outside {{ node_disk_mount }}.
+        that: backup_path == node_disk_mount or backup_path is match('^' ~ (node_disk_mount | regex_escape) ~ '/')
+        fail_msg: backup_path ({{ backup_path }}) is outside {{ node_disk_mount }}.
 
     - name: Stat local_path_data
       ansible.builtin.stat:
