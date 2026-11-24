@@ -129,8 +129,8 @@
       ]
     },
     "flux_known_hosts": {
-      "description": "SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. Unset, GitHub's published key. Host-only (Ansible).",
-      "x-required": "for an ssh:// root not on github.com",
+      "description": "SSH known_hosts lines Flux trusts for an ssh:// root; the root's host must be among them. The default is GitHub's published key (api.github.com/meta), which serves only github.com. Host-only (Ansible).",
+      "default": "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
       "type": "string",
       "pattern": "^\\s*\\S+ (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+=*(\\s*\\n\\s*\\S+ (ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+=*)*\\s*$"
     },

@@ -33,7 +33,7 @@ def test_env_shape_copy_bootstraps_builds_and_lists_hosts(tmp_path: Path, shape:
     tree = env_tree(copy.root, f"envs/{copy.name}/flux")
     assert tree.error is None and not [path.error for path in tree.paths if path.error], tree
     _assert_inventory_graph(copy)
-    assert _listed_play_hosts(_agent_play_section(copy.name, copy.root)) == (
+    assert _listed_play_hosts(_agent_play_section(tmp_path / "vars.json", copy.name, copy.root)) == (
         _hosts_outside_control_plane(copy.name, copy.root)
     )
 

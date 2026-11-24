@@ -24,32 +24,6 @@
     that: ansible_facts['architecture'] == 'x86_64'
     fail_msg: k3s role supports only amd64 hosts.
 
-- name: Require k3s cluster-vars
-  ansible.builtin.assert:
-    that:
-      - k3s_version is defined
-      - k3s_version | length > 0
-      - k3s_sha256 is defined
-      - k3s_sha256 | length == 64
-      - pod_cidr is defined
-      - service_cidr is defined
-      - backup_path is defined
-      - local_path_data is defined
-      - jarvis_env is defined
-      - jarvis_env | length > 0
-    fail_msg: >-
-      site.yml requires k3s_version, k3s_sha256, CIDRs, paths, and jarvis_env
-      in cluster-vars.
-
-- name: Require a node memory reserve from 0 to 50 percent
-  ansible.builtin.assert:
-    that:
-      - (node_memory_reserve_percent | default(10) | string) is match('^[0-9]+$')
-      - node_memory_reserve_percent | default(10) | int <= 50
-    fail_msg: >-
-      node_memory_reserve_percent is a whole number from 0 to 50
-      (the share of each node's memory no pod is scheduled into; default 10).
-
 # The k3s role compares this host's memory.available threshold with the reserve; its config
 # task logs nothing, so a threshold it cannot read stops here, before any change.
 - name: Require a readable eviction-hard memory.available on each host

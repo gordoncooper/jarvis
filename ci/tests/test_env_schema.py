@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -347,14 +348,16 @@ def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
 
 
 def _run_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> tuple[int, list[str]]:
-    """jarvis site with a stub ansible-playbook first on PATH; returns its exit code and the stub's argv."""
+    """jarvis site with a stub ansible-playbook first on PATH; returns its exit code and the stub's
+    argv. The stub keeps its extra-vars file at <log>.vars."""
     from jarvis.node import site
 
     log = tmp_path / "ap.log"
     log.unlink(missing_ok=True)
     stub = tmp_path / "bin" / "ansible-playbook"
     stub.parent.mkdir(exist_ok=True)
-    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"${CALL_LOG}\"\n")
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"${CALL_LOG}\"\n"
+                    "for a; do case \"$a\" in @*) cp \"${a#@}\" \"${CALL_LOG}.vars\";; esac; done\n")
     stub.chmod(0o755)
     monkeypatch.setenv("CALL_LOG", str(log))
     monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
@@ -365,14 +368,21 @@ def _run_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> tu
 
 def test_site_passes_inventories_tags_limit_and_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A valid env passes -i hosts then roles, -e, --tags, --limit, and --check --diff."""
+    from jarvis.secrets import age
+
     code, args = _run_site(tmp_path, monkeypatch)
     assert code == 0
     assert args[1] == "site.yml"
     dash_i = [i for i, a in enumerate(args) if a == "-i"]
     assert args[dash_i[0] + 1] == f"{sample_root()}/envs/env-00/inventory/hosts.yml"
     assert args[dash_i[1] + 1] == "../inventory/roles"
-    assert f"@{sample_root()}/envs/env-00/values/cluster-vars.yaml" in args
-    assert f"jarvis_instance_root={sample_root()}" in args
+    passed = json.loads((tmp_path / "ap.log.vars").read_text(encoding="utf-8"))
+    assert args[args.index("-e") + 1].startswith("@")
+    # The env's values with the schema's defaults, and what the plays no longer work out.
+    assert passed["jarvis_instance_root"] == str(sample_root()) and passed["ssh_user"]
+    assert passed["node_memory_reserve_percent"] == 10 and passed["chrony_nts"] is True
+    assert passed["sops_age_recipients"] == age.recipients(sample_root() / ".sops.yaml", "env-00") != []
+    assert passed["sops_age_key_file"] == str(age.key_path(passed["age_key_file"]))
     assert "--tags" not in args and "--limit" not in args and "--check" not in args
     assert "--diff" not in args
     code, args = _run_site(tmp_path, monkeypatch, "--tags", "base-os,k3s", "--limit", "cp-1", "--check")
@@ -419,20 +429,20 @@ _GITHUB_KEY = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UO
         ("ssh://git@git.example.lan/o/r", _GITHUB_KEY, "no key for git.example.lan"),
         ("ssh://git@git.example.lan/o/r", "git.example.lan ssh-ed25519 AAAAC3Nza=", None),
         ("ssh://git@github.com/o/r", _GITHUB_KEY + "\ngitlab.com ssh-ed25519 AAAAC3NzaB", None),
-        ("ssh://git@git.example.lan/o/r", None, "set flux_known_hosts"),
+        ("ssh://git@git.example.lan/o/r", None, "no key for git.example.lan"),
         ("ssh://git@github.com/o/r", None, None),
     ],
     ids=["root-host-missing", "own-forge", "several-lines", "unset-off-github", "unset-on-github"],
 )
 def test_flux_known_hosts_trusts_the_root_host(tmp_path: Path, root: str, known_hosts: str | None, problem: str | None):
     """Rule: flux_known_hosts holds '<host> <type> <key>' lines, and an ssh:// root's host is one of them;
-    unset, it is GitHub's key, so an ssh:// root elsewhere must set it."""
+    unset, it is the schema's default, GitHub's key, so an ssh:// root elsewhere must set it."""
     cv = _valid_cluster_vars()
     cv["flux_known_hosts"] = known_hosts
     if known_hosts is None:
         del cv["flux_known_hosts"]
     cv["flux_git_repo_url"] = root
-    found = env_schema._known_hosts_problems(cv.get("flux_known_hosts"), cv["flux_git_repo_url"])
+    found = env_schema._known_hosts_problems(env_schema.resolve_cluster_vars(cv)["flux_known_hosts"], cv["flux_git_repo_url"])
     if problem is None:
         assert found == []
     else:

@@ -33,6 +33,7 @@ from ansible_role_proof import (
 )
 from conftest import require_cli
 
+from jarvis.schema.values import defaults
 from support import sample_root
 
 SITE_YML = ANSIBLE_DIR / "site.yml"
@@ -322,7 +323,7 @@ def test_a_converged_cluster_changes_nothing(api: apiserver.Api, tmp_path: Path)
     _operator_running(api)
     _seal_sops_age(api, "an existing key")
     _root_source(api)
-    extra = [*_flux_operator_extra(api.config), "-e", f"age_key_file={tmp_path / 'missing-age-key'}"]
+    extra = [*_flux_operator_extra(api.config), *_key_vars(tmp_path / "missing-age-key")]
     env = _ansible_env(api.config)
     inventory = ["localhost,", str(_backup_inventory(tmp_path))]
     for _ in range(2):
@@ -390,45 +391,46 @@ def _key_file(tmp_path: Path, *identities: tuple[str, str]) -> Path:
     return path
 
 
-def _sops_config(tmp_path: Path, env: str, *publics: str, as_list: bool = False) -> Path:
-    """A SOPS config whose rule for env names publics, as one comma string or a YAML list."""
+def _key_vars(keyfile: Path, *recipients: str) -> list[str]:
+    """What jarvis site resolves for the role: the working key's path and the env's recipients."""
+    return ["-e", json.dumps({"sops_age_key_file": str(keyfile), "sops_age_recipients": list(recipients)})]
+
+
+def _sops_config(tmp_path: Path, env: str, *publics: str) -> Path:
+    """A SOPS config whose rule for env names publics."""
     path = tmp_path / "sops-config.yaml"
     rule = {
         "path_regex": f"envs/{env}/secrets/.*\\.sops\\.yaml$",
         "encrypted_regex": "^(data|stringData)$",
-        "age": list(publics) if as_list else ",".join(publics),
+        "age": ",".join(publics),
     }
     path.write_text(yaml.safe_dump({"creation_rules": [rule]}), encoding="utf-8")
     return path
 
 
-def _run_sops_age(api: apiserver.Api, tmp_path: Path, keyfile: Path, sops_config: Path) -> subprocess.CompletedProcess[str]:
-    env = _ansible_env(api.config)
-    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    args = ["-e", f"jarvis_env={_SOPS_ENV}", "-e", f"flux_sops_config_file={sops_config}"]
-    return _run_localhost_role(_SOPS_PLAY, tmp_path, args, env=env)
+def _run_sops_age(api: apiserver.Api, tmp_path: Path, keyfile: Path, *recipients: str) -> subprocess.CompletedProcess[str]:
+    args = ["-e", f"jarvis_env={_SOPS_ENV}", *_key_vars(keyfile, *recipients)]
+    return _run_localhost_role(_SOPS_PLAY, tmp_path, args, env=_ansible_env(api.config))
 
 
 def test_existing_sops_age_skips_key_when_unset(api: apiserver.Api, tmp_path: Path) -> None:
     require_cli("ansible-playbook")
     version = _seal_sops_age(api, "an existing key")
     env = _ansible_env(api.config)
-    extra = ["-e", f"age_key_file={tmp_path / 'missing-age-key'}"]
+    extra = _key_vars(tmp_path / "missing-age-key")
     proc = _run_localhost_role(_play("Re-run sops-age without the private key", "sops_age.yml"), tmp_path, extra, env=env)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _get(api, _secret_path("sops-age"))["metadata"]["resourceVersion"] == version
 
 
-@pytest.mark.parametrize("as_list", [False, True], ids=["comma-string", "yaml-list"])
-def test_new_sops_age_secret_holds_only_the_env_identity(api: apiserver.Api, tmp_path: Path, as_list: bool) -> None:
+def test_new_sops_age_secret_holds_only_the_env_identity(api: apiserver.Api, tmp_path: Path) -> None:
     """A new flux-system/sops-age holds only the identity for the env's recipients."""
     require_cli("ansible-playbook")
     other = _age_identity(tmp_path, "other")
     mine = _age_identity(tmp_path, "mine")
     second_recipient = _age_identity(tmp_path, "second")
     keyfile = _key_file(tmp_path, other, mine)
-    sops_config = _sops_config(tmp_path, _SOPS_ENV, second_recipient[1], mine[1], as_list=as_list)
-    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
+    proc = _run_sops_age(api, tmp_path, keyfile, second_recipient[1], mine[1])
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _secret_data(api, "sops-age") == {"age.agekey": mine[0]}
     assert mine[0] not in proc.stdout + proc.stderr
@@ -442,7 +444,7 @@ def test_existing_secret_with_the_env_identity_passes_untouched(api: apiserver.A
     mine = _age_identity(tmp_path, "mine")
     keyfile = _key_file(tmp_path, other, mine)
     version = _seal_sops_age(api, keyfile.read_text(encoding="utf-8") if case == "full-key-file" else mine[0])
-    proc = _run_sops_age(api, tmp_path, keyfile, _sops_config(tmp_path, _SOPS_ENV, mine[1]))
+    proc = _run_sops_age(api, tmp_path, keyfile, mine[1])
     output = proc.stdout + proc.stderr
     assert proc.returncode == 0, output
     assert playbook_recap_field(output, "changed") == 0
@@ -456,23 +458,23 @@ def test_two_matching_identities_are_one_line_each(api: apiserver.Api, tmp_path:
     first = _age_identity(tmp_path, "first")
     second = _age_identity(tmp_path, "second")
     keyfile = _key_file(tmp_path, other, first, second)
-    sops_config = _sops_config(tmp_path, _SOPS_ENV, first[1], second[1])
+    recipients = (first[1], second[1])
 
-    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
+    proc = _run_sops_age(api, tmp_path, keyfile, *recipients)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _secret_data(api, "sops-age")["age.agekey"].splitlines() == [first[0], second[0]]
 
     # The whole key file, comments and a third identity included, holds both.
     api.request("DELETE", _secret_path("sops-age"))
     version = _seal_sops_age(api, keyfile.read_text(encoding="utf-8"))
-    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
+    proc = _run_sops_age(api, tmp_path, keyfile, *recipients)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _get(api, _secret_path("sops-age"))["metadata"]["resourceVersion"] == version
 
     # A secret with only one of the two does not hold the env's identities.
     api.request("DELETE", _secret_path("sops-age"))
     _seal_sops_age(api, first[0])
-    proc = _run_sops_age(api, tmp_path, keyfile, sops_config)
+    proc = _run_sops_age(api, tmp_path, keyfile, *recipients)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
     assert _failed_task(output) == "Refuse to overwrite an existing sops-age secret with different content", output
@@ -486,7 +488,7 @@ def test_existing_secret_with_another_identity_refuses(api: apiserver.Api, tmp_p
     mine = _age_identity(tmp_path, "mine")
     existing = f"# public key: {other[1]}\n{other[0]}"
     _seal_sops_age(api, existing)
-    proc = _run_sops_age(api, tmp_path, _key_file(tmp_path, mine), _sops_config(tmp_path, _SOPS_ENV, mine[1]))
+    proc = _run_sops_age(api, tmp_path, _key_file(tmp_path, mine), mine[1])
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
     assert _failed_task(output) == "Refuse to overwrite an existing sops-age secret with different content", output
@@ -494,17 +496,7 @@ def test_existing_secret_with_another_identity_refuses(api: apiserver.Api, tmp_p
     assert _secret_data(api, "sops-age") == {"age.agekey": existing}
 
 
-@pytest.mark.parametrize(
-    ("rule_env", "refusal"),
-    [
-        (None, "Refuse a key file with no identity for the env's age recipient"),
-        ("env-other", "Require an age recipient for this env"),
-    ],
-    ids=["no-matching-identity", "no-recipient-for-env"],
-)
-def test_key_file_without_the_env_identity_refuses_before_the_operator_install(
-    api: apiserver.Api, tmp_path: Path, rule_env: str | None, refusal: str
-) -> None:
+def test_key_file_without_the_env_identity_refuses_before_the_operator_install(api: apiserver.Api, tmp_path: Path) -> None:
     """The full role stops at the age key check, before Helm or any cluster write."""
     require_cli("ansible-playbook")
     other = _age_identity(tmp_path, "other")
@@ -513,14 +505,11 @@ def test_key_file_without_the_env_identity_refuses_before_the_operator_install(
     helm_log = tmp_path / "helm.log"
     helm = tmp_path / "helm"
     _write_executable(helm, f"#!/bin/bash\nprintf '%s\\n' \"$*\" >> {helm_log}\nexit 0\n")
-    sops_config = _sops_config(tmp_path, rule_env or str(load_cluster_vars()["jarvis_env"]), recipient[1])
-    env = _ansible_env(api.config)
-    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    extra = [*_flux_operator_extra(api.config), "-e", f"helm_binary_path={helm}", "-e", f"flux_sops_config_file={sops_config}"]
-    proc = _run_localhost_role(_play("Full flux-operator role"), tmp_path, extra, env=env)
+    extra = [*_flux_operator_extra(api.config), "-e", f"helm_binary_path={helm}", *_key_vars(keyfile, recipient[1])]
+    proc = _run_localhost_role(_play("Full flux-operator role"), tmp_path, extra, env=_ansible_env(api.config))
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
-    assert _failed_task(output) == refusal, output
+    assert _failed_task(output) == "Refuse a key file with no identity for the env's age recipient", output
     assert other[0] not in output
     assert "Check whether Flux Operator deployment exists" not in output
     assert not helm_log.exists()
@@ -558,9 +547,8 @@ def test_missing_age_keygen_is_named_before_no_log(api: apiserver.Api, tmp_path:
     if not (bindir / "ansible-playbook").exists():
         (bindir / "ansible-playbook").symlink_to(playbook)
     env = _ansible_env(api.config)
-    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
     env["PATH"] = str(bindir)
-    proc = _run_localhost_role(_play("Missing age-keygen", "sops_age.yml"), tmp_path, [], env=env)
+    proc = _run_localhost_role(_play("Missing age-keygen", "sops_age.yml"), tmp_path, _key_vars(keyfile), env=env)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
     assert _failed_task(output) == "Require age-keygen on the controller", output
@@ -576,8 +564,7 @@ def test_sops_age_refuses_mode_0644_without_reading_the_key(api: apiserver.Api, 
     keyfile.write_text(sentinel + "\n", encoding="utf-8")
     keyfile.chmod(0o644)
     env = _ansible_env(api.config)
-    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    proc = _run_localhost_role(_play("Refuse a world-readable age key", "sops_age.yml"), tmp_path, [], env=env)
+    proc = _run_localhost_role(_play("Refuse a world-readable age key", "sops_age.yml"), tmp_path, _key_vars(keyfile), env=env)
     _assert_key_was_not_read(proc, sentinel)
     assert _get(api, _secret_path("sops-age")) is None
 
@@ -598,8 +585,7 @@ def test_sops_age_refuses_wrong_owner_from_stat(api: apiserver.Api, tmp_path: Pa
         chowned = keyfile.stat().st_uid == other
     env = _ansible_env(api.config)
     if chowned:
-        env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-        proc = _run_localhost_role(_play("Refuse an age key owned by someone else", "sops_age.yml"), tmp_path, [], env=env)
+        proc = _run_localhost_role(_play("Refuse an age key owned by someone else", "sops_age.yml"), tmp_path, _key_vars(keyfile), env=env)
         _assert_key_was_not_read(proc, sentinel)
         assert _get(api, _secret_path("sops-age")) is None
         return
@@ -635,8 +621,7 @@ def test_sops_age_lookup_error_does_not_bootstrap(tmp_path: Path) -> None:
     keyfile.write_text(sentinel + "\n", encoding="utf-8")
     keyfile.chmod(0o600)
     env = _ansible_env(_unreachable(tmp_path))
-    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
-    proc = _run_localhost_role(_SOPS_PLAY, tmp_path, [], env=env)
+    proc = _run_localhost_role(_SOPS_PLAY, tmp_path, _key_vars(keyfile), env=env)
     output = proc.stdout + proc.stderr
     assert proc.returncode != 0, output
     assert _failed_task(output) == "Reach the Kubernetes API", output
@@ -732,6 +717,8 @@ def test_root_source_lookup_error_does_not_set_the_hold(tmp_path: Path) -> None:
     assert "Stat restic data on the backup host" not in output
 
 
+# The schema's default for flux_known_hosts, which jarvis site passes.
+_GITHUB_KEY = defaults("cluster-vars")["flux_known_hosts"]
 _DEPLOY_KEY_PLAY = textwrap.dedent(
     """\
     ---
@@ -770,10 +757,10 @@ def test_fresh_cluster_creates_the_deploy_key_secret_once(api: apiserver.Api, tm
     )
     sealed = instance / "envs" / _SOPS_ENV / "secrets" / "flux-deploy-key.sops.yaml"
     env = _ansible_env(api.config)
-    env["SOPS_AGE_KEY_FILE"] = str(keyfile)
+    extra = ["-e", json.dumps({"flux_deploy_key_file": str(sealed), "flux_known_hosts": _GITHUB_KEY}), *_key_vars(keyfile)]
     versions = []
     for _ in range(2):
-        proc = _run_localhost_role(_DEPLOY_KEY_PLAY, tmp_path, ["-e", f"flux_deploy_key_file={sealed}"], env=env)
+        proc = _run_localhost_role(_DEPLOY_KEY_PLAY, tmp_path, extra, env=env)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert private not in proc.stdout + proc.stderr
         versions.append(_version(api, _secret_path("flux-deploy-key")))
@@ -781,12 +768,12 @@ def test_fresh_cluster_creates_the_deploy_key_secret_once(api: apiserver.Api, tm
     assert _get(api, _secret_path("flux-deploy-key"))["metadata"]["annotations"] == {"kustomize.toolkit.fluxcd.io/reconcile": "disabled"}
     assert _secret_data(api, "flux-deploy-key") == {
         "identity": private,
-        "known_hosts": load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"],
+        "known_hosts": _GITHUB_KEY,
     }
 
 
 def test_known_hosts_is_a_github_published_host_key() -> None:
-    """flux_known_hosts pins a key GitHub publishes (api.github.com/meta), so Flux trusts github.com only."""
+    """flux_known_hosts' default pins a key GitHub publishes (api.github.com/meta), so Flux trusts github.com only."""
     import urllib.error
     import urllib.request
 
@@ -801,7 +788,7 @@ def test_known_hosts_is_a_github_published_host_key() -> None:
         if error.code < 500:
             raise
         pytest.skip(f"api.github.com answers {error.code}; GitHub is down, not the pin")
-    host, key = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)["flux_known_hosts"].split(" ", 1)
+    host, key = _GITHUB_KEY.split(" ", 1)
     assert host == "github.com"
     assert key in published
 

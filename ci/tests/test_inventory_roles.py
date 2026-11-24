@@ -15,6 +15,7 @@ from ansible_role_proof import (
     playbook,
     playbook_recap_field,
     roles_inventory_path,
+    site_vars_file,
 )
 from conftest import require_cli
 
@@ -66,14 +67,14 @@ def test_env_00_inventory_graph_shows_role_groups() -> None:
     assert not any(name.startswith("_") for name in groups)
 
 
-def test_env_hosts_file_alone_fails_before_any_change(example_copy: ExampleCopy) -> None:
+def test_env_hosts_file_alone_fails_before_any_change(tmp_path: Path, example_copy: ExampleCopy) -> None:
     """Missing the roles inventory fails the opening assert, before any change."""
     require_cli("ansible-playbook")
-    for root, env in real_and_copy_envs(example_copy):
+    for index, (root, env) in enumerate(real_and_copy_envs(example_copy)):
         env_dir = root / "envs" / env
         proc = playbook(
             "--check", "site.yml", "-i", env_dir / "inventory" / "hosts.yml",
-            "-e", f"@{env_dir / 'values' / 'cluster-vars.yaml'}",
+            "-e", f"@{site_vars_file(tmp_path / f'{index}.json', root, env=env)}",
             "-e", "ansible_connection=local", "-e", "ansible_become=false",
         )  # fmt: skip
         text = proc.output
