@@ -1,7 +1,7 @@
 ---
 # Fact asserts run before any change. One bad host stops the run. Tags for k3s,
-# kubeconfig, and flux-operator are on the plays. The env's cluster-vars come in once, as extra
-# vars (jarvis site: -e @values/cluster-vars.yaml).
+# kubeconfig, and flux-operator are on the plays. jarvis site passes what validation resolved of
+# the env once, as one extra-vars file (site_vars in jarvis/node/site.py).
 - name: Assert facts before any change
   hosts: all
   become: true

@@ -175,6 +175,12 @@
   ],
   "lockFileMaintenance": {
     "enabled": true,
-    "description": "Weekly PR refreshing the packages uv.lock and mise.lock hold beyond the direct pins (Python's transitive dependencies)."
+    "description": "A PR refreshing the packages uv.lock and mise.lock hold beyond the direct pins (Python's transitive dependencies). It merges on its own once every check is green, with the auto-merge rule's keys: Renovate opens, rebases and merges it only overnight Pacific.",
+    "automerge": true,
+    "platformAutomerge": false,
+    "rebaseWhen": "behind-base-branch",
+    "timezone": "America/Los_Angeles",
+    "schedule": ["* 0-5 * * *"],
+    "updateNotScheduled": false
   }
 }
