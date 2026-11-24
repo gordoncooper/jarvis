@@ -156,11 +156,8 @@ def _doctor(instance: Path, env: str) -> int:
 
 def _validate(instance: Path, env: str) -> int:
     from jarvis.env import validate
-    from jarvis.schema.env import ENVS_VAR
 
-    # The env's own checks only: each env is checked by the core release it pins.
-    os.environ[ENVS_VAR] = env
-    return validate.run(instance)
+    return validate.run_env(instance, env)
 
 
 def _up(instance: Path, env: str) -> int:

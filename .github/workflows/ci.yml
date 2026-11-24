@@ -34,20 +34,22 @@ jobs:
         with:
           version: 2026.11.12
           install: false
+          # mise.dev.toml's tools too, for this step and every later one (MISE_ENV).
+          mise_env: dev
           # The tools' own directories go on PATH (below), not shims: a shim picks its version
           # from the current directory's mise.toml, and tests run CLIs in temporary directories.
           add_shims_to_path: false
 
-      # mise.lock must hold every tool's checksum for every platform mise.toml serves. On a
-      # mismatch the step prints the lock to commit (Renovate's PRs update it themselves).
-      - name: mise.lock matches mise.toml
+      # Each lock must hold every tool's checksum for every platform its file serves (MISE_ENV=dev
+      # locks both). On a mismatch the step prints the locks to commit (Renovate's PRs update them).
+      - name: mise.lock and mise.dev.lock match their files
         if: matrix.group == 'checks'
         run: |
           set -euo pipefail
           mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64
-          if ! git diff --quiet -- mise.lock || [[ -n "$(git status --porcelain -- mise.lock)" ]]; then
-            echo "::error file=mise.lock::mise.lock does not match mise.toml; commit the lock below (mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64)"
-            cat mise.lock
+          if ! git diff --quiet -- mise.lock mise.dev.lock || [[ -n "$(git status --porcelain -- mise.lock mise.dev.lock)" ]]; then
+            echo "::error file=mise.lock::a mise lock does not match its file; commit the locks below (mise -E dev lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64)"
+            cat mise.lock mise.dev.lock
             exit 1
           fi
 

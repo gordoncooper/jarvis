@@ -1,6 +1,6 @@
 """A throwaway kube-apiserver and etcd on loopback, for proofs that need the real API.
 
-The binaries are mise.toml's pins (Linux). The client is a token the caller makes and a loopback
+The binaries are mise.dev.toml's pins (Linux). The client is a token the caller makes and a loopback
 URL; a kubeconfig, when one is written, names only that, so a proof cannot reach another cluster.
 """
 
@@ -31,7 +31,7 @@ WORK = REPO_ROOT / ".scratch" / "apiserver"
 
 
 def binaries() -> dict[str, str]:
-    """kube-apiserver and etcd at their mise.toml pins, which make deps installs on Linux."""
+    """kube-apiserver and etcd at their mise.dev.toml pins, which make deps installs on Linux."""
     found = {name: shutil.which(name) for name in ("kube-apiserver", "etcd")}
     missing = sorted(name for name, path in found.items() if path is None)
     if missing:

@@ -3,8 +3,9 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 VENV ?= $(CURDIR)/.venv
 NEED_MISE = command -v mise >/dev/null || { echo "make deps needs mise: https://mise.jdx.dev/getting-started.html" >&2; exit 1; }
-# Every target finds the CLIs mise installed (mise.toml) first on PATH, and uv syncs into VENV.
-MISE_BIN_PATHS := $(shell command -v mise >/dev/null && mise bin-paths 2>/dev/null | paste -sd: -)
+# Every target finds the CLIs mise installed (mise.toml and mise.dev.toml) first on PATH, and uv
+# syncs into VENV. -E dev, not an exported MISE_ENV: $(shell) sees none before GNU make 4.4.
+MISE_BIN_PATHS := $(shell command -v mise >/dev/null && mise -E dev bin-paths 2>/dev/null | paste -sd: -)
 export PATH := $(if $(MISE_BIN_PATHS),$(MISE_BIN_PATHS):)$(PATH)
 export UV_PROJECT_ENVIRONMENT := $(VENV)
 
@@ -20,13 +21,13 @@ help:
 	@echo
 	@echo "Operators run jarvis from an instance repo: jarvis --help (docs/deploy.md)."
 
-# Every pinned CLI (mise.toml, checksums in mise.lock) and the venv with every Python package
-# (uv.lock): the jarvis CLI, Ansible, and the test and lint tooling. mise.toml's deps task is the
-# one definition; the jarvis CLI runs the same task for the core release an env pins.
+# Every pinned CLI (mise.toml and mise.dev.toml, checksums in their locks) and the venv with every
+# Python package (uv.lock): the jarvis CLI, Ansible, and the test and lint tooling. mise.toml's deps
+# task is the one definition; the jarvis CLI runs it without -E dev for the core release an env pins.
 deps:
 	@$(NEED_MISE)
 	mise trust --quiet "$(CURDIR)/mise.toml"
-	mise run deps
+	mise -E dev run deps
 
 # The venv with only the jarvis package's own dependencies.
 venv:

@@ -15,8 +15,7 @@ The [Quickstart](quickstart.md) is the same path in seven steps; this page is th
 ## Install tools
 
 ```bash
-mise use -g uv
-uv tool install git+https://github.com/<owner>/jarvis@<core tag>
+mise exec uv -- uv tool install git+https://github.com/<owner>/jarvis@<core tag>
 jarvis --help
 ```
 

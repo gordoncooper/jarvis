@@ -214,19 +214,21 @@ def test_up_refuses_until_flux_reads_what_the_checkout_holds(tmp_path: Path) -> 
 
 
 def test_up_stops_at_the_first_failing_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    """Rule: each step must pass before the next; the first failure's exit code is up's."""
+    """Rule: each step must pass before the next; the first failure's exit code is up's. Validate
+    checks up's env only, as jarvis validate does, so each env is checked by the core it pins."""
     ran: list[str] = []
 
     def step(name: str, code: int = 0):
         return lambda *args, **kwargs: ran.append(name) or code
 
+    monkeypatch.setenv("ENVS", "")  # restored after the test, as up sets it in place
     monkeypatch.setattr(up.doctor, "run", step("doctor"))
-    monkeypatch.setattr(up.validate, "run", step("validate"))
+    monkeypatch.setattr(up.validate, "run", lambda instance: ran.append(f"validate {os.environ['ENVS']}") or 0)
     monkeypatch.setattr(up.mint, "main", step("secrets"))
     monkeypatch.setattr(up, "_refuse_unpushed", step("pushed", 3))
     monkeypatch.setattr(up.site, "main", step("site"))
     assert up.run(tmp_path, "home") == 3
-    assert ran == ["doctor", "validate", "secrets", "pushed"]
+    assert ran == ["doctor", "validate home", "secrets", "pushed"]
     assert "stopped at pushed" in capsys.readouterr().out
 
 
