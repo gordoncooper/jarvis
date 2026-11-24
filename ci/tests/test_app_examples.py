@@ -80,7 +80,7 @@ def test_examples_pass_admission_with_the_env_line(tmp_path: Path, monkeypatch: 
     _instance, _env_dir, values = _env(tmp_path)
     _admission_env(monkeypatch, values)
     docs = [doc for app in APPS for doc in _objects(app)]
-    cases = [(doc, admission.PASS) for doc in admission._mutated(tmp_path, docs)]
+    cases = [(doc, admission.PASS) for doc in admission._mutated(docs)]
     admission._run(tmp_path, "granted", None, cases)
 
 
@@ -100,4 +100,4 @@ def test_env_values_for_a_chart_are_held_to_the_app_rules(tmp_path: Path) -> Non
     (env_dir / _apps.APPS_VALUES).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
     cluster_vars = yaml.safe_load((env_dir / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
     problems = env_schema.apps_problems(env_dir, env_dir.parent.parent, cluster_vars)
-    assert len(problems) == 1 and "Deployment lan-demo: uses host network" in problems[0], problems
+    assert len(problems) == 1 and "app-file: app-lan-demo/Deployment/lan-demo: grant: host network" in problems[0], problems

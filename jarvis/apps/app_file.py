@@ -1,29 +1,33 @@
 """Validate one hosted app's folder: its app file and the objects in deploy/, or its chart's.
 
-CONTRACT: core/feature/app-hosting/CONTRACT.md. The schema is the App CRD's
-(core/feature/app-hosting/crd/app-crd.yaml), read here, with unknown keys refused; the API
-server prunes them unread. The deploy/ rules are ValidatingAdmissionPolicies app-tenant and
-app-file as far as the folder alone decides them: a risky item the file does not ask for
-fails here, and one it asks for still needs the env's grant in the cluster. An HTTPRoute's
-hostnames are admission's alone to check: here an app may ship one only for an ownRoute entry.
-An app with a chart ships no deploy/: its objects are the chart's, rendered by `helm template` as
-helm-controller installs them (release <name> in app-<name>, the app's values, then the env's).
+CONTRACT: core/feature/app-hosting/CONTRACT.md. kubeconform holds the App to the App CRD
+(core/feature/app-hosting/crd/app-crd.yaml), unknown keys refused; the CRD's one CEL rule is
+the API server's to run. The objects meet the cluster's own admission as the app's tenant
+applies them: MutatingPolicy app-priority, then ValidatingAdmissionPolicies app-tenant and
+app-file, run by the Kyverno CLI with the App as the param. app-grants holds the env's grants,
+which the folder alone cannot decide, and stays the cluster's. A deploy/ app's objects are
+read as its Kustomization applies them (in app-<name>, with ${app_host}); a chart app's are the
+chart's, rendered by `helm template` as helm-controller installs them (release <name> in
+app-<name>, the app's values, then the env's).
 """
 
 from __future__ import annotations
 
+import functools
+import json
+import os
 import re
 import shutil
 import subprocess
-from collections.abc import Iterator
+import tempfile
 from pathlib import Path
-from typing import Any
 
 import yaml
 
 from jarvis.paths import PRODUCT_ROOT
 
-CRD_FILE = PRODUCT_ROOT / "core" / "feature" / "app-hosting" / "crd" / "app-crd.yaml"
+HOSTING = PRODUCT_ROOT / "core" / "feature" / "app-hosting"
+CRD_FILE = HOSTING / "crd" / "app-crd.yaml"
 APP_FILE = "app.yaml"
 DEPLOY_DIR = "deploy"
 API_VERSION = "hosting.jarvis.io/v1alpha1"
@@ -45,13 +49,9 @@ SHIPPED_KINDS = frozenset(
         ("autoscaling", "HorizontalPodAutoscaler"),
     }
 )
-_WORKLOADS = {"Deployment", "StatefulSet", "Job", "CronJob"}
-# MutatingPolicy app-priority sets it on every workload; app-file refuses another.
-PRIORITY_CLASS = "hosted-app"
-# The CRD's CEL rules, by rule text. A rule added to the CRD fails here until it has its twin.
-_RULES = {
-    "!('all' in self) || self.size() == 1": lambda value: "all" not in value or len(value) == 1,
-}
+# ${app_host}'s zone in the folder check: app-file holds a route's hostname to <name>[-<entry>].apps.,
+# and app-grants, which the cluster alone runs, holds the rest to the env's.
+FOLDER_ZONE = "env.invalid"
 
 
 def check_folder(folder: Path | str, env_values: dict | None = None, k3s: str | None = None) -> list[str]:
@@ -76,17 +76,17 @@ def check_folder(folder: Path | str, env_values: dict | None = None, k3s: str | 
     if len(docs) != 1 or not isinstance(docs[0], dict):
         return [*errors, f"{name}/{APP_FILE}: holds exactly one App"]
     app = docs[0]
-    errors.extend(f"{name}/{APP_FILE}: {problem}" for problem in app_problems(app, name))
+    errors.extend(f"{name}/{APP_FILE}: {problem}" for problem in app_problems(app, name, k3s))
     if errors:
         return errors
     chart = app["spec"].get("chart")
     if chart and (folder / DEPLOY_DIR).exists():
         return [f"{name}/{DEPLOY_DIR}: an app with a chart ships no {DEPLOY_DIR}/; its objects are the chart's"]
     where = f"{name} chart {chart['version']}" if chart else f"{name}/{DEPLOY_DIR}"
-    objects, error = chart_objects(name, chart, env_values, k3s) if chart else _deploy_objects(folder / DEPLOY_DIR)
+    objects, error = chart_objects(name, chart, env_values, k3s) if chart else _deploy_objects(folder / DEPLOY_DIR, name)
     if error:
         return [f"{where}: {error}"]
-    errors.extend(f"{where}: {problem}" for problem in deploy_problems(app, name, objects))
+    errors.extend(f"{where}: {problem}" for problem in admission_problems(app, name, objects))
     return errors
 
 
@@ -115,20 +115,19 @@ def web_labels(folder: Path) -> list[str]:
             for entry in (spec.get("network") or {}).get("web") or []]
 
 
-def app_problems(app: dict, name: str) -> list[str]:
-    errors: list[str] = []
+def app_problems(app: dict, name: str, k3s: str | None = None) -> list[str]:
+    """The folder's rules (one App, named after its folder, each web entry's host one label), then
+    kubeconform against the App CRD."""
+    from jarvis.env.k3s import core_release
+
     if app.get("apiVersion") != API_VERSION or app.get("kind") != KIND:
-        errors.append(f"apiVersion and kind are {API_VERSION} {KIND}")
+        return [f"apiVersion and kind are {API_VERSION} {KIND}"]
     metadata = app.get("metadata")
     if not isinstance(metadata, dict) or set(metadata) != {"name"}:
-        errors.append("metadata holds the name only; core sets the namespace")
-    elif metadata.get("name") != name:
-        errors.append(f"metadata.name is {metadata.get('name')!r}; an app's name is its folder name, {name}")
-    extra = sorted(set(app) - {"apiVersion", "kind", "metadata", "spec"})
-    if extra:
-        errors.append(f"unknown key(s) {', '.join(extra)}")
-    schema = _crd_schema()["properties"]["spec"]
-    errors.extend(_schema_problems(app.get("spec"), schema, "spec"))
+        return ["metadata holds the name only; core sets the namespace"]
+    if metadata.get("name") != name:
+        return [f"metadata.name is {metadata.get('name')!r}; an app's name is its folder name, {name}"]
+    errors = list(_schema_problems(json.dumps(app, sort_keys=True), k3s or core_release()[0]))
     if not errors:
         for entry in ((app["spec"].get("network") or {}).get("web") or []):
             if entry.get("name") and len(name) + 1 + len(entry["name"]) > 63:
@@ -136,77 +135,21 @@ def app_problems(app: dict, name: str) -> list[str]:
     return errors
 
 
-def _crd_schema() -> dict:
-    crd = yaml.safe_load(CRD_FILE.read_text(encoding="utf-8"))
-    return crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+# validate's env-schema and render each check every listed app, so one process checks the same App
+# and objects again: each verdict is kept by its input.
+@functools.cache
+def _schema_problems(app: str, k3s: str) -> tuple[str, ...]:
+    from jarvis.checks.rendered import kubeconform
+
+    return tuple(kubeconform([yaml.safe_load(CRD_FILE.read_text(encoding="utf-8")), json.loads(app)], k3s))
 
 
-def _is_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
+def _deploy_objects(deploy: Path, name: str) -> tuple[list[dict], str | None]:
+    """deploy/'s objects as the app's Kustomization applies them: kustomize when it holds a
+    kustomization.yaml, Flux's strict substitution of the one value it gives, app_host, and its
+    targetNamespace, app-<name>."""
+    from jarvis.checks.rendered import _tool
 
-
-def _schema_problems(value: Any, schema: dict, where: str) -> Iterator[str]:
-    """The OpenAPI subset the App CRD uses, with unknown keys refused."""
-    if value is None:
-        yield f"{where}: is required"
-        return
-    kind = str(schema.get("type") or "")
-    ok = {
-        "object": isinstance(value, dict),
-        "array": isinstance(value, list),
-        "string": isinstance(value, str),
-        "integer": _is_int(value),
-        "boolean": isinstance(value, bool),
-    }.get(kind, True)
-    if not ok:
-        yield f"{where}: is a {kind}"
-        return
-    for rule in schema.get("x-kubernetes-validations") or []:
-        check = _RULES.get(rule["rule"])
-        if check is None:
-            raise ValueError(f"the App CRD's rule {rule['rule']!r} has no twin in {__file__}")
-        if not check(value):
-            yield f"{where}: {rule['message']}"
-    if "enum" in schema and value not in schema["enum"]:
-        yield f"{where}: is one of {', '.join(map(str, schema['enum']))}"
-    if isinstance(value, str):
-        if "maxLength" in schema and len(value) > schema["maxLength"]:
-            yield f"{where}: is at most {schema['maxLength']} characters"
-        if "pattern" in schema and not re.search(schema["pattern"], value):
-            yield f"{where}: {value!r} does not match {schema['pattern']}"
-    if _is_int(value):
-        if value < schema.get("minimum", value) or value > schema.get("maximum", value):
-            yield f"{where}: is from {schema.get('minimum')} to {schema.get('maximum')}"
-    if isinstance(value, dict) and schema.get("x-kubernetes-preserve-unknown-fields"):
-        return
-    if isinstance(value, dict):
-        if "maxProperties" in schema and len(value) > schema["maxProperties"]:
-            yield f"{where}: has at most {schema['maxProperties']} keys"
-        properties = schema.get("properties")
-        extra = schema.get("additionalProperties")
-        for key in schema.get("required") or []:
-            if key not in value:
-                yield f"{where}.{key}: is required"
-        for key, item in value.items():
-            if properties is not None and key in properties:
-                yield from _schema_problems(item, properties[key], f"{where}.{key}")
-            elif isinstance(extra, dict):
-                yield from _schema_problems(item, extra, f"{where}.{key}")
-            else:
-                yield f"{where}: unknown key {key!r}"
-    if isinstance(value, list):
-        if "maxItems" in schema and len(value) > schema["maxItems"]:
-            yield f"{where}: has at most {schema['maxItems']} items"
-        for index, item in enumerate(value):
-            yield from _schema_problems(item, schema.get("items") or {}, f"{where}[{index}]")
-        list_type = schema.get("x-kubernetes-list-type")
-        keys = schema.get("x-kubernetes-list-map-keys") or []
-        seen = [tuple(item.get(key) for key in keys) if isinstance(item, dict) else item for item in value]
-        if list_type in {"set", "map"} and len(seen) != len(set(map(str, seen))):
-            yield f"{where}: holds each entry once"
-
-
-def _deploy_objects(deploy: Path) -> tuple[list[dict], str | None]:
     if not deploy.is_dir():
         return [], f"missing; the app's objects live in {DEPLOY_DIR}/"
     if (deploy / "kustomization.yaml").is_file():
@@ -223,198 +166,97 @@ def _deploy_objects(deploy: Path) -> tuple[list[dict], str | None]:
             for path in sorted(deploy.rglob("*"))
             if path.is_file() and path.suffix in {".yaml", ".yml"}
         ]
+    proc = subprocess.run([_tool("flux"), "envsubst", "--strict"], input="\n---\n".join(texts), capture_output=True, text=True,
+                          check=False, env={"PATH": os.environ.get("PATH", ""), "app_host": f"{name}.apps.{FOLDER_ZONE}"})  # fmt: skip
+    if proc.returncode:
+        return [], f"Flux's substitution failed: {proc.stderr.strip()}"
     try:
-        docs = [doc for text in texts for doc in yaml.safe_load_all(text) if doc is not None]
+        docs = [doc for doc in yaml.safe_load_all(proc.stdout) if doc is not None]
     except yaml.YAMLError as exc:
         return [], f"invalid YAML: {exc}"
     if not all(isinstance(doc, dict) for doc in docs):
         return [], "holds a YAML document that is not an object"
-    return docs, None
+    return [{**doc, "metadata": {**(doc.get("metadata") or {}), "namespace": f"app-{name}"}} for doc in docs], None
 
 
-def deploy_problems(app: dict, name: str, objects: list[dict]) -> Iterator[str]:
-    spec = app.get("spec") or {}
-    risky = spec.get("risky") or {}
-    volumes = {volume["name"]: volume["backup"] for volume in spec.get("volumes") or []}
-    network = spec.get("network") or {}
-    lan = {(port["listen"], port["protocol"]): port["target"] for port in network.get("ports") or []}
-    own_route = any(entry.get("ownRoute") for entry in network.get("web") or [])
-    for doc in objects:
-        kind = str(doc.get("kind"))
-        group = str(doc.get("apiVersion", "")).rpartition("/")[0]
-        metadata = metadata_raw if isinstance(metadata_raw := doc.get("metadata"), dict) else {}
-        ref = f"{kind} {metadata.get('name')}"
-        if (group, kind) not in SHIPPED_KINDS:
-            yield (
-                f"{ref}: an app ships only ConfigMaps, Secrets, Services, PVCs, Deployments, StatefulSets, "
-                "Jobs, CronJobs, HTTPRoutes, PodDisruptionBudgets and HorizontalPodAutoscalers"
-            )
-            continue
-        if metadata.get("namespace") not in (None, f"app-{name}"):
-            yield f"{ref}: lands in namespace app-{name} only; leave metadata.namespace unset"
-        if kind in _WORKLOADS:
-            yield from _volume_problems(ref, _pod_spec(doc))
-            annotations = (_template(doc).get("metadata") or {}).get("annotations") or {}
-            for item, field in _risky_uses(_pod_spec(doc), annotations):
-                if not risky.get(field):
-                    yield f"{ref}: uses {item}, which needs the app file's risky.{field} and the env's grant"
-            yield from _memory_problems(ref, _pod_spec(doc))
-            if _pod_spec(doc).get("priorityClassName") not in (None, PRIORITY_CLASS):
-                yield f"{ref}: sets priorityClassName; core runs every app pod at {PRIORITY_CLASS} and refuses another class"
-        for claim in _claims(doc):
-            yield from _claim_problems(ref, claim, volumes)
-        annotations = metadata.get("annotations") or {}
-        if kind == "HTTPRoute" and not own_route:
-            yield f"{ref}: an app ships an HTTPRoute only for a web entry marked ownRoute; core makes every other entry's route"
-        if kind == "Service":
-            yield from _service_problems(ref, doc.get("spec") or {}, lan)
-            if any(_traefik_key(key) for key in annotations):
-                yield f"{ref}: carries no Traefik annotation"
+def stand_in_crd(group: str, version: str, kind: str) -> dict:
+    """A schemaless CRD for a kind that is not built in: the Kyverno CLI maps kinds from CRDs, and
+    a loopback API server serves no other."""
+    plural = kind.lower() + "s"
+    return {
+        "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+        # A *.k8s.io group needs this annotation; the real Gateway API CRDs carry an approved one.
+        "metadata": {"name": f"{plural}.{group}", "annotations": {"api-approved.kubernetes.io": "unapproved, stand-in"}},
+        "spec": {"group": group, "scope": "Namespaced",
+                 "names": {"kind": kind, "plural": plural, "singular": kind.lower(), "listKind": f"{kind}List"},
+                 "versions": [{"name": version, "served": True, "storage": True,
+                               "schema": {"openAPIV3Schema": {"type": "object", "x-kubernetes-preserve-unknown-fields": True}}}]},
+    }  # fmt: skip
 
 
-def _template(doc: dict) -> dict:
-    spec = doc.get("spec") or {}
-    if doc.get("kind") == "CronJob":
-        spec = ((spec.get("jobTemplate") or {}).get("spec")) or {}
-    return spec.get("template") or {}
+def app_file_binding(name: str) -> dict:
+    """What the cluster-wide app-file binding resolves to in app-<name>: the CLI resolves no
+    selector paramRef, so this names the App (test_app_admission_apiserver.py proves the real one)."""
+    return {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingAdmissionPolicyBinding",
+            "metadata": {"name": f"app-file-{name}"},
+            "spec": {"policyName": "app-file", "validationActions": ["Deny"],
+                     "paramRef": {"name": name, "namespace": f"app-{name}", "parameterNotFoundAction": "Deny"},
+                     "matchResources": {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"app-{name}"}}}}}
 
 
-def _pod_spec(doc: dict) -> dict:
-    return _template(doc).get("spec") or {}
+def userinfo(username: str) -> dict:
+    return {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "UserInfo", "metadata": {"name": "u"},
+            "userInfo": {"username": username, "groups": ["system:authenticated"]}}
 
 
-_SECCOMP = frozenset({"RuntimeDefault", "Localhost"})
-_SELINUX_TYPES = frozenset({"", "container_t", "container_init_t", "container_kvm_t", "container_engine_t"})
+def mutated(docs: list[dict], username: str, names: tuple[str, ...] = ("app-priority",),
+            context: tuple[dict, ...] = ()) -> tuple[list[dict], str]:
+    """docs as app-hosting's MutatingPolicies names leave them at admission when username writes
+    them, and the CLI's error. context: the objects their resource.get reads."""
+    from jarvis.checks.rendered import _tool
+
+    files = {"policy": [doc for path in (HOSTING / "priority.yaml", HOSTING / "lan-name.yaml")
+                        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+                        if doc["kind"] == "MutatingPolicy" and doc["metadata"]["name"] in names],
+             "resources": docs, "userinfo": [userinfo(username)],
+             "context": [{"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Context", "metadata": {"name": "c"},
+                          "spec": {"resources": list(context)}}]}  # fmt: skip
+    with tempfile.TemporaryDirectory(prefix="jarvis-mutate-") as work:
+        for key, value in files.items():
+            (Path(work) / f"{key}.yaml").write_text(yaml.safe_dump_all(value, sort_keys=False), encoding="utf-8")
+        out = Path(work) / "out.yaml"
+        proc = subprocess.run(
+            [_tool("kyverno"), "apply", f"{work}/policy.yaml", "--resource", f"{work}/resources.yaml", "--remove-color",
+             "--userinfo", f"{work}/userinfo.yaml", "--context-file", f"{work}/context.yaml", "-o", str(out)],
+            capture_output=True, text=True, check=False,
+        )  # fmt: skip
+        if proc.returncode or ", error: 0," not in proc.stdout:
+            return docs, (proc.stderr or proc.stdout).strip()
+        changed = {(doc["kind"], doc["metadata"]["name"]): doc for doc in yaml.safe_load_all(out.read_text(encoding="utf-8")) if doc} if out.is_file() else {}
+    return [changed.get((doc.get("kind"), (doc.get("metadata") or {}).get("name")), doc) for doc in docs], ""
 
 
-def _beyond_restricted(pod: dict, pod_context: dict, contexts: list[dict], annotations: dict) -> bool:
-    """Whether the pod needs more than Pod Security restricted (admission's usesPrivileged)."""
-    pod_seccomp = (pod_context.get("seccompProfile") or {}).get("type") in _SECCOMP
-    selinux = [options for options in (pod_context.get("seLinuxOptions"), *(c.get("seLinuxOptions") for c in contexts)) if options]
-    return bool(
-        pod.get("hostPID") or pod.get("hostIPC") or "sysctls" in pod_context or _unconfined(pod_context)
-        or (pod_context.get("appArmorProfile") or {}).get("type") == "Unconfined"
-        or any(key.startswith("container.apparmor.security.beta.kubernetes.io/")
-               and not (value == "runtime/default" or str(value).startswith("localhost/"))
-               for key, value in annotations.items())
-        or any(options.get("type", "") not in _SELINUX_TYPES or options.get("user") or options.get("role") for options in selinux)
-        or any(
-            context.get("privileged")
-            or context.get("allowPrivilegeEscalation") is not False
-            or ((context["seccompProfile"].get("type") not in _SECCOMP) if context.get("seccompProfile") else not pod_seccomp)
-            or "ALL" not in ((context.get("capabilities") or {}).get("drop") or [])
-            or any(cap != "NET_BIND_SERVICE" for cap in (context.get("capabilities") or {}).get("add") or [])
-            or context.get("procMount", "Default") != "Default"
-            or (context.get("appArmorProfile") or {}).get("type") == "Unconfined"
-            for context in contexts
-        )
-    )
+def admission_problems(app: dict, name: str, objects: list[dict]) -> list[str]:
+    """What app-tenant and app-file refuse of objects as the app's tenant applies them, once
+    app-priority has set each workload's class: one message per policy and object. An object
+    with no namespace lands in app-<name>, the release's or the Kustomization's."""
+    return list(_admission(json.dumps([app, name, objects], sort_keys=True)))
 
 
-def _risky_uses(pod: dict, annotations: dict | None = None) -> Iterator[tuple[str, str]]:
-    containers = [*(pod.get("containers") or []), *(pod.get("initContainers") or [])]
-    contexts = [container.get("securityContext") or {} for container in containers]
-    pod_context = pod.get("securityContext") or {}
-    if _beyond_restricted(pod, pod_context, contexts, annotations or {}):
-        yield (
-            "more than Pod Security restricted (privileged mode, host PID or IPC, sysctls, allowPrivilegeEscalation "
-            "not false, capabilities not dropping ALL or adding more than NET_BIND_SERVICE, a seccomp profile not "
-            "RuntimeDefault or Localhost, procMount Unmasked, AppArmor unconfined, or SELinux options beyond a container type)"
-        ), "privileged"
-    if pod.get("hostNetwork") or any(
-        port.get("hostPort") for container in containers for port in container.get("ports") or []
-    ):
-        yield "host network or host ports", "hostNetwork"
-    if any("hostPath" in volume for volume in pod.get("volumes") or []):
-        yield "a hostPath volume", "hostPath"
-    non_root = all(
-        context["runAsNonRoot"] if "runAsNonRoot" in context else pod_context.get("runAsNonRoot") is True
-        for context in contexts
-    )
-    if pod_context.get("runAsUser") == 0 or any(context.get("runAsUser") == 0 for context in contexts) or not non_root:
-        yield "root (every container needs runAsNonRoot: true and no runAsUser 0)", "root"
+@functools.cache
+def _admission(key: str) -> tuple[str, ...]:
+    from jarvis.checks.rendered import policies
 
-
-_MEMORY = re.compile(r"^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E|)$")
-_MEMORY_FACTOR = {"": 1, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15, "E": 10**18,
-                  "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50, "Ei": 2**60}
-
-
-def _bytes(quantity: object) -> float | str:
-    """A memory quantity in bytes, or the text itself when it is no plain quantity."""
-    match = _MEMORY.fullmatch(str(quantity).strip())
-    return float(match.group(1)) * _MEMORY_FACTOR[match.group(2)] if match else str(quantity)
-
-
-def _memory_problems(ref: str, pod: dict) -> Iterator[str]:
-    """admission's app-file: a container's memory request is its limit (a limit alone passes)."""
-    for container in [*(pod.get("containers") or []), *(pod.get("initContainers") or [])]:
-        resources = container.get("resources") or {}
-        request = (resources.get("requests") or {}).get("memory")
-        limit = (resources.get("limits") or {}).get("memory")
-        if request is not None and (limit is None or _bytes(request) != _bytes(limit)):
-            yield (f"{ref}: container {container.get('name')} requests memory {request} with limit {limit}; "
-                   "a hosted app's memory request equals its limit (or set the limit alone)")
-
-
-def _unconfined(context: dict) -> bool:
-    return (context.get("seccompProfile") or {}).get("type") == "Unconfined"
-
-
-# Volume types a pod may use; others mount from the node's network, past every NetworkPolicy.
-VOLUME_TYPES = frozenset(
-    {"configMap", "secret", "emptyDir", "persistentVolumeClaim", "projected", "downwardAPI", "csi", "ephemeral", "hostPath"}
-)
-
-
-def _volume_problems(ref: str, pod: dict) -> Iterator[str]:
-    for volume in pod.get("volumes") or []:
-        if not VOLUME_TYPES & set(volume):
-            yield f"{ref}: volume {volume.get('name')} is not one of {', '.join(sorted(VOLUME_TYPES - {'hostPath'}))}"
-
-
-def _claims(doc: dict) -> list[dict]:
-    if doc.get("kind") == "PersistentVolumeClaim":
-        return [doc]
-    if doc.get("kind") == "StatefulSet":
-        return list((doc.get("spec") or {}).get("volumeClaimTemplates") or [])
-    return []
-
-
-def _claim_problems(ref: str, claim: dict, volumes: dict[str, bool]) -> Iterator[str]:
-    metadata = claim.get("metadata") or {}
-    claim_name = metadata.get("name")
-    spec = claim.get("spec") or {}
-    chosen = sorted(key for key in ("dataSource", "dataSourceRef") if key in spec) + (["volumeName"] if spec.get("volumeName") else [])
-    if chosen:
-        yield f"{ref}: claim {claim_name} sets {', '.join(chosen)}; the cluster provisions and binds an app's volumes"
-    if claim_name not in volumes:
-        yield f"{ref}: claim {claim_name} is not a volume the app file declares"
-        return
-    unbacked = (metadata.get("annotations") or {}).get("backup") == "none"
-    if volumes[claim_name] == unbacked:
-        want = "carries no backup: none annotation" if volumes[claim_name] else "carries annotation backup: none"
-        yield f"{ref}: claim {claim_name} is declared backup: {str(volumes[claim_name]).lower()}, so it {want}"
-
-
-def _traefik_key(key: str) -> bool:
-    return key.startswith("traefik.") or "traefik.io/" in key
-
-
-def _service_problems(ref: str, spec: dict, lan: dict[tuple[int, str], int]) -> Iterator[str]:
-    kind = spec.get("type", "ClusterIP")
-    if spec.get("externalIPs"):
-        yield f"{ref}: sets no externalIPs"
-    if kind == "ClusterIP":
-        return
-    if kind != "LoadBalancer":
-        yield f"{ref}: type {kind}; an app's Services are ClusterIP, or LoadBalancer for its network.ports"
-        return
-    if spec.get("allocateLoadBalancerNodePorts") is not False:
-        yield f"{ref}: a LoadBalancer sets allocateLoadBalancerNodePorts: false, so no node port opens on every node"
-    for port in spec.get("ports") or []:
-        key = (port.get("port"), port.get("protocol", "TCP"))
-        if key not in lan:
-            yield f"{ref}: LoadBalancer port {port.get('port')} is not a listen port in the app file's network.ports"
-        elif port.get("targetPort", port.get("port")) != lan[key]:
-            yield f"{ref}: LoadBalancer port {port.get('port')} sets targetPort {lan[key]}, the number network.ports gives as target"
+    app, name, objects = json.loads(key)
+    namespace, tenant = f"app-{name}", f"system:serviceaccount:flux-system:app-{name}"
+    objects = [{**doc, "metadata": {"namespace": namespace, **(doc.get("metadata") or {})}} for doc in objects]
+    objects, error = mutated(objects, tenant)
+    if error:
+        return (f"app-priority: {error}",)
+    rules = [doc for doc in yaml.safe_load_all((HOSTING / "policies" / "admission.yaml").read_text(encoding="utf-8"))
+             if doc["metadata"]["name"] == "app-tenant" or (doc["kind"], doc["metadata"]["name"]) == ("ValidatingAdmissionPolicy", "app-file")]
+    values = {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Value", "metadata": {"name": "v"},
+              "namespaceSelector": [{"name": namespace, "labels": {"kubernetes.io/metadata.name": namespace, "hosting.jarvis.io/app": name}}]}
+    return tuple(policies(objects, [*rules, app_file_binding(name)], {
+        "--parameter-resource": [{**app, "metadata": {**app["metadata"], "namespace": namespace}}], "--values-file": [values],
+        "--userinfo": [userinfo(tenant)], "--crd-paths": [stand_in_crd("gateway.networking.k8s.io", "v1", "HTTPRoute")]}))  # fmt: skip

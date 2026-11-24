@@ -6,8 +6,9 @@
 --repo checks every top-level folder of the apps repository except hidden ones and each
 --exclude (the repository's own tooling); a folder without app.yaml fails. The apps
 repository's CI runs it through the app-check Action at a core tag
-(.github/actions/app-check). It needs Python 3 with PyYAML, and kustomize when deploy/ holds
-a kustomization.yaml. Exit 1 lists every problem.
+(.github/actions/app-check). It needs the jarvis package's Python dependencies, flux, kubeconform
+and kyverno, helm for an app with a chart, and kustomize when deploy/ holds a kustomization.yaml.
+Exit 1 lists every problem.
 """
 
 from __future__ import annotations

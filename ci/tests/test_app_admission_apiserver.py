@@ -18,8 +18,9 @@ import pytest
 from apiserver import Api as _Api
 from apiserver import eventually as _eventually
 from apiserver import serve, token
-from test_app_admission import POLICIES, SUFFIX, _app, _docs, _job, _pod, _route, _wiring, stand_in_crd
+from test_app_admission import POLICIES, SUFFIX, _app, _docs, _job, _pod, _route, _wiring
 
+from jarvis.apps.app_file import stand_in_crd
 from support import REPO_ROOT
 
 VOLSYNC = "system:serviceaccount:volsync:volsync"
@@ -268,6 +269,13 @@ def test_an_apps_routes_name_only_its_web_entries_hostnames(api: Api) -> None:
                   _route("second-host", "notes", f"notes.apps.{SUFFIX}", f"wired.apps.{SUFFIX}"),
                   _route("no-hostnames", "notes")):
         _refused(api, route, "an app's HTTPRoute")
+
+
+def test_an_apps_lan_egress_is_all_or_target_names(api: Api) -> None:
+    """Rule: the App CRD's own CEL rule, which the app check's kubeconform does not run:
+    network.egress.lan is [all] or a list of target names, never both."""
+    app = _app("wired", network={"web": [{"service": "web", "port": 80}], "egress": {"lan": ["all", "nas"]}})
+    assert "lan is [all] or a list of target names" in api.refusal(app)
 
 
 def test_old_per_app_bindings_a_live_env_keeps_change_nothing(api: Api) -> None:

@@ -225,19 +225,30 @@ def core_rules(docs: list[dict]) -> list[dict]:
         k: v for k, v in rule["spec"]["matchConstraints"].items() if k != "namespaceSelector"}}} for rule in rules]  # fmt: skip
 
 
-def policies(docs: list[dict], rules: list[dict]) -> list[str]:
-    """Each object against rules and the Git-only rules, with the Kyverno CLI."""
-    rules = rules + _load(GIT_RULES)
+def git_rules() -> list[dict]:
+    return _load(GIT_RULES)
+
+
+def policies(docs: list[dict], rules: list[dict], inputs: dict[str, list[dict]] | None = None) -> list[str]:
+    """Each object against rules (policies and their bindings), with the Kyverno CLI. inputs: what
+    else an admission request carries, as documents by the CLI flag that reads them
+    (--parameter-resource, --values-file, --userinfo, --crd-paths)."""
     # The CLI's time grows with every object it reads, so it reads only objects in the groups the
     # rules match; the CLI itself matches kinds within them.
-    groups = {group for rule in rules for match in rule["spec"]["matchConstraints"]["resourceRules"] for group in match["apiGroups"]}
-    docs = [doc for doc in docs if str(doc.get("apiVersion", "")).rpartition("/")[0] in groups]
+    groups = {group for rule in rules if "matchConstraints" in rule["spec"]
+              for match in rule["spec"]["matchConstraints"]["resourceRules"] for group in match["apiGroups"]}
+    docs = [doc for doc in docs if "*" in groups or str(doc.get("apiVersion", "")).rpartition("/")[0] in groups]
     with tempfile.TemporaryDirectory(prefix="jarvis-policies-") as work:
         rule_file, objects = Path(work) / "rules.yaml", Path(work) / "objects.yaml"
         rule_file.write_text(yaml.safe_dump_all(rules, sort_keys=False), encoding="utf-8")
         objects.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+        flags: list[str] = []
+        for flag, given in (inputs or {}).items():
+            path = Path(work) / f"{flag.strip('-')}.yaml"
+            path.write_text(yaml.safe_dump_all(given, sort_keys=False), encoding="utf-8")
+            flags += [flag, str(path)]
         proc = subprocess.run(
-            [_tool("kyverno"), "apply", str(rule_file), "--resource", str(objects),
+            [_tool("kyverno"), "apply", str(rule_file), "--resource", str(objects), *flags,
              "--policy-report", "--output-format", "json", "--remove-color"],
             capture_output=True, text=True, check=False,
         )  # fmt: skip
@@ -274,4 +285,4 @@ def scan_kubeconform(instance: Path) -> list[str]:
 
 
 def scan_policies(instance: Path) -> list[str]:
-    return _each_env(instance, lambda docs, _k3s: policies(docs, core_rules(docs)))
+    return _each_env(instance, lambda docs, _k3s: policies(docs, [*core_rules(docs), *git_rules()]))

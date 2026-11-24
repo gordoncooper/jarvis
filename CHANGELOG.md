@@ -7,6 +7,24 @@ the upgrade.
 
 ## Unreleased
 
+### Changed
+
+- `jarvis validate` and the app-check Action hold each app folder to app hosting's own admission,
+  run by the Kyverno CLI as the app's tenant applies it (`app-priority`, then `app-tenant` and
+  `app-file`, with the App as the param), and the App to its CRD with kubeconform. Each problem
+  is the policy's or kubeconform's own message, one per policy and object. `app-grants` (the
+  env's grants) stays the cluster's, as before.
+  - Now passes, as on the cluster: a `deploy/` object that sets `metadata.namespace` (Flux puts
+    it in `app-<name>`), and a workload with another `priorityClassName` (`app-priority` sets
+    `hosted-app`).
+  - Now refused, as on the cluster: a `deploy/` file that uses a variable other than
+    `${app_host}` (Flux's strict substitution).
+  - Now refused only by the API server, when Flux applies the App: `network.egress.lan` naming
+    both `all` and a target (the CRD's CEL rule, which kubeconform does not run).
+- `app-file` refuses an app Service that is not ClusterIP or LoadBalancer, or that sets
+  `externalIPs`, where `app-grants` did; the cluster's refusal now names `app-file`.
+- The app-check Action installs flux, kubeconform and kyverno at the core pins.
+
 ## v0.8.3
 
 ### Changed
