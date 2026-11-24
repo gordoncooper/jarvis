@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.8.3
+
 ### Changed
 
 - Each command's help names it (`usage: jarvis render …`) and no longer lists `--env`, which is
@@ -82,6 +84,10 @@ the upgrade.
   `~/.config/sops/age/keys.txt`).
 - The controller that runs `jarvis up` must read `flux_git_repo_url` with git, as Flux does (for
   `ssh://`, with a key the forge accepts). `jarvis doctor` checks it.
+- In your own scripts and runbooks: `jarvis secrets --rotate-restic` is
+  `jarvis secrets --new-restic-password`, `AS_OF=<time> jarvis restore` is
+  `jarvis restore --as-of <time>`, and `python -m jarvis.render.apps`, `.cluster_vars` or
+  `.switches` is `jarvis render`.
 
 ## v0.8.2
 
