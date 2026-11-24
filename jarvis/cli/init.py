@@ -65,7 +65,7 @@ def parser(command: str) -> argparse.ArgumentParser:
     p.add_argument(
         "--with-examples",
         action="store_true",
-        help="Turn on app-hosting with the example apps, for a first-run tour (apps repository: jarvis-apps beside core, unless --apps-repo-url)",
+        help="Turn on app-hosting with the example apps, for a first-run tour (their apps repository, unless --apps-repo-url)",
     )
     p.add_argument(
         "--age-key-file",
@@ -101,7 +101,7 @@ def _spec(args: argparse.Namespace, *, name: str, repo_url: str, branch: str, co
     raw_nodes = args.node or [_ask(None, "the first node's host name (--node)")]
     nodes = [scaffold.Node.parse(text, only=len(raw_nodes) == 1) for text in raw_nodes]
     features = list(dict.fromkeys(args.feature + (["app-hosting"] if args.with_examples else [])))
-    apps_repo_url = args.apps_repo_url or (scaffold.apps_repo_beside(core[0]) if args.with_examples else "")
+    apps_repo_url = args.apps_repo_url or (scaffold.example_apps_repository() if args.with_examples else "")
     age_key_file = args.age_key_file or os.environ.get("SOPS_AGE_KEY_FILE") or scaffold.DEFAULT_KEY_FILE
     if _age.key_path(age_key_file) != Path(age_key_file).expanduser():
         # Every command reads SOPS_AGE_KEY_FILE before age_key_file, so the env must record that key.

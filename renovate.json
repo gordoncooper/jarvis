@@ -137,13 +137,14 @@
   ],
   "customManagers": [
     {
-      "customType": "regex",
+      "customType": "jsonata",
       "description": "Core's k3s release in infra/ansible/group_vars/all.yml, which every env runs unless it overrides it. k3s_sha256 is bumped by hand in the same PR.",
+      "fileFormat": "yaml",
+      "managerFilePatterns": ["/^infra\\/ansible\\/group_vars\\/all\\.yml$/"],
+      "matchStrings": ["$[$exists(k3s_version)].{\"currentValue\": k3s_version}"],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "k3s-io/k3s",
-      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$",
-      "managerFilePatterns": ["/^infra\\/ansible\\/group_vars\\/all\\.yml$/"],
-      "matchStrings": ["k3s_version:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+\\+k3s\\d+)"]
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\+k3s(?<build>\\d+)$"
     },
     {
       "customType": "regex",
@@ -161,12 +162,14 @@
       "matchStrings": ["(?:#|//) renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*\"?MISE_VERSION\"?(?:=|: \")(?<currentValue>v[^\\s\"]+)"]
     },
     {
-      "customType": "regex",
-      "description": "The example apps jarvis init --with-examples pins (jarvis/kit/examples-apps.yaml): <app>: v<version>, the tag <app>/v<version> in jarvis-apps, the apps repository beside core.",
+      "customType": "jsonata",
+      "description": "The example apps jarvis init --with-examples pins (jarvis/kit/examples-apps.yaml): each app's version, v<version>, the tag <app>/v<version> in the repository the file names.",
+      "fileFormat": "yaml",
       "managerFilePatterns": ["/^jarvis\\/kit\\/examples-apps\\.yaml$/"],
-      "matchStrings": ["(?m)^  (?<depName>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?): (?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s*$"],
+      "matchStrings": [
+        "($examples := $[0]; $keys($examples.apps).{\"depName\": $, \"currentValue\": $lookup($examples.apps, $).version, \"packageName\": $examples.repository})"
+      ],
       "datasourceTemplate": "git-tags",
-      "packageNameTemplate": "https://github.com/gordoncooper/jarvis-apps",
       "extractVersionTemplate": "^{{{depName}}}/(?<version>v\\d+\\.\\d+\\.\\d+)$"
     }
   ],
