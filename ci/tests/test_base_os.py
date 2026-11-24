@@ -36,12 +36,13 @@ def _pools(chrony: str) -> list[str]:
 
 
 def test_chrony_nts_off_renders_pools_without_nts() -> None:
-    """Rule: chrony_nts off, for a LAN time source without NTS, renders the pools without nts and mentions NTS nowhere
-    but ntsdumpdir; the string false (ansible-playbook -e chrony_nts=false) renders exactly as off."""
+    """Rule: chrony_nts off, for a LAN time source without NTS, renders the pools without nts, no 4460/tcp note and no
+    other NTS mention but ntsdumpdir; the string false (ansible-playbook -e chrony_nts=false) renders exactly as off."""
     on, off, string_off = _chrony(True), _chrony(False), _chrony("false")
     assert _pools(on) == ["pool time.example iburst maxsources 4 nts", "pool lan.example iburst maxsources 4 nts"]
+    assert "4460/tcp" in on, on
     assert _pools(off) == ["pool time.example iburst maxsources 4", "pool lan.example iburst maxsources 4"]
-    assert "nts" not in off.lower().replace("ntsdumpdir", ""), off
+    assert "nts" not in off.lower().replace("ntsdumpdir", "") and "4460/tcp" not in off, off
     assert string_off == off
 
 
@@ -86,10 +87,10 @@ def test_pending_reboot_warns_only_the_host_that_needs_one(tmp_path: Path, flags
 
 
 def test_resolv_conf_link_does_not_touch_its_target() -> None:
-    """Rule: the edge block that turns resolved's stub off links resolv.conf to resolved's upstream list (state link,
-    follow false) with no owner, group or mode: resolved replaces that file, so touching it leaves every run changed."""
+    """Rule: the edge block that turns resolved's stub off holds one link, resolv.conf to resolved's upstream list
+    (follow false), with no owner, group or mode: resolved replaces that file, so touching it leaves every run changed."""
     tasks = yaml.safe_load((ROLE_DIR / "tasks" / "main.yml").read_text(encoding="utf-8"))
     [edge] = [task["block"] for task in tasks if "edge" in str(task.get("when")) and "resolved-stub.conf.j2" in str(task.get("block"))]
-    [link] = [task["ansible.builtin.file"] for task in edge if task.get("ansible.builtin.file", {}).get("src") == "/run/systemd/resolve/resolv.conf"]
-    assert link.get("state") == "link" and link.get("follow") is False, link
+    [link] = [task["ansible.builtin.file"] for task in edge if task.get("ansible.builtin.file", {}).get("state") == "link"]
+    assert link.get("src") == "/run/systemd/resolve/resolv.conf" and link.get("follow") is False, link
     assert not link.keys() & {"owner", "group", "mode"}, link

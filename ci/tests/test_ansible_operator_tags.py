@@ -57,8 +57,10 @@ def test_narrow_tag_lists_only_its_own_tasks(tmp_path: Path, tag: str, own: list
     vars_file = site_vars_file(tmp_path / "vars.json")
     run = playbook("site.yml", "-i", LIST_TASKS_INVENTORY, "-e", f"@{vars_file}", "--list-tasks", "--tags", tag)
     assert run.returncode == 0, run.output
-    # --list-tasks has no JSON form: a task is a line indented six spaces, then its tags.
+    # --list-tasks has no JSON form: a task is a line indented six spaces, then its tags. A name holding a newline
+    # runs onto a second line, so every six-space line must be a task the regex read.
     listed = re.findall(r"^ {6}(.+)\tTAGS: \[(.*)\]$", run.stdout, re.M)
+    assert len(listed) == len(re.findall(r"^ {6}", run.stdout, re.M)), run.stdout
     added = [name for name, tags in listed if "always" not in tags.split(", ")]
     assert [name for name, tags in listed if "always" in tags.split(", ")] == ALWAYS, run.stdout
     assert added == own and purpose in added, run.stdout
