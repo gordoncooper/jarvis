@@ -328,6 +328,11 @@ spec:
             q.protocol == (has(p.protocol) ? p.protocol : 'TCP') &&
             (has(p.targetPort) ? p.targetPort : p.port) == q.target))
       message: "grant: a LoadBalancer port is one of the app file's network.ports: listen as port, its protocol, and target as a numeric targetPort"
+    - expression: >-
+        object.kind != 'Service' || !has(object.spec.type) || object.spec.type in ['ClusterIP', 'LoadBalancer']
+      message: "an app's Services are ClusterIP, or LoadBalancer for its network.ports; no NodePort or ExternalName"
+    - expression: "object.kind != 'Service' || !has(object.spec.externalIPs)"
+      message: "an app's Service sets no externalIPs"
     # ServiceLB publishes on the edge nodes with no node port; one would open the port on every node.
     - expression: >-
         object.kind != 'Service' || !has(object.spec.type) || object.spec.type != 'LoadBalancer' ||
@@ -561,11 +566,6 @@ spec:
       message: >-
         grant: an app's HTTPRoute names its hostnames, each one label under apps.<dns suffix> or a
         custom hostname the env grants as 'hostname <name>'
-    - expression: >-
-        object.kind != 'Service' || !has(object.spec.type) || object.spec.type in ['ClusterIP', 'LoadBalancer']
-      message: "an app's Services are ClusterIP, or LoadBalancer for its network.ports; no NodePort or ExternalName"
-    - expression: "object.kind != 'Service' || !has(object.spec.externalIPs)"
-      message: "an app's Service sets no externalIPs"
     - expression: "variables.lanPorts.all(p, p in variables.grants[?'hosting.jarvis.io/lan-ports'].orValue('').split(','))"
       message: "grant: a LoadBalancer exposes only ports the env grants as lan-port <port>/<protocol>"
     # App DNS names a LoadBalancer by its coredns.io/hostname, else external-dns's hostname

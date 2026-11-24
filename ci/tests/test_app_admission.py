@@ -1,5 +1,6 @@
 """Hosted-app admission, offline: every rule in core/feature/app-hosting/policies against seeded
-good and bad objects, with the pinned kyverno CLI, and jarvis/apps/check.py on the same objects.
+good and bad objects, with the pinned kyverno CLI, and the app check (jarvis/apps/app_file.py),
+which runs app-tenant and app-file the same way.
 
 The namespaces are rendered from the real per-app wiring (core/feature/app-hosting/app) with the
 env's values, so app-grants sees the annotations the cluster gets. The CLI cannot run two parts
@@ -12,6 +13,7 @@ test_app_admission_apiserver.py proves both real ones.
 from __future__ import annotations
 
 import copy
+import datetime
 import ipaddress
 import json
 import shutil
@@ -22,14 +24,12 @@ import pytest
 import yaml
 
 from jarvis.apps import values as _apps
-from jarvis.apps.app_file import check_folder
+from jarvis.apps.app_file import app_file_binding, check_folder, mutated, stand_in_crd, userinfo
 from jarvis.backups.restore import _binder_body
 from support import REPO_ROOT, flux_envsubst, kyverno_generated
 
 APPS = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "apps"
 POLICIES = REPO_ROOT / "core" / "feature" / "app-hosting" / "policies"
-# The MutatingPolicies, app-priority and app-lan-name.
-MUTATING = [REPO_ROOT / "core" / "feature" / "app-hosting" / name for name in ("priority.yaml", "lan-name.yaml")]
 WIRING = REPO_ROOT / "core" / "feature" / "app-hosting" / "app"
 SUFFIX = "env-00.example"
 TENANT = "system:serviceaccount:flux-system:app-{app}"
@@ -70,15 +70,6 @@ def _wiring(app: str, grants: list[str]) -> list[dict]:
     return flux_envsubst(_docs(WIRING / "namespace.yaml"), values)
 
 
-def _app_file_stand_in(app: str) -> dict:
-    """What the cluster-wide app-file binding resolves to in app's namespace."""
-    return {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingAdmissionPolicyBinding",
-            "metadata": {"name": f"app-file-{app}"},
-            "spec": {"policyName": "app-file", "validationActions": ["Deny"],
-                     "paramRef": {"name": app, "namespace": f"app-{app}", "parameterNotFoundAction": "Deny"},
-                     "matchResources": {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"app-{app}"}}}}}
-
-
 def _deploy(app: str) -> list[dict]:
     """A fixture app's deploy/ objects, as its Kustomization applies them."""
     docs = [doc for path in sorted((APPS / app / "deploy").glob("*.yaml")) for doc in _docs(path)]
@@ -91,28 +82,14 @@ def _deploy(app: str) -> list[dict]:
 _RESTRICTED = {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
 
 
-def _mutated(tmp_path: Path, docs: list[dict], user: str | None = None) -> list[dict]:
-    """docs as the MutatingPolicies leave them at admission (kyverno apply), written by user
-    (default: the tenant of the first doc's namespace)."""
-    work = tmp_path / f"mutate-{len(list(tmp_path.glob('mutate-*')))}"
-    work.mkdir()
+def _mutated(docs: list[dict], user: str | None = None) -> list[dict]:
+    """docs as both MutatingPolicies leave them at admission, written by user (default: the tenant
+    of the first doc's namespace). resource.get reads each app's Namespace, as its wiring renders it."""
     user = user or TENANT.format(app=docs[0]["metadata"]["namespace"].removeprefix("app-"))
-    (work / "resources.yaml").write_text(yaml.safe_dump_all(docs), encoding="utf-8")
-    # kyverno apply loads no policy from a file that also holds the PriorityClass.
-    policies = [doc for path in MUTATING for doc in _docs(path) if doc["kind"] == "MutatingPolicy"]
-    (work / "policy.yaml").write_text(yaml.safe_dump_all(policies), encoding="utf-8")
-    # What resource.get reads: each app's Namespace, as its wiring renders it.
-    namespaces = [doc for app, (_doc, grants) in _ENV.items() for doc in _wiring(app, grants) if doc["kind"] == "Namespace"]
-    context = {"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "Context", "metadata": {"name": "c"}, "spec": {"resources": namespaces}}
-    (work / "context.yaml").write_text(yaml.safe_dump(context), encoding="utf-8")
-    command = [_kyverno(), "apply", str(work / "policy.yaml"), "--resource", str(work / "resources.yaml"),
-               "--remove-color", "-o", str(work / "out.yaml"), "--userinfo", str(_userinfo(work / "userinfo.yaml", user)),
-               "--context-file", str(work / "context.yaml")]
-    proc = subprocess.run(command, capture_output=True, text=True, check=False)
-    assert proc.returncode == 0 and ", error: 0," in proc.stdout, proc.stdout + proc.stderr
-    out = work / "out.yaml"
-    changed = {(doc["kind"], doc["metadata"]["name"]): doc for doc in _docs(out)} if out.is_file() else {}
-    return [changed.get((doc["kind"], doc["metadata"]["name"]), doc) for doc in docs]
+    namespaces = tuple(doc for app, (_doc, grants) in _ENV.items() for doc in _wiring(app, grants) if doc["kind"] == "Namespace")
+    found, error = mutated(docs, user, ("app-priority", "app-lan-name"), namespaces)
+    assert not error, error
+    return found
 
 
 def _pod(name: str, app: str, *, owner_job: bool = False, **pod: object) -> dict:
@@ -182,21 +159,6 @@ _ENV = {
 }
 
 
-def stand_in_crd(group: str, version: str, kind: str) -> dict:
-    """A schemaless CRD for a kind that is not built in: kyverno apply maps kinds from CRDs, and
-    the loopback API server serves no other."""
-    plural = kind.lower() + "s"
-    return {
-        "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
-        # A *.k8s.io group needs this annotation; the real Gateway API CRDs carry an approved one.
-        "metadata": {"name": f"{plural}.{group}", "annotations": {"api-approved.kubernetes.io": "unapproved, test stand-in"}},
-        "spec": {"group": group, "scope": "Namespaced",
-                 "names": {"kind": kind, "plural": plural, "singular": kind.lower(), "listKind": f"{kind}List"},
-                 "versions": [{"name": version, "served": True, "storage": True,
-                               "schema": {"openAPIV3Schema": {"type": "object", "x-kubernetes-preserve-unknown-fields": True}}}]},
-    }
-
-
 def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, dict[str, str]]]) -> None:
     """kyverno test on cases: (object, {policy: pass|fail|skip}). Fails with the CLI's table."""
     work = tmp_path / label
@@ -210,7 +172,7 @@ def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, d
             grants = next(item for item in policy["spec"]["variables"] if item["name"] == "grants")
             grants["expression"] = f"{json.dumps(annotations)}[namespaceObject.metadata.name]"
     (work / "policies.yaml").write_text(
-        yaml.safe_dump_all([*policies, *(_app_file_stand_in(app) for app in _ENV)]), encoding="utf-8"
+        yaml.safe_dump_all([*policies, *(_resolved(app_file_binding(app), app) for app in _ENV)]), encoding="utf-8"
     )
     (work / "params.yaml").write_text(yaml.safe_dump_all([app for app, _ in _ENV.values()]), encoding="utf-8")
     (work / "resources.yaml").write_text(yaml.safe_dump_all([doc for doc, _ in cases]), encoding="utf-8")
@@ -241,6 +203,12 @@ def _run(tmp_path: Path, label: str, user: str | None, cases: list[tuple[dict, d
     assert proc.returncode == 0, "\n".join(wrong) or proc.stdout + proc.stderr
 
 
+def _resolved(binding: dict, app: str) -> dict:
+    """One binding per app in one run, each held to its own namespace, as the API server reads one App per request."""
+    spec = {**binding["spec"], "matchResources": {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": f"app-{app}"}}}}
+    return {**binding, "metadata": {"name": f"app-file-{app}"}, "spec": spec}
+
+
 PASS = {"app-file": "pass", "app-grants": "pass"}
 FILE_FAILS = {"app-file": "fail"}
 GRANT_FAILS = {"app-grants": "fail"}
@@ -252,7 +220,7 @@ def test_sample_apps_pass_admission(tmp_path: Path) -> None:
     app-priority has set their class; without it (Kyverno down) their workloads are refused.
     Their HTTPRoutes: test_app_admission_apiserver.py (the CLI cannot map a CRD's kind)."""
     docs = [doc for app in ("web-demo", "notes", "photos") for doc in _deploy(app) if doc["kind"] != "HTTPRoute"]
-    _run(tmp_path, "samples", None, [(doc, PASS) for doc in _mutated(tmp_path, docs)])
+    _run(tmp_path, "samples", None, [(doc, PASS) for doc in _mutated(docs)])
     _run(tmp_path, "unmutated", None, [(doc, FILE_FAILS) for doc in docs if doc["kind"] == "Deployment"])
 
 
@@ -347,15 +315,15 @@ def test_app_pods_run_at_the_hosted_app_class_only(tmp_path: Path) -> None:
     cron = {"apiVersion": "batch/v1", "kind": "CronJob", "metadata": {"name": "nightly", "namespace": "app-web-demo"},
             "spec": {"schedule": "0 0 * * *", "jobTemplate": {"spec": {"template": {"spec": {
                 **{k: v for k, v in _pod("t", "web-demo")["spec"].items() if k != "priorityClassName"}, "restartPolicy": "Never"}}}}}}
-    mutated, mutated_cron = _mutated(tmp_path, [deployment, cron], user=TENANT.format(app="web-demo"))
-    assert mutated["spec"]["template"]["spec"]["priorityClassName"] == "hosted-app"
-    assert mutated_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["priorityClassName"] == "hosted-app"
+    classed, classed_cron = _mutated([deployment, cron], user=TENANT.format(app="web-demo"))
+    assert classed["spec"]["template"]["spec"]["priorityClassName"] == "hosted-app"
+    assert classed_cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["priorityClassName"] == "hosted-app"
     mover = _job("volsync-src-data", "notes")
     del mover["spec"]["template"]["spec"]["priorityClassName"]
-    assert "priorityClassName" not in _mutated(tmp_path, [mover], user=VOLSYNC)[0]["spec"]["template"]["spec"]
+    assert "priorityClassName" not in _mutated([mover], user=VOLSYNC)[0]["spec"]["template"]["spec"]
     deployment["metadata"]["name"] = "unmutated"
     _run(tmp_path, "priority", None, [
-        (mutated, PASS), (mutated_cron, PASS), (deployment, FILE_FAILS),
+        (classed, PASS), (classed_cron, PASS), (deployment, FILE_FAILS),
         (_pod("other-class", "web-demo", priorityClassName="high"), FILE_FAILS),
         (_pod("no-class", "web-demo", priorityClassName=None), FILE_FAILS),
     ])
@@ -460,7 +428,7 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
                  volumeClaimTemplates=[{"metadata": {"name": "pgdata"}, "spec": {}}]), FILE_FAILS),
         (traefik_service, FILE_FAILS),
         (_object("Service", "lb", "web-demo", **lb), BOTH_FAIL),
-        *((doc, PASS) for doc in _mutated(tmp_path, [_object("Service", "lan", "lan", **lb),
+        *((doc, PASS) for doc in _mutated([_object("Service", "lan", "lan", **lb),
                                                      _object("Service", "lan-mapped", "lan", **mapped)])),
         # Unnamed (Kyverno down), or named another app's or core's name: App DNS would answer it.
         (_object("Service", "lan-unnamed", "lan", **lb), GRANT_FAILS),
@@ -473,8 +441,8 @@ def test_volumes_hosts_and_services_match_the_file_and_the_env(tmp_path: Path) -
         (_object("Service", "lan-named-target", "lan", **named_target), FILE_FAILS),
         (_object("Service", "lan-other-protocol", "lan", **other_protocol), BOTH_FAIL),
         (_object("Service", "lan-node-ports", "lan", **with_node_ports), FILE_FAILS),
-        (_object("Service", "nodeport", "web-demo", type="NodePort", ports=[{"port": 80}]), GRANT_FAILS),
-        (_object("Service", "external-ips", "web-demo", ports=[{"port": 80}], externalIPs=["192.0.2.1"]), GRANT_FAILS),
+        (_object("Service", "nodeport", "web-demo", type="NodePort", ports=[{"port": 80}]), {**FILE_FAILS, "app-grants": "pass"}),
+        (_object("Service", "external-ips", "web-demo", ports=[{"port": 80}], externalIPs=["192.0.2.1"]), {**FILE_FAILS, "app-grants": "pass"}),
     ]
     _run(tmp_path, "objects", None, cases)
 
@@ -507,11 +475,7 @@ def test_an_app_cannot_write_its_own_grants_or_leave_its_namespace(tmp_path: Pat
 
 
 def _userinfo(path: Path, user: str) -> Path:
-    path.write_text(
-        yaml.safe_dump({"apiVersion": "cli.kyverno.io/v1alpha1", "kind": "UserInfo", "metadata": {"name": "u"},
-                        "userInfo": {"username": user, "groups": ["system:authenticated"]}}),
-        encoding="utf-8",
-    )
+    path.write_text(yaml.safe_dump(userinfo(user)), encoding="utf-8")
     return path
 
 
@@ -582,42 +546,20 @@ def _folder(tmp_path: Path, app: dict, objects: list[dict], extra: dict[str, str
 @pytest.mark.parametrize(
     ("app", "obj", "expected"),
     [
-        ("web-demo", _job("j", "web-demo", **_PRIVILEGED), "risky.privileged"),
-        ("web-demo", _pod("p", "web-demo"), "an app ships only"),
-        ("web-demo", _job("j", "web-demo", hostNetwork=True), "risky.hostNetwork"),
-        ("web-demo", _job("j", "web-demo", securityContext={}), "risky.root"),
-        ("web-demo", _job("j", "web-demo", volumes=[{"name": "h", "hostPath": {"path": "/"}}]), "risky.hostPath"),
-        ("notes", _pvc("undeclared", "notes"), "not a volume the app file declares"),
-        ("notes", _pvc("cache", "notes"), "carries annotation backup: none"),
-        ("notes", _route("r", "notes", f"notes.apps.{SUFFIX}"), "only for a web entry marked ownRoute"),
-        ("web-demo", _object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "type NodePort"),
-        ("web-demo", _object("Service", "s", "web-demo", type="LoadBalancer", allocateLoadBalancerNodePorts=False, ports=[{"port": 80}]), "not a listen port"),
-        ("lan", _object("Service", "s", "lan", type="LoadBalancer", allocateLoadBalancerNodePorts=False,
-                        ports=[{"port": 443, "protocol": "TCP", "targetPort": 9090}]), "the number network.ports gives as target"),
-        ("lan", _object("Service", "s", "lan", type="LoadBalancer", ports=[{"port": 8443, "protocol": "TCP"}]), "allocateLoadBalancerNodePorts: false"),
-        ("web-demo", _object("NetworkPolicy", "n", "web-demo", "networking.k8s.io/v1"), "an app ships only"),
-        ("web-demo", _object("IngressRoute", "r", "web-demo", "traefik.io/v1alpha1"), "an app ships only"),
-        ("web-demo", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "namespace": "flux-system"}}, "lands in namespace app-web-demo"),
-        ("web-demo", _job("j", "web-demo", containers=[_container(capabilities={"drop": ["NET_RAW"]})]), "more than Pod Security restricted"),
-        ("web-demo", _job("j", "web-demo", securityContext={"runAsNonRoot": True}), "more than Pod Security restricted"),
-        ("web-demo", _job("j", "web-demo", containers=[_container(procMount="Unmasked")]), "more than Pod Security restricted"),
-        ("web-demo", _job("j", "web-demo", priorityClassName="high"), "refuses another class"),
-        ("web-demo", _job("j", "web-demo", containers=[{**_container(), "resources": {
-            "requests": {"memory": "64Mi"}, "limits": {"memory": "128Mi"}}}]), "memory request equals its limit"),
-        ("web-demo", {**_object("Service", "s", "web-demo", ports=[{"port": 80}]),
-                      "metadata": {"name": "s", "annotations": {"traefik.ingress.kubernetes.io/service.sticky.cookie": "true"}}},
-         "carries no Traefik annotation"),
-        ("notes", {**_pvc("data", "notes"), "spec": {"volumeName": "pv-other"}}, "sets volumeName"),
-        ("notes", {**_pvc("data", "notes"), "spec": {"dataSourceRef": {"kind": "PersistentVolumeClaim", "name": "x"}}}, "sets dataSourceRef"),
+        ("web-demo", _job("j", "web-demo", **_PRIVILEGED), "app-file: app-web-demo/Job/j: grant: anything beyond Pod Security restricted"),
+        ("web-demo", _object("NetworkPolicy", "n", "web-demo", "networking.k8s.io/v1"), "app-tenant: app-web-demo/NetworkPolicy: an app ships only"),
+        ("web-demo", _object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "app-file: app-web-demo/Service/s: an app's Services are ClusterIP"),
+        ("web-demo", _named(_object("Service", "s", "web-demo", type="NodePort", ports=[{"port": 80}]), "since", datetime.date(2026, 1, 1)),
+         "app-file: app-web-demo/Service/s: an app's Services are ClusterIP"),
+        ("notes", _route("r", "notes", f"notes.apps.{SUFFIX}"), "app-file: app-notes/HTTPRoute/r: an app ships an HTTPRoute only for a web entry marked ownRoute"),
+        ("web-demo", _object("IngressRoute", "r", "web-demo", "traefik.io/v1alpha1"), 'no matches for kind "IngressRoute"'),
     ],
-    ids=["privileged", "bare-pod", "host-network", "root", "host-path", "undeclared-pvc", "unbacked-without-annotation",
-         "stray-route", "nodeport", "loadbalancer-not-listed", "loadbalancer-wrong-target", "loadbalancer-node-ports",
-         "networkpolicy", "ingressroute", "other-namespace", "no-drop-all", "no-seccomp", "proc-unmasked", "other-priority-class", "memory-request-under-limit",
-         "service-traefik-annotation", "pvc-volume-name", "pvc-data-source-ref"],
+    ids=["privileged", "networkpolicy", "nodeport", "dated-value", "stray-route", "ingressroute"],
 )
 def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj: dict, expected: str) -> None:
-    """Rule: jarvis/apps/check.py fails, on the folder alone, each object the cluster refuses for the
-    file's sake (the cases above)."""
+    """Rule: the app check holds the folder's objects to app-tenant and app-file as the app's
+    tenant applies them (its route at ${app_host}, a YAML date as its string), and a kind the
+    CLI cannot map stops it."""
     problems = check_folder(_folder(tmp_path, _ENV[app][0], [obj]))
     assert any(expected in problem for problem in problems), problems
 
@@ -628,24 +570,19 @@ def test_app_check_refuses_what_admission_refuses(tmp_path: Path, app: str, obj:
         (lambda folder: (folder / "app.yaml").unlink(), "missing app.yaml"),
         (lambda folder: (folder / "app.yaml").write_text("kind: App\n", encoding="utf-8"), "apiVersion and kind"),
         (lambda folder: folder.rename(folder.parent / "renamed") and None, "folder name"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"].update(colour="blue")), "unknown key 'colour'"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"].pop("volumes")), "spec.volumes: is required"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"].update(colour="blue")), "additional properties 'colour' not allowed"),
+        (lambda folder: _edit_app(folder, lambda app: app["spec"].pop("volumes")), "missing property 'volumes'"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(web=[{"service": "web", "port": "eighty"}])),
-         "spec.network.web[0].port: is a integer"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"]["web"][0].pop("port")),
-         "spec.network.web[0].port: is required"),
+         "at '/spec/network/web/0/port': got string, want integer"),
         (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(web=[{"name": "a" * 60, "service": "web", "port": 80}])),
          "longer than 63"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"].update(webPort=8080)), "unknown key 'webPort'"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(egress={"lan": ["all", "nas"]})), "lan is [all] or a list"),
-        (lambda folder: _edit_app(folder, lambda app: app["spec"]["network"].update(ports=[{"listen": 80, "protocol": "TCP"}])), "target: is required"),
         (lambda folder: _edit_app(folder, lambda app: app["metadata"].update(namespace="kube-system")), "metadata holds the name only"),
     ],
-    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "web-port-missing", "web-name-too-long",
-         "old-web-port-key", "lan-all-and-names", "port-without-target", "namespace-set"],
+    ids=["missing", "invalid", "misnamed", "unknown-key", "required-field", "bad-web-port", "web-name-too-long", "namespace-set"],
 )
 def test_app_check_refuses_a_missing_invalid_or_misnamed_file(tmp_path: Path, change, expected: str) -> None:
-    """Rule: nothing of an app deploys without a valid app file whose name is its folder's."""
+    """Rule: nothing of an app deploys without a valid app file whose name is its folder's;
+    kubeconform holds it to the App CRD (its CEL rule: test_app_admission_apiserver.py)."""
     folder = tmp_path / "web-demo"
     shutil.copytree(APPS / "web-demo", folder)
     change(folder)

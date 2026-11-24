@@ -258,7 +258,7 @@ def test_each_app_is_checked_at_its_pinned_tag(tmp_path: Path, monkeypatch: pyte
     _edit(apps / "hello-web" / "app.yaml", "        port: 80\n", "")
     sample.tag_apps(apps, {"hello-web": "v0.3.1"})
     _edit(instance / "envs" / "env-00" / _apps.APPS_VALUES, "hello-web:\n  version: v0.3.0\n", "hello-web:\n  version: v0.3.1\n")
-    assert any("hello-web v0.3.1: hello-web/app.yaml: spec.network.web[0]" in error for error in _schema_errors(instance))
+    assert any("hello-web v0.3.1: hello-web/app.yaml:" in error and "missing property 'port'" in error for error in _schema_errors(instance))
 
 
 def test_two_apps_making_one_web_name_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
