@@ -1,11 +1,14 @@
-# The example hosted apps, as values/apps.yaml: what jarvis init --with-examples writes for a
-# first-run tour, and what core's tests and e2e run. The apps live in the jarvis-apps repository
-# beside core (each version is its tag <app>/<version> there); an env's Renovate moves them.
-hello-web:
-  version: v0.3.0
-notes:
-  version: v0.3.0
-lan-demo:
-  version: v0.2.0
-  grants:
-    - lan-port 8080/TCP
+# The example hosted apps: their apps repository, and under apps what jarvis init --with-examples
+# writes as values/apps.yaml for a first-run tour (init writes the repository as
+# apps_git_repo_url). Core's tests and e2e run them. Each version is its tag <app>/<version> in
+# the repository; core's Renovate moves them here, and an env's Renovate in the env.
+repository: https://github.com/gordoncooper/jarvis-apps
+apps:
+  hello-web:
+    version: v0.3.0
+  notes:
+    version: v0.3.0
+  lan-demo:
+    version: v0.2.0
+    grants:
+      - lan-port 8080/TCP

@@ -112,12 +112,12 @@ class EnvSpec:
 
 def example_apps() -> dict:
     """The example apps' values/apps.yaml: each one's version and grants."""
-    return yaml.safe_load(EXAMPLE_APPS.read_text(encoding="utf-8"))
+    return yaml.safe_load(EXAMPLE_APPS.read_text(encoding="utf-8"))["apps"]
 
 
-def apps_repo_beside(core_url: str) -> str:
-    """The examples' apps repository: jarvis-apps beside core, as core's own e2e reads it."""
-    return core_url.rstrip("/").removesuffix(".git").rsplit("/", 1)[0] + "/jarvis-apps"
+def example_apps_repository() -> str:
+    """The apps repository the example apps' tags are in."""
+    return yaml.safe_load(EXAMPLE_APPS.read_text(encoding="utf-8"))["repository"]
 
 
 def cluster_vars(spec: EnvSpec) -> str:
@@ -291,10 +291,9 @@ def write_env(instance: Path, spec: EnvSpec) -> Path:
     (env_dir / "values" / "switches.yaml").write_text(switches(spec), encoding="utf-8")
     (env_dir / "inventory" / "hosts.yml").write_text(hosts(spec), encoding="utf-8")
     if spec.examples:
-        lines = EXAMPLE_APPS.read_text(encoding="utf-8").splitlines(keepends=True)
-        body = "".join(lines[next(i for i, line in enumerate(lines) if not line.startswith("#")) :])
         header = "# The example apps jarvis init --with-examples turned on. Remove them from here once the\n"
         header += "# tour is done; their volumes stay until you delete them.\n"
+        body = yaml.safe_dump(example_apps(), sort_keys=False)
         (env_dir / "values" / "apps.yaml").write_text(header + body, encoding="utf-8")
     return env_dir
 

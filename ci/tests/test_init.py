@@ -189,8 +189,8 @@ def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch
 
 
 def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_path: Path, controller: Path, monkeypatch) -> None:
-    """Rule: --with-examples turns on app-hosting and the example apps, reads them from jarvis-apps
-    beside core, and the env still passes validate as written."""
+    """Rule: --with-examples turns on app-hosting and the example apps, reads them from the
+    repository the examples name, and the env still passes validate as written."""
     code, dest = _init(tmp_path, "--with-examples")
     assert code == 0
     switches = yaml.safe_load((dest / "envs/home/values/switches.yaml").read_text())
@@ -198,7 +198,7 @@ def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_p
     apps = yaml.safe_load((dest / "envs/home/values/apps.yaml").read_text())
     assert apps == scaffold.example_apps()
     cluster_vars = yaml.safe_load((dest / "envs/home/values/cluster-vars.yaml").read_text())
-    assert cluster_vars["apps_git_repo_url"] == "https://github.com/example-owner/jarvis-apps"
+    assert cluster_vars["apps_git_repo_url"] == scaffold.example_apps_repository()
     assert (dest / "envs/home/flux/generated/apps.yaml").is_file()
     # The sample instance turns on the same apps and renders their charts (ci/checks/sample-instance).
     done = _validate(dest, "home", charts=False)

@@ -21,6 +21,11 @@ the upgrade.
   embedded registry nor flannel's WireGuard backend, so nothing on the node holds them.
 - `jarvis restore` finds VolSync's mover Job by its controller owner, the ReplicationSource,
   rather than by working out VolSync's Job name.
+- An instance's Renovate reads `values/cluster-vars.yaml` and `values/apps.yaml` as YAML (core's
+  preset now uses JSONata managers), so it finds the core pin whatever the order of
+  `core_git_repo_url` and `core_git_ref`, and takes no pin from a comment. It opens the same PRs.
+- `jarvis init --with-examples` sets `apps_git_repo_url` to the repository
+  `jarvis/kit/examples-apps.yaml` names, not a `jarvis-apps` beside core's URL.
 
 ## v0.8.3
 

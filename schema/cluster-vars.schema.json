@@ -54,7 +54,7 @@
       "pattern": "\\S"
     },
     "apps_git_repo_url": {
-      "description": "The hosted apps repository, https, read with no credential. Anyone's: the example apps beside core, or your own.",
+      "description": "The hosted apps repository, https, read with no credential. Anyone's: the example apps' (jarvis/kit/examples-apps.yaml), or your own.",
       "x-required": "when apps.yaml lists an app",
       "type": "string",
       "pattern": "^https://[^/@?#\\s]+(/[^/?#\\s]+){2,}/?$"
