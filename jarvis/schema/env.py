@@ -8,7 +8,6 @@ flux/ is the render of the values is jarvis render --check's, which jarvis valid
 
 from __future__ import annotations
 
-import argparse
 import ipaddress
 import os
 import re
@@ -514,15 +513,3 @@ def _sealed_problems(env_dir: Path, repo_root: Path, cluster_path: Path) -> list
         for path in sorted(secrets.rglob("*.sops.yaml"))
         if path.resolve() not in read
     ]
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--env", required=True)
-    ns = parser.parse_args(argv)
-    try:
-        validate_one_env(instance_root(Path(".")), ns.env)
-    except ValidationError as exc:
-        print(exc, flush=True)
-        return 1
-    return 0

@@ -123,7 +123,7 @@ def apps_repo_beside(core_url: str) -> str:
 def cluster_vars(spec: EnvSpec) -> str:
     """values/cluster-vars.yaml: the schema's required keys, then the env's own choices."""
     app_dns = "app-dns" in spec.features
-    lines = [*_schema_line(spec, "cluster-vars"),
+    lines = [
         "# The env's flat settings (schema/CONTRACT.md in core lists every key).",
         f"jarvis_env: {spec.name}",
         f"dns_suffix: {spec.domain}",
@@ -169,19 +169,10 @@ def cluster_vars(spec: EnvSpec) -> str:
     return "\n".join(lines)
 
 
-def _schema_line(spec: EnvSpec, name: str) -> list[str]:
-    """The editor hint naming the file's schema, at the core release the env pins (GitHub only)."""
-    core = _github(spec.core_url)
-    if core is None:
-        return []
-    return [f"# yaml-language-server: $schema=https://raw.githubusercontent.com/{core}/{spec.core_tag}/schema/{name}.schema.json"]
-
-
 def switches(spec: EnvSpec) -> str:
     features = "".join(f"  - {name}\n" for name in spec.features)
     return (
-        "".join(line + "\n" for line in _schema_line(spec, "switches"))
-        + "# What this env turns on, by name. Core is always on. jarvis render writes the Flux wiring\n"
+        "# What this env turns on, by name. Core is always on. jarvis render writes the Flux wiring\n"
         "# from this file; an unknown name fails.\n"
         + ("features:\n" + features if features else "features: []\n")
         + "addons: []\n"
@@ -190,8 +181,7 @@ def switches(spec: EnvSpec) -> str:
 
 def hosts(spec: EnvSpec) -> str:
     body = "".join(f"    {node.name}:\n      node_roles: [{', '.join(node.roles)}]\n" for node in spec.nodes)
-    hint = "".join(line + "\n" for line in _schema_line(spec, "hosts"))
-    return hint + "# Host names only; each must resolve from the controller and every node.\nall:\n  hosts:\n" + body
+    return "# Host names only; each must resolve from the controller and every node.\nall:\n  hosts:\n" + body
 
 
 def _github(core_url: str) -> str | None:
@@ -303,8 +293,7 @@ def write_env(instance: Path, spec: EnvSpec) -> Path:
     if spec.examples:
         lines = EXAMPLE_APPS.read_text(encoding="utf-8").splitlines(keepends=True)
         body = "".join(lines[next(i for i, line in enumerate(lines) if not line.startswith("#")) :])
-        header = "".join(line + "\n" for line in _schema_line(spec, "apps"))
-        header += "# The example apps jarvis init --with-examples turned on. Remove them from here once the\n"
+        header = "# The example apps jarvis init --with-examples turned on. Remove them from here once the\n"
         header += "# tour is done; their volumes stay until you delete them.\n"
         (env_dir / "values" / "apps.yaml").write_text(header + body, encoding="utf-8")
     return env_dir

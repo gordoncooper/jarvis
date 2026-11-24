@@ -155,7 +155,7 @@ def _host_state() -> tuple:
 def test_a_host_that_does_not_resolve_or_is_not_listed_exits_before_any_change(host: str, message: str) -> None:
     before = _host_state()
     result = subprocess.run(
-        [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", "--host", host, "--login-user", "tester"],
+        [*RUN_MODULE, "jarvis.node.prep", "--env", "env-00", host, "--login-user", "tester"],
         cwd=REPO_ROOT,
         env={**os.environ, "INSTANCE": str(sample_root()), "SOPS_AGE_KEY_FILE": str(sample_root() / ".age" / "keys.txt")},
         input="\n", capture_output=True, text=True, timeout=30, check=False,
@@ -479,7 +479,7 @@ def test_schema_error_makes_zero_host_calls(
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
 
     with pytest.raises(module.PrepError) as excinfo:
-        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-00", "cp-1", "--login-user", "ubuntu"])
     assert "dns_suffix" in str(excinfo.value)
     assert host_calls == []
 
@@ -505,7 +505,7 @@ def test_run_keeps_the_recorded_ansible_user(
     _accept_default_ansible_user(module, monkeypatch)
     called = _stub_host_steps(module, monkeypatch, hostname=host)
 
-    module.run(["--env", "env-new", "--host", host, "--login-user", login])
+    module.run(["--env", "env-new", host, "--login-user", login])
 
     assert module.recorded_ssh_user(tmp_path, "env-new") == kept
     assert module.host_ssh_user(tmp_path, "env-new", host) == per_host
@@ -530,7 +530,7 @@ def test_run_refuses_a_different_ansible_user_before_any_host_call(
     monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: asked)
 
     with pytest.raises(module.PrepError, match="set ssh_user on that host"):
-        module.run(["--env", "env-new", "--host", host, "--login-user", asked])
+        module.run(["--env", "env-new", host, "--login-user", asked])
     assert host_calls == []
     assert cluster.read_text(encoding="utf-8") == before
 
@@ -553,7 +553,7 @@ def test_a_new_env_reaches_the_host_check(
     monkeypatch.setattr(module, "assert_host_resolves", stop)
 
     with pytest.raises(module.PrepError, match="stopped after pre-host"):
-        module.run(["--env", "env-new", "--host", "cp-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-new", "cp-1", "--login-user", "ubuntu"])
     assert host_calls == ["assert_host_resolves"]
 
 
@@ -573,7 +573,7 @@ def test_missing_age_keygen_exits_before_host_calls(
     monkeypatch.setattr(module.shutil, "which", which)
 
     with pytest.raises(module.PrepError, match="age-keygen"):
-        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-00", "cp-1", "--login-user", "ubuntu"])
     assert host_calls == []
 
 
@@ -599,7 +599,7 @@ def test_run_calls_full_schema_after_host_steps(
     monkeypatch.setattr(module, "apply_env_edits", lambda *_a, **_k: None)
 
     with pytest.raises(module.PrepError, match="full schema failed"):
-        module.run(["--env", "env-00", "--host", "cp-1", "--login-user", "ubuntu"])
+        module.run(["--env", "env-00", "cp-1", "--login-user", "ubuntu"])
     assert len(schema_runs) == 2
 
 

@@ -34,7 +34,11 @@ from jarvis.secrets import recipients as _recipients
 
 
 def parser(command: str) -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog=f"jarvis {command}", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        prog=f"jarvis {command}", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        # jarvis/cli/main.py takes these two out before this parser runs.
+        epilog="--core-url <url> --core-ref <tag>: pin another core release than this CLI's own (both, from a core checkout)",
+    )
     if command == "init":
         p.add_argument("dir", nargs="?", default=".", help="The new instance repo (default: here; must be empty)")
         p.add_argument("--env", dest="name", help="The first env's name (a DNS label)")

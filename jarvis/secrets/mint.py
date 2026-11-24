@@ -2,7 +2,7 @@
 
 Also writes envs/<env>/ca.crt, the public CA certificate, and never the key.
 A new CA permits only that env's dns_suffix. A backups-restic file git already
-records is not recreated unless --rotate-restic is set. k3s tokens are minted
+records is not recreated unless --new-restic-password is set. k3s tokens are minted
 only for a new env; an env with other secrets gets its cluster's token sealed.
 
 It also mints each hosted app's own backup credential where the app needs one (backups on in
@@ -393,16 +393,16 @@ def _git_records(rel: str) -> bool:
     return bool(history.stdout.strip())
 
 
-def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
+def _refuse_unsafe_regeneration(env: str, *, new_restic_password: bool) -> None:
     """Stop before a new restic password or a CA that would not match ca.crt."""
     repo = _repo_root()
     restic_rel = f"envs/{env}/secrets/backups-restic.sops.yaml"
     restic = _sops.secret_path(repo, env, "backups-restic")
-    if not restic.exists() and _git_records(restic_rel) and not rotate_restic:
+    if not restic.exists() and _git_records(restic_rel) and not new_restic_password:
         raise SystemExit(
             "refusing to recreate backups-restic because git already records it; "
             "rotation is in docs/backups.md; "
-            "pass --rotate-restic to mint a new password"
+            "pass --new-restic-password to mint a new one, which opens no existing repository"
         )
     ca_secret = _secrets_dir(env) / CA_SECRET_FILENAME
     ca_root = _ca_root_path(env)
@@ -422,9 +422,9 @@ def _refuse_unsafe_regeneration(env: str, *, rotate_restic: bool) -> None:
         )
 
 
-def bootstrap(env: str, *, sops_bin: str | None = None, rotate_restic: bool = False) -> list[str]:
+def bootstrap(env: str, *, sops_bin: str | None = None, new_restic_password: bool = False) -> list[str]:
     created: list[str] = []
-    _refuse_unsafe_regeneration(env, rotate_restic=rotate_restic)
+    _refuse_unsafe_regeneration(env, new_restic_password=new_restic_password)
     apps = _apps_needing_credentials(env)
     sops = sops_bin or _sops.require_sops()
     secrets = _secrets_dir(env)
@@ -620,14 +620,14 @@ def _rotate_deploy_key(env: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", required=True, help="Env under envs/")
+    parser = argparse.ArgumentParser(prog="jarvis secrets", description=__doc__)
+    parser.add_argument("--env", required=True, help=argparse.SUPPRESS)
     parser.add_argument(
-        "--rotate-restic",
+        "--new-restic-password",
         action="store_true",
         help=(
-            "Recreate a missing backups-restic file even when git already records it. "
-            "Mints a new password. This is not the restic rotation."
+            "Recreate a missing backups-restic file even when git already records it, with a new password "
+            "that opens no existing repository. The rotation is in docs/backups.md."
         ),
     )
     which = parser.add_mutually_exclusive_group()
@@ -648,10 +648,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.update_recipients or args.add_recovery_key or args.rotate:
-        if args.rotate_restic:
+        if args.new_restic_password:
             parser.error("--update-recipients, --add-recovery-key and --rotate are runs of their own")
         return _lifecycle(args)
-    created = bootstrap(args.env, rotate_restic=args.rotate_restic)
+    created = bootstrap(args.env, new_restic_password=args.new_restic_password)
     if created:
         for rel in created:
             print(f"created {rel}")
