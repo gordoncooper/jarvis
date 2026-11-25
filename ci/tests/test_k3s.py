@@ -373,11 +373,13 @@ _KEY_NAMES = ("Require the sealed token file and its key names",
                      id="key-mode"),
         pytest.param(lambda token, key: token.unlink(), _KEY_NAMES, id="missing"),
         pytest.param(lambda token, key: token.write_text("stringData:\n  token: ENC[fixture]\n", encoding="utf-8"), _KEY_NAMES, id="key-names"),
+        pytest.param(lambda token, key: token.write_text("stringData:\n  server_token: ENC[fixture]\n", encoding="utf-8"), _KEY_NAMES, id="no-agent-token"),
+        pytest.param(lambda token, key: token.write_text("stringData:\n  agent_token: ENC[fixture]\n", encoding="utf-8"), _KEY_NAMES, id="no-server-token"),
     ],
 )
 def test_token_read_stops_visibly_before_any_decrypt(tmp_path: Path, broken, refusal: tuple[str, str]) -> None:
-    """Rule: a missing or loose key file, or a sealed file that is missing or lacks the key names, stops the run at its
-    own check, before the decrypt."""
+    """Rule: a missing or loose key file, or a sealed file that is missing or lacks either key name, stops the run at
+    its own check, before the decrypt."""
     tokens = _tokens(tmp_path)
     broken(Path(tokens["k3s_token_file"]), Path(tokens["sops_age_key_file"]))
     run = _read_tokens(tmp_path, tokens)
