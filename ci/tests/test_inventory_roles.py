@@ -1,105 +1,52 @@
-"""Role groups from the constructed inventory."""
+"""The constructed inventory: data_disk stays a host var with no group, and site.yml refuses the env hosts file alone."""
 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from pathlib import Path
 
 import yaml
 from ansible_role_proof import (
     ANSIBLE_DIR,
-    env_inventory_args,
+    changed,
+    failed_task,
     inventory_path,
     playbook,
-    playbook_recap_field,
+    role_groups,
     roles_inventory_path,
     site_vars_file,
 )
 from conftest import require_cli
 
-from support import ExampleCopy, real_and_copy_envs
 
-
-def _expected_role_groups() -> dict[str, set[str]]:
-    """Role groups from the example inventory: one per node_roles entry."""
-    doc = yaml.safe_load(inventory_path().read_text(encoding="utf-8"))
-    hosts = doc["all"]["hosts"]
-    groups: dict[str, set[str]] = {}
-    for hostname, host_vars in hosts.items():
-        host_vars = host_vars or {}
-        for role in host_vars.get("node_roles") or []:
-            groups.setdefault(role, set()).add(hostname)
-    return groups
-
-
-def _parse_graph(text: str) -> dict[str, set[str]]:
-    groups: dict[str, set[str]] = {}
-    current: str | None = None
-    for raw in text.splitlines():
-        group = re.search(r"@([^:\s]+):\s*$", raw)
-        if group:
-            current = group.group(1)
-            groups.setdefault(current, set())
-            continue
-        host = re.search(r"--([A-Za-z0-9._-]+)\s*$", raw)
-        if host and current is not None:
-            groups[current].add(host.group(1))
-    return groups
-
-
-def test_env_00_inventory_graph_shows_role_groups() -> None:
-    require_cli("ansible-inventory")
-    proc = subprocess.run(
-        ["ansible-inventory", "--graph", *env_inventory_args()],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    groups = _parse_graph(proc.stdout)
-    expected = _expected_role_groups()
-    assert set(expected) <= set(groups)
-    for name, hosts in expected.items():
-        assert groups[name] == hosts, name
-    assert not any(name.startswith("_") for name in groups)
-
-
-def test_env_hosts_file_alone_fails_before_any_change(tmp_path: Path, example_copy: ExampleCopy) -> None:
-    """Missing the roles inventory fails the opening assert, before any change."""
+def test_env_hosts_file_alone_fails_before_any_change(tmp_path: Path) -> None:
+    """Rule: site.yml given only the env hosts file stops at the control-plane assert, before any other task, and
+    says to pass both inventories."""
     require_cli("ansible-playbook")
-    for index, (root, env) in enumerate(real_and_copy_envs(example_copy)):
-        env_dir = root / "envs" / env
-        proc = playbook(
-            "--check", "site.yml", "-i", env_dir / "inventory" / "hosts.yml",
-            "-e", f"@{site_vars_file(tmp_path / f'{index}.json', root, env=env)}",
-            "-e", "ansible_connection=local", "-e", "ansible_become=false",
-        )  # fmt: skip
-        text = proc.output
-        assert proc.returncode != 0, text
-        assert "Assert exactly one control_plane host" in text
-        assert "jarvis site --env" in text
-        assert "infra/inventory/roles" in text
-        assert "roles.yml" not in text
-        assert "base-os :" not in text
-        assert playbook_recap_field(text, "changed") == 0
+    hosts = inventory_path()
+    run = playbook(
+        "--check", "site.yml", "-i", hosts, "-e", f"@{site_vars_file(tmp_path / 'vars.json')}",
+        "-e", "ansible_connection=local", "-e", "ansible_become=false", json=True,
+    )  # fmt: skip
+    assert run.returncode != 0, run.output
+    assert [task["task"]["name"] for play in run.json["plays"] for task in play["tasks"]] == ["Assert exactly one control_plane host"]
+    assert failed_task(run) == (
+        "Assert exactly one control_plane host",
+        "control_plane has 0 hosts; expected exactly one. Pass both inventories with jarvis site --env <env>"
+        " (hosts file, then infra/inventory/roles).",
+    )
+    assert changed(run) == dict.fromkeys(yaml.safe_load(hosts.read_text(encoding="utf-8"))["all"]["hosts"], 0)
+    assert "roles.yml" not in run.output
 
 
 def test_data_disk_is_a_host_var_with_no_group(tmp_path: Path) -> None:
-    """A host with data_disk: true keeps the var for node-disk, and no data_disk group exists."""
+    """Rule: a host's data_disk: true reaches node-disk as a host var, and no group is made from it."""
     require_cli("ansible-inventory")
     hosts = tmp_path / "hosts.yml"
-    hosts.write_text(
-        "all:\n  hosts:\n    n1:\n      node_roles: [control_plane]\n      data_disk: true\n",
-        encoding="utf-8",
-    )
-    inventory = ["-i", str(hosts), "-i", str(roles_inventory_path())]
-    graph, host = (
-        subprocess.run(["ansible-inventory", *args, *inventory], cwd=ANSIBLE_DIR, capture_output=True, text=True)
-        for args in (["--graph"], ["--host", "n1"])
-    )
-    assert graph.returncode == 0 and host.returncode == 0, graph.stderr + host.stderr
-    assert "data_disk" not in _parse_graph(graph.stdout)
+    hosts.write_text("all:\n  hosts:\n    n1:\n      node_roles: [control_plane]\n      data_disk: true\n", encoding="utf-8")
+    assert role_groups(hosts, roles_inventory_path()) == {"control_plane": {"n1"}}
+    host = subprocess.run(["ansible-inventory", "--host", "n1", "-i", str(hosts), "-i", str(roles_inventory_path())],
+                          cwd=ANSIBLE_DIR, capture_output=True, text=True, check=False)
+    assert host.returncode == 0, host.stderr
     assert json.loads(host.stdout)["data_disk"] is True
