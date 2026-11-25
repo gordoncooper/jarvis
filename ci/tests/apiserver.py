@@ -10,7 +10,6 @@ import json
 import os
 import secrets
 import shutil
-import socket
 import ssl
 import subprocess
 import tempfile
@@ -25,7 +24,7 @@ import pytest
 import yaml
 from conftest import ci_mode
 
-from support import REPO_ROOT
+from support import REPO_ROOT, free_port
 
 WORK = REPO_ROOT / ".scratch" / "apiserver"
 
@@ -40,12 +39,6 @@ def binaries() -> dict[str, str]:
             pytest.fail(f"{message} — required in CI")
         pytest.skip(message)
     return {name: str(path) for name, path in found.items()}
-
-
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def eventually(check, what: str, seconds: int = 60):
