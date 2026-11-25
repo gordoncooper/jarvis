@@ -32,7 +32,7 @@ jobs:
       - name: Install mise
         uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          version: 2026.11.12
+          version: 2026.11.14
           install: false
           # mise.dev.toml's tools too, for this step and every later one (MISE_ENV).
           mise_env: dev
