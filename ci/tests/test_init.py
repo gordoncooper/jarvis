@@ -46,9 +46,9 @@ def _init(tmp_path: Path, *extra: str) -> tuple[int, Path]:
 
 
 def _validate(instance: Path, env: str, *, charts: bool = True) -> int:
-    """jarvis validate's checks of one env, in this process (the controller fixture restores ENVS)."""
-    os.environ["ENVS"] = env
-    return validate.run(instance, None if charts else checks_without_charts())
+    """jarvis validate's checks of one env, in this process (the controller fixture restores both variables)."""
+    os.environ.update(INSTANCE=str(instance), ENVS=env)
+    return validate.main([] if charts else [f"--only={name}" for name in checks_without_charts()])
 
 
 def test_init_writes_an_instance_that_passes_every_check(tmp_path: Path, controller: Path, capsys) -> None:
@@ -133,7 +133,7 @@ def test_env_add_reuses_the_recipients_and_passes_the_env_checks(tmp_path: Path,
     assert values["flux_git_repo_url"] == "ssh://git@github.com/me/lab" and values["flux_git_ref"] == "refs/heads/main"
     git(dest, "add", "-A")
     git(dest, "commit", "--no-verify", "-qm", "two")
-    # The second env renders the same charts as the first, which the test above checks.
+    # The second env renders the same charts as the first, which test_init_writes_an_instance_that_passes_every_check checks.
     assert _validate(dest, "lab", charts=False) == 0, capsys.readouterr().out
 
 

@@ -144,20 +144,19 @@ def test_usage_errors_exit_2_and_help_needs_no_instance(tmp_path: Path, monkeypa
     monkeypatch.chdir(tmp_path)
     usage = cli.__doc__ + "\n"
     assert "Exit codes" in usage
-    for argv, code, out, err in (([], 2, usage, ""), (["--help"], 0, usage, ""),
-                                 (["bogus"], 2, "", "jarvis: unknown command 'bogus'; see jarvis --help\n")):  # fmt: skip
-        assert cli.main(argv) == code
-        assert capsys.readouterr() == (out, err), argv
-    # One run through the installed script, as a shell runs it: its argv and its exit status.
-    shell = subprocess.run([str(Path(sys.executable).parent / "jarvis"), "verify"], cwd=tmp_path, capture_output=True, text=True)
-    outside = "jarvis: run jarvis from inside an instance repo (a git repository that holds envs/)\n"
-    assert (shell.returncode, shell.stdout, shell.stderr) == (2, "", outside)
     # Each word is in the usage too, so each form must print the command's own help, and both the same.
     for command, words in (("restore", "--as-of"), ("site", "--tags"), ("up", "doctor, validate")):
         assert cli.main([command, "--help"]) == 0
         own = capsys.readouterr()
         assert cli.main(["help", command]) == 0
         assert capsys.readouterr() == own and words in own.out and own.out != usage and own.err == "", own
+    # As a shell runs the installed script (own is up's help): main() gets the words typed, no more, and exits with its code.
+    outside = "jarvis: run jarvis from inside an instance repo (a git repository that holds envs/)\n"
+    for argv, code, out, err in (([], 2, usage, ""), (["--help"], 0, usage, ""), (["up", "--help"], 0, own.out, ""),
+                                 (["help", "up"], 0, own.out, ""), (["--env", "lab", "verify"], 2, "", outside),
+                                 (["bogus", "--env", "lab"], 2, "", "jarvis: unknown command 'bogus'; see jarvis --help\n")):  # fmt: skip
+        shell = subprocess.run([str(Path(sys.executable).parent / "jarvis"), *argv], cwd=tmp_path, capture_output=True, text=True)
+        assert (shell.returncode, shell.stdout, shell.stderr) == (code, out, err), argv
 
 
 def test_every_command_names_a_module_that_has_its_entry(tmp_path: Path) -> None:
