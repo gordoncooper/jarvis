@@ -1,687 +1,378 @@
-"""bootstrap-secrets idempotency and no-overwrite behaviour."""
+"""jarvis secrets' mint (bootstrap): create-if-missing and never overwrite, the CA root and its name constraints,
+each Secret's shape, and the refusals that keep a recorded secret from being minted again."""
 
 from __future__ import annotations
 
-import importlib
 import os
 import shlex
 import shutil
 import subprocess
-import textwrap
 from pathlib import Path
 
+import bcrypt
 import pytest
 import yaml
+from conftest import require_cli
+from cryptography import x509
+
+import support
+from jarvis.secrets import mint
+
+ENV = "env-test"
+SUFFIX = "app.example"
+SECRETS = "envs/env-test/secrets"
+CA_ROOT = "envs/env-test/ca.crt"
+CA = f"{SECRETS}/cert-manager-ca.sops.yaml"
+K3S = f"{SECRETS}/k3s-token.sops.yaml"
+RESTIC = f"{SECRETS}/backups-restic.sops.yaml"
+APP = f"{SECRETS}/app-shop/backups-restic-app-shop.sops.yaml"
+# What a new env's run writes, in order: the k3s tokens first, so a run that fails later leaves them in place.
+CREATED = [K3S, CA, CA_ROOT, RESTIC]
+PRUNE = {"kustomize.toolkit.fluxcd.io/prune": "disabled"}
+RESTIC_REFUSAL = (
+    "refusing to recreate backups-restic because git already records it; rotation is in docs/backups.md; "
+    "pass --new-restic-password to mint a new one, which opens no existing repository"
+)
+# The file's one private-key PEM: gitleaks' private-key rule reads from its BEGIN line to any later "KEY-----".
+KEY_PEM = "-----BEGIN PRIVATE KEY-----\nYQ==\n-----END PRIVATE KEY-----\n"
 
 
-def _load_module():
-    return importlib.import_module("jarvis.secrets.mint")
+@pytest.fixture
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The instance at tmp_path: env-test sealed to a throwaway key, its cluster-vars naming the DNS suffix and its
+    secrets folder empty, as jarvis init leaves it, and SOPS_AGE_KEY_FILE unset, so only an encrypt needs no key."""
+    require_cli("sops")
+    support.sealing_root(tmp_path, monkeypatch, ENV)
+    (support.write_env_marker(tmp_path, ENV, dns_suffix=SUFFIX) / "secrets").mkdir()
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    return tmp_path.resolve()
 
 
-def _load_sops():
-    from jarvis.secrets import sops as _sops
-
-    return _sops
-
-
-def _require_tool(name: str) -> str:
-    path = shutil.which(name)
-    if not path:
-        pytest.fail(f"{name} not found on PATH (required for this test)")
-    return path
+def _tree(root: Path) -> dict[str, bytes]:
+    """Every file under root/envs, by its path from root."""
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in (root / "envs").rglob("*") if path.is_file()}
 
 
-def _prepare_env(
-    root: Path,
-    env_name: str = "env-test",
-    *,
-    dns_suffix: str = "app.example",
-    age_key_file: str | None = None,
-) -> None:
-    (root / "envs" / env_name / "secrets").mkdir(parents=True, exist_ok=True)
-    values = root / "envs" / env_name / "values"
-    values.mkdir(parents=True, exist_ok=True)
-    lines = [f"dns_suffix: {dns_suffix}\n"]
-    if age_key_file is not None:
-        lines.append(f"age_key_file: {age_key_file}\n")
-    (values / "cluster-vars.yaml").write_text("".join(lines), encoding="utf-8")
+def _opened(root: Path, rel: str) -> dict:
+    """The sealed file at rel, decrypted with the instance's throwaway key."""
+    env = {**os.environ, "SOPS_AGE_KEY_FILE": str(root / ".age" / "keys.txt")}
+    done = subprocess.run(["sops", "decrypt", rel], cwd=root, env=env, capture_output=True, text=True, check=True)
+    return yaml.safe_load(done.stdout)
 
 
-def _write_test_sops_yaml(root: Path, public_key: str) -> None:
-    (root / ".sops.yaml").write_text(
-        textwrap.dedent(
-            f"""
-            creation_rules:
-              - path_regex: envs/.*/secrets/.*\\.sops\\.yaml$
-                encrypted_regex: ^(data|stringData)$
-                age: {public_key}
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
+def _refused(run, *args, **kwargs) -> str:
+    """The message run(*args, **kwargs) exits with."""
+    with pytest.raises(SystemExit) as refused:
+        run(*args, **kwargs)
+    return str(refused.value)
 
 
-def _generate_throwaway_age_keypair(tmp_path: Path) -> tuple[str, Path]:
-    age_keygen = _require_tool("age-keygen")
-    keyfile = tmp_path / "age-key.txt"
-    subprocess.check_call([age_keygen, "-o", str(keyfile)])
-    private = keyfile.read_text(encoding="utf-8")
-    pub_line = next(line for line in private.splitlines() if line.startswith("# public key:"))
-    public = pub_line.split(":", 1)[1].strip()
-    return public, keyfile
-
-
-def test_second_run_is_byte_identical_and_skips_existing(tmp_path, monkeypatch):
-    mod = _load_module()
-    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-
-    sops_bin = _require_tool("sops")
-
-    env_name = "env-test"
-    _prepare_env(tmp_path, env_name)
-
-    mod.bootstrap(env_name, sops_bin=sops_bin)
-    secrets_dir = tmp_path / "envs" / env_name / "secrets"
-    files = sorted(secrets_dir.glob("*.sops.yaml"))
-    root = tmp_path / "envs" / env_name / "ca.crt"
-    assert [f.name for f in files] == [
-        "backups-restic.sops.yaml",
-        "cert-manager-ca.sops.yaml",
-        "k3s-token.sops.yaml",
-    ]
-    cert = root.read_text(encoding="utf-8")
-    assert "BEGIN CERTIFICATE" in cert
-    assert "PRIVATE KEY" not in cert
-    first_bytes = {path: path.read_bytes() for path in [*files, root]}
-
-    mod.bootstrap(env_name, sops_bin=sops_bin)
-    for path, blob in first_bytes.items():
-        assert path.read_bytes() == blob, path.name
-
-    victim = files[0]
-    victim.write_bytes(b"stale-content\n")
-    root.write_bytes(b"stale-root\n")
-    mod.bootstrap(env_name, sops_bin=sops_bin)
-    assert victim.read_bytes() == b"stale-content\n"
-    assert root.read_bytes() == b"stale-root\n"
-
-
-def _wrap_sops(tmp_path: Path, sops_bin: str, *, reject_decrypt: bool) -> tuple[Path, Path]:
-    log = tmp_path / "sops-args"
-    wrapper = tmp_path / "sops-wrap"
-    reject = ""
-    if reject_decrypt:
-        reject = 'if [ "$1" = decrypt ]; then echo "decrypt not allowed" >&2; exit 1; fi\n'
-    wrapper.write_text(
-        "#!/bin/sh\n"
-        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(log))}\n"
-        f"{reject}"
-        f"exec {shlex.quote(sops_bin)} \"$@\"\n",
-        encoding="utf-8",
-    )
+def _logging_sops(tmp_path: Path) -> tuple[str, Path]:
+    """(sops, log): a sops that writes each run's arguments to log, one line per run, then runs the real one."""
+    wrapper, log = tmp_path / "sops-logged", tmp_path / "sops-args"
+    real = shutil.which("sops") or "sops"
+    wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {shlex.quote(str(log))}\nexec {shlex.quote(real)} \"$@\"\n")
     wrapper.chmod(0o755)
-    return wrapper, log
+    return str(wrapper), log
 
 
-def test_new_ca_writes_the_root_without_decrypting(tmp_path, monkeypatch):
-    mod = _load_module()
-    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    sops_bin = _require_tool("sops")
-    wrapper, log = _wrap_sops(tmp_path, sops_bin, reject_decrypt=True)
-    env_name = "env-test"
-    _prepare_env(tmp_path, env_name)
-
-    mod.bootstrap(env_name, sops_bin=str(wrapper))
-    root = tmp_path / "envs" / env_name / "ca.crt"
-    cert = root.read_text(encoding="utf-8")
-    assert "BEGIN CERTIFICATE" in cert
-    assert "PRIVATE KEY" not in cert
-    recorded = log.read_text(encoding="utf-8")
-    assert "encrypt" in recorded
-    assert "decrypt" not in recorded
+def _record_restic(root: Path) -> None:
+    """Mint the env, then commit its backups-restic file in a new repository at root."""
+    mint.bootstrap(ENV)
+    support.git(root, "init", "-q")
+    support.git(root, "add", "--", RESTIC)
+    support.git(root, "commit", "-q", "-m", "record restic")
 
 
-def test_missing_root_is_recovered_from_tls_crt_only(tmp_path, monkeypatch):
-    mod = _load_module()
-    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    sops_bin = _require_tool("sops")
-    env_name = "env-test"
-    _prepare_env(tmp_path, env_name)
-    mod.bootstrap(env_name, sops_bin=sops_bin)
-
-    secret = tmp_path / "envs" / env_name / "secrets" / "cert-manager-ca.sops.yaml"
-    root = tmp_path / "envs" / env_name / "ca.crt"
-    secret_bytes = secret.read_bytes()
-    root.unlink()
-    wrapper, log = _wrap_sops(tmp_path, sops_bin, reject_decrypt=False)
-    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(keyfile))
-    mod.bootstrap(env_name, sops_bin=str(wrapper))
-
-    assert secret.read_bytes() == secret_bytes
-    recorded = log.read_text(encoding="utf-8")
-    assert "decrypt" in recorded
-    assert "--extract" in recorded
-    assert "tls.crt" in recorded
-    assert "tls.key" not in recorded
-    env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-    extracted = subprocess.check_output(
-        [sops_bin, "decrypt", "--extract", '["stringData"]["tls.crt"]', str(secret)],
-        env=env,
-        text=True,
-    )
-    assert root.read_text(encoding="utf-8") == extracted
-    assert "BEGIN CERTIFICATE" in extracted
-    assert "PRIVATE KEY" not in extracted
+def _assert_restic_login(data: dict[str, str], repository: str, user: str) -> None:
+    """data is a restic credential on repository: its own password, and a REST login for user whose htpasswd line
+    is one bcrypt hash of that login's password."""
+    hashed = data["htpasswd"].removeprefix(f"{user}:").removesuffix("\n")
+    password, rest_password = data["RESTIC_PASSWORD"], data["RESTIC_REST_PASSWORD"]
+    assert data == {"RESTIC_PASSWORD": password, "RESTIC_REPOSITORY": repository, "RESTIC_REST_USERNAME": user,
+                    "RESTIC_REST_PASSWORD": rest_password, "htpasswd": f"{user}:{hashed}\n"}  # fmt: skip
+    assert "\n" not in hashed and bcrypt.checkpw(rest_password.encode(), hashed.encode())
+    assert min(len(password), len(rest_password)) >= 32 and password != rest_password
 
 
-def test_public_root_refuses_a_private_key(tmp_path, monkeypatch):
-    mod = _load_module()
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    dest = tmp_path / "envs" / "env-test" / "ca.crt"
-    with pytest.raises(SystemExit, match="not a certificate"):
-        mod._write_public_root(
-            dest,
-            "-----BEGIN PRIVATE KEY-----\nYQ==\n-----END PRIVATE KEY-----\n",
-        )
+def test_second_run_is_byte_identical_and_skips_existing(root: Path) -> None:
+    """Rule: bootstrap creates only what is missing and never overwrites: a second run changes no byte, and a file
+    changed since is left as it is."""
+    assert mint.bootstrap(ENV) == CREATED
+    first = _tree(root)
+    assert sorted(first) == sorted([*CREATED, "envs/env-test/values/cluster-vars.yaml"])
+    assert mint.bootstrap(ENV) == []
+    assert _tree(root) == first
+    for rel in (RESTIC, CA_ROOT):
+        (root / rel).write_bytes(b"stale\n")
+    stale = _tree(root)
+    assert mint.bootstrap(ENV) == []
+    assert _tree(root) == stale
+
+
+def test_new_ca_writes_the_root_without_decrypting(root: Path, tmp_path: Path) -> None:
+    """Rule: a new CA's ca.crt is written from memory: sops only encrypts, and ca.crt is the sealed tls.crt, with
+    no key in it."""
+    sops, log = _logging_sops(tmp_path)
+    assert mint.bootstrap(ENV, sops_bin=sops) == CREATED
+    assert log.read_text().splitlines() == [f"encrypt --filename-override={rel} /dev/stdin" for rel in (K3S, CA, RESTIC)]
+    cert = (root / CA_ROOT).read_text()
+    assert cert == _opened(root, CA)["stringData"]["tls.crt"]
+    assert cert.startswith("-----BEGIN CERTIFICATE-----") and "PRIVATE KEY" not in cert
+
+
+def test_missing_root_is_recovered_from_tls_crt_only(root: Path, tmp_path: Path, monkeypatch) -> None:
+    """Rule: a missing ca.crt is restored from the sealed CA's tls.crt alone; the key stays sealed and no other
+    file changes."""
+    mint.bootstrap(ENV)
+    before = _tree(root)
+    (root / CA_ROOT).unlink()
+    sops, log = _logging_sops(tmp_path)
+    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(root / ".age" / "keys.txt"))
+    assert mint.bootstrap(ENV, sops_bin=sops) == [CA_ROOT]
+    assert log.read_text().splitlines() == [f'decrypt --extract ["stringData"]["tls.crt"] {root / CA}']
+    assert _tree(root) == before
+
+
+@pytest.mark.parametrize(
+    "pem",
+    [
+        pytest.param(KEY_PEM, id="key"),
+        pytest.param("-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----\n" + KEY_PEM,
+                     id="certificate-and-key"),
+        pytest.param("YQ==\n", id="no-certificate"),
+    ],
+)  # fmt: skip
+def test_public_root_refuses_a_private_key(tmp_path: Path, pem: str) -> None:
+    """Rule: ca.crt is written only from a certificate, and never with a private key in it."""
+    dest = tmp_path / "ca.crt"
+    assert _refused(mint._write_public_root, dest, pem) == "refusing to write a CA root that is not a certificate"
     assert not dest.exists()
 
 
-def test_ca_leaf_passes_x509_strict_verify(tmp_path: Path) -> None:
-    mod = _load_module()
-    cert_pem, key_pem = mod._generate_ca_material("leaf.example")
-    assert "PRIVATE KEY" not in cert_pem
-    ca_cert = tmp_path / "ca.crt"
-    ca_key = tmp_path / "ca.key"
-    ca_cert.write_text(cert_pem, encoding="utf-8")
-    ca_key.write_text(key_pem, encoding="utf-8")
-    ca_key.chmod(0o600)
-
-    leaf_csr = tmp_path / "leaf.csr"
-    leaf_crt = tmp_path / "leaf.crt"
-    subprocess.check_call(
-        [
-            "openssl",
-            "req",
-            "-new",
-            "-nodes",
-            "-newkey",
-            "rsa:2048",
-            "-keyout",
-            str(tmp_path / "leaf.key"),
-            "-out",
-            str(leaf_csr),
-            "-subj",
-            "/CN=leaf.example",
-            "-addext",
-            "subjectAltName=DNS:leaf.example",
-            "-batch",
-        ],
-        stdout=subprocess.DEVNULL,
-    )
-    subprocess.check_call(
-        [
-            "openssl",
-            "x509",
-            "-req",
-            "-in",
-            str(leaf_csr),
-            "-CA",
-            str(ca_cert),
-            "-CAkey",
-            str(ca_key),
-            "-CAcreateserial",
-            "-out",
-            str(leaf_crt),
-            "-days",
-            "1",
-            "-sha256",
-            "-copy_extensions",
-            "copy",
-        ],
-        stdout=subprocess.DEVNULL,
-    )
-    verified = subprocess.run(
-        ["openssl", "verify", "-x509_strict", "-CAfile", str(ca_cert), str(leaf_crt)],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert verified.returncode == 0, verified.stderr
-    assert verified.stdout.strip().endswith(": OK")
-
-
-def test_secret_manifest_shape(tmp_path, monkeypatch):
-    mod = _load_module()
-    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    sops_bin = _require_tool("sops")
-    env_name = "env-test"
-    _prepare_env(tmp_path, env_name)
-    mod.bootstrap(env_name, sops_bin=sops_bin)
-
-    restic_path = tmp_path / "envs" / env_name / "secrets" / "backups-restic.sops.yaml"
-    env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-    decrypted = subprocess.check_output([sops_bin, "-d", str(restic_path)], env=env, text=True)
-    restic = yaml.safe_load(decrypted)
-    assert restic["metadata"]["namespace"] == "platform-backups"
-    data = restic["stringData"]
-    assert set(data) == {
-        "RESTIC_PASSWORD",
-        "RESTIC_REPOSITORY",
-        "RESTIC_REST_USERNAME",
-        "RESTIC_REST_PASSWORD",
-        "htpasswd",
+def test_secret_manifest_shape(root: Path) -> None:
+    """Rule: each minted Secret is named for what reads it, of the type it is read as, and guarded from Flux's
+    prune; backups-restic holds its own password and a REST login."""
+    mint.bootstrap(ENV)
+    docs = {rel: yaml.safe_load((root / rel).read_text()) for rel in (K3S, CA, RESTIC)}
+    assert {rel: (doc["kind"], doc["type"], doc["metadata"]) for rel, doc in docs.items()} == {
+        K3S: ("Secret", "Opaque", {"name": "k3s-token", "annotations": PRUNE}),
+        CA: ("Secret", "kubernetes.io/tls", {"name": "cert-manager-ca", "namespace": "platform-cert-manager", "annotations": PRUNE}),
+        RESTIC: ("Secret", "Opaque", {"name": "backups-restic", "namespace": "platform-backups", "annotations": PRUNE}),
     }
-    assert data["RESTIC_REPOSITORY"] == mod.RESTIC_REPOSITORY
-    assert data["RESTIC_REST_USERNAME"] == mod.RESTIC_REST_USERNAME
-    passwords_differ = data["RESTIC_PASSWORD"] != data["RESTIC_REST_PASSWORD"]
-    assert passwords_differ
-    line = data["htpasswd"]
-    one_line = line.endswith("\n") and line.count("\n") == 1
-    assert one_line
-    accepted = mod._htpasswd_accepts(line, data["RESTIC_REST_USERNAME"], data["RESTIC_REST_PASSWORD"])
-    assert accepted
+    _assert_restic_login(_opened(root, RESTIC)["stringData"], mint.RESTIC_REPOSITORY, mint.RESTIC_REST_USERNAME)
 
 
-def test_sops_failure_leaves_no_target_file(tmp_path):
-    sops_mod = _load_sops()
-    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-
-    fail_sops = tmp_path / "fail-sops"
-    fail_sops.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    fail_sops.chmod(0o755)
-
-    (tmp_path / "envs" / "env-test").mkdir(parents=True)
-    target = tmp_path / "envs/env-test/secrets/backups-restic.sops.yaml"
-    doc = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {"name": "backups-restic", "namespace": "platform-backups"},
-        "type": "Opaque",
-        "stringData": {"RESTIC_PASSWORD": "test"},
-    }
-
-    with pytest.raises(subprocess.CalledProcessError):
-        sops_mod.encrypt_secret_to_file(
-            repo_root=tmp_path,
-            env="env-test",
-            name="backups-restic",
-            document=doc,
-            sops_bin=str(fail_sops),
-        )
-    assert not target.exists()
+def test_sops_failure_leaves_no_target_file(root: Path, tmp_path: Path) -> None:
+    """Rule: when sops fails, bootstrap stops and writes no file."""
+    bin_dir, marker = support.marker_sops(tmp_path)
+    before = _tree(root)
+    with pytest.raises(subprocess.CalledProcessError) as failed:
+        mint.bootstrap(ENV, sops_bin=str(bin_dir / "sops"))
+    assert failed.value.returncode == 99 and marker.exists()
+    assert _tree(root) == before
 
 
-def test_bootstrap_refuses_a_bad_env_before_sops(tmp_path, monkeypatch):
-    mod = _load_module()
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    marker = tmp_path / "sops-ran"
-    wrapper = tmp_path / "sops-wrap"
-    wrapper.write_text(
-        "#!/bin/sh\n" + f"touch {shlex.quote(str(marker))}\n" + "exit 99\n",
-        encoding="utf-8",
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        pytest.param("../x", "refusing env, namespace or name: only [a-z0-9-] segments are allowed", id="not-a-name"),
+        pytest.param("env-missing", "env folder does not exist", id="no-env-folder"),
+    ],
+)
+def test_bootstrap_refuses_a_bad_env_before_sops(root: Path, tmp_path: Path, env: str, message: str) -> None:
+    """Rule: a bad env name, or an env with no folder, is refused before sops runs (test_sops_failure_leaves_no_target_file
+    shows the same sops running for a good env)."""
+    bin_dir, marker = support.marker_sops(tmp_path)
+    assert _refused(mint.bootstrap, env, sops_bin=str(bin_dir / "sops")) == message
+    assert not marker.exists()
+
+
+def test_tracked_restic_is_not_recreated_without_rotate(root: Path) -> None:
+    """Rule: a deleted backups-restic file git records is not minted again, unless --new-restic-password is set."""
+    _record_restic(root)
+    recorded = (root / RESTIC).read_bytes()
+    (root / RESTIC).unlink()
+    before = _tree(root)
+    assert _refused(mint.bootstrap, ENV) == RESTIC_REFUSAL
+    assert _tree(root) == before
+    assert mint.bootstrap(ENV, new_restic_password=True) == [RESTIC]
+    assert (root / RESTIC).read_bytes() != recorded
+
+
+def test_app_credential_is_its_own_and_never_minted_twice(root: Path) -> None:
+    """Rule: an app's run seals its own password and an apps-server login named for its namespace, in its own
+    folder, once; an app the env does not list, or a credential git records, is refused before any write."""
+    before = _tree(root)
+    assert _refused(mint.bootstrap_app, ENV, "app-shop") == "refusing app-shop: the env does not list shop in values/apps.yaml"
+    assert _tree(root) == before
+    (root / "envs/env-test/values/apps.yaml").write_text("shop:\n  version: v0.1.0\n")
+    assert mint.bootstrap_app(ENV, "app-shop") == [APP]
+    assert mint.bootstrap_app(ENV, "app-shop") == []
+    doc = _opened(root, APP)
+    assert doc["metadata"] == {"name": "backups-restic-app-shop", "namespace": "platform-backups", "annotations": PRUNE}
+    _assert_restic_login(doc["stringData"], "rest:http://restic-apps.platform-backups.svc.cluster.local:8000/", "ns-app-shop")
+    support.git(root, "init", "-q")
+    support.git(root, "add", "--", APP)
+    support.git(root, "commit", "-q", "-m", "app")
+    (root / APP).unlink()
+    before = _tree(root)
+    assert _refused(mint.bootstrap_app, ENV, "app-shop") == (
+        f"refusing to recreate {APP} because git already records it; an app's repositories open only with its "
+        "first password (core/feature/app-hosting/CONTRACT.md)"
     )
-    wrapper.chmod(0o755)
-    for env in ("../x", "env-missing"):
-        marker.unlink(missing_ok=True)
-        with pytest.raises(SystemExit):
-            mod.bootstrap(env, sops_bin=str(wrapper))
-        assert not marker.exists()
+    assert _tree(root) == before
 
 
-def test_new_ca_and_restic_secrets_are_prune_guarded(tmp_path, monkeypatch):
-    mod = _load_module()
-    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    _prepare_env(tmp_path)
-    mod.bootstrap("env-test", sops_bin=_require_tool("sops"))
-    secrets = tmp_path / "envs" / "env-test" / "secrets"
-    for name in ("cert-manager-ca", "backups-restic"):
-        doc = yaml.safe_load((secrets / f"{name}.sops.yaml").read_text(encoding="utf-8"))
-        annotations = doc["metadata"]["annotations"]
-        assert annotations["kustomize.toolkit.fluxcd.io/prune"] == "disabled"
-        for value in doc["stringData"].values():
-            assert isinstance(value, str) and value.startswith("ENC[")
+@pytest.mark.parametrize("commit", [pytest.param(False, id="staged"), pytest.param(True, id="committed")])
+def test_staged_restic_deletion_is_still_recorded(root: Path, commit: bool) -> None:
+    """Rule: a deletion of backups-restic, staged or committed, leaves it recorded in git, so bootstrap refuses."""
+    _record_restic(root)
+    support.git(root, "rm", "-q", "--", RESTIC)
+    if commit:
+        support.git(root, "commit", "-q", "-m", "drop restic")
+    assert _refused(mint.bootstrap, ENV) == RESTIC_REFUSAL
+    assert not (root / RESTIC).exists()
 
 
-def _git(root: Path, *args: str) -> None:
-    subprocess.check_call(["git", "-C", str(root), *args], stdout=subprocess.DEVNULL)
-
-
-def _scalars(value: object) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [item for child in value.values() for item in _scalars(child)]
-    if isinstance(value, list):
-        return [item for child in value for item in _scalars(child)]
-    return []
-
-
-def _sign_leaf(
-    tmp_path: Path, ca_cert: Path, ca_key: Path, dns_name: str, stem: str, *, san: str | None = None
-) -> Path:
-    csr = tmp_path / f"{stem}.csr"
-    crt = tmp_path / f"{stem}.crt"
-    subprocess.check_call(
-        [
-            "openssl", "req", "-new", "-nodes", "-newkey", "rsa:2048",
-            "-keyout", str(tmp_path / f"{stem}.key"),
-            "-out", str(csr),
-            "-subj", f"/CN={dns_name}",
-            "-addext", f"subjectAltName={san or f'DNS:{dns_name}'}",
-            "-batch",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+def test_git_error_does_not_mint_a_new_restic_password(root: Path) -> None:
+    """Rule: a repository git cannot read refuses, and mints no new restic password."""
+    _record_restic(root)
+    (root / RESTIC).unlink()
+    shutil.rmtree(root / ".git")
+    (root / ".git").write_text("gitdir: /no/such/gitdir\n")
+    assert _refused(mint.bootstrap, ENV) == (
+        f"refusing to mint secrets because git could not say whether {RESTIC} is already recorded: "
+        "fatal: not a git repository: /no/such/gitdir"
     )
-    subprocess.check_call(
-        [
-            "openssl", "x509", "-req", "-in", str(csr),
-            "-CA", str(ca_cert), "-CAkey", str(ca_key), "-CAcreateserial",
-            "-out", str(crt), "-days", "1", "-sha256", "-copy_extensions", "copy",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return crt
+    assert not (root / RESTIC).exists()
 
 
-def test_tracked_restic_is_not_recreated_without_rotate(tmp_path, monkeypatch):
-    """Deleting a git-recorded backups-restic file refuses unless --new-restic-password is set."""
-    mod = _load_module()
-    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path)
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    rel = "envs/env-test/secrets/backups-restic.sops.yaml"
-    recorded = (tmp_path / rel).read_bytes()
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "add", "--", rel)
-    _git(
-        tmp_path,
-        "-c", "user.name=test",
-        "-c", "user.email=test@example.invalid",
-        "commit", "-q", "-m", "record restic",
-    )
-    (tmp_path / rel).unlink()
-    with pytest.raises(SystemExit, match="refusing to recreate backups-restic"):
-        mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert not (tmp_path / rel).exists()
-    mod.bootstrap("env-test", sops_bin=sops_bin, new_restic_password=True)
-    assert (tmp_path / rel).read_bytes() != recorded
+def test_repo_with_no_commits_mints_restic(root: Path) -> None:
+    """Rule: a fresh git init with nothing committed records nothing, so bootstrap mints instead of refusing."""
+    _record_restic(root)
+    (root / RESTIC).unlink()
+    shutil.rmtree(root / ".git")
+    support.git(root, "init", "-q")
+    assert mint.bootstrap(ENV) == [RESTIC]
 
 
-def test_app_credential_is_its_own_and_never_minted_twice(tmp_path, monkeypatch):
-    """An app's run seals its own password and an apps-server login named for its namespace in
-    its own folder; an app the env does not list, or a recorded credential, refuses before any write."""
-    mod = _load_module()
-    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path)
-    rel = "envs/env-test/secrets/app-shop/backups-restic-app-shop.sops.yaml"
-    with pytest.raises(SystemExit, match="does not list shop"):
-        mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin)
-    assert not (tmp_path / rel).exists()
-    (tmp_path / "envs/env-test/values/apps.yaml").write_text("shop:\n  version: v0.1.0\n", encoding="utf-8")
-    assert mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin) == [rel]
-    assert mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin) == []
-    child = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-    doc = yaml.safe_load(subprocess.check_output([sops_bin, "-d", str(tmp_path / rel)], env=child, text=True))
-    assert doc["metadata"]["name"] == "backups-restic-app-shop"
-    assert doc["metadata"]["namespace"] == "platform-backups"
-    data = doc["stringData"]
-    assert data["RESTIC_REST_USERNAME"] == "ns-app-shop"
-    assert data["RESTIC_REPOSITORY"] == "rest:http://restic-apps.platform-backups.svc.cluster.local:8000/"
-    assert mod._htpasswd_accepts(data["htpasswd"], "ns-app-shop", data["RESTIC_REST_PASSWORD"])
-    assert len(data["RESTIC_PASSWORD"]) >= 32
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "add", "--", rel)
-    _git(tmp_path, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-q", "-m", "app")
-    (tmp_path / rel).unlink()
-    with pytest.raises(SystemExit, match="refusing to recreate .*app-shop.* because git already records it"):
-        mod.bootstrap_app("env-test", "app-shop", sops_bin=sops_bin)
-    assert not (tmp_path / rel).exists()
-
-
-def _record_restic(tmp_path, monkeypatch):
-    mod = _load_module()
-    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path)
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    rel = "envs/env-test/secrets/backups-restic.sops.yaml"
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "add", "--", rel)
-    _git(
-        tmp_path,
-        "-c", "user.name=test",
-        "-c", "user.email=test@example.invalid",
-        "commit", "-q", "-m", "record restic",
-    )
-    return mod, sops_bin, rel
-
-
-def test_staged_restic_deletion_is_still_recorded(tmp_path, monkeypatch):
-    """A staged but uncommitted deletion is still recorded, so bootstrap refuses."""
-    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
-    _git(tmp_path, "rm", "-q", "--", rel)
-    with pytest.raises(SystemExit, match="refusing to recreate backups-restic"):
-        mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert not (tmp_path / rel).exists()
-
-
-def test_git_error_does_not_mint_a_new_restic_password(tmp_path, monkeypatch):
-    """A repository git cannot read refuses, and does not write a new restic file."""
-    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
-    (tmp_path / rel).unlink()
-    git_dir = tmp_path / ".git"
-    shutil.rmtree(git_dir)
-    git_dir.write_text("gitdir: /no/such/gitdir\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="git could not"):
-        mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert not (tmp_path / rel).exists()
-
-
-def test_repo_with_no_commits_mints_restic(tmp_path, monkeypatch):
-    """A fresh `git init` with nothing committed records nothing, so bootstrap mints instead of refusing."""
-    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
-    (tmp_path / rel).unlink()
-    shutil.rmtree(tmp_path / ".git")
-    _git(tmp_path, "init", "-q")
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert (tmp_path / rel).is_file()
-
-
-def test_git_location_env_does_not_hide_a_recorded_restic(tmp_path, monkeypatch):
-    """A git-location variable pointing at another repository does not let bootstrap mint."""
-    mod, sops_bin, rel = _record_restic(tmp_path, monkeypatch)
-    (tmp_path / rel).unlink()
-    other = tmp_path / "other-repo"
+def test_git_location_env_does_not_hide_a_recorded_restic(root: Path, monkeypatch) -> None:
+    """Rule: a git-location variable pointing at another repository does not let bootstrap mint."""
+    _record_restic(root)
+    (root / RESTIC).unlink()
+    other = root / "other-repo"
     other.mkdir()
-    _git(other, "init", "-q")
+    support.git(other, "init", "-q")
     monkeypatch.setenv("GIT_DIR", str(other / ".git"))
-    with pytest.raises(SystemExit, match="refusing to recreate backups-restic"):
-        mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert not (tmp_path / rel).exists()
+    assert _refused(mint.bootstrap, ENV) == RESTIC_REFUSAL
+    assert not (root / RESTIC).exists()
 
 
-def test_k3s_tokens_are_minted_only_for_a_new_env(tmp_path, monkeypatch):
-    """A new env gets distinct server and agent tokens. An env with secrets is never minted over."""
-    mod = _load_module()
-    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path)
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    token = tmp_path / "envs" / "env-test" / "secrets" / "k3s-token.sops.yaml"
-    child = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-    data = yaml.safe_load(subprocess.check_output([sops_bin, "-d", str(token)], env=child, text=True))
-    server, agent = data["stringData"]["server_token"], data["stringData"]["agent_token"]
-    assert len(server) >= 32 and len(agent) >= 32 and server != agent
-    sealed = token.read_bytes()
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert token.read_bytes() == sealed
-    token.unlink()
-    with pytest.raises(SystemExit, match="refusing to mint k3s tokens"):
-        mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert not token.exists()
+def test_k3s_tokens_are_minted_only_for_a_new_env(root: Path) -> None:
+    """Rule: a new env gets distinct server and agent tokens; an env that has other secrets never gets new ones."""
+    mint.bootstrap(ENV)
+    tokens = _opened(root, K3S)["stringData"]
+    assert set(tokens) == {"server_token", "agent_token"}
+    assert min(map(len, tokens.values())) >= 32 and tokens["server_token"] != tokens["agent_token"]
+    (root / K3S).unlink()
+    before = _tree(root)
+    assert _refused(mint.bootstrap, ENV) == (
+        "refusing to mint k3s tokens for an env that already has secrets; its cluster has a token already, so the "
+        "owner seals it as k3s-token (docs/backups.md, Rebuild a dead node)"
+    )
+    assert _tree(root) == before
 
 
-def test_ca_regeneration_refuses_a_mismatched_root(tmp_path, monkeypatch):
-    """A CA-only regeneration refuses while ca.crt is still present."""
-    mod = _load_module()
-    public, _keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path)
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    secret = tmp_path / "envs" / "env-test" / "secrets" / "cert-manager-ca.sops.yaml"
-    root = tmp_path / "envs" / "env-test" / "ca.crt"
-    root_bytes = root.read_bytes()
-    secret.unlink()
-    with pytest.raises(SystemExit, match="refusing to mint a CA"):
-        mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert not secret.exists()
-    assert root.read_bytes() == root_bytes
-    root.unlink()
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert secret.is_file()
-    assert b"BEGIN CERTIFICATE" in root.read_bytes()
-    assert b"PRIVATE KEY" not in root.read_bytes()
+def test_ca_regeneration_refuses_a_mismatched_root(root: Path) -> None:
+    """Rule: the sealed CA is not minted again while ca.crt is present, as the new CA would not match it; with
+    both gone, a new CA and its ca.crt are."""
+    mint.bootstrap(ENV)
+    old = (root / CA_ROOT).read_text()
+    (root / CA).unlink()
+    before = _tree(root)
+    assert _refused(mint.bootstrap, ENV) == (
+        f"refusing to mint a CA while {CA_ROOT} is present; delete it with the sealed CA only as part of the CA rotation"
+    )
+    assert _tree(root) == before
+    (root / CA_ROOT).unlink()
+    assert mint.bootstrap(ENV) == [CA, CA_ROOT]
+    assert old != (root / CA_ROOT).read_text() == _opened(root, CA)["stringData"]["tls.crt"]
 
 
-def test_new_ca_permits_only_the_dns_suffix(tmp_path: Path) -> None:
-    """A new CA allows a name under the suffix, including the wildcard, and rejects a name outside it."""
-    mod = _load_module()
-    suffix = "app.example"
-    cert_pem, key_pem = mod._generate_ca_material(suffix)
-    ca_cert = tmp_path / "ca.crt"
-    ca_key = tmp_path / "ca.key"
-    ca_cert.write_text(cert_pem, encoding="utf-8")
-    ca_key.write_text(key_pem, encoding="utf-8")
-    ca_key.chmod(0o600)
-    text = subprocess.check_output(["openssl", "x509", "-in", str(ca_cert), "-noout", "-text"], text=True)
-    assert "Name Constraints: critical" in text
-    assert f"DNS:{suffix}" in text
-    assert "IP:0.0.0.0/0.0.0.0" in text
-    assert "email:none@nameconstraint.invalid" in text
-    for dns_name, stem, ok, san in (
-        (suffix, "apex", True, None),
-        (f"app.{suffix}", "child", True, None),
-        (f"*.{suffix}", "wild", True, None),
-        ("outside.example", "outside", False, None),
-        ("192.0.2.10", "ip", False, "IP:192.0.2.10"),
-        ("ip6", "ip6", False, "IP:2001:db8::1"),
-        ("user@app.example", "mail", False, "email:user@app.example"),
-        ("uri-in", "uriin", True, "URI:https://app.example/x"),
-        ("uri-out", "uriout", False, "URI:https://outside.example/x"),
-    ):
-        leaf = _sign_leaf(tmp_path, ca_cert, ca_key, dns_name, stem, san=san)
-        verified = subprocess.run(
-            ["openssl", "verify", "-x509_strict", "-CAfile", str(ca_cert), str(leaf)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert (verified.returncode == 0) is ok, verified.stderr
+@pytest.fixture(scope="module")
+def ca(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """(certificate, key) of one new CA for SUFFIX."""
+    folder = tmp_path_factory.mktemp("ca")
+    cert_pem, key_pem = mint._generate_ca_material(SUFFIX)
+    (folder / "ca.crt").write_text(cert_pem)
+    (folder / "ca.key").write_text(key_pem)
+    return folder / "ca.crt", folder / "ca.key"
 
 
-def test_single_label_dns_suffix_is_not_a_ca_constraint(tmp_path: Path) -> None:
-    """A single label would permit every name under it, so the CA is not minted."""
-    mod = _load_module()
-    with pytest.raises(SystemExit, match="DNS suffix"):
-        mod._generate_ca_material("lan")
-    assert list(tmp_path.iterdir()) == []
+@pytest.mark.parametrize(
+    ("cn", "san", "error"),
+    [
+        pytest.param(SUFFIX, f"DNS:{SUFFIX}", None, id="apex"),
+        pytest.param(f"app.{SUFFIX}", f"DNS:app.{SUFFIX}", None, id="child"),
+        pytest.param(f"*.{SUFFIX}", f"DNS:*.{SUFFIX}", None, id="wildcard"),
+        pytest.param("outside.example", "DNS:outside.example", "47 at 0 depth lookup: permitted subtree violation", id="outside"),
+        # Not a dotted CN: openssl checks a hostname-like CN against the DNS subtree on its own.
+        pytest.param("ip4", "IP:192.0.2.10", "48 at 0 depth lookup: excluded subtree violation", id="ipv4"),
+        pytest.param("ip6", "IP:2001:db8::1", "48 at 0 depth lookup: excluded subtree violation", id="ipv6"),
+        pytest.param("user@app.example", "email:user@app.example", "47 at 0 depth lookup: permitted subtree violation", id="mail"),
+        pytest.param("uri-in", "URI:https://app.example/x", None, id="uri-in"),
+        pytest.param("uri-child", "URI:https://www.app.example/x", None, id="uri-child"),
+        pytest.param("uri-out", "URI:https://outside.example/x", "47 at 0 depth lookup: permitted subtree violation", id="uri-out"),
+    ],
+)  # fmt: skip
+def test_new_ca_permits_only_the_dns_suffix(ca: tuple[Path, Path], tmp_path: Path, cn: str, san: str, error: str | None) -> None:
+    """Rule: a new CA's critical name constraints let it sign a name under the DNS suffix, the wildcard included, and
+    nothing else; a leaf it signs passes openssl's -x509_strict verify (a7c1dfa: the CA's keyUsage)."""
+    cert, key = ca
+    assert x509.load_pem_x509_certificate(cert.read_bytes()).extensions.get_extension_for_class(x509.NameConstraints).critical
+    csr, leaf = tmp_path / "leaf.csr", tmp_path / "leaf.crt"
+    subprocess.run(["openssl", "req", "-new", "-nodes", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+                    "-keyout", str(tmp_path / "leaf.key"), "-out", str(csr), "-subj", f"/CN={cn}",
+                    "-addext", f"subjectAltName={san}", "-batch"], capture_output=True, check=True)  # fmt: skip
+    subprocess.run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(cert), "-CAkey", str(key), "-set_serial", "1",
+                    "-out", str(leaf), "-days", "1", "-copy_extensions", "copy"], capture_output=True, check=True)  # fmt: skip
+    verified = subprocess.run(["openssl", "verify", "-x509_strict", "-CAfile", str(cert), str(leaf)], capture_output=True, text=True)
+    if error is None:
+        assert (verified.returncode, verified.stdout) == (0, f"{leaf}: OK\n"), verified.stderr
+    else:
+        assert (verified.returncode, verified.stderr) == (2, f"CN = {cn}\nerror {error}\nerror {leaf}: verification failed\n")
 
 
-def test_age_key_file_is_used_when_sops_age_key_file_is_unset(tmp_path, monkeypatch):
-    """A missing ca.crt is restored with age_key_file when SOPS_AGE_KEY_FILE is unset. Each value is
+def test_single_label_dns_suffix_is_not_a_ca_constraint() -> None:
+    """Rule: a single label would permit every name under it, so no CA is minted for it."""
+    assert _refused(mint._generate_ca_material, "lan") == "refusing to mint a CA without a DNS suffix"
+
+
+def test_age_key_file_is_used_when_sops_age_key_file_is_unset(root: Path) -> None:
+    """Rule: with SOPS_AGE_KEY_FILE unset, a missing ca.crt is restored with the env's age_key_file. Each value is
     read as YAML reads it: quoted, with a comment after it."""
-    mod = _load_module()
-    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path, dns_suffix='"app.example"  # the suffix', age_key_file=f'"{keyfile}"  # the working key')
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    root = tmp_path / "envs" / "env-test" / "ca.crt"
-    secret = tmp_path / "envs" / "env-test" / "secrets" / "cert-manager-ca.sops.yaml"
-    expected = root.read_text(encoding="utf-8")
-    root.unlink()
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    assert root.read_text(encoding="utf-8") == expected
-    assert secret.is_file()
+    (root / "envs/env-test/values/cluster-vars.yaml").write_text(
+        f'dns_suffix: "{SUFFIX}"  # the suffix\nage_key_file: "{root / ".age" / "keys.txt"}"  # the working key\n'
+    )
+    mint.bootstrap(ENV)
+    before = _tree(root)
+    (root / CA_ROOT).unlink()
+    assert mint.bootstrap(ENV) == [CA_ROOT]
+    assert _tree(root) == before
 
 
-def test_generated_secret_values_stay_ciphertext(tmp_path, monkeypatch):
-    """Every generated secret's data values are ciphertext, including in metadata."""
-    mod = _load_module()
-    public, keyfile = _generate_throwaway_age_keypair(tmp_path)
-    _write_test_sops_yaml(tmp_path, public)
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
-    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    sops_bin = _require_tool("sops")
-    _prepare_env(tmp_path)
-    mod.bootstrap("env-test", sops_bin=sops_bin)
-    secrets = tmp_path / "envs" / "env-test" / "secrets"
-    filenames = {spec.filename for spec in mod._specs("env-test")}
-    assert {path.name for path in secrets.glob("*.sops.yaml")} == filenames
-    child = {**os.environ, "SOPS_AGE_KEY_FILE": str(keyfile)}
-    for name in filenames:
-        path = secrets / name
-        raw = path.read_text(encoding="utf-8")
-        encrypted = yaml.safe_load(raw)
-        for section in ("data", "stringData"):
-            block = encrypted.get(section) or {}
-            assert isinstance(block, dict)
-            for value in block.values():
-                assert isinstance(value, str) and value.startswith("ENC[")
-        decrypted = yaml.safe_load(
-            subprocess.check_output([sops_bin, "-d", str(path)], env=child, text=True)
-        )
-        meta = decrypted.get("metadata") or {}
-        identity = [meta.get("name"), meta.get("namespace")]
-        identity = [item for item in identity if isinstance(item, str)]
-        for section in ("data", "stringData"):
-            for value in _scalars(decrypted.get(section) or {}):
-                if any(value in item for item in identity):
-                    continue
-                assert value not in raw
+def test_generated_secret_values_stay_ciphertext(root: Path) -> None:
+    """Rule: every value bootstrap seals is ciphertext, and no plaintext value shows anywhere in its file, metadata
+    included, but as part of the Secret's own name or namespace."""
+    sealed = [rel for rel in mint.bootstrap(ENV) if rel != CA_ROOT]
+    assert sealed == [K3S, CA, RESTIC]
+    for rel in sealed:
+        raw = (root / rel).read_text()
+        doc, plain = yaml.safe_load(raw), _opened(root, rel)
+        values = [value for section in ("data", "stringData") for value in (doc.get(section) or {}).values()]
+        assert values and all(str(value).startswith("ENC[") for value in values), rel
+        identity = [plain["metadata"].get("name", ""), plain["metadata"].get("namespace", "")]
+        shown = [value for section in ("data", "stringData") for value in (plain.get(section) or {}).values()
+                 if value in raw and not any(value in item for item in identity)]  # fmt: skip
+        assert shown == [], rel
