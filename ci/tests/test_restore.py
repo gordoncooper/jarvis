@@ -13,8 +13,7 @@ import pytest
 import yaml
 
 from jarvis.backups import restore as restore_tool
-from jarvis.backups.etcd_image import etcd_snapshot_image
-from support import completed, write_env_marker
+from support import REPO_ROOT, completed, write_env_marker, yaml_docs
 
 
 @pytest.fixture(autouse=True)
@@ -133,6 +132,8 @@ class _Cluster:
             if self.destination_done:
                 status["lastManualSync"] = self.applied[-1]["spec"]["trigger"]["manual"]
             return completed(argv, {"status": status})
+        if argv[:2] == ["get", "kustomization"]:
+            return completed(argv, {"spec": {}})
         if argv[:2] == ["annotate", "pvc"] and "backup=paused" in argv:
             self.paused.add(argv[2])
         elif argv[:2] == ["annotate", "pvc"] and "backup-" in argv:
@@ -305,6 +306,7 @@ def test_refuses_before_any_change(knobs: dict, flags: dict, message: str, capsy
     ("as_of", "restored_as_of"),
     [
         pytest.param(None, _AS_OF, id="a-second-before-the-pvc"),
+        pytest.param("2026-10-29T12:00:00Z", "2026-10-29T12:00:00Z", id="as-of-utc"),
         pytest.param("2026-10-29T13:00:00+01:00", "2026-10-29T12:00:00Z", id="as-of"),
     ],
 )
@@ -353,9 +355,11 @@ def test_restore_takes_every_enrolled_pvc_in_scope(scope: dict, restored: list[s
 
 
 _DRILL_VOLUME = {"volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": "drill"}}]}
-_HOLDERS = [  # pods that mount drill: running, not started, terminating with its containers done, finished
+_HOLDERS = [  # pods that mount drill: running, not started, terminating (still running, or done), finished
     {"metadata": {"name": "app"}, "spec": _DRILL_VOLUME, "status": {"phase": "Running"}},
     {"metadata": {"name": "starting"}, "spec": _DRILL_VOLUME},
+    {"metadata": {"name": "stopping", "deletionTimestamp": "2026-10-29T00:00:00Z"}, "spec": _DRILL_VOLUME,
+     "status": {"phase": "Running"}},
     {"metadata": {"name": "old-mover", "deletionTimestamp": "2026-10-29T00:00:00Z"}, "spec": _DRILL_VOLUME,
      "status": {"phase": "Succeeded"}},
     {"metadata": {"name": "done"}, "spec": _DRILL_VOLUME, "status": {"phase": "Succeeded"}},
@@ -368,7 +372,8 @@ _HOLDERS = [  # pods that mount drill: running, not started, terminating with it
         pytest.param({"jobs": [_mover("drill", 1), _mover("keep", 0)]}, "ReplicationSource did not pause",
                      id="mover-still-running"),
         pytest.param({"will_pause": False}, "ReplicationSource did not pause", id="source-never-pauses"),
-        pytest.param({"pods": _HOLDERS}, "pods still mounted (app, starting, old-mover)", id="a-pod-mounts-the-pvc"),
+        pytest.param({"pods": _HOLDERS}, "pods still mounted (app, starting, stopping, old-mover)",
+                     id="a-pod-mounts-the-pvc"),
     ],
 )
 def test_restore_writes_nothing_until_the_source_has_paused(knobs: dict, message: str, capsys) -> None:
@@ -503,9 +508,11 @@ def test_restore_all_node_pins_every_unbound_pvc(capsys) -> None:
 
 def test_bind_pod_runs_the_etcd_copys_image(capsys) -> None:
     """Rule: the binder runs the image core's etcd-snapshots manifest names, with no read of the live CronJob."""
+    [cronjob] = yaml_docs(REPO_ROOT / "core/platform/backups/etcd-snapshots.yaml")
+    image = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"]
     cluster = _Cluster([_pvc("demo", "one", volume=""), _pvc("demo", "two", volume="")])
     assert _run(cluster, node="node-a") == 0
-    assert [pod["spec"]["containers"][0]["image"] for pod in cluster.binders] == [etcd_snapshot_image()] * 2
+    assert [pod["spec"]["containers"][0]["image"] for pod in cluster.binders] == [image] * 2
     assert ["get", "cronjob", "etcd-snapshots"] not in [call[:3] for call in cluster.calls]
     assert capsys.readouterr().out.splitlines() == [
         *_restored("demo/one", "demo/two"), "SUMMARY restored=2 accepted=0 retired=0",
@@ -518,6 +525,7 @@ def test_bind_pod_runs_the_etcd_copys_image(capsys) -> None:
         pytest.param("deployment", _LOW, None, _LOW, id="deployment"),
         pytest.param("statefulset", _LOW, None, _LOW, id="statefulset"),
         pytest.param("cronjob", _LOW, None, _LOW, id="cronjob"),
+        pytest.param("deployment", _PLACED, None, _PLACED, id="no-priority-class"),
         pytest.param("deployment", {"nodeName": "node-b"}, None, _pinned("node-b"), id="pinned-by-node-name"),
         pytest.param("deployment", _LOW, "node-b", {**_pinned("node-b"), "priorityClassName": "low"}, id="node-wins"),
     ],
@@ -635,30 +643,38 @@ def test_printed_hold_recovery_preserves_repo_lines(capsys) -> None:
     assert restore_tool._hold_repos(kubectl) == hold
 
 
-def test_restore_suspends_and_restores_real_workloads(capsys) -> None:
-    """Rule: restore stops what writes the PVC (its Deployment scaled to 0, its CronJob suspended) before the pause
-    and starts it again after the resume; an unrelated CronJob's Kustomization is not even read."""
+@pytest.mark.parametrize(
+    "kustomizations", [pytest.param(["demo"], id="flux-managed"), pytest.param([], id="no-kustomization")]
+)
+def test_restore_suspends_and_restores_real_workloads(kustomizations: list[str], capsys) -> None:
+    """Rule: restore suspends the PVC's Kustomization, if any, and stops its writers (Deployment scaled to 0, CronJob
+    suspended) before the pause, then starts them after the resume; an unrelated CronJob's Kustomization is not read."""
     cronjob = _mounting("cronjob", {}, name="scheduled-writer", claim="drill")
     cronjob["spec"]["suspend"] = False
+    in_flux_system = {"kustomize.toolkit.fluxcd.io/namespace": "flux-system"}
     unrelated = {
         "metadata": {
             "name": "other-schedule",
-            "labels": {restore_tool._FLUX_NAME: "other", restore_tool._FLUX_NS: "flux-system"},
+            "labels": {"kustomize.toolkit.fluxcd.io/name": "other", **in_flux_system},
         },
         "spec": {"jobTemplate": {"spec": {"template": {"spec": {"volumes": []}}}}},
     }
-    cluster = _Cluster(deployments=[_WRITER], cronjobs=[cronjob, unrelated])
+    labels = {"kustomize.toolkit.fluxcd.io/name": "demo", **in_flux_system} if kustomizations else {}
+    cluster = _Cluster([_pvc("demo", "drill", labels=labels)], deployments=[_WRITER], cronjobs=[cronjob, unrelated])
     assert _run(cluster) == 0
     suspend = ["patch", "cronjob", "scheduled-writer", "-n", "demo", "--type", "merge", "-p"]
+    flux = [["patch", "kustomization", name, "-n", "flux-system", "--type", "merge", "-p"] for name in kustomizations]
     assert [[*call[:-1], json.loads(call[-1])] if call[0] == "patch" else call for call in _changes(cluster)] == [
+        *([*patch, {"spec": {"suspend": True}}] for patch in flux),
         [*suspend, {"spec": {"suspend": True}}],
         ["scale", "deployment", "writer", "-n", "demo", "--replicas=0"],
         *_RESTORE_DRILL,
         _RESUME_DRILL,
         ["scale", "deployment", "writer", "-n", "demo", "--replicas=2"],
         [*suspend, {"spec": {"suspend": False}}],
+        *([*patch, {"spec": {"suspend": False}}] for patch in flux),
     ]
-    assert ["get", "kustomization"] not in [call[:2] for call in cluster.calls]
+    assert [call[2] for call in cluster.calls if call[:2] == ["get", "kustomization"]] == kustomizations
     assert capsys.readouterr().out.splitlines() == [*_restored("demo/drill"), "SUMMARY restored=1 accepted=0 retired=0"]
 
 
