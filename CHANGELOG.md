@@ -7,6 +7,8 @@ the upgrade.
 
 ## Unreleased
 
+## v0.8.4
+
 ### Changed
 
 - `jarvis site` hands Ansible what validation resolved, as one extra-vars file: the env's
@@ -49,6 +51,16 @@ the upgrade.
   `jarvis up` runs.
 - Core's lock file maintenance PR merges on its own once green, overnight Pacific, like its patch
   PRs, and can open any night instead of once a week.
+
+### Upgrading
+
+- Nodes change. Once `jarvis verify` passes on v0.8.4, `git pull` the instance repository, run
+  `jarvis site --env <env> --check` to see each node's `/etc/apt/apt.conf.d/50unattended-upgrades`
+  change, then `jarvis up --env <env>`. No value changes for `jarvis site`'s extra-vars file:
+  each default the roles kept, `flux_known_hosts` among them, is now the schema's, with the same
+  value.
+- In your own scripts and runbooks, `ansible-playbook site.yml -e @cluster-vars.yaml` is
+  `jarvis site`.
 
 ## v0.8.3
 
