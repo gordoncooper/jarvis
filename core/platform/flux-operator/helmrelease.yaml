@@ -26,7 +26,7 @@ spec:
     image:
       repository: ghcr.io/controlplaneio-fluxcd/flux-operator
       # The chart's appVersion, which moves with the chart pin in oci-repository.yaml.
-      tag: "v0.63.1@sha256:460cc140dba2958261b05466acca40dfbee3addd1a6c33b885c1cd4e4e5d0489"
+      tag: "v0.64.0@sha256:7f60122c5f07c51972ba86635783c5bcc6d450dea5d6f8291362efb1d81463e8"
     resources:
       requests:
         cpu: 100m
