@@ -8,7 +8,7 @@
   "containerEnv": {
     "MISE_ENV": "dev",
     // renovate: datasource=github-releases depName=jdx/mise
-    "MISE_VERSION": "v2026.11.12"
+    "MISE_VERSION": "v2026.11.14"
   },
   "postCreateCommand": "curl -fsSL https://mise.run | sh && ~/.local/bin/mise trust && ~/.local/bin/mise run deps && echo 'eval \"$(~/.local/bin/mise activate bash)\"' >> ~/.bashrc",
   "remoteUser": "vscode"
