@@ -241,9 +241,13 @@ def test_git_error_does_not_mint_a_new_restic_password(root: Path) -> None:
     (root / RESTIC).unlink()
     shutil.rmtree(root / ".git")
     (root / ".git").write_text("gitdir: /no/such/gitdir\n")
+    # git words this error by version (2.43: "not a git repository", 2.56: "gitfile does not point to a valid
+    # repository"), so its line is read from git itself, on the same repository and in mint's C locale.
+    git = subprocess.run(["git", f"--git-dir={root / '.git'}", "status"], capture_output=True, text=True,
+                         env={**os.environ, "LC_ALL": "C"})  # fmt: skip
     assert _refused(mint.bootstrap, ENV) == (
         f"refusing to mint secrets because git could not say whether {RESTIC} is already recorded: "
-        "fatal: not a git repository: /no/such/gitdir"
+        f"{git.stderr.splitlines()[0]}"
     )
     assert not (root / RESTIC).exists()
 
@@ -340,8 +344,9 @@ def test_new_ca_permits_only_the_dns_suffix(ca: tuple[Path, Path], tmp_path: Pat
     verified = subprocess.run(["openssl", "verify", "-x509_strict", "-CAfile", str(cert), str(leaf)], capture_output=True, text=True)
     if error is None:
         assert (verified.returncode, verified.stdout) == (0, f"{leaf}: OK\n"), verified.stderr
-    else:
-        assert (verified.returncode, verified.stderr) == (2, f"CN = {cn}\nerror {error}\nerror {leaf}: verification failed\n")
+    else:  # The subject line's spacing is openssl's, by version: 3.0.13 prints "CN = <cn>", CI's "CN=<cn>".
+        stderr = verified.stderr.replace(f"CN = {cn}\n", f"CN={cn}\n", 1)
+        assert (verified.returncode, stderr) == (2, f"CN={cn}\nerror {error}\nerror {leaf}: verification failed\n")
 
 
 def test_single_label_dns_suffix_is_not_a_ca_constraint() -> None:
