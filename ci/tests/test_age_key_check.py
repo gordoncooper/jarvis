@@ -2,197 +2,98 @@
 
 from __future__ import annotations
 
-import importlib
 import os
-import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
+from conftest import require_cli
+
+import support
+from jarvis.secrets import age, age_key_check, sops
 
 _SENTINEL = "sentinel-plaintext-9f3c2a7b"
-
-
-def _load():
-    return importlib.import_module("jarvis.secrets.age_key_check")
-
-
-def _require(name: str) -> str:
-    path = __import__("shutil").which(name)
-    if not path:
-        pytest.fail(f"{name} not found on PATH (required for this test)")
-    return path
-
-
-def _key(tmp_path: Path, name: str) -> Path:
-    path = tmp_path / name
-    subprocess.check_call(
-        [_require("age-keygen"), "-o", str(path)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return path
-
-
-def _public(path: Path) -> str:
-    return subprocess.check_output([_require("age-keygen"), "-y", str(path)], text=True).strip()
-
-
-def _secret(root: Path, public: str) -> None:
-    (root / ".sops.yaml").write_text(
-        textwrap.dedent(
-            f"""
-            creation_rules:
-              - path_regex: envs/.*/secrets/.*\\.sops\\.yaml$
-                encrypted_regex: ^(data|stringData)$
-                age: {public}
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    env = root / "envs" / "env-test" / "secrets"
-    env.mkdir(parents=True)
-    plain = f"stringData:\n  token: {_SENTINEL}\n"
-    sops = _require("sops")
-    key = root / "right.txt"
-    encrypted = subprocess.check_output(
-        [sops, "encrypt", "--filename-override", "envs/env-test/secrets/app.sops.yaml", "/dev/stdin"],
-        input=plain,
-        text=True,
-        cwd=root,
-        env={**os.environ, "SOPS_AGE_KEY_FILE": str(key)},
-    )
-    (env / "app.sops.yaml").write_text(encrypted, encoding="utf-8")
 
 
 def _holding(root: Path, needle: bytes) -> list[Path]:
     return [path for path in root.rglob("*") if path.is_file() and needle in path.read_bytes()]
 
 
+@pytest.mark.parametrize("rescue", [pytest.param(None, id="no-default-key"), pytest.param("home", id="default-key-in-home"),
+                                    pytest.param("environment", id="key-in-environment")])  # fmt: skip
 def test_right_key_passes_and_wrong_key_fails_without_plaintext(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], rescue: str | None
 ) -> None:
-    """The right throwaway key prints PASS, a wrong key prints FAIL, and neither shows plaintext."""
-    mod = _load()
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    right = _key(tmp_path, "right.txt")
-    wrong = _key(tmp_path, "wrong.txt")
-    _secret(tmp_path, _public(right))
+    """Rule: the env's key prints PASS and another key FAIL, even with the env's key in the per-user default location
+    (5c736a5) or in the caller's environment, and neither prints anything else or leaves the plaintext anywhere."""
+    right = support.sealing_root(tmp_path, monkeypatch)
+    wrong = tmp_path / "wrong.txt"
+    age.create_key(wrong)
+    (tmp_path / "envs" / "env-test").mkdir(parents=True)
+    sops.encrypt_secret_to_file(repo_root=tmp_path, env="env-test", name="app", sops_bin=require_cli("sops"),
+                                document={"stringData": {"token": _SENTINEL}})  # fmt: skip
+    if rescue == "environment":
+        monkeypatch.setenv("SOPS_AGE_KEY", right.read_text(encoding="utf-8"))
+    if rescue == "home":
+        home = tmp_path / "home"
+        (home / ".config" / "sops" / "age").mkdir(parents=True)
+        (home / ".config" / "sops" / "age" / "keys.txt").write_bytes(right.read_bytes())
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     needle = _SENTINEL.encode()
     assert _holding(tmp_path, needle) == []
 
-    assert mod.main(["--env", "env-test", "--key-file", str(right)]) == 0
-    passed = capfd.readouterr()
-    assert passed.out == "PASS\n"
-    assert passed.err == ""
-    assert _SENTINEL not in f"{passed.out}{passed.err}"
-
-    assert mod.main(["--env", "env-test", "--key-file", str(wrong)]) == 1
-    failed = capfd.readouterr()
-    assert failed.out == "FAIL\n"
+    assert age_key_check.main(["--env", "env-test", "--key-file", str(right)]) == 0
+    assert capfd.readouterr() == ("PASS\n", "")
+    assert age_key_check.main(["--env", "env-test", "--key-file", str(wrong)]) == 1
     # capfd reads the process fds. A sops stderr leak, including plaintext, fails here.
-    assert failed.err == ""
-    assert _SENTINEL not in f"{failed.out}{failed.err}"
+    assert capfd.readouterr() == ("FAIL\n", "")
     assert _holding(tmp_path, needle) == []
 
 
-def test_default_key_location_does_not_rescue_a_wrong_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """A valid throwaway key in the default per-user location does not make a wrong KEY pass."""
-    mod = _load()
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    right = _key(tmp_path, "right.txt")
-    wrong = _key(tmp_path, "wrong.txt")
-    _secret(tmp_path, _public(right))
-    home = tmp_path / "home"
-    key_dir = home / ".config" / "sops" / "age"
-    key_dir.mkdir(parents=True)
-    (key_dir / "keys.txt").write_text(right.read_text(encoding="utf-8"), encoding="utf-8")
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    assert mod.main(["--env", "env-test", "--key-file", str(wrong)]) == 1
-    failed = capfd.readouterr()
-    assert failed.out == "FAIL\n"
-    assert failed.err == ""
-    assert _SENTINEL not in f"{failed.out}{failed.err}"
-    assert mod.main(["--env", "env-test", "--key-file", str(right)]) == 0
-    passed = capfd.readouterr()
-    assert passed.out == "PASS\n"
-    assert passed.err == ""
-
-
-@pytest.mark.parametrize("mode", [0o640, 0o620, 0o604, 0o602, 0o700, 0o670, 0o601])
-def test_loose_mode_fails_before_sops(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    mode: int,
-) -> None:
-    """A key file that is not mode 0600 prints FAIL and does not call sops."""
-    mod = _load()
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    secrets = tmp_path / "envs" / "env-test" / "secrets"
-    secrets.mkdir(parents=True)
-    (secrets / "app.sops.yaml").write_text("fake-ciphertext\n", encoding="utf-8")
-    key = tmp_path / "key.txt"
-    key.write_text("not-a-real-age-key\n", encoding="utf-8")
-    key.chmod(mode)
-
-    def which(name: str) -> str | None:
-        return "/usr/bin/sops" if name == "sops" else None
-
-    monkeypatch.setattr(mod.shutil, "which", which)
-    calls: list[object] = []
-
-    def spy(*args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        return subprocess.CompletedProcess([], 1, b"", b"")
-
-    monkeypatch.setattr(mod.subprocess, "run", spy)
-    assert mod.main(["--env", "env-test", "--key-file", str(key)]) == 1
-    captured = capfd.readouterr()
-    assert captured.out == "FAIL\n"
-    assert captured.err == ""
-    assert calls == []
-
-
-def test_other_owners_key_fails_before_sops(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """A mode 0600 key owned by another uid prints FAIL and does not call sops."""
-    mod = _load()
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod.os, "getuid", lambda: os.getuid() + 1)
-    secrets = tmp_path / "envs" / "env-test" / "secrets"
-    secrets.mkdir(parents=True)
-    (secrets / "app.sops.yaml").write_text("fake-ciphertext\n", encoding="utf-8")
-    key = tmp_path / "key.txt"
-    key.write_text("not-a-real-age-key\n", encoding="utf-8")
-    key.chmod(0o600)
-    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/sops" if name == "sops" else None)
-    calls: list[object] = []
-
-    def spy(*args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        return subprocess.CompletedProcess([], 1, b"", b"")
-
-    monkeypatch.setattr(mod.subprocess, "run", spy)
-    assert mod.main(["--env", "env-test", "--key-file", str(key)]) == 1
-    captured = capfd.readouterr()
-    assert captured.out == "FAIL\n"
-    assert captured.err == ""
-    assert calls == []
-
-
-def test_env_with_no_secrets_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
-    """An env with no secrets prints FAIL."""
-    mod = _load()
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    key = _key(tmp_path, "right.txt")
+@pytest.mark.parametrize(
+    ("mode", "other_owner", "secret", "sops_ran"),
+    [
+        *(pytest.param(mode, False, True, False, id=f"mode-{mode:o}")
+          for mode in (0o640, 0o620, 0o604, 0o602, 0o700, 0o670, 0o601)),
+        pytest.param(0o600, True, True, False, id="other-owner"),
+        pytest.param(0o600, False, False, False, id="no-secrets"),
+        pytest.param(None, False, True, False, id="no-key-file"),
+        pytest.param(0o600, False, True, True, id="sops-runs"),
+    ],
+)  # fmt: skip
+def test_key_check_fails_before_sops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], mode: int | None, other_owner: bool,
+    secret: bool, sops_ran: bool,
+) -> None:  # fmt: skip
+    """Rule: a key file missing, not mode 0600 or not the runner's, or an env with no secret, prints FAIL before sops
+    runs."""
+    monkeypatch.setenv("INSTANCE", str(tmp_path))
+    bin_dir, marker = support.marker_sops(tmp_path)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     (tmp_path / "envs" / "env-test").mkdir(parents=True)
-    assert mod.main(["--env", "env-test", "--key-file", str(key)]) == 1
-    captured = capfd.readouterr()
-    assert captured.out == "FAIL\n"
-    assert captured.err == ""
+    if secret:
+        (tmp_path / "envs" / "env-test" / "secrets").mkdir()
+        (tmp_path / "envs" / "env-test" / "secrets" / "app.sops.yaml").write_text("fake-ciphertext\n", encoding="utf-8")
+    key = tmp_path / "key.txt"
+    if mode is not None:
+        age.create_key(key)
+        key.chmod(mode)
+    owner = os.getuid() + other_owner
+    monkeypatch.setattr(age_key_check.os, "getuid", lambda: owner)
+
+    assert age_key_check.main(["--env", "env-test", "--key-file", str(key)]) == 1
+
+    assert capfd.readouterr() == ("FAIL\n", "")
+    assert marker.exists() is sops_ran
+
+
+def test_an_error_in_the_check_prints_only_fail(monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
+    """Rule: an error inside the check prints FAIL and no traceback, which could quote decrypted bytes."""
+
+    def check(env: str, key_file: Path) -> bool:
+        raise RuntimeError(_SENTINEL)
+
+    monkeypatch.setattr(age_key_check, "check", check)
+    assert age_key_check.main(["--env", "env-test", "--key-file", "key.txt"]) == 1
+
+    assert capfd.readouterr() == ("FAIL\n", "")
