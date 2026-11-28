@@ -368,7 +368,7 @@ _KEY_NAMES = ("Require the sealed token file and its key names",
         pytest.param(lambda token, key: key.unlink(), ("Require the age private key on the controller",
                      "Every k3s run, check mode included, decrypts the sealed k3s tokens. Set SOPS_AGE_KEY_FILE or age_key_file"
                      " to the age private key on the controller."), id="no-key"),
-        # The refusal's no_log hides its message, from the operator too.
+        # no_log censors a refusal's JSON result, msg included.
         pytest.param(lambda token, key: key.chmod(0o644), ("Refuse an age private key that is not mode 0600 and owned by the runner", ""),
                      id="key-mode"),
         pytest.param(lambda token, key: token.unlink(), _KEY_NAMES, id="missing"),
