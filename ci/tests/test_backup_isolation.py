@@ -8,26 +8,20 @@ test_backup_enrollment.py's.
 
 from __future__ import annotations
 
-import importlib
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
 from jarvis.schema.env import ValidationError, validate_one_env
-from support import ExampleCopy, bootstrap_example_copy, flux_built, register_copy_app, render_switches
+from jarvis.secrets import mint
+from support import copy_sample, flux_built, render_switches, sample_root
 
 APP = "app-notes"
-
-
-def _app_copy(tmp_path: Path) -> ExampleCopy:
-    copy = bootstrap_example_copy(tmp_path)
-    register_copy_app(copy, APP)
-    return copy
-
-
-def _platform_configs(copy: ExampleCopy) -> list[dict]:
-    return flux_built(copy.root, copy.name)
+CREDENTIAL = f"backups-restic-{APP}"
+# The apps server comes with app hosting, restic-offsite with the off-host copy.
+FEATURES = ("app-hosting", "offsite-backup-copy")
 
 
 def _find(docs: list[dict], kind: str, name: str) -> dict:
@@ -39,84 +33,104 @@ def _pod(doc: dict) -> dict:
     return (spec["jobTemplate"]["spec"] if doc["kind"] == "CronJob" else spec)["template"]["spec"]
 
 
-@pytest.fixture(scope="module")
-def app_copy(tmp_path_factory: pytest.TempPathFactory) -> ExampleCopy:
-    return _app_copy(tmp_path_factory.mktemp("app-copy"))
+def _naming(docs: list[dict], text: str) -> set[tuple[str, str]]:
+    """(kind, name) of each object that holds text anywhere."""
+    return {(doc["kind"], doc["metadata"]["name"]) for doc in docs if text in json.dumps(doc)}
 
 
-def test_registered_app_renders_its_credential_only_where_needed(app_copy: ExampleCopy) -> None:
-    """The registration adds the app's sealed Secret and the apps server, mounts the htpasswd
-    key in the apps server and the password key in restic-check and restic-offsite, leaves core's
-    rest-server alone, and passes env-schema."""
-    docs = _platform_configs(app_copy)
-    secret = _find(docs, "Secret", f"backups-restic-{APP}")
+def test_registered_app_renders_its_credential_only_where_needed() -> None:
+    """Rule: a registered credential renders sealed, the one secret volume of the apps server (its htpasswd key),
+    restic-check and restic-offsite (its password), named nowhere else; core's server keeps its own; the env validates."""
+    root = sample_root(*FEATURES)
+    docs = flux_built(root, "env-00")
+    assert _naming(docs, CREDENTIAL) == {("Secret", CREDENTIAL), ("Deployment", "restic-apps"),
+                                         ("CronJob", "restic-check"), ("CronJob", "restic-offsite")}  # fmt: skip
+    secret = _find(docs, "Secret", CREDENTIAL)
     assert secret["metadata"]["namespace"] == "platform-backups"
     # Sealed: Flux's build masks a SOPS-encrypted Secret's values.
     assert set((secret.get("data") or secret.get("stringData") or {}).values()) == {"**SOPS**"}
-    expected = {
-        "restic-apps": "htpasswd",
-        "restic-check": "RESTIC_PASSWORD",
-        "restic-offsite": "RESTIC_PASSWORD",
-    }
-    for name, key in expected.items():
-        doc = next(item for item in docs if item["metadata"]["name"] == name and item["kind"] in {"Deployment", "CronJob"})
-        pod = _pod(doc)
-        assert {"name": APP, "secret": {"secretName": f"backups-restic-{APP}", "items": [{"key": key, "path": key}]}} in pod["volumes"]
-        mount = {"name": APP, "mountPath": f"/credentials/{APP}", "readOnly": True}
-        assert mount in pod["containers"][0]["volumeMounts"]
-    core = _find(docs, "Deployment", "restic")
-    assert all(volume.get("secret", {}).get("secretName", "backups-restic") == "backups-restic" for volume in _pod(core)["volumes"])
-    validate_one_env(app_copy.root, app_copy.name)
+    for kind, name, key in (("Deployment", "restic-apps", "htpasswd"), ("CronJob", "restic-check", "RESTIC_PASSWORD"),
+                            ("CronJob", "restic-offsite", "RESTIC_PASSWORD")):  # fmt: skip
+        pod = _pod(_find(docs, kind, name))
+        assert [volume for volume in pod["volumes"] if "secret" in volume] == [
+            {"name": APP, "secret": {"secretName": CREDENTIAL, "items": [{"key": key, "path": key}]}}]
+        assert {"name": APP, "mountPath": f"/credentials/{APP}", "readOnly": True} in pod["containers"][0]["volumeMounts"]
+    core = _pod(_find(docs, "Deployment", "restic"))
+    assert {volume["secret"]["secretName"] for volume in core["volumes"] if "secret" in volume} == {"backups-restic"}
+    validate_one_env(root, "env-00")
 
 
-def test_core_only_env_renders_no_app_workload(tmp_path: Path) -> None:
-    """With no app credential sealed (notes' backups off), no app credential renders or is mounted anywhere."""
-    copy = bootstrap_example_copy(tmp_path)
-    shutil.rmtree(copy.env_dir / "secrets" / APP)
-    values = copy.env_dir / "values" / "apps.yaml"
-    values.write_text(values.read_text(encoding="utf-8").replace("notes:\n", "notes:\n  backups: false\n"), encoding="utf-8")
-    render_switches(copy.env_dir, copy.root)
-    docs = _platform_configs(copy)
-    assert not any(doc["metadata"]["name"].startswith("backups-restic-app-") for doc in docs)
-    assert not any(volume["name"].startswith("app-") for volume in _pod(_find(docs, "Deployment", "restic-apps"))["volumes"])
-    for name in ("restic-check", "restic-offsite"):
-        pod = _pod(_find(docs, "CronJob", name))
-        assert not any(volume["name"].startswith("app-") for volume in pod["volumes"])
-
-
-def _schema_errors(copy: ExampleCopy) -> str:
-    with pytest.raises(ValidationError) as caught:
-        validate_one_env(copy.root, copy.name)
-    return "\n".join(caught.value.messages)
+@pytest.mark.parametrize(
+    ("backups", "sealed"),
+    [pytest.param(False, True, id="backups-off"), pytest.param(True, False, id="credential-not-sealed")],
+)
+def test_registration_needs_backups_on_and_a_sealed_credential(tmp_path: Path, backups: bool, sealed: bool) -> None:
+    """Rule: an app's credential registers only while its backups are on and it is sealed in the app's folder; without
+    either, no object names it, and the apps server, restic-check and restic-offsite still render."""
+    env_dir = copy_sample(tmp_path, *FEATURES) / "envs" / "env-00"
+    values = env_dir / "values" / "apps.yaml"
+    if not backups:
+        values.write_text(values.read_text(encoding="utf-8").replace("notes:\n", "notes:\n  backups: false\n"), encoding="utf-8")
+    if not sealed:
+        shutil.rmtree(env_dir / "secrets" / APP)
+    render_switches(env_dir, tmp_path)
+    docs = flux_built(tmp_path, "env-00")
+    assert _naming(docs, CREDENTIAL) == set()
+    assert {("Deployment", "restic-apps"), ("CronJob", "restic-check"), ("CronJob", "restic-offsite")} <= {
+        (doc["kind"], doc["metadata"]["name"]) for doc in docs}
 
 
 def test_env_schema_rejects_a_credential_outside_its_folder(tmp_path: Path) -> None:
-    """An app credential sealed outside its own folder fails env-schema, and registers nothing.
-    A hand-edited registration is the render check's (test_render.py)."""
-    copy = _app_copy(tmp_path)
-    secrets = copy.env_dir / "secrets"
-    sealed = secrets / APP / f"backups-restic-{APP}.sops.yaml"
-    moved = secrets / f"backups-restic-{APP}.sops.yaml"
-    shutil.move(sealed, moved)
-    assert "an app credential is sealed only in its own folder" in _schema_errors(copy)
-    shutil.move(moved, sealed)
-    validate_one_env(copy.root, copy.name)
+    """Rule: an app credential sealed outside its own folder fails env-schema, which names the file and its folder; the
+    app then has no credential where it must be. A hand-edited registration is the render check's (test_render.py)."""
+    secrets = copy_sample(tmp_path, *FEATURES) / "envs" / "env-00" / "secrets"
+    shutil.move(secrets / APP / f"{CREDENTIAL}.sops.yaml", secrets / f"{CREDENTIAL}.sops.yaml")
+    with pytest.raises(ValidationError) as caught:
+        validate_one_env(tmp_path, "env-00")
+    assert caught.value.messages == [
+        "envs/env-00/values/apps.yaml: notes: backups are on and it keeps a backup: true volume, so its credential is"
+        " sealed: jarvis secrets --env env-00 (or set backups: false)",
+        f"envs/env-00/secrets/{CREDENTIAL}.sops.yaml: an app credential is sealed only in its own folder, envs/env-00/secrets/{APP}/",
+    ]
 
 
-def test_bootstrap_app_mints_once_and_refuses_a_non_app_name(app_copy: ExampleCopy, monkeypatch) -> None:
-    """A second run changes nothing; a name outside app-, or an app the env does not list, is
-    refused before any write."""
-    mod = importlib.import_module("jarvis.secrets.mint")
-    monkeypatch.setattr(mod, "REPO_ROOT", app_copy.root)
-    monkeypatch.setattr(mod, "_repo_root", lambda: app_copy.root)
-    sealed = app_copy.env_dir / "secrets" / APP / f"backups-restic-{APP}.sops.yaml"
-    before = sealed.read_bytes()
-    assert mod.bootstrap_app(app_copy.name, APP, sops_bin=shutil.which("sops")) == []
-    assert sealed.read_bytes() == before
-    for bad in ("notes", "platform-backups", "app-", "app-Notes"):
-        with pytest.raises(SystemExit, match="hosted app namespace"):
-            mod.bootstrap_app(app_copy.name, bad, sops_bin=shutil.which("sops"))
-    with pytest.raises(SystemExit, match="does not list photos"):
-        mod.bootstrap_app(app_copy.name, "app-photos", sops_bin=shutil.which("sops"))
-    assert not (app_copy.env_dir / "secrets" / "notes").exists()
-    assert not (app_copy.env_dir / "secrets" / "app-photos").exists()
+@pytest.fixture
+def instance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A copy of the sample, as the instance jarvis secrets mints into."""
+    root = copy_sample(tmp_path, *FEATURES)
+    monkeypatch.setattr(mint, "REPO_ROOT", root)
+    monkeypatch.setattr(mint, "_repo_root", lambda: root)
+    return root
+
+
+def _tree(root: Path) -> dict[Path, bytes | None]:
+    """Every path under root, with each file's bytes."""
+    return {path: path.read_bytes() if path.is_file() else None for path in root.rglob("*")}
+
+
+def test_bootstrap_app_mints_an_app_credential_once(instance: Path) -> None:
+    """Rule: bootstrap_app mints a missing app credential in its app's folder; a second run changes nothing."""
+    sealed = instance / "envs" / "env-00" / "secrets" / APP / f"{CREDENTIAL}.sops.yaml"
+    sealed.unlink()
+    assert mint.bootstrap_app("env-00", APP, sops_bin=shutil.which("sops")) == [str(sealed.relative_to(instance))]
+    before = _tree(instance)
+    assert mint.bootstrap_app("env-00", APP, sops_bin=shutil.which("sops")) == []
+    assert _tree(instance) == before
+
+
+@pytest.mark.parametrize(
+    ("namespace", "refusal"),
+    [
+        pytest.param("notes", "refusing notes: it must be a hosted app namespace, app-<name>", id="no-app-prefix"),
+        pytest.param("platform-backups", "refusing platform-backups: it must be a hosted app namespace, app-<name>", id="core-namespace"),
+        pytest.param("app-", "refusing app-: it must be a hosted app namespace, app-<name>", id="empty-name"),
+        pytest.param("app-Notes", "refusing app-Notes: it must be a hosted app namespace, app-<name>", id="upper-case"),
+        pytest.param("app-photos", "refusing app-photos: the env does not list photos in values/apps.yaml", id="unlisted-app"),
+    ],
+)  # fmt: skip
+def test_bootstrap_app_refuses_before_any_write(instance: Path, namespace: str, refusal: str) -> None:
+    """Rule: a name that is not a hosted app namespace, or an app the env does not list, is refused before any write."""
+    before = _tree(instance)
+    with pytest.raises(SystemExit) as caught:
+        mint.bootstrap_app("env-00", namespace, sops_bin=shutil.which("sops"))
+    assert (caught.value.code, _tree(instance)) == (refusal, before)

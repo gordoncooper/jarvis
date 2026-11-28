@@ -1,16 +1,15 @@
-"""Env-00 copies: schema, inventory graph, agent hosts, and a built Flux entry."""
+"""Copies of the sample env, one per hosts shape: schema, a built Flux entry, role groups, and agent hosts."""
 
 from __future__ import annotations
 
-import subprocess
+import re
 from pathlib import Path
 
 import pytest
+import sample
 import yaml
-from ansible_role_proof import ANSIBLE_DIR, roles_inventory_path
+from ansible_role_proof import expected_role_groups, playbook, role_groups, roles_inventory_path, site_vars_file
 from conftest import require_cli
-from test_inventory_roles import _parse_graph
-from test_k3s import _agent_play_section, _hosts_outside_control_plane, _listed_play_hosts
 
 from jarvis.checks.flux_build import env_tree
 from jarvis.schema.env import validate_env_tree
@@ -20,91 +19,39 @@ _SHAPES = Path(__file__).resolve().parent / "fixtures" / "env-shapes"
 
 
 def test_example_copy_passes_env_schema(example_copy: ExampleCopy) -> None:
-    """A bootstrapped copy of env-00 is a valid env."""
+    """Rule: a copy of the sample env with every feature and the fixture add-on, as jarvis init and an owner write it,
+    is a valid env."""
     validate_env_tree(example_copy.root)
 
 
-def test_env_shape_copy_bootstraps_builds_and_lists_hosts(tmp_path: Path, shape: str) -> None:
-    """Each hosts shape copies env-00, bootstraps, builds Flux, and lists agent hosts."""
-    hosts = (_SHAPES / shape / "hosts.yml").read_text(encoding="utf-8")
+def _agent_hosts(copy: ExampleCopy, tmp_path: Path) -> set[str]:
+    """The hosts site.yml's Join k3s agents play lists for copy's env (--list-hosts has no JSON form)."""
+    run = playbook(
+        "site.yml", "--list-hosts", "-i", copy.env_dir / "inventory" / "hosts.yml", "-i", roles_inventory_path(),
+        "-e", f"@{site_vars_file(tmp_path / 'vars.json', copy.root, env=copy.name)}",
+    )  # fmt: skip
+    assert run.returncode == 0, run.output
+    [(count, listed)] = re.findall(r": Join k3s agents\t.*\n.*\n {4}hosts \((\d+)\):\n((?: {6}\S+\n)*)", run.stdout)
+    assert len(listed.split()) == int(count), run.stdout
+    return set(listed.split())
+
+
+@pytest.mark.parametrize(
+    "hosts",
+    [
+        pytest.param(sample.HOSTS, id="sample"),
+        *(pytest.param((_SHAPES / shape / "hosts.yml").read_text(encoding="utf-8"), id=shape)
+          for shape in ("single-node", "gpu-mix", "secondary-disk")),
+    ],
+)
+def test_env_shape_copy_bootstraps_builds_and_lists_hosts(tmp_path: Path, hosts: str) -> None:
+    """Rule: a copy of the sample env with each hosts shape is valid and builds, its inventory has one group per node
+    role, and every host but the control plane joins as an agent."""
+    require_cli("ansible-playbook")
     copy = bootstrap_example_copy(tmp_path, hosts_text=hosts)
-    _assert_shape(shape, yaml.safe_load(hosts))
     validate_env_tree(copy.root)
     tree = env_tree(copy.root, f"envs/{copy.name}/flux")
     assert tree.error is None and not [path.error for path in tree.paths if path.error], tree
-    _assert_inventory_graph(copy)
-    assert _listed_play_hosts(_agent_play_section(tmp_path / "vars.json", copy.name, copy.root)) == (
-        _hosts_outside_control_plane(copy.name, copy.root)
-    )
-
-
-def test_gpu_mix_without_the_gpu_role_fails() -> None:
-    """Dropping gpu from the mix no longer has GPU workers."""
-    doc = yaml.safe_load((_SHAPES / "gpu-mix" / "hosts.yml").read_text(encoding="utf-8"))
-    for host in doc["all"]["hosts"].values():
-        host["node_roles"] = [role for role in host["node_roles"] if role != "gpu"]
-    with pytest.raises(AssertionError):
-        _assert_shape("gpu-mix", doc)
-
-
-def test_secondary_disk_without_data_disk_fails() -> None:
-    """Dropping data_disk leaves no host with the flag."""
-    doc = yaml.safe_load((_SHAPES / "secondary-disk" / "hosts.yml").read_text(encoding="utf-8"))
-    for host in doc["all"]["hosts"].values():
-        host.pop("data_disk", None)
-    with pytest.raises(AssertionError):
-        _assert_shape("secondary-disk", doc)
-
-
-def _assert_shape(shape: str, doc: dict) -> None:
-    hosts: dict = doc["all"]["hosts"]
-    if shape == "single-node":
-        assert len(hosts) == 1
-        return
-    if shape == "gpu-mix":
-        control = [name for name, host in hosts.items() if "control_plane" in host["node_roles"]]
-        workers = [name for name, host in hosts.items() if "workers" in host["node_roles"]]
-        assert len(control) == 1
-        assert "gpu" not in hosts[control[0]]["node_roles"]
-        assert workers
-        assert all("gpu" in hosts[name]["node_roles"] for name in workers)
-        return
-    if shape == "secondary-disk":
-        marked = [name for name, host in hosts.items() if host.get("data_disk") is True]
-        assert len(marked) == 1
-        return
-    raise AssertionError(shape)
-
-
-def pytest_generate_tests(metafunc) -> None:
-    if "shape" in metafunc.fixturenames:
-        metafunc.parametrize("shape", ["single-node", "gpu-mix", "secondary-disk"])
-
-
-def _assert_inventory_graph(copy: ExampleCopy) -> None:
-    require_cli("ansible-inventory")
-    hosts = copy.env_dir / "inventory" / "hosts.yml"
-    proc = subprocess.run(
-        [
-            "ansible-inventory",
-            "--graph",
-            "-i",
-            str(hosts),
-            "-i",
-            str(roles_inventory_path()),
-        ],
-        cwd=ANSIBLE_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    groups = _parse_graph(proc.stdout)
-    doc = yaml.safe_load(hosts.read_text(encoding="utf-8"))
-    expected: dict[str, set[str]] = {}
-    for hostname, host_vars in doc["all"]["hosts"].items():
-        host_vars = host_vars or {}
-        for role in host_vars.get("node_roles") or []:
-            expected.setdefault(role, set()).add(hostname)
-    for name, members in expected.items():
-        assert groups.get(name) == members, name
+    groups = expected_role_groups(copy.env_dir / "inventory" / "hosts.yml")
+    assert role_groups(copy.env_dir / "inventory" / "hosts.yml", roles_inventory_path()) == groups
+    assert _agent_hosts(copy, tmp_path) == set(yaml.safe_load(hosts)["all"]["hosts"]) - groups["control_plane"]

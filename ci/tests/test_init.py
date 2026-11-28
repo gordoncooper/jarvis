@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -12,9 +13,9 @@ import yaml
 
 from jarvis.cli import core as cli_core
 from jarvis.cli import init
-from jarvis.env import scaffold
+from jarvis.env import scaffold, validate
 from jarvis.secrets import age
-from support import REPO_ROOT, RUN_MODULE, checks_without_charts
+from support import REPO_ROOT, checks_without_charts, git
 
 CORE = ("https://github.com/example-owner/example-core", "v0.5.0")
 
@@ -28,7 +29,8 @@ def controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CACHE_HOME", os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache"))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
-    monkeypatch.setenv("INSTANCE", os.environ.get("INSTANCE", ""))
+    for name in ("INSTANCE", "ENVS"):
+        monkeypatch.setenv(name, os.environ.get(name, ""))
     monkeypatch.chdir(tmp_path)
     return home
 
@@ -43,32 +45,27 @@ def _init(tmp_path: Path, *extra: str) -> tuple[int, Path]:
     return code, dest
 
 
-def _validate(instance: Path, env: str, *, charts: bool = True) -> subprocess.CompletedProcess[str]:
-    only = [] if charts else [arg for name in checks_without_charts() for arg in ("--only", name)]
-    return subprocess.run(
-        [*RUN_MODULE, "jarvis.env.validate", *only],
-        cwd=REPO_ROOT,
-        env={**os.environ, "INSTANCE": str(instance), "ENVS": env},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _validate(instance: Path, env: str, *, charts: bool = True) -> int:
+    """jarvis validate's checks of one env, in this process (the controller fixture restores both variables)."""
+    os.environ.update(INSTANCE=str(instance), ENVS=env)
+    return validate.main([] if charts else [f"--only={name}" for name in checks_without_charts()])
 
 
 def test_init_writes_an_instance_that_passes_every_check(tmp_path: Path, controller: Path, capsys) -> None:
-    """Rule: the env passes jarvis validate as soon as init returns; nothing is left to hand-write."""
+    """Rule: the env passes jarvis validate as soon as init returns; nothing is left to hand-write.
+    The devcontainer is always written, the agent kit only with --with-agents."""
     code, dest = _init(tmp_path)
-    assert code == 0
-    subprocess.run(["git", "-C", str(dest), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(dest), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--no-verify", "-qm", "home"], check=True)
-    done = _validate(dest, "home")
-    assert done.returncode == 0, done.stdout + done.stderr
+    out = capsys.readouterr().out
+    assert code == 0 and "jarvis node prep node1.home.lan" in out and "ssh-ed25519 " in out
+    git(dest, "add", "-A")
+    git(dest, "commit", "--no-verify", "-qm", "home")
+    assert _validate(dest, "home") == 0, capsys.readouterr().out
     for path in (".sops.yaml", "README.md", "renovate.json", ".github/workflows/ci.yml", "envs/home/ca.crt",
                  "envs/home/secrets/k3s-token.sops.yaml", "envs/home/secrets/flux-deploy-key.sops.yaml",
-                 "envs/home/flux/sync.yaml", ".git/hooks/pre-commit"):  # fmt: skip
+                 "envs/home/flux/sync.yaml", ".git/hooks/pre-commit", ".devcontainer/devcontainer.json"):  # fmt: skip
         assert (dest / path).is_file(), path
-    out = capsys.readouterr().out
-    assert "jarvis node prep node1.home.lan" in out and "ssh-ed25519 " in out
+    assert os.access(dest / ".devcontainer/setup.sh", os.X_OK)
+    assert [name for name in ("AGENTS.md", "CLAUDE.md", ".claude", ".cursor") if (dest / name).exists()] == []
 
 
 def test_secrets_open_with_the_working_key_and_the_recovery_key(tmp_path: Path, controller: Path, capsys) -> None:
@@ -94,24 +91,26 @@ def test_secrets_open_with_the_working_key_and_the_recovery_key(tmp_path: Path, 
         assert opened.returncode == 0, (key_file, opened.stderr)
 
 
-def test_init_refuses_a_folder_that_is_not_empty(tmp_path: Path, controller: Path) -> None:
+def test_init_refuses_a_folder_that_is_not_empty(tmp_path: Path, controller: Path, capsys) -> None:
+    """Rule: init makes a new instance repo only in an empty folder, and touches nothing else."""
     (tmp_path / "lab").mkdir()
     (tmp_path / "lab" / "notes.txt").write_text("mine\n", encoding="utf-8")
     code, dest = _init(tmp_path)
-    assert code == 3
+    assert (code, capsys.readouterr().out) == (3, f"REFUSE init: {dest} is not empty\n")
     assert sorted(path.name for path in dest.iterdir()) == ["notes.txt"]
 
 
-def test_init_writes_nothing_when_a_tool_is_missing(tmp_path: Path, controller: Path, monkeypatch) -> None:
+def test_init_writes_nothing_when_a_tool_is_missing(tmp_path: Path, controller: Path, monkeypatch, capsys) -> None:
     """Rule: the tools are checked before the first write, so a missing one leaves nothing half made."""
     monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
     code, dest = _init(tmp_path)
-    assert code == 4
+    assert (code, capsys.readouterr().out) == (4, "FAIL init: not on PATH: git, age-keygen, sops, ssh-keygen (run jarvis doctor)\n")
     assert not dest.exists()
     assert not (controller / ".config").exists()
 
 
 def test_a_given_recovery_recipient_is_used_and_nothing_is_printed(tmp_path: Path, controller: Path, capsys) -> None:
+    """Rule: --recovery-recipient seals to that key and prints no private half; --no-ci writes no CI files."""
     _secret, public = age.new_key_in_memory()
     code, dest = _init(tmp_path, "--recovery-recipient", public, "--no-ci")
     assert code == 0
@@ -120,47 +119,51 @@ def test_a_given_recovery_recipient_is_used_and_nothing_is_printed(tmp_path: Pat
     assert not (dest / "renovate.json").exists() and not (dest / ".github").exists()
 
 
-def test_env_add_reuses_the_recipients_and_passes_the_env_checks(tmp_path: Path, controller: Path) -> None:
+def test_env_add_reuses_the_recipients_and_passes_the_env_checks(tmp_path: Path, controller: Path, capsys) -> None:
+    """Rule: env add seals to the repo's recipients, reads Flux's source from the first env, passes the
+    env checks as written, and refuses a name the repo already holds."""
     code, dest = _init(tmp_path)
     assert code == 0
+    with pytest.raises(scaffold.ScaffoldError) as raised:
+        init.run_env_add(dest, ["home", "--domain", "home.lan", "--node", "n1.home.lan"], CORE)
+    assert str(raised.value) == "envs/home already exists"
     assert init.run_env_add(dest, ["lab", "--domain", "lab.lan", "--node", "n1.lab.lan"], CORE) == 0
     assert age.recipients(dest / ".sops.yaml", "lab") == age.recipients(dest / ".sops.yaml", "home")
     values = yaml.safe_load((dest / "envs" / "lab" / "values" / "cluster-vars.yaml").read_text(encoding="utf-8"))
     assert values["flux_git_repo_url"] == "ssh://git@github.com/me/lab" and values["flux_git_ref"] == "refs/heads/main"
-    subprocess.run(["git", "-C", str(dest), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(dest), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--no-verify", "-qm", "two"], check=True)
-    # The second env renders the same charts as the first, which the test above checks.
-    done = _validate(dest, "lab", charts=False)
-    assert done.returncode == 0, done.stdout + done.stderr
+    git(dest, "add", "-A")
+    git(dest, "commit", "--no-verify", "-qm", "two")
+    # The second env renders the same charts as the first, which test_init_writes_an_instance_that_passes_every_check checks.
+    assert _validate(dest, "lab", charts=False) == 0, capsys.readouterr().out
 
 
-def test_env_add_refuses_an_existing_name(tmp_path: Path, controller: Path) -> None:
-    code, dest = _init(tmp_path)
-    assert code == 0
-    with pytest.raises(scaffold.ScaffoldError, match="already exists"):
-        init.run_env_add(dest, ["home", "--domain", "home.lan", "--node", "n1.home.lan"], CORE)
+_ROLES = "(roles: control_plane, workers, backup, edge, gpu)"
 
 
 @pytest.mark.parametrize(
     ("nodes", "message"),
     [
-        (["cp:control_plane", "wk:workers,edge"], "backup role"),
-        (["a:control_plane,backup,edge,workers", "b:control_plane"], "control_plane role, found 2"),
-        (["a:control_plane,backup,workers"], "no node holds the edge role"),
-        (["a", "b:workers"], "give its roles"),
-        (["a:master"], "unknown role master"),
+        pytest.param(["cp:control_plane", "wk:workers,edge"], "exactly one node needs the backup role, found 0", id="no-backup"),
+        pytest.param(["a:control_plane,backup,edge,workers", "b:control_plane"],
+                     "exactly one node needs the control_plane role, found 2", id="two-control-planes"),
+        pytest.param(["a:control_plane,backup,workers"], "no node holds the edge role", id="no-edge"),
+        pytest.param(["a", "b:workers"], f"a: give its roles, <name>:<role>,<role> {_ROLES}", id="no-roles-beside-another"),
+        pytest.param(["a:master"], f"a: unknown role master {_ROLES}", id="unknown-role"),
     ],
-)
+)  # fmt: skip
 def test_the_nodes_must_make_a_whole_cluster(nodes: list[str], message: str) -> None:
-    with pytest.raises(scaffold.ScaffoldError, match=message):
+    """Rule: init refuses nodes that do not make the schema's whole cluster, naming what is missing."""
+    with pytest.raises(scaffold.ScaffoldError) as raised:
         spec = scaffold.EnvSpec(
             name="home", domain="home.lan", repo_url="https://github.com/me/lab", core_url=CORE[0], core_tag=CORE[1],
             nodes=[scaffold.Node.parse(text, only=len(nodes) == 1) for text in nodes],
         )  # fmt: skip
         spec.check()
+    assert str(raised.value) == message
 
 
 def test_a_lone_node_gets_every_role_but_gpu() -> None:
+    """Rule: a lone node given no roles holds the whole cluster; gpu is never assumed."""
     assert scaffold.Node.parse("n1", only=True).roles == ("control_plane", "workers", "backup", "edge")
 
 
@@ -170,8 +173,12 @@ def test_a_key_path_sops_would_not_read_is_refused_before_anything_is_written(
     """Rule: the env records the working key SOPS_AGE_KEY_FILE names, or nothing is made: with the
     two naming different files, init would seal to one and record the other."""
     monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(tmp_path / "other.txt"))
-    with pytest.raises(scaffold.ScaffoldError, match="SOPS_AGE_KEY_FILE"):
+    with pytest.raises(scaffold.ScaffoldError) as raised:
         _init(tmp_path, "--age-key-file", str(tmp_path / "recorded.txt"))
+    assert str(raised.value) == (
+        f"SOPS_AGE_KEY_FILE ({tmp_path / 'other.txt'}) is not the age_key_file the env would record "
+        f"({tmp_path / 'recorded.txt'}); unset it, or pass the same path as --age-key-file"
+    )
     assert not any(path.exists() for path in (tmp_path / "lab", tmp_path / "other.txt", tmp_path / "recorded.txt"))
 
 
@@ -188,7 +195,7 @@ def test_the_installed_cli_knows_its_own_release(monkeypatch: pytest.MonkeyPatch
     assert cli_core.own_release() == ("https://github.com/o/jarvis", "v9.1.0")
 
 
-def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_path: Path, controller: Path, monkeypatch) -> None:
+def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_path: Path, controller: Path, capsys) -> None:
     """Rule: --with-examples turns on app-hosting and the example apps, reads them from the
     repository the examples name, and the env still passes validate as written."""
     code, dest = _init(tmp_path, "--with-examples")
@@ -201,59 +208,52 @@ def test_with_examples_turns_on_the_example_apps_and_passes_the_env_checks(tmp_p
     assert cluster_vars["apps_git_repo_url"] == scaffold.example_apps_repository()
     assert (dest / "envs/home/flux/generated/apps.yaml").is_file()
     # The sample instance turns on the same apps and renders their charts (ci/checks/sample-instance).
-    done = _validate(dest, "home", charts=False)
-    assert done.returncode == 0, done.stdout + done.stderr
+    assert _validate(dest, "home", charts=False) == 0, capsys.readouterr().out
 
 
 def test_the_example_apps_need_app_hosting_and_an_apps_repository() -> None:
+    """Rule: --with-examples is refused for an env without app hosting and an apps repository."""
     spec = scaffold.EnvSpec("home", "home.lan", "https://github.com/me/lab", *CORE, [scaffold.Node.parse("n1", only=True)], examples=True)
-    with pytest.raises(scaffold.ScaffoldError, match="app-hosting feature and an apps repository"):
+    with pytest.raises(scaffold.ScaffoldError) as raised:
         spec.check()
+    assert str(raised.value) == "the example apps need the app-hosting feature and an apps repository"
 
 
 def test_the_agent_kit_is_opt_in(tmp_path: Path, controller: Path) -> None:
-    """Rule: init writes the devcontainer always and the agent kit only with --with-agents; the
-    kit's deny lists are core's own (core's .claude and .cursor files link to the kit)."""
-    code, dest = _init(tmp_path)
-    assert code == 0
-    assert (dest / ".devcontainer/devcontainer.json").is_file() and os.access(dest / ".devcontainer/setup.sh", os.X_OK)
-    assert not (dest / "AGENTS.md").exists() and not (dest / ".claude").exists()
-    code, dest = _init(tmp_path / "with", "--with-agents")
-    assert code == 0
+    """Rule: --with-agents writes the agent kit with core's own deny lists (without it, none: see
+    test_init_writes_an_instance_that_passes_every_check); an age key already on the controller is used."""
+    working = age.create_key(controller / ".config" / "sops" / "age" / "keys.txt")
+    code, dest = _init(tmp_path / "new", "--with-agents")
+    assert code == 0 and age.recipients(dest / ".sops.yaml", "home")[0] == working
     assert (dest / "CLAUDE.md").read_text() == "@AGENTS.md\n" and (dest / "AGENTS.md").is_file()
     assert (dest / ".claude/settings.json").read_bytes() == (REPO_ROOT / ".claude/settings.json").read_bytes()
     assert (dest / ".cursor/cli.json").read_bytes() == (REPO_ROOT / ".cursor/cli.json").read_bytes()
     assert json.loads((dest / ".claude/settings.json").read_text())["permissions"]["deny"]
 
 
-def test_the_installed_package_carries_the_kit(tmp_path: Path) -> None:
-    """Rule: init runs from the installed CLI, so everything it copies is in the wheel."""
-    import zipfile
-
-    subprocess.run(["uv", "build", "--wheel", "-q", "-o", str(tmp_path)], cwd=REPO_ROOT, check=True, capture_output=True)
-    names = set(zipfile.ZipFile(next(tmp_path.glob("*.whl"))).namelist())
-    kit = {path.relative_to(REPO_ROOT).as_posix() for path in scaffold.KIT.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
-    assert kit and kit <= names, sorted(kit - names)
-
-
 def test_the_package_version_is_the_release_tag(tmp_path: Path) -> None:
-    """Rule: a core release is its tag, and the package says so: a wheel built at v1.2.3 is 1.2.3
-    (hatch-vcs), so uv tool list and pip agree with jarvis --version. Nothing is bumped by hand."""
-    import zipfile
-
-    files = subprocess.run(["git", "-C", str(REPO_ROOT), "ls-files", "-z"], capture_output=True, text=True, check=True).stdout
-    for rel in filter(None, files.split("\0")):
+    """Rule: a wheel built at v1.2.3 is 1.2.3 (hatch-vcs; nothing is bumped by hand), a throwaway tag is
+    no version, and the wheel holds everything init copies (init runs from the installed CLI)."""
+    for rel in filter(None, git(REPO_ROOT, "ls-files", "-z").split("\0")):
         source = REPO_ROOT / rel
         if source.is_file() and not source.is_symlink():
             (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / rel).write_bytes(source.read_bytes())
-    who = ["-c", "user.email=t@t", "-c", "user.name=t"]
-    # A throwaway tag on the same commit, as the quickstart gate pushes, is not a version.
-    for args in (["init", "-q", "-b", "main"], ["add", "-A"], [*who, "commit", "-q", "-m", "one"],
-                 [*who, "tag", "-a", "v1.2.3", "-m", "v1.2.3"], ["tag", "quickstart/1-1"]):  # fmt: skip
-        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
-    subprocess.run(["uv", "build", "--wheel", "-q", "-o", str(tmp_path / "dist")], cwd=tmp_path, check=True, capture_output=True)
-    wheel = next((tmp_path / "dist").glob("*.whl"))
+
+    def build(out: str) -> Path:
+        subprocess.run(["uv", "build", "--wheel", "-q", "-o", str(tmp_path / out)], cwd=tmp_path, check=True, capture_output=True)
+        return next((tmp_path / out).glob("*.whl"))
+
+    for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-q", "-m", "one"), ("tag", "-a", "v1.2.3", "-m", "v1.2.3")):
+        git(tmp_path, *args)
+    wheel = build("dist")
+    names = set(zipfile.ZipFile(wheel).namelist())
     assert wheel.name.startswith("jarvis-1.2.3-")
-    metadata = next(name for name in zipfile.ZipFile(wheel).namelist() if name.endswith("METADATA"))
+    metadata = next(name for name in names if name.endswith("METADATA"))
     assert "Version: 1.2.3" in zipfile.ZipFile(wheel).read(metadata).decode()
+    kit = {path.relative_to(REPO_ROOT).as_posix() for path in scaffold.KIT.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
+    assert kit and kit <= names, sorted(kit - names)
+    # The quickstart gate tags the commit under test, past the release: that build is the next release's dev.
+    git(tmp_path, "commit", "-q", "--allow-empty", "-m", "two")
+    git(tmp_path, "tag", "quickstart/1-1")
+    assert build("next").name.startswith("jarvis-1.2.4.dev1+g")

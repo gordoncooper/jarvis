@@ -1,13 +1,11 @@
-"""Env schema validator."""
+"""Env schema validator: the rules that span an env's fields or files, and .sops.yaml's."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
+import runpy
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -15,468 +13,285 @@ import yaml
 
 import jarvis.schema.env as env_schema
 from jarvis.env.switches import FEATURE_COMPONENTS
-from jarvis.schema.env import (
-    DEFAULT_SSH_USER,
-    ValidationError,
-    validate_env_tree,
-)
-from support import REPO_ROOT, RUN_MODULE, SEALED_PLACEHOLDER, _valid_cluster_vars, _write_env, copy_sample, sample_root
+from jarvis.node import site
+from jarvis.render import env as render
+from jarvis.schema import values as _values
+from jarvis.schema.env import ValidationError, validate_env_tree, validate_one_env
+from jarvis.secrets import age, encrypt, mint
+from support import FIXTURE_RECIPIENT, SEALED_PLACEHOLDER, _valid_cluster_vars, _write_env, copy_sample, set_switches
+
+CLUSTER_VARS = "envs/env-test/values/cluster-vars.yaml"
+DEFAULTS = _values.defaults(_values.CLUSTER_VARS)
+OPTIONAL_KEYS = ("apps_git_repo_url", "lan_cidrs")
+LAN_ROOT = "ssh://git@git.example.lan/o/r"
+NO_LAN_KEY = "flux_known_hosts holds no key for git.example.lan, the host of flux_git_repo_url"
+RULE = age.creation_rule("env-test", [FIXTURE_RECIPIENT])
+GHOST = age.creation_rule("env-ghost", [FIXTURE_RECIPIENT])
+NOT_JARVIS = "is not the rule jarvis writes for an env folder under envs/; remove it"
 
 
-def test_sops_creation_rule_missing_for_non_example_env(tmp_path: Path):
-    _write_env(tmp_path)
-    (tmp_path / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "envs/env-test/secrets/" in "\n".join(excinfo.value.messages)
+def _problems(root: Path, env: str | None = None) -> list[str]:
+    """What validate_env_tree refuses in root, or validate_one_env (jarvis site's) for env; [] when it passes."""
+    try:
+        validate_env_tree(root) if env is None else validate_one_env(root, env)
+    except ValidationError as error:
+        return error.messages
+    return []
 
 
-def test_invalid_sops_yaml_is_reported(tmp_path: Path):
-    """Invalid .sops.yaml is reported, not swallowed."""
-    _write_env(tmp_path)
-    (tmp_path / ".sops.yaml").write_text("{\n", encoding="utf-8")
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "invalid YAML" in "\n".join(excinfo.value.messages)
+def _yaml_error(text: str) -> str:
+    try:
+        yaml.safe_load(text)
+    except yaml.YAMLError as error:
+        return str(error)
+    raise AssertionError(f"{text!r} is valid YAML")
 
 
-def test_sops_creation_rule_for_missing_env_fails(tmp_path: Path):
-    """Each .sops.yaml rule must be the one jarvis writes for an env folder that exists: one for a
-    missing folder fails, and so does an env's rule edited by hand, which SOPS would also apply."""
-    from jarvis.secrets import age
-    from support import FIXTURE_RECIPIENT
-
-    _write_env(tmp_path)
-    path = tmp_path / ".sops.yaml"
-    edited = {**age.creation_rule("env-test", [FIXTURE_RECIPIENT]), "path_regex": "^envs/(env-test|env-x)/secrets/"}
-    age.write_creation_rules(path, [*age.creation_rules(path), age.creation_rule("env-ghost", [FIXTURE_RECIPIENT]), edited])
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "env-ghost" in msg
-    assert "env-test|env-x" in msg
+def _env_with(root: Path, change: dict) -> dict:
+    """A valid env-test, its App DNS address set, with change made to its cluster-vars (None leaves a key out) and
+    an ssh:// root's deploy key sealed. Returns the cluster-vars written."""
+    base = {**_valid_cluster_vars(), "app_dns_cluster_ip": "10.43.0.53"}
+    cluster_vars = {key: value for key, value in {**base, **change}.items() if value is not None}
+    env = _write_env(root, cluster_vars=cluster_vars)
+    if cluster_vars["flux_git_repo_url"].startswith("ssh://"):
+        (env / "secrets" / env_schema.DEPLOY_KEY_FILE).write_text(SEALED_PLACEHOLDER, encoding="utf-8")
+    return cluster_vars
 
 
-def test_ssh_user_defaults_to_ubuntu_when_omitted(tmp_path: Path):
-    _write_env(tmp_path, omit_ssh_user=True)
-    resolved = validate_env_tree(tmp_path)
-    assert resolved["env-test"]["ssh_user"] == DEFAULT_SSH_USER
-
-
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("backup_path", "srv/backups"),
-        ("backup_path", "/srv/../etc"),
-        ("local_path_data", "/var/lib/jarvis"),
-        ("local_path_data", "/var/lib/jarvis/../etc"),
-    ],
-    ids=["backup-relative", "backup-dot-segment", "data-is-the-mount", "data-dot-segment"],
-)
-def test_a_data_path_that_could_land_off_its_disk_fails(tmp_path: Path, key: str, value: str):
-    """Rule: backup_path is absolute with no '.' or '..' segment, and local_path_data is a
-    subdirectory of /var/lib/jarvis, so neither hostPath can resolve onto another disk."""
-    cv = _valid_cluster_vars()
-    cv[key] = value
-    _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert any(f"cluster-vars.yaml: {key}: " in item for item in excinfo.value.messages), excinfo.value.messages
-
-
-def test_jarvis_env_must_match_env_directory(tmp_path: Path):
-    cv = _valid_cluster_vars()
-    cv["jarvis_env"] = "env-other"
-    _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "jarvis_env" in "\n".join(excinfo.value.messages)
+def _no_match(key: str, value: str) -> str:
+    return f"{key}: {value!r} does not match {_values.schema(_values.CLUSTER_VARS)['properties'][key]['pattern']!r}"
 
 
 @pytest.mark.parametrize(
-    ("value", "message"),
+    ("change", "problem"),
     [
-        ("not-an-ip", "must be an IP address"),
+        pytest.param({"backup_path": "srv/backups"}, _no_match("backup_path", "srv/backups"), id="backup-relative"),
+        pytest.param({"backup_path": "/srv/../etc"}, _no_match("backup_path", "/srv/../etc"), id="backup-dot-segment"),
+        pytest.param({"local_path_data": "/var/lib/jarvis"}, _no_match("local_path_data", "/var/lib/jarvis"),
+                     id="data-is-the-mount"),
+        pytest.param({"local_path_data": "/var/lib/jarvis/../etc"}, _no_match("local_path_data", "/var/lib/jarvis/../etc"),
+                     id="data-dot-segment"),
+        pytest.param({"jarvis_env": "env-other"}, "jarvis_env must match the env directory name (env-test)",
+                     id="jarvis-env-not-the-folder"),
+        pytest.param({"time_zone": "Not/AZone"}, "time_zone must be an IANA time zone", id="time-zone-unknown"),
+        pytest.param({"pod_cidr": "not-a-pod-cidr"}, "pod_cidr must be a CIDR", id="pod-cidr-not-a-cidr"),
+        pytest.param({"service_cidr": "not-a-service-cidr"}, "service_cidr must be a CIDR", id="service-cidr-not-a-cidr"),
+        pytest.param({"app_dns_cluster_ip": "not-an-ip"}, "app_dns_cluster_ip must be an IP address", id="app-dns-ip-not-an-ip"),
         # The sample's pod_cidr is 10.42.0.0/16 and its service_cidr 10.43.0.0/16 (k3s's own).
-        ("10.42.0.53", "must be a host address inside service_cidr"),
-        ("10.43.0.0", "must be a host address inside service_cidr"),
-        ("10.43.0.1", "must not be the first or tenth address of service_cidr"),
-        ("10.43.0.10", "must not be the first or tenth address of service_cidr"),
+        pytest.param({"app_dns_cluster_ip": "10.42.0.53"}, "app_dns_cluster_ip must be a host address inside service_cidr",
+                     id="app-dns-ip-in-pod-cidr"),
+        pytest.param({"app_dns_cluster_ip": "10.43.0.0"}, "app_dns_cluster_ip must be a host address inside service_cidr",
+                     id="app-dns-ip-network-address"),
+        pytest.param({"app_dns_cluster_ip": "10.43.0.1"},
+                     "app_dns_cluster_ip must not be the first or tenth address of service_cidr", id="app-dns-ip-api"),
+        pytest.param({"app_dns_cluster_ip": "10.43.0.10"},
+                     "app_dns_cluster_ip must not be the first or tenth address of service_cidr", id="app-dns-ip-cluster-dns"),
+        pytest.param({"lan_cidrs": ["10.200.0.1/24"]}, "lan_cidrs: '10.200.0.1/24' is not an IPv4 CIDR", id="lan-host-bits"),
+        pytest.param({"lan_cidrs": ["198.51.100.0/24"]},
+                     "lan_cidrs: 198.51.100.0/24 is outside the private ranges 10/8, 172.16/12 and 192.168/16", id="lan-public"),
+        pytest.param({"lan_cidrs": ["10.42.0.0/24"]}, "lan_cidrs: 10.42.0.0/24 overlaps pod_cidr or service_cidr",
+                     id="lan-cluster-range"),
+        pytest.param({"flux_git_repo_url": LAN_ROOT, "flux_known_hosts": DEFAULTS["flux_known_hosts"]}, NO_LAN_KEY,
+                     id="known-hosts-root-host-missing"),
+        pytest.param({"flux_git_repo_url": LAN_ROOT}, NO_LAN_KEY, id="known-hosts-unset-off-github"),
     ],
-)
-def test_app_dns_cluster_ip_must_be_a_service_host_address(tmp_path: Path, value: str, message: str):
-    cv = _valid_cluster_vars()
-    cv["app_dns_cluster_ip"] = value
-    _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert message in "\n".join(excinfo.value.messages)
-
-
-def test_cluster_cidrs_must_be_cidrs(tmp_path: Path):
-    cv = _valid_cluster_vars()
-    cv["pod_cidr"] = "not-a-pod-cidr"
-    cv["service_cidr"] = "not-a-service-cidr"
-    _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    msg = "\n".join(excinfo.value.messages)
-    assert "pod_cidr must be a CIDR" in msg
-    assert "service_cidr must be a CIDR" in msg
+)  # fmt: skip
+def test_each_cluster_vars_rule_refuses_its_value(tmp_path: Path, change: dict, problem: str) -> None:
+    """Rule: each cluster-vars rule refuses its value with its own message: data paths stay on their disk, CIDRs and
+    the App DNS address fit the cluster, LAN ranges stay private and clear of it, an ssh:// root's host has a key."""
+    _env_with(tmp_path, change)
+    assert _problems(tmp_path) == [f"{CLUSTER_VARS}: {problem}"]
 
 
 @pytest.mark.parametrize(
-    ("value", "message"),
+    "change",
     [
-        (["10.200.0.1/24"], "is not an IPv4 CIDR"),
-        (["198.51.100.0/24"], "outside the private ranges"),
-        (["10.42.0.0/24"], "overlaps pod_cidr or service_cidr"),
+        pytest.param({"apps_git_repo_url": "https://github.com/other-owner/example-apps"}, id="apps-repo-another-owners"),
+        pytest.param(dict.fromkeys(OPTIONAL_KEYS), id="optional-keys-omitted"),
+        pytest.param({"ssh_user": None}, id="ssh-user-omitted"),
+        pytest.param({"flux_git_repo_url": LAN_ROOT, "flux_known_hosts": "git.example.lan ssh-ed25519 AAAAC3Nza="},
+                     id="known-hosts-own-forge"),
+        pytest.param({"flux_git_repo_url": "ssh://git@github.com/o/r",
+                      "flux_known_hosts": DEFAULTS["flux_known_hosts"] + "\ngitlab.com ssh-ed25519 AAAAC3NzaB"},
+                     id="known-hosts-several-lines"),
+        pytest.param({"flux_git_repo_url": "ssh://git@github.com/o/r"}, id="known-hosts-unset-on-github"),
     ],
-    ids=["host-bits", "public", "cluster-range"],
-)
-def test_lan_cidrs_are_private_ranges_clear_of_the_cluster(tmp_path: Path, value, message: str):
-    """Rule: the env's LAN ranges are private and outside its pod and service CIDRs, so a LAN
-    grant inside them opens neither the internet nor the cluster."""
-    cv = _valid_cluster_vars()
-    cv["lan_cidrs"] = value
-    _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert message in "\n".join(excinfo.value.messages)
-
-
-def test_time_zone_must_be_an_iana_zone(tmp_path: Path):
-    cv = _valid_cluster_vars()
-    cv["time_zone"] = "Not/AZone"
-    _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "time_zone must be an IANA time zone" in "\n".join(excinfo.value.messages)
-
-
-def test_the_apps_repository_may_be_another_owners(tmp_path: Path):
-    """Rule: an env may read hosted apps from anyone's repository (the example apps beside core,
-    another team's); the apps are untrusted and held by admission wherever they come from."""
-    cv = _valid_cluster_vars()
-    cv["apps_git_repo_url"] = "https://github.com/other-owner/example-apps"
-    _write_env(tmp_path, cluster_vars=cv)
-    validate_env_tree(tmp_path)
-
-
-def test_ssh_root_requires_the_sealed_deploy_key(tmp_path: Path) -> None:
-    """An ssh:// root reads with the deploy key, so its sealed file is required."""
-    cv = _valid_cluster_vars()
-    cv["flux_git_repo_url"] = "ssh://git@github.com/example-owner/example-cluster"
-    env = _write_env(tmp_path, cluster_vars=cv)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "missing required file envs/env-test/secrets/flux-deploy-key.sops.yaml" in str(excinfo.value)
-    (env / "secrets" / "flux-deploy-key.sops.yaml").write_text(SEALED_PLACEHOLDER, encoding="utf-8")
-    validate_env_tree(tmp_path)
-
-
-_OPTIONAL_CLUSTER_KEYS = (
-    "apps_git_repo_url",
-    "lan_cidrs",
-)
-
-
-def test_optional_cluster_keys_may_all_be_omitted(tmp_path: Path):
-    """An env can deploy with none of the optional keys."""
-    cv = _valid_cluster_vars()
-    for key in _OPTIONAL_CLUSTER_KEYS:
-        del cv[key]
-    _write_env(tmp_path, cluster_vars=cv)
+)  # fmt: skip
+def test_cluster_vars_resolve_with_the_schema_defaults(tmp_path: Path, change: dict) -> None:
+    """Rule: an env may read apps from anyone's repository (the example apps' own, another team's; admission holds them),
+    leave out the optional keys and trust its own forge; validation fills in the schema's defaults, none for an optional key."""
+    cluster_vars = _env_with(tmp_path, change)
     resolved = validate_env_tree(tmp_path)
-    for key in _OPTIONAL_CLUSTER_KEYS:
-        assert key not in resolved["env-test"]
+    assert resolved == {"env-test": {**DEFAULTS, **cluster_vars}}
+    assert not set(OPTIONAL_KEYS) & (resolved["env-test"].keys() - cluster_vars.keys())
 
 
-def _hosts(body: str) -> str:
-    return textwrap.dedent(body).strip() + "\n"
-
-
-def test_env_without_edge_host_fails(tmp_path: Path):
-    _write_env(
-        tmp_path,
-        hosts_yml=_hosts(
-            """
-            all:
-              hosts:
-                node.example:
-                  node_roles: [control_plane, backup]
-            """
-        ),
-    )
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "at least one edge host" in "\n".join(excinfo.value.messages)
+def test_app_dns_cluster_ip_is_required_only_while_app_dns_is_listed(tmp_path: Path) -> None:
+    """Rule: app_dns_cluster_ip is optional, and required once values/switches.yaml lists app-dns."""
+    cluster_vars = _valid_cluster_vars()
+    cluster_vars.pop("app_dns_cluster_ip", None)
+    env = _write_env(tmp_path, cluster_vars=cluster_vars)
+    assert _problems(tmp_path) == []
+    set_switches(env, features=["app-dns"])
+    assert _problems(tmp_path) == [f"{CLUSTER_VARS}: app_dns_cluster_ip is required while values/switches.yaml lists app-dns"]
 
 
 @pytest.mark.parametrize(
-    ("hosts_body", "role"),
+    ("hosts", "problem"),
     [
-        (
-            """
-            all:
-              hosts:
-                node.example:
-                  node_roles: [backup]
-            """,
-            "control_plane",
-        ),
-        (
-            """
-            all:
-              hosts:
-                a.example:
-                  node_roles: [control_plane, backup]
-                b.example:
-                  node_roles: [control_plane]
-            """,
-            "control_plane",
-        ),
-        (
-            """
-            all:
-              hosts:
-                node.example:
-                  node_roles: [control_plane]
-            """,
-            "backup",
-        ),
-        (
-            """
-            all:
-              hosts:
-                a.example:
-                  node_roles: [control_plane, backup]
-                b.example:
-                  node_roles: [backup]
-            """,
-            "backup",
-        ),
+        pytest.param("{node.example: {node_roles: [control_plane, backup]}}", "expected at least one edge host", id="no-edge"),
+        pytest.param("{node.example: {node_roles: [backup, edge]}}", "expected exactly one control_plane host, found 0",
+                     id="no-control-plane"),
+        pytest.param("{a.example: {node_roles: [control_plane, backup, edge]}, b.example: {node_roles: [control_plane]}}",
+                     "expected exactly one control_plane host, found 2", id="two-control-planes"),
+        pytest.param("{node.example: {node_roles: [control_plane, edge]}}", "expected exactly one backup host, found 0",
+                     id="no-backup"),
+        pytest.param("{a.example: {node_roles: [control_plane, backup, edge]}, b.example: {node_roles: [backup]}}",
+                     "expected exactly one backup host, found 2", id="two-backups"),
     ],
-)
-def test_singleton_role_must_be_exactly_one(tmp_path: Path, hosts_body: str, role: str):
-    _write_env(tmp_path, hosts_yml=_hosts(hosts_body))
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert f"exactly one {role} host" in "\n".join(excinfo.value.messages)
-
-
-def test_env_requires_the_secrets_init_seals(tmp_path: Path) -> None:
-    """Every env holds the secrets jarvis init seals: the k3s token, the CA and the restic login."""
-    env = _write_env(tmp_path)
-    validate_env_tree(tmp_path)
-    for name in ("k3s-token", "cert-manager-ca", "backups-restic"):
-        sealed = env / "secrets" / f"{name}.sops.yaml"
-        sealed.unlink()
-        with pytest.raises(ValidationError) as excinfo:
-            validate_env_tree(tmp_path)
-        assert excinfo.value.messages == [f"env-test: missing required file envs/env-test/secrets/{name}.sops.yaml"]
-        sealed.write_text(SEALED_PLACEHOLDER, encoding="utf-8")
-
-
-def _copy_flux_entry(env: Path) -> None:
-    """env-00's flux/ tree under a test env, enough to satisfy the must-exist files."""
-    shutil.copytree(
-        sample_root() / "envs" / "env-00" / "flux",
-        env / "flux",
-        ignore=shutil.ignore_patterns("generated"),
-    )
-    for path in (env / "flux").rglob("*.yaml"):
-        text = path.read_text(encoding="utf-8")
-        text = text.replace(f"envs/{"env-00"}/", f"envs/{env.name}/")
-        path.write_text(text.replace(f"jarvis_env: {"env-00"}", f"jarvis_env: {env.name}"), encoding="utf-8")
-    # A new env starts core-only, as docs/deploy.md has a copy empty the example's lists. No
-    # off-host copy unless a test lists it, and with no hosted app no rendered app wiring either.
-    _render_core_only(env)
-
-
-def _render_core_only(env: Path, *features: str) -> None:
-    from jarvis.apps import values as _apps
-    from jarvis.env import switches as _switches
-
-    data = {"features": list(features), "addons": []}
-    (env / _switches.SWITCHES_FILE).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    (env / _apps.APPS_VALUES).unlink(missing_ok=True)
-    flux = env / "flux"
-    (flux / _switches.ROOT_REL).write_text(_switches.root_kustomization(apps_generated=None), encoding="utf-8")
-    (flux / _switches.SERVICES_REL).write_text(_switches.services(data), encoding="utf-8")
-    (flux / _switches.PLATFORM_CONFIGS_REL).write_text(_switches.platform_configs(data), encoding="utf-8")
+)  # fmt: skip
+def test_host_roles_are_held_across_hosts(tmp_path: Path, hosts: str, problem: str) -> None:
+    """Rule: across hosts, exactly one control_plane and one backup host, and at least one edge host."""
+    _write_env(tmp_path, hosts_yml=f"all: {{hosts: {hosts}}}\n")
+    assert _problems(tmp_path) == [f"envs/env-test/inventory/hosts.yml: {problem}"]
 
 
 @pytest.mark.parametrize(
-    ("feature", "sealed"),
-    [(name, file) for name, adds in FEATURE_COMPONENTS.items() for file in adds.get("sealed", ())],
-)
-def test_env_that_lists_a_feature_requires_its_sealed_secret(tmp_path: Path, feature: str, sealed: str) -> None:
-    """An env listing a feature requires each file the feature seals."""
-    env = _write_env(tmp_path)
-    _copy_flux_entry(env)
-    _render_core_only(env, feature)
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert f"missing required file envs/env-test/secrets/{sealed}" in "\n".join(excinfo.value.messages)
-    (env / "secrets" / sealed).write_text(SEALED_PLACEHOLDER, encoding="utf-8")
-    validate_env_tree(tmp_path)
+    ("change", "features", "rel", "message"),
+    [
+        *(pytest.param({}, [], rel, f"env-test: missing required file envs/env-test/{rel}", id=Path(rel).name.split(".")[0])
+          for rel in ("values/cluster-vars.yaml", "inventory/hosts.yml", "values/switches.yaml",
+                      "secrets/k3s-token.sops.yaml", "secrets/cert-manager-ca.sops.yaml", "secrets/backups-restic.sops.yaml")),
+        pytest.param({"flux_git_repo_url": "ssh://git@github.com/example-owner/example-cluster"}, [],
+                     "secrets/flux-deploy-key.sops.yaml",
+                     "env-test: missing required file envs/env-test/secrets/flux-deploy-key.sops.yaml", id="ssh-root-deploy-key"),
+        *(pytest.param({}, [feature], f"secrets/{file}",
+                       f"env-test: values/switches.yaml lists {feature}, missing required file envs/env-test/secrets/{file}",
+                       id=feature)
+          for feature, adds in FEATURE_COMPONENTS.items() for file in adds.get("sealed", ())),
+    ],
+)  # fmt: skip
+def test_an_env_holds_each_file_something_reads(tmp_path: Path, change: dict, features: list[str], rel: str, message: str) -> None:
+    """Rule: an env holds its values files, the secrets jarvis init seals, an ssh:// root's deploy key and each listed
+    feature's sealed file: without one it fails with that file's message, and with it it passes."""
+    env = _write_env(tmp_path, cluster_vars={**_valid_cluster_vars(), **change})
+    set_switches(env, features=features)
+    path = env / rel
+    held = path.read_text(encoding="utf-8") if path.is_file() else SEALED_PLACEHOLDER
+    path.unlink(missing_ok=True)
+    assert _problems(tmp_path) == [message]
+    path.write_text(held, encoding="utf-8")
+    assert _problems(tmp_path) == []
 
 
-def test_cli_requires_env() -> None:
-    commands = (
-        [sys.executable, "jarvis/secrets/mint.py"],
-        [sys.executable, "jarvis/secrets/encrypt.py", "--name", "example"],
-        [*RUN_MODULE, "jarvis.render.env"],
-    )
-    for cmd in commands:
-        proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
-        assert proc.returncode != 0, cmd
-        assert "--env" in proc.stderr + proc.stdout
+def test_every_sealed_file_opens_for_exactly_the_env_recipients(tmp_path: Path) -> None:
+    """Rule: a sealed file that is not SOPS-encrypted, or is encrypted to other recipients than the
+    env's creation rule names, fails; jarvis secrets --update-recipients is the fix it names."""
+    token = copy_sample(tmp_path) / "envs" / "env-00" / "secrets" / "k3s-token.sops.yaml"
+    assert _problems(tmp_path, "env-00") == []
+    doc = yaml.safe_load(token.read_text(encoding="utf-8"))
+    token.write_text("stringData:\n  server_token: plain\n", encoding="utf-8")
+    assert _problems(tmp_path, "env-00") == [
+        "envs/env-00/secrets/k3s-token.sops.yaml: not SOPS-encrypted with age; seal it with jarvis encrypt"]
+    doc["sops"]["age"] = doc["sops"]["age"][:1] + [{"recipient": FIXTURE_RECIPIENT, "enc": "x"}]
+    token.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    assert _problems(tmp_path, "env-00") == [
+        "envs/env-00/secrets/k3s-token.sops.yaml: encrypted to 2 age recipient(s) that are not the 1 in .sops.yaml's rule"
+        " for envs/env-00/secrets/; run jarvis secrets --update-recipients"]
 
 
-def test_validate_one_env_runs_sops_creation_rules(tmp_path: Path) -> None:
-    """An existing env with a .sops.yaml creation-rule error fails validate_one_env."""
-    from jarvis.secrets import age
-
-    copy_sample(tmp_path)
-    rules = age.creation_rules(tmp_path / ".sops.yaml")
-    age.write_creation_rules(tmp_path / ".sops.yaml", [*rules, *rules])
-    with pytest.raises(ValidationError) as excinfo:
-        env_schema.validate_one_env(tmp_path, "env-00")
-    assert "expected exactly one creation rule" in str(excinfo.value)
-
-
-def _run_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> tuple[int, list[str]]:
-    """jarvis site with a stub ansible-playbook first on PATH; returns its exit code and the stub's
-    argv. The stub keeps its extra-vars file at <log>.vars."""
-    from jarvis.node import site
-
-    log = tmp_path / "ap.log"
-    log.unlink(missing_ok=True)
-    stub = tmp_path / "bin" / "ansible-playbook"
-    stub.parent.mkdir(exist_ok=True)
-    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$0\" \"$@\" > \"${CALL_LOG}\"\n"
-                    "for a; do case \"$a\" in @*) cp \"${a#@}\" \"${CALL_LOG}.vars\";; esac; done\n")
-    stub.chmod(0o755)
-    monkeypatch.setenv("CALL_LOG", str(log))
-    monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("INSTANCE", str(sample_root()))
-    code = site.main(["--env", "env-00", *args])
-    return code, log.read_text().splitlines() if log.exists() else []
-
-
-def test_site_passes_inventories_tags_limit_and_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A valid env passes -i hosts then roles, -e, --tags, --limit, and --check --diff."""
-    from jarvis.secrets import age
-
-    code, args = _run_site(tmp_path, monkeypatch)
-    assert code == 0
-    assert args[1] == "site.yml"
-    dash_i = [i for i, a in enumerate(args) if a == "-i"]
-    assert args[dash_i[0] + 1] == f"{sample_root()}/envs/env-00/inventory/hosts.yml"
-    assert args[dash_i[1] + 1] == "../inventory/roles"
-    passed = json.loads((tmp_path / "ap.log.vars").read_text(encoding="utf-8"))
-    assert args[args.index("-e") + 1].startswith("@")
-    # The env's values with the schema's defaults, and what the plays no longer work out.
-    assert passed["jarvis_instance_root"] == str(sample_root()) and passed["ssh_user"]
-    assert passed["node_memory_reserve_percent"] == 10 and passed["chrony_nts"] is True
-    assert passed["sops_age_recipients"] == age.recipients(sample_root() / ".sops.yaml", "env-00") != []
-    assert passed["sops_age_key_file"] == str(age.key_path(passed["age_key_file"]))
-    assert "--tags" not in args and "--limit" not in args and "--check" not in args
-    assert "--diff" not in args
-    code, args = _run_site(tmp_path, monkeypatch, "--tags", "base-os,k3s", "--limit", "cp-1", "--check")
-    assert code == 0
-    assert args[args.index("--tags") + 1] == "base-os,k3s"
-    assert args[args.index("--limit") + 1] == "cp-1" and "--check" in args
-    assert "--diff" in args
-
-
-def test_site_refuses_an_invalid_env_before_ansible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    """Rule: the env schema runs first; an invalid env runs no playbook and exits 3."""
-    from jarvis.node import site
-
-    def invalid(root, name):
-        raise ValidationError(["envs/env-00: broken"])
-
-    monkeypatch.setattr(site, "validate_one_env", invalid)
-    code, args = _run_site(tmp_path, monkeypatch)
-    assert code == 3 and args == []
-    assert "REFUSE site" in capsys.readouterr().out
+@pytest.mark.parametrize(
+    ("sops_yaml", "message"),
+    [
+        pytest.param({"creation_rules": []}, "expected exactly one creation rule for envs/env-test/secrets/, found 0", id="no-rule"),
+        pytest.param({"creation_rules": [RULE, RULE]}, "expected exactly one creation rule for envs/env-test/secrets/, found 2",
+                     id="two-rules"),
+        pytest.param({"creation_rules": [RULE, GHOST]}, f"creation rule {GHOST['path_regex']!r} {NOT_JARVIS}",
+                     id="rule-for-a-missing-env"),
+        pytest.param({"creation_rules": [RULE, {**RULE, "path_regex": "^envs/(env-test|env-x)/secrets/"}]},
+                     f"creation rule '^envs/(env-test|env-x)/secrets/' {NOT_JARVIS}", id="rule-edited-by-hand"),
+        pytest.param("{\n", "invalid YAML: " + _yaml_error("{\n"), id="invalid-yaml"),
+    ],
+)  # fmt: skip
+def test_sops_yaml_holds_one_rule_per_env_and_no_other(tmp_path: Path, sops_yaml: dict | str, message: str) -> None:
+    """Rule: .sops.yaml holds one creation rule per env, the one jarvis writes (SOPS would apply an edited one too),
+    and none for a folder that does not exist; validate_env_tree and validate_one_env (#167) both refuse the rest."""
+    _write_env(tmp_path)
+    text = sops_yaml if isinstance(sops_yaml, str) else yaml.safe_dump(sops_yaml, sort_keys=False)
+    (tmp_path / ".sops.yaml").write_text(text, encoding="utf-8")
+    assert _problems(tmp_path) == _problems(tmp_path, "env-test") == [f".sops.yaml: {message}"]
 
 
 def test_envs_limits_the_env_checks_to_the_named_envs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Rule: ENVS names the envs validate_env_tree checks, so an instance CI leg checks one env
     against its own core pin; .sops.yaml rules still see every env folder."""
     _write_env(tmp_path, "env-test")
-    _write_env(tmp_path, "env-broken")
-    (tmp_path / "envs" / "env-broken" / "values" / "cluster-vars.yaml").write_text("not: valid\n", encoding="utf-8")
-    with pytest.raises(ValidationError):
-        validate_env_tree(tmp_path)
+    (_write_env(tmp_path, "env-broken") / "values" / "cluster-vars.yaml").write_text("not: valid\n", encoding="utf-8")
+    broken = _values.problems(_values.CLUSTER_VARS, {"not": "valid"}, "envs/env-broken/values/cluster-vars.yaml")
+    assert _problems(tmp_path) == broken != []
+    monkeypatch.setenv(env_schema.ENVS_VAR, "env-broken")
+    assert _problems(tmp_path) == broken
     monkeypatch.setenv(env_schema.ENVS_VAR, "env-test")
     assert set(validate_env_tree(tmp_path)) == {"env-test"}
-    monkeypatch.setenv(env_schema.ENVS_VAR, "env-broken")
-    with pytest.raises(ValidationError):
-        validate_env_tree(tmp_path)
-
-
-_GITHUB_KEY = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
 
 
 @pytest.mark.parametrize(
-    ("root", "known_hosts", "problem"),
+    ("module", "argv", "prog"),
     [
-        ("ssh://git@git.example.lan/o/r", _GITHUB_KEY, "no key for git.example.lan"),
-        ("ssh://git@git.example.lan/o/r", "git.example.lan ssh-ed25519 AAAAC3Nza=", None),
-        ("ssh://git@github.com/o/r", _GITHUB_KEY + "\ngitlab.com ssh-ed25519 AAAAC3NzaB", None),
-        ("ssh://git@git.example.lan/o/r", None, "no key for git.example.lan"),
-        ("ssh://git@github.com/o/r", None, None),
+        pytest.param(mint, [], "jarvis secrets", id="secrets"),
+        pytest.param(encrypt, ["--name", "example"], "jarvis encrypt", id="encrypt"),
+        pytest.param(render, [], "jarvis render", id="render"),
     ],
-    ids=["root-host-missing", "own-forge", "several-lines", "unset-off-github", "unset-on-github"],
 )
-def test_flux_known_hosts_trusts_the_root_host(tmp_path: Path, root: str, known_hosts: str | None, problem: str | None):
-    """Rule: flux_known_hosts holds '<host> <type> <key>' lines, and an ssh:// root's host is one of them;
-    unset, it is the schema's default, GitHub's key, so an ssh:// root elsewhere must set it."""
-    cv = _valid_cluster_vars()
-    cv["flux_known_hosts"] = known_hosts
-    if known_hosts is None:
-        del cv["flux_known_hosts"]
-    cv["flux_git_repo_url"] = root
-    found = env_schema._known_hosts_problems(env_schema.resolve_cluster_vars(cv)["flux_known_hosts"], cv["flux_git_repo_url"])
-    if problem is None:
-        assert found == []
-    else:
-        assert any(problem in item for item in found), found
+def test_cli_requires_env(module, argv: list[str], prog: str, monkeypatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """Rule: jarvis secrets (jarvis/secrets/mint.py), jarvis encrypt (jarvis/secrets/encrypt.py) and jarvis render
+    refuse to run without --env, also run as a module: each file's __main__ block runs its main()."""
+    monkeypatch.setattr(sys, "argv", [module.__file__, *argv])
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_path(module.__file__, run_name="__main__")
+    out, err = capsys.readouterr()
+    assert (exited.value.code, out, err.splitlines()[-1]) == (2, "", f"{prog}: error: the following arguments are required: --env")
 
 
-def test_app_dns_cluster_ip_is_required_only_while_app_dns_is_listed(tmp_path: Path) -> None:
-    """Rule: app_dns_cluster_ip is optional, and required once values/switches.yaml lists app-dns."""
-    from support import set_switches
+def _run_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *args: str) -> tuple[int, list[str]]:
+    """jarvis site on env-00 of the instance at tmp_path/instance, a stub ansible-playbook first on PATH: its exit
+    code and the stub's argv, the extra-vars file as @vars (the stub keeps a copy at <log>.vars)."""
+    log = tmp_path / "ap.log"
+    log.unlink(missing_ok=True)
+    stub = tmp_path / "bin" / "ansible-playbook"
+    stub.parent.mkdir(exist_ok=True)
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"${CALL_LOG}\"\n"
+                    "for a; do case \"$a\" in @*) cp \"${a#@}\" \"${CALL_LOG}.vars\";; esac; done\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("CALL_LOG", str(log))
+    monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("INSTANCE", str(tmp_path / "instance"))
+    code = site.main(["--env", "env-00", *args])
+    return code, ["@vars" if arg.startswith("@") else arg for arg in log.read_text().splitlines()] if log.exists() else []
 
-    cv = _valid_cluster_vars()
-    cv.pop("app_dns_cluster_ip", None)
-    env = _write_env(tmp_path, cluster_vars=dict(cv))
-    (env / "secrets").mkdir(exist_ok=True)
-    _copy_flux_entry(env)
-    validate_env_tree(tmp_path)
-    set_switches(env, features=["app-dns"])
-    with pytest.raises(ValidationError) as excinfo:
-        validate_env_tree(tmp_path)
-    assert "app_dns_cluster_ip is required while values/switches.yaml lists app-dns" in str(excinfo.value)
+
+def test_site_passes_inventories_tags_limit_and_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule: jarvis site runs site.yml on the env's hosts then the role groups, with the env's values (the schema's
+    defaults filled in) and what the plays no longer work out as one extra-vars file; --check adds --diff."""
+    root = copy_sample(tmp_path / "instance")
+    command = ["site.yml", "-i", f"{root}/envs/env-00/inventory/hosts.yml", "-i", "../inventory/roles", "-e", "@vars"]
+    assert _run_site(tmp_path, monkeypatch) == (0, command)
+    cluster_vars = yaml.safe_load((root / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8"))
+    assert json.loads((tmp_path / "ap.log.vars").read_text(encoding="utf-8")) == {
+        **DEFAULTS, **cluster_vars, "jarvis_instance_root": str(root),
+        "sops_age_key_file": str(age.key_path(cluster_vars["age_key_file"])),
+        "sops_age_recipients": [age.public_key(root / ".age" / "keys.txt")],
+    }  # fmt: skip
+    flags = ["--tags", "base-os,k3s", "--limit", "cp-1", "--check"]
+    assert _run_site(tmp_path, monkeypatch, *flags) == (0, [*command, *flags, "--diff"])
 
 
-def test_every_sealed_file_opens_for_exactly_the_env_recipients(tmp_path: Path) -> None:
-    """Rule: a sealed file that is not SOPS-encrypted, or is encrypted to other recipients than the
-    env's creation rule names, fails; jarvis secrets --update-recipients is the fix it names."""
-    env = copy_sample(tmp_path) / "envs" / "env-00"
-    env_schema.validate_one_env(tmp_path, "env-00")
-    token = env / "secrets" / "k3s-token.sops.yaml"
-    sealed = token.read_text(encoding="utf-8")
-    token.write_text("stringData:\n  server_token: plain\n", encoding="utf-8")
-    with pytest.raises(ValidationError, match="k3s-token.sops.yaml: not SOPS-encrypted"):
-        env_schema.validate_one_env(tmp_path, "env-00")
-    doc = yaml.safe_load(sealed)
-    doc["sops"]["age"] = doc["sops"]["age"][:1] + [{"recipient": "age1" + "q" * 58, "enc": "x"}]
-    token.write_text(yaml.safe_dump(doc), encoding="utf-8")
-    with pytest.raises(ValidationError, match="run jarvis secrets --update-recipients"):
-        env_schema.validate_one_env(tmp_path, "env-00")
+def test_site_refuses_an_invalid_env_before_ansible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Rule: the env schema runs first; an invalid env runs no playbook and exits 3."""
+
+    def invalid(root, name):
+        raise ValidationError(["envs/env-00: broken"])
+
+    monkeypatch.setattr(site, "validate_one_env", invalid)
+    assert _run_site(tmp_path, monkeypatch) == (3, [])
+    assert capsys.readouterr().out == "REFUSE site: env-00 fails validation\nenvs/env-00: broken\n"

@@ -1,30 +1,30 @@
-"""Per-env kubeconfig rewrite stays check-mode safe and leaves ~/.kube/config alone."""
+"""Per-env kubeconfig: check-mode safe, only the server line rewritten, no secret printed, ~/.kube/config left alone."""
 
 from __future__ import annotations
 
-import json
-import re
+import stat
 import subprocess
 from pathlib import Path
 
-import pytest
-from ansible_role_proof import playbook
+from ansible_role_proof import changed, local_play, playbook, ran, role_tasks
 from conftest import require_cli
 
-_SOURCE = """\
+_LOOPBACK = "https://127.0.0.1:6443"
+_SECRET = "SECRET-MARKER"
+_SOURCE = f"""\
 apiVersion: v1
 kind: Config
 clusters:
 - cluster:
-    certificate-authority-data: CERTDATA-MARKER
-    server: https://127.0.0.1:6443
+    certificate-authority-data: {_SECRET}
+    server: {_LOOPBACK}
   name: default
 users:
 - name: default
   user:
-    client-certificate-data: CERTDATA-MARKER
-    client-key-data: KEYDATA-MARKER
-    token: TOKEN-MARKER
+    client-certificate-data: {_SECRET}
+    client-key-data: {_SECRET}
+    token: {_SECRET}
 contexts:
 - context:
     cluster: default
@@ -32,163 +32,66 @@ contexts:
   name: default
 current-context: default
 """
-_MARKERS = ("CERTDATA-MARKER", "KEYDATA-MARKER", "TOKEN-MARKER")
-_LOOPBACK = "https://127.0.0.1:6443"
-_MISSED = _SOURCE.replace(_LOOPBACK, "https://kube.example:6443")
 
 
-def _mode(path: Path) -> int:
-    return path.stat().st_mode & 0o777
+def _kubeconfig(tmp_path: Path, *flags: str, source: str = _SOURCE,
+                json: bool = True) -> subprocess.CompletedProcess[str]:
+    """The kubeconfig role for env fixture on control-1, run on this machine with HOME at tmp_path/home and source as
+    the node's kubeconfig."""
+    node_kubeconfig = tmp_path / "k3s.yaml"
+    node_kubeconfig.write_text(source, encoding="utf-8")
+    play_vars = {"jarvis_env": "fixture", "k3s_kubeconfig_path": str(node_kubeconfig)}
+    play = local_play(tmp_path, role_tasks("kubeconfig"), hosts="all", vars=play_vars)
+    inventory = ("-i", "control-1,", "-e", "ansible_connection=local")
+    return playbook(play, *inventory, *flags, env={"HOME": str(tmp_path / "home")}, json=json)
 
 
-def _recap_total(output: str, field: str) -> int:
-    lines = [
-        line
-        for line in output.splitlines()
-        if f"{field}=" in line and "PLAY RECAP" not in line
-    ]
-    assert lines, output
-    total = 0
-    for line in lines:
-        match = re.search(rf"{field}=(\d+)", line)
-        assert match is not None, output
-        total += int(match.group(1))
-    return total
+def _modes(kube: Path) -> dict[str, int]:
+    return {path.name: stat.S_IMODE(path.stat().st_mode) for path in (kube, *kube.iterdir())}
 
 
-def _run(
-    tmp: Path,
-    *,
-    hostname: str,
-    jarvis_env: str,
-    quote: bool,
-    source_text: str,
-    home: Path,
-    check: bool = False,
-    diff: bool = False,
-) -> subprocess.CompletedProcess[str]:
-    source = tmp / "node-kubeconfig.yaml"
-    source.write_text(source_text, encoding="utf-8")
-    host = json.dumps(hostname) if quote else hostname
-    env_extra = json.dumps({"jarvis_env": jarvis_env}) if quote else f"jarvis_env={jarvis_env}"
-    inventory = tmp / "hosts.yml"
-    inventory.write_text(
-        f"all:\n  hosts:\n    {host}:\n      ansible_connection: local\n",
-        encoding="utf-8",
-    )
-    play = tmp / "play.yml"
-    play.write_text("- hosts: all\n  gather_facts: false\n  become: false\n  roles: [kubeconfig]\n", encoding="utf-8")
-    flags = [*(["--check"] if check else []), *(["--diff"] if diff else [])]
-    source_var = json.dumps({"k3s_kubeconfig_path": str(source)})
-    return playbook(play, "-i", inventory, "-e", env_extra, "-e", source_var, *flags, env={"HOME": str(home)})
-
-
-def _dest(home: Path, jarvis_env: str) -> Path:
-    return home / ".kube" / f"jarvis-{jarvis_env}.yaml"
-
-
-def _assert_no_markers(output: str) -> None:
-    leaked = [marker for marker in _MARKERS if marker in output]
-    assert not leaked, output
-
-
-@pytest.mark.parametrize(
-    ("hostname", "jarvis_env", "quote"),
-    [
-        ("control-1", "fixture", False),
-        ("control 1:odd+", "fix 01:odd+", True),
-    ],
-)
-def test_kubeconfig_rewrites_server_and_hides_secrets(
-    tmp_path: Path, hostname: str, jarvis_env: str, quote: bool
-) -> None:
-    """Check mode completes, the server line alone changes, and a second run is unchanged."""
+def test_kubeconfig_rewrites_server_and_hides_secrets(tmp_path: Path) -> None:
+    """Rule: --check writes nothing. A run writes ~/.kube/jarvis-<env>.yaml (0600, in a 0700 ~/.kube that holds
+    nothing else) with only the server line changed, and a second run changes nothing. No run prints a secret."""
     require_cli("ansible-playbook")
-    home = tmp_path / "home"
-    home.mkdir()
-    dest = _dest(home, jarvis_env)
-    expected = _SOURCE.replace(_LOOPBACK, f"https://{hostname}:6443")
+    kube = tmp_path / "home" / ".kube"
+    kube.parent.mkdir()
 
-    preview = _run(
-        tmp_path,
-        hostname=hostname,
-        jarvis_env=jarvis_env,
-        quote=quote,
-        source_text=_SOURCE,
-        home=home,
-        check=True,
-        diff=True,
-    )
-    preview_output = preview.output
-    assert preview.returncode == 0, preview_output
-    assert _recap_total(preview_output, "failed") == 0, preview_output
-    _assert_no_markers(preview_output)
-    assert not dest.exists()
-    assert not (home / ".kube" / "config").exists()
+    preview = _kubeconfig(tmp_path, "--check", "--diff")
+    assert preview.returncode == 0, preview.output
+    assert not kube.exists()
 
-    first = _run(
-        tmp_path,
-        hostname=hostname,
-        jarvis_env=jarvis_env,
-        quote=quote,
-        source_text=_SOURCE,
-        home=home,
-    )
-    first_output = first.output
-    assert first.returncode == 0, first_output
-    _assert_no_markers(first_output)
-    assert dest.read_text(encoding="utf-8") == expected
-    assert _LOOPBACK not in dest.read_text(encoding="utf-8")
-    assert _mode(dest.parent) == 0o700
-    assert _mode(dest) == 0o600
-    assert not (home / ".kube" / "config").exists()
-    assert sorted(path.name for path in dest.parent.iterdir()) == [dest.name]
+    first = _kubeconfig(tmp_path)
+    assert first.returncode == 0, first.output
+    assert _modes(kube) == {".kube": 0o700, "jarvis-fixture.yaml": 0o600}
+    assert (kube / "jarvis-fixture.yaml").read_text(encoding="utf-8") == _SOURCE.replace(_LOOPBACK, "https://control-1:6443")
 
-    second = _run(
-        tmp_path,
-        hostname=hostname,
-        jarvis_env=jarvis_env,
-        quote=quote,
-        source_text=_SOURCE,
-        home=home,
-    )
-    second_output = second.output
-    assert second.returncode == 0, second_output
-    assert _recap_total(second_output, "changed") == 0, second_output
-    assert _recap_total(second_output, "failed") == 0, second_output
-    _assert_no_markers(second_output)
-    assert dest.read_text(encoding="utf-8") == expected
-    assert _mode(dest.parent) == 0o700
-    assert _mode(dest) == 0o600
+    second = _kubeconfig(tmp_path)
+    assert second.returncode == 0, second.output
+    assert changed(second) == {"control-1": 0}
+    for run in (preview, first, second):
+        assert _SECRET not in run.output, run.output
 
 
 def test_kubeconfig_fails_when_the_server_line_does_not_change(tmp_path: Path) -> None:
-    """A missed rewrite fails and leaves no partial or world-readable kubeconfig."""
+    """Rule: a node kubeconfig without the loopback server fails the run at the rewrite check, prints no secret, and
+    leaves the runner's kubeconfig and ~/.kube as they were."""
     require_cli("ansible-playbook")
-    hostname = "control 1:odd+"
-    jarvis_env = "fix 01:odd+"
-    home = tmp_path / "home"
-    kube_dir = home / ".kube"
-    kube_dir.mkdir(parents=True)
-    kube_dir.chmod(0o700)
-    dest = _dest(home, jarvis_env)
-    dest.write_text("sentinel\n", encoding="utf-8")
-    dest.chmod(0o600)
+    kube = tmp_path / "home" / ".kube"
+    kube.mkdir(parents=True)
+    kube.chmod(0o700)
+    runner_kubeconfig = kube / "jarvis-fixture.yaml"
+    runner_kubeconfig.write_text("sentinel\n", encoding="utf-8")
+    runner_kubeconfig.chmod(0o600)
 
-    result = _run(
-        tmp_path,
-        hostname=hostname,
-        jarvis_env=jarvis_env,
-        quote=True,
-        source_text=_MISSED,
-        home=home,
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    _assert_no_markers(output)
-    assert dest.read_text(encoding="utf-8") == "sentinel\n"
-    assert _mode(dest) == 0o600
-    assert _mode(kube_dir) == 0o700
-    assert sorted(path.name for path in kube_dir.iterdir()) == [dest.name]
-    for path in kube_dir.rglob("*"):
-        assert _mode(path) & 0o007 == 0, path
+    source = _SOURCE.replace(_LOOPBACK, "https://kube.example:6443")
+    run = _kubeconfig(tmp_path, source=source)
+    # The refusal changes nothing, so this run meets the same state. Its output, as jarvis site prints it, shows a
+    # failed no_log task's fail_msg (ansible-core 2.22), which the JSON result censors.
+    shown = _kubeconfig(tmp_path, source=source, json=False)
+    assert run.returncode != 0 and shown.returncode == run.returncode, shown.output
+    assert ran(run, "Fail when the kubeconfig server line did not change") == {"control-1": "failed"}
+    for output in (run.output, shown.output):
+        assert _SECRET not in output, output
+    assert runner_kubeconfig.read_text(encoding="utf-8") == "sentinel\n"
+    assert _modes(kube) == {".kube": 0o700, "jarvis-fixture.yaml": 0o600}

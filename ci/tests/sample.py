@@ -4,7 +4,8 @@ Core ships no env of its own. Tests and the env-level rule checks run on an inst
 the same code jarvis init runs (jarvis/env/scaffold.py), then edited as an owner would: more
 nodes, the sample hosted apps from the apps fixture, the fixture add-on, and placeholder sealed
 files for what an owner seals by hand. Its secrets are sealed to a throwaway age key that stays
-in the instance's own .age/ folder.
+in the instance's own .age/ folder. Like an env jarvis init writes with no --feature, it is core
+only unless its caller lists features and the add-on; this script lists every one.
 
   python ci/tests/sample.py <dest>               writes a sample instance at <dest> and prints its path
   python ci/tests/sample.py --validate <dest>    and runs every env check on it (ci/checks/sample-instance)
@@ -21,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +30,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from jarvis.env import scaffold  # noqa: E402
+from jarvis.env.switches import FEATURE_COMPONENTS  # noqa: E402
 
+# Every feature core holds, in core's order.
+ALL_FEATURES = tuple(FEATURE_COMPONENTS)
 FIXTURE_APPS_REPO = REPO_ROOT / "ci" / "tests" / "fixtures" / "app-hosting" / "jarvis-apps"
 FIXTURE_ADDONS = REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"
 NAME = "env-00"
@@ -52,8 +57,12 @@ all:
       node_roles: [backup]
       data_disk: true
 """
-def spec(name: str = NAME, *, features: list[str] | None = None) -> scaffold.EnvSpec:
-    """The sample env's starting decisions, as jarvis init takes them."""
+def spec(name: str = NAME, *, features: Iterable[str] = ()) -> scaffold.EnvSpec:
+    """The sample env's starting decisions, as jarvis init takes them: core only, or with features
+    on (in core's order). A name core does not hold is refused, as init refuses it."""
+    wanted = set(features)
+    if not wanted <= set(ALL_FEATURES):
+        raise ValueError(f"unknown feature {sorted(wanted - set(ALL_FEATURES))}; core holds {list(ALL_FEATURES)}")
     return scaffold.EnvSpec(
         name=name,
         domain=f"{name}.example",
@@ -62,7 +71,7 @@ def spec(name: str = NAME, *, features: list[str] | None = None) -> scaffold.Env
         core_tag="v0.2.0",
         nodes=[scaffold.Node.parse("node1", only=True)],
         ssh_user="example",
-        features=["alerts", "app-dns", "app-hosting", "offsite-backup-copy"] if features is None else features,
+        features=[feature for feature in ALL_FEATURES if feature in wanted],
         apps_repo_url="https://github.com/example-owner/example-apps",
     )
 
@@ -174,15 +183,15 @@ def add_env(
     name: str = NAME,
     *,
     hosts_text: str | None = HOSTS,
-    with_apps: bool = True,
-    with_addons: bool = True,
-    features: list[str] | None = None,
+    with_addons: bool = False,
+    features: Iterable[str] = (),
     public_keys: list[str],
 ) -> Path:
-    """One sample env in root: scaffolded, edited as an owner would, sealed and rendered."""
+    """One sample env in root: scaffolded, edited as an owner would, sealed and rendered. Core
+    only unless features or with_addons say otherwise."""
     return add_env_from_spec(
         root, spec(name, features=features), public_keys=public_keys,
-        hosts_text=hosts_text, with_apps=with_apps, with_addons=with_addons,
+        hosts_text=hosts_text, with_addons=with_addons,
     )  # fmt: skip
 
 
@@ -263,7 +272,7 @@ if __name__ == "__main__":
     dest = Path(sys.argv[-1]).resolve()
     os.environ.setdefault("APPS_REPO", str(fixture_apps_checkout()))
     subprocess.run(["git", "init", "-q", str(dest)], check=True)
-    build(dest)
+    build(dest, features=ALL_FEATURES, with_addons=True)
     for args in (["add", "-A"], ["-c", "user.email=sample@example.invalid", "-c", "user.name=sample", "commit", "-q", "-m", "sample"]):
         subprocess.run(["git", "-C", str(dest), *args], check=True)
     if not validate:

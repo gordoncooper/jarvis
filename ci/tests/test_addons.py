@@ -353,7 +353,7 @@ def _run_env_checks(root: Path) -> subprocess.CompletedProcess[str]:
 
 def test_core_only_env_passes_the_env_checks(tmp_path: Path) -> None:
     """An env with no add-on is a full env: the env checks pass on it."""
-    copy_env = bootstrap_example_copy(tmp_path, core_only=True)
+    copy_env = bootstrap_example_copy(tmp_path)
     proc = _run_env_checks(copy_env.root)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PASS addons" in proc.stdout and "PASS secret-scan" in proc.stdout, proc.stdout
@@ -361,7 +361,7 @@ def test_core_only_env_passes_the_env_checks(tmp_path: Path) -> None:
 
 def test_env_with_the_sample_addon_and_its_sealed_secret_passes_the_env_checks(tmp_path: Path) -> None:
     """The example's add-on list with each decrypted folder sealed to a throwaway key passes; without the seal it fails."""
-    copy_env = bootstrap_example_copy(tmp_path)
+    copy_env = bootstrap_example_copy(tmp_path, addons=True)
     sealed = sorted((copy_env.env_dir / "secrets").glob("*/*.sops.yaml"))
     assert sealed
     proc = _run_env_checks(copy_env.root)
@@ -376,7 +376,7 @@ def test_a_sealed_file_nothing_reads_fails(tmp_path: Path) -> None:
     """Rule: every sealed file under envs/<env>/secrets/ has a reader. A left-over top-level
     secret and a folder no enabled add-on decrypts each fail env-schema; the bootstrap secrets,
     the off-host target and the enabled add-on's folder pass."""
-    copy_env = bootstrap_example_copy(tmp_path)
+    copy_env = bootstrap_example_copy(tmp_path, features=("offsite-backup-copy",), addons=True)
     secrets = copy_env.env_dir / "secrets"
     assert _schema_errors(copy_env.root) == []
     template = next(secrets.glob("*.sops.yaml")).read_text(encoding="utf-8")

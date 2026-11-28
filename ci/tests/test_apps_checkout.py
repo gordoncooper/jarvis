@@ -25,7 +25,7 @@ _GIT = ["git", "-c", "user.email=fixture@example.com", "-c", "user.name=fixture"
 def _instance(tmp_path: Path, *, core_only: bool) -> Path:
     """Instance checkout with env-00; core-only drops its apps."""
     instance = tmp_path / "instance"
-    env_dir = copy_sample(instance) / "envs" / "env-00"
+    env_dir = copy_sample(instance, "app-hosting") / "envs" / "env-00"
     if core_only:
         (env_dir / "values" / "apps.yaml").write_text("{}\n", encoding="utf-8")
         shutil.rmtree(env_dir / "secrets" / "app-notes")
