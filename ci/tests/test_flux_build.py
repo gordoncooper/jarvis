@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jarvis.checks.flux_build import env_tree
+from jarvis.checks.flux_build import EnvTree, env_tree
 from jarvis.checks.manifests import kustomize_build
-from support import copy_sample, core_at, sample_root, write_flux_root
+from support import REPO_ROOT, copy_sample, core_at, sample_root, write_flux_root
 
 _API = "kustomize.toolkit.fluxcd.io/v1"
 
@@ -36,8 +36,8 @@ _TARGET = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out", 
            "data": {"env": "${jarvis_env}", "colour": "${colour:=grey}"}}  # fmt: skip
 
 
-def _repo(root: Path, root_docs: list[dict], layer_docs: list[dict] | None = None) -> Path:
-    """An env whose root applies root_docs, with one plain folder core/layer holding layer_docs."""
+def _repo(root: Path, root_docs: list[dict]) -> Path:
+    """An env whose root applies root_docs, with one plain folder core/layer holding _TARGET."""
     flux = root / "envs" / "env-test" / "flux"
     flux.mkdir(parents=True)
     (flux / "kustomization.yaml").write_text("resources: [layers.yaml]\n", encoding="utf-8")
@@ -45,7 +45,7 @@ def _repo(root: Path, root_docs: list[dict], layer_docs: list[dict] | None = Non
     layer = root / "core" / "layer"
     layer.mkdir(parents=True)
     # No kustomization file: Flux generates one for a plain directory, as on the cluster.
-    (layer / "objects.yaml").write_text(yaml.safe_dump_all(layer_docs or [_TARGET]), encoding="utf-8")
+    (layer / "objects.yaml").write_text(yaml.safe_dump(_TARGET), encoding="utf-8")
     write_flux_root(flux.parent)
     return root
 
@@ -72,19 +72,18 @@ def _digest(base: Path) -> str:
 
 
 def test_walking_the_sample_writes_nothing_to_the_repository(tmp_path: Path) -> None:
-    """Flux builds in memory: the env and core's trees are byte-for-byte unchanged afterwards."""
+    """Rule: Flux builds in memory: the env and core's trees are byte-for-byte unchanged afterwards."""
     root = copy_sample(tmp_path / "instance")
-    core = Path(__file__).resolve().parents[2]
-    trees = [root, core / "core", core / "addons", core / "ci" / "tests" / "fixtures" / "addons"]
+    trees = [root, REPO_ROOT / "core", REPO_ROOT / "addons", REPO_ROOT / "ci" / "tests" / "fixtures" / "addons"]
     before = [_digest(tree) for tree in trees]
     tree = env_tree(root, "envs/env-00/flux")
-    assert tree.error is None, tree.error
+    assert tree.error is None and any(path.docs for path in tree.paths), tree.error
     assert [_digest(tree) for tree in trees] == before
 
 
 def test_the_sample_tree_holds_every_layer_built() -> None:
-    """The root applies the stages; each built path's Kustomizations are built in turn (the sample
-    lists no add-on, so its services stage applies nothing yet)."""
+    """Rule: the root applies the stages, each built (the sample lists no add-on, so its services stage
+    applies nothing yet)."""
     tree = env_tree(sample_root(), "envs/env-00/flux")
     assert tree.error is None, tree.error
     built = {path.kustomization["metadata"]["name"]: path for path in tree.paths}
@@ -94,55 +93,57 @@ def test_the_sample_tree_holds_every_layer_built() -> None:
         assert bool(built[stage].docs) == (stage != "services")
 
 
-def test_substitute_from_reads_the_built_config_map_and_inline_wins(tmp_path: Path) -> None:
-    """A substituteFrom ConfigMap is read from what the root applies; the inline substitute wins."""
-    post_build = {"substitute": {"colour": "blue"}, "substituteFrom": [{"kind": "ConfigMap", "name": "cluster-vars"}]}
-    root = _repo(tmp_path, [_ks("layer", "./core/layer", post_build=post_build),
-                            _config_map("cluster-vars", {"jarvis_env": "env-test", "colour": "red"})])  # fmt: skip
-    (out,) = _layer(root).docs
-    assert out["data"] == {"env": "env-test", "colour": "blue"}
+_FROM_GONE = {"substitute": {"jarvis_env": "env-test"}, "substituteFrom": [{"kind": "ConfigMap", "name": "gone"}]}
+_DEFAULTED = {"env": "env-test", "colour": "grey"}
 
 
-def test_substitute_from_decodes_a_secret_and_keeps_a_default(tmp_path: Path) -> None:
-    """A plain Secret's data is base64, as Flux decodes it; an unset variable with a default takes it."""
-    post_build = {"substituteFrom": [{"kind": "Secret", "name": "vars"}]}
-    root = _repo(tmp_path, [_ks("layer", "./core/layer", post_build=post_build), _secret("vars", {"jarvis_env": "env-test"})])
-    (out,) = _layer(root).docs
-    assert out["data"] == {"env": "env-test", "colour": "grey"}
-
-
-def test_missing_substitution_source_fails_unless_optional(tmp_path: Path) -> None:
-    """A substituteFrom ConfigMap the tree does not hold fails the path; optional ones are skipped."""
-    missing = {"substitute": {"jarvis_env": "env-test"}, "substituteFrom": [{"kind": "ConfigMap", "name": "gone"}]}
-    path = _layer(_repo(tmp_path / "a", [_ks("layer", "./core/layer", post_build=missing)]))
-    assert path.error and "ConfigMap flux-system/gone is not in the env's flux tree" in path.error
-    optional = {**missing, "substituteFrom": [{"kind": "ConfigMap", "name": "gone", "optional": True}]}
-    path = _layer(_repo(tmp_path / "b", [_ks("layer", "./core/layer", post_build=optional)]))
-    assert path.error is None and path.docs[0]["data"]["env"] == "env-test"
-
-
-def test_variable_with_no_value_fails_the_build(tmp_path: Path) -> None:
-    """Strict substitution: a variable with no value and no default fails, as the reconcile does."""
-    path = _layer(_repo(tmp_path, [_ks("layer", "./core/layer", post_build={"substitute": {"colour": "x"}})]))
-    assert path.error and path.error.startswith("flux build layer failed:") and "jarvis_env" in path.error
+@pytest.mark.parametrize(
+    ("post_build", "sources", "data", "error"),
+    [
+        pytest.param({"substitute": {"colour": "blue"}, "substituteFrom": [{"kind": "ConfigMap", "name": "cluster-vars"}]},
+                     [_config_map("cluster-vars", {"jarvis_env": "env-test", "colour": "red"})],
+                     {"env": "env-test", "colour": "blue"}, None, id="config-map-inline-wins"),
+        pytest.param({"substituteFrom": [{"kind": "Secret", "name": "vars"}]}, [_secret("vars", {"jarvis_env": "env-test"})],
+                     _DEFAULTED, None, id="secret-decoded-default-kept"),
+        pytest.param(_FROM_GONE, [], None, "substituteFrom ConfigMap flux-system/gone is not in the env's flux tree",
+                     id="missing-source"),
+        pytest.param({**_FROM_GONE, "substituteFrom": [{"kind": "ConfigMap", "name": "gone", "optional": True}]}, [],
+                     _DEFAULTED, None, id="optional-source-skipped"),
+        pytest.param({"substitute": {"colour": "x"}}, [], None, "flux build layer failed: ✗ var substitution failed for"
+                     " 'out': envsubst error: variable substitution failed: variable not set (strict mode): \"jarvis_env\"",
+                     id="variable-without-value"),
+    ],
+)
+def test_a_layer_is_built_with_its_post_build_values(
+    tmp_path: Path, post_build: dict, sources: list[dict], data: dict | None, error: str | None
+) -> None:
+    """Rule: substituteFrom reads what the root built (a Secret decoded) and the inline substitute wins; a
+    missing source fails unless optional, and a variable with no value fails the build, as the reconcile does."""
+    path = _layer(_repo(tmp_path, [_ks("layer", "./core/layer", post_build=post_build), *sources]))
+    assert ([doc["data"] for doc in path.docs], path.error) == ([data] if data else [], error)
 
 
 def test_kustomization_on_another_source_is_partial(tmp_path: Path) -> None:
-    """A path read from another source (an app's repository) is listed, not built."""
-    root = _repo(tmp_path, [_ks("app-x", "./deploy", source="app-x")])
-    tree = _tree(root)
-    (path,) = tree.paths
+    """Rule: a path read from another source (an app's repository) is listed, not built."""
+    (path,) = _tree(_repo(tmp_path, [_ks("app-x", "./deploy", source="app-x")])).paths
     assert path.partial and path.docs == [] and path.error is None
 
 
-def test_env_without_a_root_kustomization_is_an_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("name", "text", "error"), [
+    pytest.param("sync.yaml", "{}\n", "envs/env-test/flux/sync.yaml declares no root Kustomization flux-system", id="no-root"),
+    pytest.param("kustomization.yaml", "resources: [gone.yaml]\n", "flux build flux-system failed: ✗ failed to generate"
+                 " kustomization.yaml: lstat envs/env-test/flux/gone.yaml: no such file or directory <nil>", id="root-does-not-build"),
+])  # fmt: skip
+def test_an_env_whose_root_does_not_build_is_an_error(tmp_path: Path, name: str, text: str, error: str) -> None:
+    """Rule: an env whose sync.yaml declares no root Kustomization, or whose root does not build, is an error with
+    nothing built; flux's message names the env's files, not the temporary artifact's."""
     root = _repo(tmp_path, [])
-    (root / "envs" / "env-test" / "flux" / "sync.yaml").write_text("{}\n", encoding="utf-8")
-    assert "declares no root Kustomization flux-system" in (_tree(root).error or "")
+    (root / "envs" / "env-test" / "flux" / name).write_text(text, encoding="utf-8")
+    assert _tree(root) == EnvTree([], [], error)
 
 
 def test_a_changed_file_rebuilds_the_tree(tmp_path: Path) -> None:
-    """The walk is cached per content: editing a file between checks is seen."""
+    """Rule: the walk is cached per content: editing a file between checks is seen."""
     root = _repo(tmp_path, [_ks("layer", "./core/layer", post_build={"substitute": {"jarvis_env": "one"}})])
     assert _layer(root).docs[0]["data"]["env"] == "one"
     layers = root / "envs" / "env-test" / "flux" / "layers.yaml"
@@ -152,6 +153,5 @@ def test_a_changed_file_rebuilds_the_tree(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("rel", ["envs/env-00/flux", "../elsewhere", "ci/tests"])
 def test_kustomize_build_reads_core_trees_only(rel: str) -> None:
-    """What an env applies is Flux's build; kustomize_build is for core's own folders."""
-    docs, error = kustomize_build(Path(__file__).resolve().parents[2], rel)
-    assert docs == [] and error and "is not one of core's trees" in error
+    """Rule: what an env applies is Flux's build; kustomize_build is for core's own folders."""
+    assert kustomize_build(REPO_ROOT, rel) == ([], f"{rel} is not one of core's trees (core, addons)")
