@@ -34,7 +34,8 @@ current-context: default
 """
 
 
-def _kubeconfig(tmp_path: Path, *flags: str, source: str = _SOURCE) -> subprocess.CompletedProcess[str]:
+def _kubeconfig(tmp_path: Path, *flags: str, source: str = _SOURCE,
+                json: bool = True) -> subprocess.CompletedProcess[str]:
     """The kubeconfig role for env fixture on control-1, run on this machine with HOME at tmp_path/home and source as
     the node's kubeconfig."""
     node_kubeconfig = tmp_path / "k3s.yaml"
@@ -42,7 +43,7 @@ def _kubeconfig(tmp_path: Path, *flags: str, source: str = _SOURCE) -> subproces
     play_vars = {"jarvis_env": "fixture", "k3s_kubeconfig_path": str(node_kubeconfig)}
     play = local_play(tmp_path, role_tasks("kubeconfig"), hosts="all", vars=play_vars)
     inventory = ("-i", "control-1,", "-e", "ansible_connection=local")
-    return playbook(play, *inventory, *flags, env={"HOME": str(tmp_path / "home")}, json=True)
+    return playbook(play, *inventory, *flags, env={"HOME": str(tmp_path / "home")}, json=json)
 
 
 def _modes(kube: Path) -> dict[str, int]:
@@ -83,9 +84,14 @@ def test_kubeconfig_fails_when_the_server_line_does_not_change(tmp_path: Path) -
     runner_kubeconfig.write_text("sentinel\n", encoding="utf-8")
     runner_kubeconfig.chmod(0o600)
 
-    run = _kubeconfig(tmp_path, source=_SOURCE.replace(_LOOPBACK, "https://kube.example:6443"))
-    assert run.returncode != 0, run.output
+    source = _SOURCE.replace(_LOOPBACK, "https://kube.example:6443")
+    run = _kubeconfig(tmp_path, source=source)
+    # The refusal changes nothing, so this run meets the same state. Its output, as jarvis site prints it, shows a
+    # failed no_log task's fail_msg (ansible-core 2.22), which the JSON result censors.
+    shown = _kubeconfig(tmp_path, source=source, json=False)
+    assert run.returncode != 0 and shown.returncode == run.returncode, shown.output
     assert ran(run, "Fail when the kubeconfig server line did not change") == {"control-1": "failed"}
-    assert _SECRET not in run.output, run.output
+    for output in (run.output, shown.output):
+        assert _SECRET not in output, output
     assert runner_kubeconfig.read_text(encoding="utf-8") == "sentinel\n"
     assert _modes(kube) == {".kube": 0o700, "jarvis-fixture.yaml": 0o600}
