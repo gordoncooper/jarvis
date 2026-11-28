@@ -8,76 +8,56 @@ Throwaway passwords; nothing is printed.
 
 from __future__ import annotations
 
-import importlib
 import os
 import re
 import secrets
-import socket
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
 import yaml
 from conftest import require_cli
 
-from support import REPO_ROOT
+from jarvis.secrets.mint import _htpasswd_line
+from support import REPO_ROOT, free_port, wait_listening
 
 APPS_MANIFEST = REPO_ROOT / "core/feature/app-hosting/backups/rest-server.yaml"
 
 
-def _pinned(path: Path, image: str) -> str:
-    match = re.search(rf"image: {re.escape(image)}:(\d+\.\d+\.\d+)@", path.read_text(encoding="utf-8"))
-    assert match, path
-    return match.group(1)
-
-
-def _require_pinned(name: str, version_args: list[str], pinned: str) -> str:
+def _require_pinned(name: str, version_args: list[str], manifest: Path, image: str) -> str:
+    """name on PATH, which must be the release of image that manifest pins."""
+    pinned = re.search(rf"image: {re.escape(image)}:(\d+\.\d+\.\d+)@", manifest.read_text(encoding="utf-8"))
+    assert pinned, manifest
     binary = require_cli(name)
     out = subprocess.run([binary, *version_args], capture_output=True, text=True, check=False)
     found = re.search(r"(\d+\.\d+\.\d+)", out.stdout + out.stderr)
-    assert found and found.group(1) == pinned, f"{name} on PATH is not the pinned {pinned}"
+    assert found and found.group(1) == pinned.group(1), f"{name} on PATH is not the pinned {pinned.group(1)}"
     return binary
-
-
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-def _wait(port: int, proc: subprocess.Popen) -> None:
-    for _ in range(100):
-        assert proc.poll() is None, "rest-server exited"
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
-            return
-        except OSError:
-            time.sleep(0.05)
-    raise AssertionError("rest-server did not listen")
 
 
 @pytest.fixture
 def servers(tmp_path: Path):
-    rest_server = _require_pinned("rest-server", ["--version"], _pinned(APPS_MANIFEST, "restic/rest-server"))
+    """Both servers on one data directory, each binary the release the manifests pin, and three logins."""
+    rest_server = _require_pinned("rest-server", ["--version"], APPS_MANIFEST, "restic/rest-server")
+    restic = _require_pinned("restic", ["version"], REPO_ROOT / "core/platform/backups/restic-check.yaml", "restic/restic")
+    # One binary stands in for both servers: they must run one image.
     image = re.compile(r"image: restic/rest-server:\S+")
     core_manifest = REPO_ROOT / "core/platform/backups/rest-server.yaml"
     assert image.findall(APPS_MANIFEST.read_text(encoding="utf-8")) == image.findall(core_manifest.read_text(encoding="utf-8"))
-    tool = importlib.import_module("jarvis.secrets.mint")
     data, creds, auth = tmp_path / "data", tmp_path / "credentials", tmp_path / "auth"
     for folder in (data, creds, auth):
         folder.mkdir()
     logins = {user: secrets.token_urlsafe(24) for user in ("restic", "ns-app-shop", "ns-app-blog")}
-    (tmp_path / "core.htpasswd").write_text(tool._htpasswd_line("restic", logins["restic"]), encoding="utf-8")
+    (tmp_path / "core.htpasswd").write_text(_htpasswd_line("restic", logins["restic"]), encoding="utf-8")
     for app in ("app-shop", "app-blog"):
         (creds / app).mkdir()
         # The blog line names core's user; the apps server must still call it ns-app-blog.
         named = "restic" if app == "app-blog" else f"ns-{app}"
-        (creds / app / "htpasswd").write_text(tool._htpasswd_line(named, logins[f"ns-{app}"]), encoding="utf-8")
+        (creds / app / "htpasswd").write_text(_htpasswd_line(named, logins[f"ns-{app}"]), encoding="utf-8")
     # A folder that is not a namespace name never becomes a user.
     (creds / "app-Bad").mkdir()
-    (creds / "app-Bad" / "htpasswd").write_text(tool._htpasswd_line("x", logins["ns-app-shop"]), encoding="utf-8")
-    core_port, apps_port = _free_port(), _free_port()
+    (creds / "app-Bad" / "htpasswd").write_text(_htpasswd_line("x", logins["ns-app-shop"]), encoding="utf-8")
+    core_port, apps_port = free_port(), free_port()
     container = yaml.safe_load(APPS_MANIFEST.read_text(encoding="utf-8").split("\n---\n")[0])["spec"]["template"]["spec"]["containers"][0]
     script = (
         container["command"][-1]
@@ -95,9 +75,9 @@ def servers(tmp_path: Path):
         subprocess.Popen(["sh", "-c", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True),
     ]
     try:
-        _wait(core_port, procs[0])
-        _wait(apps_port, procs[1])
-        yield {"core": core_port, "apps": apps_port, "logins": logins, "tmp": tmp_path, "auth": auth}
+        wait_listening(core_port, procs[0])
+        wait_listening(apps_port, procs[1])
+        yield {"core": core_port, "apps": apps_port, "logins": logins, "tmp": tmp_path, "auth": auth, "restic": restic}
     finally:
         for proc in procs:
             proc.terminate()
@@ -105,7 +85,6 @@ def servers(tmp_path: Path):
 
 
 def _restic(servers: dict, port: str, user: str, login: str, path: str, password: str, *args: str) -> int:
-    restic = _require_pinned("restic", ["version"], _pinned(REPO_ROOT / "core/platform/backups/restic-check.yaml", "restic/restic"))
     env = {
         **os.environ,
         "RESTIC_REPOSITORY": f"rest:http://127.0.0.1:{servers[port]}/{path}",
@@ -114,11 +93,13 @@ def _restic(servers: dict, port: str, user: str, login: str, path: str, password
         "RESTIC_PASSWORD": password,
     }
     return subprocess.run(
-        [restic, "--no-cache", "--retry-lock", "0s", *args], env=env, capture_output=True, text=True, check=False, timeout=60
+        [servers["restic"], "--no-cache", "--retry-lock", "0s", *args], env=env, capture_output=True, text=True, check=False, timeout=60
     ).returncode
 
 
 def test_app_login_is_confined_to_its_own_repositories(servers: dict) -> None:
+    """Rule: an app's login inits, backs up and prunes its own repositories on the apps server, and opens, prunes or
+    creates no other repository on either server, even with the right password; its user is its folder's name."""
     logins = servers["logins"]
     core_pw, shop_pw, blog_pw = (secrets.token_urlsafe(24) for _ in range(3))
     payload = servers["tmp"] / "payload"

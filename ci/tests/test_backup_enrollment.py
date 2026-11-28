@@ -5,31 +5,15 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
+import sample
 import yaml
 
+from jarvis.env import scaffold
 from support import REPO_ROOT as ROOT
-from support import (
-    flux_envsubst,
-    kyverno_generated,
-    sample_root,
-)
+from support import flux_envsubst, kyverno_generated, yaml_docs
 
-
-def _docs(path: Path) -> list[dict]:
-    return [
-        doc
-        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
-        if isinstance(doc, dict)
-    ]
-
-
-_ENV = {key: str(value) for key, value in yaml.safe_load(
-    (sample_root() / "envs/env-00/values/cluster-vars.yaml").read_text(encoding="utf-8")).items()
-    if key.startswith("backup_")}
-
-
-def _b64(text: str) -> str:
-    return base64.b64encode(text.encode()).decode()
+# The env's backup values, as jarvis init writes them.
+_ENV = {key: str(value) for key, value in yaml.safe_load(scaffold.cluster_vars(sample.spec())).items() if key.startswith("backup_")}
 
 
 def _claim(name: str, namespace: str, *, bound: bool = True, **annotations: str) -> dict:
@@ -41,10 +25,15 @@ def _claim(name: str, namespace: str, *, bound: bool = True, **annotations: str)
     return claim
 
 
+def _values(repository: str, password: str) -> dict[str, str]:
+    """A restic credential's keys: the repository, and a password and login told apart by password."""
+    return {"RESTIC_REPOSITORY": repository, "RESTIC_PASSWORD": password,
+            "RESTIC_REST_USERNAME": f"user-{password}", "RESTIC_REST_PASSWORD": f"rest-{password}"}
+
+
 def _credential(name: str, repository: str, password: str) -> dict:
-    return {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": "platform-backups"},
-            "data": {"RESTIC_REPOSITORY": _b64(repository), "RESTIC_PASSWORD": _b64(password),
-                     "RESTIC_REST_USERNAME": _b64(f"user-{password}"), "RESTIC_REST_PASSWORD": _b64(f"rest-{password}")}}
+    data = {key: base64.b64encode(value.encode()).decode() for key, value in _values(repository, password).items()}
+    return {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": "platform-backups"}, "data": data}
 
 
 def _cluster(*extra: dict) -> list[dict]:
@@ -61,59 +50,62 @@ def _cluster(*extra: dict) -> list[dict]:
 
 
 def _generated(tmp_path: Path, claims: list[dict], cluster: list[dict]) -> dict[tuple[str, str, str], dict]:
-    policies = flux_envsubst([*_docs(ROOT / "core/platform/backups/enrollment.yaml"),
-                              *_docs(ROOT / "core/feature/app-hosting/backups/policies.yaml")], _ENV)
+    policies = flux_envsubst([*yaml_docs(ROOT / "core/platform/backups/enrollment.yaml"),
+                              *yaml_docs(ROOT / "core/feature/app-hosting/backups/policies.yaml")], _ENV)
     made = kyverno_generated(tmp_path, policies, claims, cluster)
     return {(doc["kind"], doc["metadata"]["namespace"], doc["metadata"]["name"]): doc for doc in made}
 
 
+def _decided(doc: dict) -> dict:
+    """A generated Secret's data, decoded, or a source's spec less the policy's own cache, prune and within
+    settings, which are its to tune."""
+    if doc["kind"] == "Secret":
+        return {key: base64.b64decode(value).decode() for key, value in doc["data"].items()}
+    restic = {key: value for key, value in doc["spec"]["restic"].items() if key not in ("cacheCapacity", "pruneIntervalDays")}
+    return {**doc["spec"], "restic": {**restic, "retain": {key: value for key, value in restic["retain"].items() if key != "within"}}}
+
+
 def _source(name: str, *, paused: bool = False) -> dict:
+    """A claim's source: the env's schedule and retention, its own Secret, read in place (local-path has no snapshots)."""
+    retain = {key: int(_ENV[f"backup_retention_{key}"]) for key in ("daily", "weekly", "monthly")}
     return {"paused": paused, "sourcePVC": name, "trigger": {"schedule": _ENV["backup_schedule"]},
-            "restic": {"repository": f"restic-{name}", "copyMethod": "Direct", "cacheCapacity": "1Gi", "pruneIntervalDays": 7,
-                       "retain": {"daily": int(_ENV["backup_retention_daily"]),
-                                  "weekly": int(_ENV["backup_retention_weekly"]),
-                                  "monthly": int(_ENV["backup_retention_monthly"]), "within": "7d"}}}
+            "restic": {"repository": f"restic-{name}", "copyMethod": "Direct", "retain": retain}}
 
 
 def test_enrollment_generates_a_secret_and_source_per_bound_claim(tmp_path: Path) -> None:
-    """Rule: a bound claim gets Secret restic-<pvc> and ReplicationSource <pvc> on the env's
-    schedule and retention; a claim in a core layer's namespace reads core's credential, an app-
-    claim only its own; an app with no credential, a namespace with no layer, an unbound claim,
-    backup: none and a mover's claim get nothing; backup: paused pauses its source."""
+    """Rule: in a core layer and in an app with its credential, a bound claim gets Secret restic-<pvc> (core's or that app's
+    credential) and a source on the env's schedule and retention, paused if backup: paused; any other claim gets nothing."""
     claims = [
         _claim("data", "monitoring"),
         _claim("held", "monitoring", backup="paused"),
         _claim("db", "app-notes"),
+        _claim("held", "app-notes", backup="paused"),
         _claim("db", "app-web-demo"),
         _claim("waiting", "monitoring", bound=False),
+        _claim("waiting", "app-notes", bound=False),
         _claim("scratch", "monitoring", backup="none"),
+        _claim("scratch", "app-notes", backup="none"),
         _claim("data", "by-hand"),
     ]
-    mover = _claim("volsync-cache", "monitoring")
-    mover["metadata"]["labels"] = {"app.kubernetes.io/created-by": "volsync"}
-    made = _generated(tmp_path, [*claims, mover], _cluster())
-    assert set(made) == {
-        ("Secret", "monitoring", "restic-data"), ("ReplicationSource", "monitoring", "data"),
-        ("Secret", "monitoring", "restic-held"), ("ReplicationSource", "monitoring", "held"),
-        ("Secret", "app-notes", "restic-db"), ("ReplicationSource", "app-notes", "db"),
+    movers = [_claim("volsync-cache", namespace) for namespace in ("monitoring", "app-notes")]
+    for mover in movers:
+        mover["metadata"]["labels"] = {"app.kubernetes.io/created-by": "volsync"}
+    made = _generated(tmp_path, [*claims, *movers], _cluster())
+    assert {key: _decided(doc) for key, doc in made.items()} == {
+        ("Secret", "monitoring", "restic-data"): _values("rest:http://restic:8000/ns-monitoring/pvc-data", "core"),
+        ("ReplicationSource", "monitoring", "data"): _source("data"),
+        ("Secret", "monitoring", "restic-held"): _values("rest:http://restic:8000/ns-monitoring/pvc-held", "core"),
+        ("ReplicationSource", "monitoring", "held"): _source("held", paused=True),
+        ("Secret", "app-notes", "restic-db"): _values("rest:http://restic-apps:8000/ns-app-notes/pvc-db", "notes"),
+        ("ReplicationSource", "app-notes", "db"): _source("db"),
+        ("Secret", "app-notes", "restic-held"): _values("rest:http://restic-apps:8000/ns-app-notes/pvc-held", "notes"),
+        ("ReplicationSource", "app-notes", "held"): _source("held", paused=True),
     }
-    core = made[("Secret", "monitoring", "restic-data")]["data"]
-    assert base64.b64decode(core["RESTIC_REPOSITORY"]).decode() == "rest:http://restic:8000/ns-monitoring/pvc-data"
-    assert base64.b64decode(core["RESTIC_PASSWORD"]).decode() == "core"
-    app = made[("Secret", "app-notes", "restic-db")]["data"]
-    assert base64.b64decode(app["RESTIC_REPOSITORY"]).decode() == "rest:http://restic-apps:8000/ns-app-notes/pvc-db"
-    assert {base64.b64decode(value).decode() for value in app.values()} & {"core", "user-core", "rest-core"} == set()
-    assert made[("ReplicationSource", "monitoring", "data")]["spec"] == _source("data")
-    assert made[("ReplicationSource", "monitoring", "held")]["spec"] == _source("held", paused=True)
-    assert made[("ReplicationSource", "app-notes", "db")]["spec"] == _source("db")
 
 
 def test_rebuild_hold_pauses_every_source(tmp_path: Path) -> None:
-    """Rule: while kube-system/backup-rebuild-hold exists, every generated source is paused."""
+    """Rule: while kube-system/backup-rebuild-hold exists, every generated source is paused, core's and an app's."""
     hold = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "backup-rebuild-hold", "namespace": "kube-system"}}
     made = _generated(tmp_path, [_claim("data", "monitoring"), _claim("db", "app-notes")], _cluster(hold))
-    sources = [doc for doc in made.values() if doc["kind"] == "ReplicationSource"]
-    assert len(sources) == 2
-    assert all(doc["spec"]["paused"] is True for doc in sources)
-
-
+    assert {key: doc["spec"]["paused"] for key, doc in made.items() if key[0] == "ReplicationSource"} == {
+        ("ReplicationSource", "monitoring", "data"): True, ("ReplicationSource", "app-notes", "db"): True}

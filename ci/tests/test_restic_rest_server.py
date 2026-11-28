@@ -1,4 +1,5 @@
-"""Rules from the platform-backups contract for the rest-server and etcd copy."""
+"""Rules from the platform-backups contract for restic-check and the off-host copy: each CronJob as an env
+builds it, and its script run over a fake restic."""
 
 from __future__ import annotations
 
@@ -6,286 +7,192 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from subprocess import CompletedProcess
 
 import pytest
 import yaml
 
+from jarvis.schema.env import offsite_copy_listed, resolve_cluster_vars
 from support import REPO_ROOT as ROOT
-from support import ExampleCopy, flux_built, real_and_copy_envs
+from support import copy_sample, flux_built, render_switches, sample_root, set_switches, yaml_docs
 
-_DEDICATED_TOLERATION = {
-    "key": "node-role.jarvis.io/dedicated",
-    "operator": "Equal",
-    "value": "true",
-    "effect": "NoSchedule",
-}
+# App hosting registers app credentials in restic-check and restic-offsite.
+_APPS_AND_OFFSITE = ("app-hosting", "offsite-backup-copy")
 
 
-def _assert_dedicated_placement(pod: dict, role: str) -> None:
-    """Required affinity matches the role label, and tolerates one taint."""
+def _container(cronjob: dict) -> dict:
+    return cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+
+
+def _cronjob(root: Path, name: str) -> dict:
+    return next(doc for doc in flux_built(root, "env-00") if doc["kind"] == "CronJob" and doc["metadata"]["name"] == name)
+
+
+def _run(tmp_path: Path, container: dict, fake: str, repos: list[str], **env: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """The container's script over repos under tmp_path, fake as restic beside tmp_path/bin's tools: its run and calls."""
+    data, bindir = tmp_path / "data", tmp_path / "bin"
+    data.mkdir()
+    for repo in repos:
+        (data / repo).mkdir(parents=True)
+    bindir.mkdir(exist_ok=True)
+    (bindir / "restic").write_text(fake, encoding="utf-8")
+    (bindir / "restic").chmod(0o755)
+    values = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    script = container["command"][-1].replace("/repositories", str(data)).replace("/credentials", str(tmp_path / "credentials"))
+    proc = subprocess.run(["sh", "-c", script], env={**values, "PATH": f"{bindir}:{os.environ['PATH']}", "LOG": str(tmp_path / "log"), **env},
+                          capture_output=True, text=True, check=False)  # fmt: skip
+    return proc, (tmp_path / "log").read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize(("name", "command"), [pytest.param("restic-check", "check", id="restic-check"),
+                                               pytest.param("restic-offsite", "copy", id="restic-offsite")])
+def test_restic_check_and_offsite_read_repositories_without_a_lock(name: str, command: str) -> None:
+    """Rule: restic-check and restic-offsite run the etcd copy's pinned image with a memory cap on the backup node, take no
+    local lock, have no API token or capability and mount the repositories read-only: never block, delete, prune or unlock."""
+    root = sample_root(*_APPS_AND_OFFSITE)
+    pod = _cronjob(root, name)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    assert container["image"] == _container(yaml_docs(ROOT / "core/platform/backups/etcd-snapshots.yaml")[0])["image"]
+    assert re.fullmatch(r"restic/restic:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"])
+    assert container["resources"]["requests"]["memory"] and container["resources"]["limits"]["memory"]
     assert "nodeSelector" not in pod
-    required = pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
-    assert required["nodeSelectorTerms"] == [
-        {
-            "matchExpressions": [
-                {
-                    "key": f"node-role.jarvis.io/{role}",
-                    "operator": "In",
-                    "values": ["true"],
-                }
-            ]
-        },
-    ]
-    assert pod["tolerations"] == [_DEDICATED_TOLERATION]
+    assert pod["affinity"] == {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [
+        {"matchExpressions": [{"key": "node-role.jarvis.io/backup", "operator": "In", "values": ["true"]}]}]}}}
+    assert pod["tolerations"] == [{"key": "node-role.jarvis.io/dedicated", "operator": "Equal", "value": "true", "effect": "NoSchedule"}]
+    # No API token and no capabilities: root may only read files it owns.
+    assert pod["automountServiceAccountToken"] is False
+    assert container["securityContext"] == {"runAsUser": 0, "allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+    assert re.search(rf"\brestic\b[^\n]*--no-lock\b[^\n]*\b{command}\b", container["command"][-1])
+    values = resolve_cluster_vars(yaml.safe_load((root / "envs" / "env-00" / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")))
+    mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
+    assert [(volume["hostPath"]["path"], mounts[volume["name"]]["readOnly"]) for volume in pod["volumes"] if "hostPath" in volume] == [
+        (f"{values['backup_path']}/restic", True)]
 
 
-def _docs(path: Path) -> list[dict]:
-    return [
-        doc
-        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
-        if isinstance(doc, dict)
-    ]
-
-
-def _restic_check(root: Path, env: str) -> dict:
-    return next(
-        doc
-        for doc in flux_built(root, env)
-        if doc.get("kind") == "CronJob"
-        and doc["metadata"]["name"] == "restic-check"
-    )
-
-
-def test_restic_check_reads_repositories_without_a_lock(example_copy: ExampleCopy) -> None:
-    """The check takes no lock and mounts the repositories read-only, so it never blocks,
-    deletes, prunes or unlocks anything; it has no API token or capabilities, and runs the
-    etcd copy's pinned image with a memory cap."""
-    etcd = _docs(ROOT / "core/platform/backups/etcd-snapshots.yaml")[0]
-    etcd_image = etcd["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["image"]
-    from jarvis.schema.env import resolve_cluster_vars
-
-    for root, env in real_and_copy_envs(example_copy):
-        values = resolve_cluster_vars(yaml.safe_load((root / "envs" / env / "values" / "cluster-vars.yaml").read_text(encoding="utf-8")))
-        pod = _restic_check(root, env)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-        container = pod["containers"][0]
-        assert container["image"] == etcd_image
-        assert re.fullmatch(r"restic/restic:\d+\.\d+\.\d+@sha256:[a-f0-9]{64}", container["image"])
-        assert container["resources"]["requests"]["memory"]
-        assert container["resources"]["limits"]["memory"]
-        _assert_dedicated_placement(pod, "backup")
-        # No API token and no capabilities: root may only read files it owns.
-        assert pod["automountServiceAccountToken"] is False
-        security = container["securityContext"]
-        assert security["capabilities"]["drop"] == ["ALL"]
-        assert "add" not in security["capabilities"]
-        assert security["allowPrivilegeEscalation"] is False
-        assert re.search(r"\brestic\b[^\n]*--no-lock\b[^\n]*\bcheck\b", container["command"][-1])
-        mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
-        for volume in pod["volumes"]:
-            if "hostPath" in volume:
-                assert volume["hostPath"]["path"] == f"{values['backup_path']}/restic"
-                assert mounts[volume["name"]]["readOnly"] is True
-
-
-# Exits 10 for a missing repository and 1 for one marked broken; prints a file name it must not leak.
+# Exits 10 for a missing repository, 1 for a broken one and 12 (a wrong password) for one another credential wrote;
+# prints a file name it must not leak, on stdout and stderr.
 _FAKE_CHECK = """#!/bin/sh
 echo "$2 $5" >> "$LOG"
-echo "tree 1: file private-file-name"
+echo "tree 1: file private-file-name"; echo "tree 1: file private-file-name" >&2
 [ -d "$2" ] || exit 10
-[ ! -e "$2/broken" ] || exit 1
-[ ! -e "$2/other-password" ] || exit 12
+case "$2" in */pvc-bad) exit 1 ;; */pvc-other) exit 12 ;; esac
 """
 
 
 @pytest.mark.parametrize(
     ("repos", "code", "lines"),
     [
-        (
-            ["host-etcd-snapshots", "ns-a/pvc-ok", "ns-b/pvc-bad", "ns-c/pvc-other"],
-            1,
-            [
-                "PASS host-etcd-snapshots",
-                "PASS ns-a/pvc-ok",
-                "FAIL ns-b/pvc-bad: restic check exited 1",
-                "FAIL ns-c/pvc-other: core's password does not open it; remove it once its data is not needed (docs/backups.md)",
-            ],
-        ),
-        (["host-etcd-snapshots"], 0, ["PASS host-etcd-snapshots"]),
-        ([], 1, ["FAIL host-etcd-snapshots: restic check exited 10"]),
+        pytest.param(["host-etcd-snapshots", "ns-a/pvc-ok", "ns-b/pvc-bad", "ns-c/pvc-other"], 1, [
+            "PASS host-etcd-snapshots",
+            "PASS ns-a/pvc-ok",
+            "FAIL ns-b/pvc-bad: restic check exited 1",
+            "FAIL ns-c/pvc-other: core's password does not open it; remove it once its data is not needed (docs/backups.md)",
+        ], id="broken-and-foreign"),
+        pytest.param(["host-etcd-snapshots"], 0, ["PASS host-etcd-snapshots"], id="no-pvc-repository"),
+        pytest.param([], 1, ["FAIL host-etcd-snapshots: restic check exited 10"], id="no-etcd-repository"),
     ],
-)
+)  # fmt: skip
 def test_restic_check_script_checks_every_repository_and_prints_only_results(
     tmp_path: Path, repos: list[str], code: int, lines: list[str]
 ) -> None:
-    """Every PVC repository and the etcd repository is checked on a rotating slice; a missing
-    etcd repository fails, an empty PVC glob does not, one that core's password doesn't open says
-    so, and restic's own output never reaches the log."""
-    data, bindir = tmp_path / "data", tmp_path / "bin"
-    bindir.mkdir()
-    data.mkdir()
-    for repo in repos:
-        (data / repo).mkdir(parents=True)
-    for repo, marker in (("ns-b/pvc-bad", "broken"), ("ns-c/pvc-other", "other-password")):
-        if repo in repos:
-            (data / repo / marker).touch()
-    (bindir / "restic").write_text(_FAKE_CHECK, encoding="utf-8")
-    (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "core/platform/backups/restic-check.yaml")[0]["spec"]["jobTemplate"]
-    container = job["spec"]["template"]["spec"]["containers"][0]
-    env ={item["name"]: item["value"] for item in container["env"] if "value" in item}
-    env.update(PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(tmp_path / "log"))
-    script = container["command"][-1].replace("/repositories", str(data))
-    proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
-    assert proc.returncode == code
-    assert proc.stdout.splitlines() == lines
+    """Rule: every PVC repository and the etcd repository is checked on the week's slice of its data; a missing etcd
+    repository fails, an empty PVC glob does not, one core's password doesn't open says so, and no restic output shows."""
+    container = _container(yaml_docs(ROOT / "core/platform/backups/restic-check.yaml")[0])
+    (tmp_path / "bin").mkdir()
+    # A date in week 5 since the epoch, so the slice the week picks is known: 5 % READ_DATA_SLICES + 1.
+    (tmp_path / "bin" / "date").write_text(f"#!/bin/sh\necho {5 * 604800}\n", encoding="utf-8")
+    (tmp_path / "bin" / "date").chmod(0o755)
+    proc, calls = _run(tmp_path, container, _FAKE_CHECK, repos)
+    assert (proc.returncode, proc.stdout.splitlines()) == (code, lines)
     assert "private-file-name" not in proc.stdout + proc.stderr
-    subsets = {line.split()[1] for line in (tmp_path / "log").read_text().splitlines()}
-    assert len(subsets) == 1
-    slice_, total = subsets.pop().removeprefix("--read-data-subset=").split("/")
-    assert 1 <= int(slice_) <= int(total) == int(env["READ_DATA_SLICES"])
+    slices = int(next(item["value"] for item in container["env"] if item["name"] == "READ_DATA_SLICES"))
+    assert {call.split()[1] for call in calls} == {f"--read-data-subset={5 % slices + 1}/{slices}"}, calls
 
 
+# Exits 10 for a repository with no config; logs each call with the passwords it could read.
 _FAKE_KEYED = """#!/bin/sh
 echo "$* core=${RESTIC_PASSWORD-unset} from=${RESTIC_FROM_PASSWORD-unset}" >> "$LOG"
 case "$3" in cat) [ -e "$2/config" ] || exit 10 ;; init) mkdir -p "$2"; touch "$2/config" ;; esac
 """
 
 
-def _run_keyed(tmp_path: Path, container: dict, extra_env: dict[str, str]) -> tuple[CompletedProcess[str], list[str]]:
-    """Runs a CronJob's script over one core and two app repositories; only app-shop is registered."""
-    data, bindir, creds = tmp_path / "data", tmp_path / "bin", tmp_path / "credentials"
-    bindir.mkdir()
-    for repo in ("host-etcd-snapshots", "ns-a/pvc-x", "ns-app-shop/pvc-db", "ns-app-gone/pvc-db"):
-        (data / repo).mkdir(parents=True)
-    (creds / "app-shop").mkdir(parents=True)
-    (creds / "app-shop" / "RESTIC_PASSWORD").write_text("throwaway", encoding="utf-8")
-    (bindir / "restic").write_text(_FAKE_KEYED, encoding="utf-8")
-    (bindir / "restic").chmod(0o755)
-    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
-    env.update(PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(tmp_path / "log"), RESTIC_PASSWORD="core", **extra_env)
-    script = container["command"][-1].replace("/repositories", str(data)).replace("/credentials", str(creds))
-    proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
-    return proc, (tmp_path / "log").read_text().splitlines()
-
-
 @pytest.mark.parametrize(
-    ("name", "extra_env", "missing"),
+    ("name", "env", "missing"),
     [
-        ("restic-check", {}, "no backup credential registered for it"),
-        ("restic-offsite", {"RESTIC_FROM_PASSWORD": "core-local"}, "no backup credential registered for its app"),
+        pytest.param("restic-check", {}, "no backup credential registered for it", id="restic-check"),
+        pytest.param("restic-offsite", {"RESTIC_FROM_PASSWORD": "core-local"}, "no backup credential registered for its app",
+                     id="restic-offsite"),
     ],
-    ids=["restic-check", "restic-offsite"],
-)
-def test_app_repository_opens_only_with_its_own_password(
-    tmp_path: Path, example_copy: ExampleCopy, name: str, extra_env: dict[str, str], missing: str
-) -> None:
-    """With app hosting on, as the env builds each CronJob: an app repository gets that app's
-    password file and never core's password; core repositories keep core's; an app repository
-    with no registered credential fails alone."""
-    if name == "restic-offsite":
-        extra_env = {**extra_env, "RESTIC_REPOSITORY": f"{tmp_path / 'offsite'}/"}
-    cronjob = next(doc for doc in flux_built(example_copy.root, example_copy.name) if doc["kind"] == "CronJob" and doc["metadata"]["name"] == name)
-    proc, calls = _run_keyed(tmp_path, cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0], extra_env)
-    assert proc.returncode == 1
-    assert proc.stdout.splitlines() == [
-        "PASS host-etcd-snapshots",
-        "PASS ns-a/pvc-x",
-        f"FAIL ns-app-gone/pvc-db: {missing}",
-        "PASS ns-app-shop/pvc-db",
-    ]
-    key = f"--password-file {tmp_path / 'credentials' / 'app-shop' / 'RESTIC_PASSWORD'}"
+)  # fmt: skip
+def test_app_repository_opens_only_with_its_own_password(tmp_path: Path, name: str, env: dict[str, str], missing: str) -> None:
+    """Rule: with app hosting on, an app repository gets its app's password file and never core's password, core
+    repositories keep core's, and an app repository with no registered credential fails alone."""
+    key = tmp_path / "credentials" / "app-shop" / "RESTIC_PASSWORD"
+    key.parent.mkdir(parents=True)
+    key.write_text("throwaway", encoding="utf-8")
+    repos = ["host-etcd-snapshots", "ns-a/pvc-x", "ns-app-shop/pvc-db", "ns-app-gone/pvc-db"]
+    target = {"RESTIC_REPOSITORY": f"{tmp_path / 'offsite'}/"} if name == "restic-offsite" else {}
+    proc, calls = _run(tmp_path, _container(_cronjob(sample_root(*_APPS_AND_OFFSITE), name)), _FAKE_KEYED, repos,
+                       RESTIC_PASSWORD="core", **target, **env)  # fmt: skip
+    assert (proc.returncode, proc.stdout.splitlines()) == (1, [
+        "PASS host-etcd-snapshots", "PASS ns-a/pvc-x", f"FAIL ns-app-gone/pvc-db: {missing}", "PASS ns-app-shop/pvc-db"])
     app_calls = [call for call in calls if "ns-app-shop" in call]
-    assert app_calls and all(key in call and "core=unset from=unset" in call for call in app_calls)
-    assert not any("ns-app-gone" in call for call in calls)
-    assert all("--password-file" not in call for call in calls if "ns-app-" not in call)
+    assert app_calls and all(f"--password-file {key}" in call and call.endswith(" core=unset from=unset") for call in app_calls), calls
+    assert not any("ns-app-gone" in call for call in calls), calls
+    assert all("--password-file" not in call and " core=core " in call for call in calls if "ns-app-" not in call), calls
 
 
-def test_offsite_copy_renders_only_where_the_env_lists_it(example_copy: ExampleCopy) -> None:
-    """The example copy turns the off-host copy on with its own backups-offsite secret; an env
-    that does not list it renders no off-host CronJob or secret."""
-    from jarvis.schema.env import offsite_copy_listed
-
-    for root, env in real_and_copy_envs(example_copy):
-        docs = flux_built(root, env)
-        names = {(doc["kind"], doc["metadata"]["name"]) for doc in docs}
-        listed = offsite_copy_listed(root / "envs" / env)
-        assert listed or env != example_copy.name
-        assert (("CronJob", "restic-offsite") in names) is listed
-        assert (("Secret", "backups-offsite") in names) is listed
-        if listed:
-            cronjob = next(doc for doc in docs if doc["metadata"]["name"] == "restic-offsite")
-            container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
-            assert container["envFrom"] == [{"secretRef": {"name": "backups-offsite"}}]
+@pytest.mark.parametrize("features", [pytest.param(["app-hosting"], id="unlisted"), pytest.param(list(_APPS_AND_OFFSITE), id="listed")])
+def test_offsite_copy_renders_only_where_the_env_lists_it(tmp_path: Path, features: list[str]) -> None:
+    """Rule: only an env that lists the off-host copy renders restic-offsite, which reads its sealed backups-offsite
+    whole, and only there does verify read it as listed; unlisted, the sealed file it keeps renders nothing."""
+    env_dir = copy_sample(tmp_path, *_APPS_AND_OFFSITE) / "envs" / "env-00"
+    set_switches(env_dir, features=features)
+    render_switches(env_dir, tmp_path)
+    docs = flux_built(tmp_path, "env-00")
+    listed = "offsite-backup-copy" in features
+    assert offsite_copy_listed(env_dir) is listed
+    offsite = {("CronJob", "restic-offsite"), ("Secret", "backups-offsite")}
+    assert {(doc["kind"], doc["metadata"]["name"]) for doc in docs} & offsite == (offsite if listed else set())
+    assert [_container(doc)["envFrom"] for doc in docs if doc["metadata"]["name"] == "restic-offsite"] == (
+        [[{"secretRef": {"name": "backups-offsite"}}]] if listed else [])
 
 
-# Exits 10 for a missing destination; prints a file name it must not leak.
+# Exits 10 for a destination with no config and 1 for a copy into */pvc-bad; prints a file name it must not leak, on
+# stdout and stderr.
 _FAKE_COPY = """#!/bin/sh
 echo "$*" >> "$LOG"
-echo "tree 1: file private-file-name"
-dest=$2
-case "$3" in
-  cat) [ -e "$dest/config" ] || exit 10 ;;
-  init) [ -d "$5" ] || exit 1; mkdir -p "$dest"; touch "$dest/config" ;;
-  --no-lock) [ "$4" = copy ] && [ -d "$6" ] && [ -e "$dest/config" ] || exit 1; touch "$dest/copied" ;;
-  *) exit 1 ;;
-esac
+echo "tree 1: file private-file-name"; echo "tree 1: file private-file-name" >&2
+case "$3" in cat) [ -e "$2/config" ] || exit 10 ;; init) mkdir -p "$2"; touch "$2/config" ;; esac
+case "$3 $2" in "--no-lock "*/pvc-bad) exit 1 ;; esac
 """
 
 
-def test_offsite_copy_script_inits_and_copies_every_repository(tmp_path: Path) -> None:
-    """Each local repository is copied into prefix + its path, a missing destination is
-    initialised first, the local side takes no lock, and only PASS lines reach the log."""
-    data, bindir, offsite = tmp_path / "data", tmp_path / "bin", tmp_path / "offsite"
-    bindir.mkdir()
-    for repo in ("host-etcd-snapshots", "ns-a/pvc-x"):
-        (data / repo).mkdir(parents=True)
-    (bindir / "restic").write_text(_FAKE_COPY, encoding="utf-8")
-    (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "core/feature/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
-    container = job["spec"]["template"]["spec"]["containers"][0]
-    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
-    env.update(
-        PATH=f"{bindir}:{os.environ['PATH']}",
-        LOG=str(tmp_path / "log"),
-        RESTIC_REPOSITORY=f"{offsite}/",
-    )
-    script = container["command"][-1].replace("/repositories", str(data))
-    proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, proc.stdout
-    assert proc.stdout.splitlines() == ["PASS host-etcd-snapshots", "PASS ns-a/pvc-x"]
+@pytest.mark.parametrize(("repos", "code", "lines"), [
+    pytest.param(["host-etcd-snapshots", "ns-a/pvc-x"], 0, ["PASS host-etcd-snapshots", "PASS ns-a/pvc-x"], id="every-repository"),
+    pytest.param(["host-etcd-snapshots", "ns-a/pvc-x", "ns-b/pvc-bad"], 1,
+                 ["PASS host-etcd-snapshots", "PASS ns-a/pvc-x", "FAIL ns-b/pvc-bad: restic exited 1"], id="a-copy-fails"),
+])  # fmt: skip
+def test_offsite_copy_script_inits_and_copies_every_repository(tmp_path: Path, repos: list[str], code: int, lines: list[str]) -> None:
+    """Rule: after one probe of the target, each local repository is copied, lock-free, into prefix + its path, a missing
+    destination initialised first with the local chunker parameters; one line per repository, and a failed copy fails."""
+    offsite, data = tmp_path / "offsite", tmp_path / "data"
+    container = _container(yaml_docs(ROOT / "core/feature/offsite-backup-copy/restic-offsite.yaml")[0])
+    proc, calls = _run(tmp_path, container, _FAKE_COPY, repos, RESTIC_REPOSITORY=f"{offsite}/")
+    assert (proc.returncode, proc.stdout.splitlines()) == (code, lines), proc.stdout
     assert "private-file-name" not in proc.stdout + proc.stderr
-    for repo in ("host-etcd-snapshots", "ns-a/pvc-x"):
-        assert (offsite / repo / "copied").is_file()
-    copies = [line for line in (tmp_path / "log").read_text().splitlines() if " copy " in line]
-    assert copies == [
-        f"--repo {offsite}/{repo} --no-lock copy --from-repo {data}/{repo}"
-        for repo in ("host-etcd-snapshots", "ns-a/pvc-x")
-    ]
+    assert calls == [f"--repo {offsite}/probe cat config", *(call for repo in repos for call in (
+        f"--repo {offsite}/{repo} cat config",
+        f"--repo {offsite}/{repo} init --from-repo {data}/{repo} --copy-chunker-params",
+        f"--repo {offsite}/{repo} --no-lock copy --from-repo {data}/{repo}"))]  # fmt: skip
 
 
 def test_offsite_copy_fails_every_repository_at_once_when_the_target_is_down(tmp_path: Path) -> None:
-    """A target that does not answer the first probe fails each repository with one line and
-    runs no init or copy."""
-    data, bindir = tmp_path / "data", tmp_path / "bin"
-    bindir.mkdir()
-    for repo in ("host-etcd-snapshots", "ns-a/pvc-x"):
-        (data / repo).mkdir(parents=True)
-    (bindir / "restic").write_text('#!/bin/sh\necho "$*" >> "$LOG"\nexit 1\n', encoding="utf-8")
-    (bindir / "restic").chmod(0o755)
-    job = _docs(ROOT / "core/feature/offsite-backup-copy/restic-offsite.yaml")[0]["spec"]["jobTemplate"]
-    container = job["spec"]["template"]["spec"]["containers"][0]
-    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
-    env.update(
-        PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(tmp_path / "log"), RESTIC_REPOSITORY="rest:http://down/"
-    )
-    script = container["command"][-1].replace("/repositories", str(data))
-    proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
-    assert proc.returncode == 1
-    assert proc.stdout.splitlines() == [
+    """Rule: a target that does not answer the first probe fails each repository with one line, and nothing more runs."""
+    container = _container(yaml_docs(ROOT / "core/feature/offsite-backup-copy/restic-offsite.yaml")[0])
+    proc, calls = _run(tmp_path, container, '#!/bin/sh\necho "$*" >> "$LOG"\nexit 1\n', ["host-etcd-snapshots", "ns-a/pvc-x"],
+                       RESTIC_REPOSITORY="rest:http://down/")  # fmt: skip
+    assert (proc.returncode, proc.stdout.splitlines()) == (1, [
         "FAIL host-etcd-snapshots: off-host target not reachable (probe exited 1)",
         "FAIL ns-a/pvc-x: off-host target not reachable (probe exited 1)",
-    ]
-    assert len((tmp_path / "log").read_text().splitlines()) == 1
-
-
+    ])
+    assert calls == ["--repo rest:http://down/probe cat config"]
