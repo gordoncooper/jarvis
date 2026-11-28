@@ -19,10 +19,15 @@ def _keys() -> list[tuple[str, str, dict[str, Any]]]:
     return found
 
 
-def test_the_reference_page_is_the_schemas_render() -> None:
-    """Rule: the page is generated; a schema change re-renders it (python -m jarvis.schema.reference)."""
+def test_the_reference_page_is_the_schemas_render(tmp_path, monkeypatch, capsys) -> None:
+    """Rule: the page is the schemas' render (python -m jarvis.schema.reference), and --check fails any other page."""
     assert reference.PAGE.read_text(encoding="utf-8") == reference.render()
     assert reference.main(["--check"]) == 0
+    monkeypatch.setattr(reference, "PAGE", tmp_path / "reference.md")
+    reference.PAGE.write_text("an older render\n", encoding="utf-8")
+    assert (reference.main(["--check"]), capsys.readouterr().out.splitlines()) == (1, [
+        "PASS reference: docs/reference.md matches the schemas",
+        "FAIL reference: docs/reference.md is stale; run python -m jarvis.schema.reference"])
 
 
 def test_every_key_says_what_it_means() -> None:
@@ -33,6 +38,7 @@ def test_every_key_says_what_it_means() -> None:
 
 
 def test_a_conditionally_required_key_says_when() -> None:
+    """Rule: the page says when a conditionally required key is required, escapes <tag>, and shows a key's default."""
     page = reference.render()
     assert "| `app_dns_cluster_ip` | no; yes when switches.yaml lists app-dns |" in page
     assert "refs/tags/&lt;tag&gt;" in page and "| `ssh_user` | no | string | `ubuntu` |" in page

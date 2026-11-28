@@ -2,82 +2,69 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
+import runpy
+import sys
+from pathlib import Path
 
-from support import RUN_MODULE, ExampleCopy
+import pytest
 
-
-def _check(copy: ExampleCopy) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [*RUN_MODULE, "jarvis.render.env", "--env", copy.name, "--check"],
-        env={**os.environ, "INSTANCE": str(copy.root)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+from jarvis.env.switches import FEATURE_COMPONENTS
+from jarvis.render import env as render
+from support import copy_sample
 
 
-def test_check_passes_a_rendered_env_and_names_each_stale_file(example_copy: ExampleCopy) -> None:
+def _flux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The flux/ of a core-only copy of the sample's env-00 at tmp_path, the instance jarvis render reads."""
+    monkeypatch.setenv("INSTANCE", str(copy_sample(tmp_path)))
+    return tmp_path / "envs" / "env-00" / "flux"
+
+
+def _files(flux: Path) -> dict[Path, bytes]:
+    return {path: path.read_bytes() for path in flux.rglob("*") if path.is_file()}
+
+
+def test_check_passes_a_rendered_env_and_names_each_stale_file(tmp_path: Path, monkeypatch, capsys) -> None:
     """Rule: --check writes nothing, passes a rendered env, and names an edited, a missing and an extra file."""
-    flux = example_copy.env_dir / "flux"
-    clean = _check(example_copy)
-    assert clean.returncode == 0, clean.stderr
-    sync, configmap = flux / "sync.yaml", flux / "generated" / "cluster-vars-configmap.yaml"
-    extra = flux / "generated" / "stray.yaml"
-    before = sync.read_text(encoding="utf-8"), configmap.read_text(encoding="utf-8")
-    try:
-        sync.write_text(before[0] + "# edited\n", encoding="utf-8")
-        configmap.unlink()
-        extra.write_text("kind: ConfigMap\n", encoding="utf-8")
-        stale = _check(example_copy)
-        assert stale.returncode == 1
-        assert f"envs/{example_copy.name}/flux/sync.yaml: differs from the render" in stale.stderr
-        assert "flux/generated/cluster-vars-configmap.yaml: missing" in stale.stderr
-        assert "flux/generated/stray.yaml: not rendered from the values" in stale.stderr
-        assert sync.read_text(encoding="utf-8").endswith("# edited\n")
-    finally:
-        sync.write_text(before[0], encoding="utf-8")
-        configmap.write_text(before[1], encoding="utf-8")
-        extra.unlink(missing_ok=True)
-
-
-def _render(copy: ExampleCopy) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [*RUN_MODULE, "jarvis.render.env", "--env", copy.name],
-        env={**os.environ, "INSTANCE": str(copy.root)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def test_render_replaces_flux_whole(tmp_path) -> None:
-    """Rule: flux/ is render output: a render removes a file it does not write anywhere under flux/
-    (a file core moved or retired leaves with no upgrade step) and restores an edited one."""
-    from support import bootstrap_example_copy
-
-    copy = bootstrap_example_copy(tmp_path)
-    flux = copy.env_dir / "flux"
-    retired = flux / "kustomizations" / "platform-controllers.yaml"
-    retired.write_text("kind: Kustomization\n", encoding="utf-8")
+    flux = _flux(tmp_path, monkeypatch)
+    assert render.main(["--env", "env-00", "--check"]) == 0
     sync = flux / "sync.yaml"
     sync.write_text(sync.read_text(encoding="utf-8") + "# edited\n", encoding="utf-8")
-    proc = _render(copy)
-    assert proc.returncode == 0, proc.stderr
-    assert not retired.exists()
-    assert not sync.read_text(encoding="utf-8").endswith("# edited\n")
-    assert _check(copy).returncode == 0
+    (flux / "generated" / "cluster-vars-configmap.yaml").unlink()
+    (flux / "generated" / "stray.yaml").write_text("kind: ConfigMap\n", encoding="utf-8")
+    stale = _files(flux)
+    # As python -m runs it: the module's __main__ block makes --check's result the exit status.
+    monkeypatch.setattr(sys, "argv", [render.__file__, "--env", "env-00", "--check"])
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_path(render.__file__, run_name="__main__")
+    assert (exited.value.code, capsys.readouterr()) == (1, ("", "".join(f"envs/env-00/flux/{line}\n" for line in (
+        "generated/cluster-vars-configmap.yaml: missing",
+        "generated/stray.yaml: not rendered from the values; the next render removes it",
+        "sync.yaml: differs from the render",
+    )) + "render: re-render with jarvis render --env env-00\n"))  # fmt: skip
+    assert _files(flux) == stale
 
 
-def test_a_refused_render_leaves_flux_as_it_was(tmp_path) -> None:
+def test_render_replaces_flux_whole(tmp_path: Path, monkeypatch) -> None:
+    """Rule: flux/ is render output: a render removes a file it does not write anywhere under flux/
+    (a file core moved or retired leaves with no upgrade step) and restores an edited one."""
+    flux = _flux(tmp_path, monkeypatch)
+    rendered = _files(flux)
+    (flux / "kustomizations" / "platform-controllers.yaml").write_text("kind: Kustomization\n", encoding="utf-8")
+    sync = flux / "sync.yaml"
+    sync.write_text(sync.read_text(encoding="utf-8") + "# edited\n", encoding="utf-8")
+    assert render.main(["--env", "env-00"]) == 0
+    assert _files(flux) == rendered
+    assert render.main(["--env", "env-00", "--check"]) == 0
+
+
+def test_a_refused_render_leaves_flux_as_it_was(tmp_path: Path, monkeypatch) -> None:
     """Rule: the render works on a copy; values it refuses change nothing under flux/."""
-    from support import bootstrap_example_copy
-
-    copy = bootstrap_example_copy(tmp_path)
-    flux = copy.env_dir / "flux"
-    before = {path: path.read_bytes() for path in flux.rglob("*") if path.is_file()}
-    (copy.env_dir / "values" / "switches.yaml").write_text("features: [no-such-feature]\n", encoding="utf-8")
-    proc = _render(copy)
-    assert proc.returncode != 0
-    assert {path: path.read_bytes() for path in flux.rglob("*") if path.is_file()} == before
+    flux = _flux(tmp_path, monkeypatch)
+    before = _files(flux)
+    (flux.parent / "values" / "switches.yaml").write_text("features: [no-such-feature]\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as refused:
+        render.main(["--env", "env-00"])
+    # The refusal names the render's working copy of values/switches.yaml, not the env's.
+    known = ", ".join(FEATURE_COMPONENTS)
+    assert str(refused.value.code).endswith(f"/env-00/values/switches.yaml: features: unknown name 'no-such-feature' (known: {known})")
+    assert _files(flux) == before
