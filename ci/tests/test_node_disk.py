@@ -1,346 +1,147 @@
-"""node-disk only checks a declared data disk."""
+"""node-disk only checks a declared data disk: it refuses a data path it cannot use, accepts one holding only Jarvis data,
+and changes nothing."""
 
 from __future__ import annotations
 
 import json
 import subprocess
-import textwrap
+import sys
 from pathlib import Path
 
-from ansible_role_proof import LOCALHOST, local_play, playbook, playbook_recap_field
+import pytest
+from ansible_role_proof import LOCALHOST, changed, failed_task, fake_tool, local_play, playbook, role_tasks
 from conftest import require_cli
 
 _ROOT_ID = "8:1"
 _DISK_ID = "9:1"
+# findmnt -T <path> -o <field>, answered from MOUNTS: {path: {"TARGET": ..., "MAJ:MIN": ...}}.
+_FINDMNT = r"""
+import sys
+args = sys.argv[1:]
+path, field = args[args.index("-T") + 1], args[args.index("-o") + 1]
+if field not in MOUNTS.get(path, {}):
+    sys.exit(f"findmnt: no {field} for {path}")
+print(MOUNTS[path][field])
+"""
+_ROOT = {"/": ("/", _ROOT_ID)}
+_OWN = {**_ROOT, "data": ("data", _DISK_ID)}
+_ON_ROOT = {**_ROOT, "data": ("data", _ROOT_ID)}
+_JARVIS = {"data/local-path": None, "data/backup/etcd-snapshots": None, "data/lost+found": None}
+_JARVIS_MOUNTS = {**_OWN, "data/local-path": ("data", _DISK_ID), "data/backup": ("data", _DISK_ID)}
+_RERUN = {**_JARVIS, "k3s-data/server/db": None}
+# What the fake tools print when the role misuses them: findmnt asked about a path it was not given, or any disk tool.
+_COMPLAINTS = ("findmnt:", "disk command invoked")
+_MISSING = ("Refuse a missing data path", "data path {root}/data does not exist or is not a directory.")
+_ROOT_FS = ("Refuse a data path on the root filesystem", "{root}/data is not its own filesystem; it is part of /.")
+_FOREIGN = "Refuse entries that are not Jarvis data"
+_OUTSIDE = "Refuse a backup_path outside the data mount"
+_EMPTY = ("Refuse an empty data path when k3s has already run", "{root}/data has no Jarvis data, but {root}/k3s-data already"
+          " holds k3s server or agent state, so existing data is missing or hidden under the mount.")
 
 
-def _install_bin(bin_dir: Path, mounts: dict[str, dict[str, str]]) -> None:
-    bin_dir.mkdir()
-    (bin_dir / "mounts.json").write_text(json.dumps(mounts), encoding="utf-8")
-    (bin_dir / "findmnt").write_text(
-        textwrap.dedent(
-            """\
-            #!/usr/bin/env python3
-            import json
-            import sys
-            from pathlib import Path
-
-            table = json.loads(Path(__file__).with_name("mounts.json").read_text())
-            args = sys.argv[1:]
-            target = None
-            field = None
-            index = 0
-            while index < len(args):
-                if args[index] == "-T" and index + 1 < len(args):
-                    target = args[index + 1]
-                    index += 2
-                    continue
-                if args[index] == "-o" and index + 1 < len(args):
-                    field = args[index + 1]
-                    index += 2
-                    continue
-                index += 1
-            row = table.get(target)
-            if row is None or field not in row:
-                sys.stderr.write(f"findmnt: no {field} for {target}\\n")
-                sys.exit(1)
-            sys.stdout.write(row[field] + "\\n")
-            """
-        ),
-        encoding="utf-8",
-    )
-    (bin_dir / "findmnt").chmod(0o755)
-    for name in ("wipefs", "mkfs.ext4", "parted", "mount"):
-        tool = bin_dir / name
-        tool.write_text(
-            "#!/bin/sh\necho 'disk command invoked' >&2\nexit 99\n",
-            encoding="utf-8",
-        )
-        tool.chmod(0o755)
+def _host(tmp_path: Path, entries: dict[str, str | None]) -> Path:
+    """tmp_path/host holding entries, each a file's text or None for a directory."""
+    root = tmp_path / "host"
+    root.mkdir()
+    for name, text in entries.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if text is None:
+            path.mkdir()
+        else:
+            path.write_text(text, encoding="utf-8")
+    return root
 
 
-def _mount_row(target: str, maj_min: str) -> dict[str, str]:
-    return {"TARGET": target, "MAJ:MIN": maj_min}
+def _tree(root: Path) -> dict[str, str | None]:
+    """Every path under root, with each file's text."""
+    return {str(path.relative_to(root)): path.read_text(encoding="utf-8") if path.is_file() else None for path in root.rglob("*")}
 
 
-def _run(
-    tmp_path: Path,
-    *,
-    mount: Path,
-    mounts: dict[str, dict[str, str]],
-    extra: dict[str, object],
-    check: bool = False,
-) -> subprocess.CompletedProcess[str]:
+def _node_disk(tmp_path: Path, root: Path, mounts: dict[str, tuple[str, str]], *flags: str,
+               **values: object) -> subprocess.CompletedProcess[str]:
+    """node-disk on localhost for a data disk at root/data, local_path_data and backup_path in it and k3s_data_dir at
+    root/k3s-data, values set over them (a str is a path under root; None unsets). findmnt answers from mounts
+    ({path: (target, MAJ:MIN)}, under root), and every disk tool fails, saying so."""
     require_cli("ansible-playbook")
-    bin_dir = tmp_path / "bin"
-    if not (bin_dir / "findmnt").exists():
-        _install_bin(bin_dir, mounts)
-    play = local_play(tmp_path, "    - ansible.builtin.include_role:\n        name: node-disk\n", bin_dir=bin_dir)
-    extra_vars = json.dumps({"node_disk_mount": str(mount), **extra})
-    return playbook(play, *LOCALHOST, "-e", extra_vars, *(["--check"] if check else []))
+    table = {str(root / path): {"TARGET": str(root / target), "MAJ:MIN": number} for path, (target, number) in mounts.items()}
+    fake_tool(tmp_path / "bin", "findmnt", f"#!{sys.executable}\nMOUNTS = {table!r}{_FINDMNT}")
+    for name in ("wipefs", "mkfs.ext4", "parted", "mount"):
+        fake_tool(tmp_path / "bin", name, "#!/bin/sh\necho 'disk command invoked' >&2\nexit 99\n")
+    disk = {"data_disk": True, "node_disk_mount": "data", "local_path_data": "data/local-path", "backup_path": "data/backup",
+            "k3s_data_dir": "k3s-data", **values}
+    extra = {key: str(root / value) if isinstance(value, str) else value for key, value in disk.items() if value is not None}
+    play = local_play(tmp_path, role_tasks("node-disk"), bin_dir=tmp_path / "bin")
+    return playbook(play, *LOCALHOST, "-e", json.dumps(extra), *flags, json=True)
 
 
-def _paths(mount: Path, k3s_data: Path) -> dict[str, object]:
-    return {
-        "data_disk": True,
-        "local_path_data": str(mount / "local-path"),
-        "backup_path": str(mount / "backup"),
-        "k3s_data_dir": str(k3s_data),
-    }
+@pytest.mark.parametrize(
+    ("entries", "mounts", "values", "flags", "refusal"),
+    [
+        pytest.param({}, _OWN, {}, (), _MISSING, id="missing"),
+        pytest.param({"data": "not a directory\n"}, _OWN, {}, (), _MISSING, id="a-file"),
+        pytest.param({"data": None}, {**_ROOT, "data": (".", "9:2")}, {}, (),
+                     ("Refuse a data path that is not a mount", "{root}/data is not a mount; it is part of {root}."), id="not-a-mount"),
+        pytest.param({"data": None}, _ON_ROOT, {}, (), _ROOT_FS, id="on-the-root-filesystem"),
+        # As jarvis site --check runs it: if check mode skipped reading a filesystem id, the two ids would differ and it pass.
+        pytest.param({"data": None}, _ON_ROOT, {}, ("--check",), _ROOT_FS, id="on-the-root-filesystem-check-mode"),
+        pytest.param({"data/notes.txt": "foreign\n"}, _OWN, {}, (), (_FOREIGN, "{root}/data holds entries that are not Jarvis"
+                     " data: notes.txt."), id="foreign-entry"),
+        pytest.param({"data/.notes": "foreign\n"}, _OWN, {}, (), (_FOREIGN, "{root}/data holds entries that are not Jarvis data:"
+                     " .notes."), id="hidden-foreign-entry"),
+        pytest.param({"data/lost+found": None, "k3s-data/agent/db": None}, _OWN, {}, (), _EMPTY, id="empty-after-the-agent-ran"),
+        pytest.param({"data/lost+found": None, "k3s-data/server/db": None}, _OWN, {}, (), _EMPTY, id="empty-after-the-server-ran"),
+        pytest.param({"data": None}, _OWN, {"backup_path": "elsewhere"}, (), (_OUTSIDE, "backup_path ({root}/elsewhere) is outside"
+                     " {root}/data."), id="backup-path-outside"),
+        pytest.param({"data": None}, _OWN, {"backup_path": "data-backup"}, (), (_OUTSIDE, "backup_path ({root}/data-backup) is"
+                     " outside {root}/data."), id="backup-path-beside-the-mount"),
+        pytest.param({"data/local-path": None}, {**_OWN, "data/local-path": ("data/local-path", "9:2")}, {}, (),
+                     ("Refuse local_path_data on another mount", "local_path_data ({root}/data/local-path) is outside {root}/data"
+                      " (mounted at {root}/data/local-path)."), id="local-path-data-on-its-own-mount"),
+        pytest.param({"data/local-path": None, "data/backup": None},
+                     {**_OWN, "data/local-path": ("data", _DISK_ID), "data/backup": ("data/backup", "9:3")}, {}, (),
+                     ("Refuse backup_path on another mount", "backup_path ({root}/data/backup) is outside {root}/data"
+                      " (mounted at {root}/data/backup)."), id="backup-path-on-its-own-mount"),
+    ],
+)
+def test_node_disk_refuses_a_data_path_it_cannot_use(
+    tmp_path: Path, entries: dict[str, str | None], mounts: dict[str, tuple[str, str]], values: dict[str, object],
+    flags: tuple[str, ...], refusal: tuple[str, str],
+) -> None:
+    """Rule: a data path that is missing or a file, not a mount, on the root filesystem, holding what is not Jarvis data, empty
+    once k3s stored state, or with backup_path or local_path_data outside it is refused: nothing changes, no disk tool runs."""
+    root = _host(tmp_path, entries)
+    before = _tree(root)
+    task, message = refusal
+    run = _node_disk(tmp_path, root, mounts, *flags, **values)
+    assert run.returncode != 0 and failed_task(run) == (task, message.format(root=root)), run.output
+    assert (changed(run), _tree(root)) == ({"localhost": 0}, before), run.output
+    assert not [word for word in _COMPLAINTS if word in run.output], run.output
 
 
-def _own_mount(mount: Path) -> dict[str, dict[str, str]]:
-    return {
-        str(mount): _mount_row(str(mount), _DISK_ID),
-        "/": _mount_row("/", _ROOT_ID),
-    }
-
-
-def test_node_disk_refuses_a_missing_path(tmp_path: Path) -> None:
-    mount = tmp_path / "missing"
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=_own_mount(mount),
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    assert "does not exist" in output
-    assert "disk command invoked" not in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_refuses_a_path_that_is_not_a_mount(tmp_path: Path) -> None:
-    """A directory inside a non-root mount is not itself a mount."""
-    parent = tmp_path / "disk"
-    mount = parent / "jarvis"
-    mount.mkdir(parents=True)
-    parent_id = "9:2"
-    mounts = {
-        str(mount): _mount_row(str(parent), parent_id),
-        str(parent): _mount_row(str(parent), parent_id),
-        "/": _mount_row("/", _ROOT_ID),
-    }
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=mounts,
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    assert "is not a mount" in output
-    assert "its own filesystem" not in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_refuses_a_mount_on_the_root_filesystem(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    mount.mkdir()
-    mounts = {
-        str(mount): _mount_row(str(mount), _ROOT_ID),
-        "/": _mount_row("/", _ROOT_ID),
-    }
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=mounts,
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    assert "part of /" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_refuses_unrelated_entries(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    mount.mkdir()
-    (mount / "notes.txt").write_text("foreign\n", encoding="utf-8")
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=_own_mount(mount),
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    assert "notes.txt" in output
-    assert "not Jarvis data" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_marker_without_k3s_state_allows_an_empty_mount(tmp_path: Path) -> None:
-    """The env marker is written before k3s runs, so it is not evidence of data."""
-    mount = tmp_path / "data"
-    mount.mkdir()
-    (mount / "lost+found").mkdir()
-    marker = tmp_path / "env"
-    marker.write_text("env-test\n", encoding="utf-8")
-    k3s_data = tmp_path / "k3s-data"
-    (k3s_data / "server").mkdir(parents=True)
-    extra = _paths(mount, k3s_data)
-    extra["jarvis_marker_path"] = str(marker)
-    result = _run(tmp_path, mount=mount, mounts=_own_mount(mount), extra=extra)
-    output = result.output
-    assert result.returncode == 0, output
-    assert playbook_recap_field(output, "changed") == 0
-    assert marker.read_text(encoding="utf-8") == "env-test\n"
-
-
-def test_node_disk_refuses_an_empty_mount_when_k3s_has_run(tmp_path: Path) -> None:
-    """Agent state counts as k3s having run (server state does too: the accepts test below)."""
-    k3s_role = "agent"
-    mount = tmp_path / "data"
-    mount.mkdir()
-    (mount / "lost+found").mkdir()
-    k3s_data = tmp_path / "k3s-data"
-    (k3s_data / k3s_role / "db").mkdir(parents=True)
-    result = _run(tmp_path, mount=mount, mounts=_own_mount(mount), extra=_paths(mount, k3s_data))
-    output = result.output
-    assert result.returncode != 0, output
-    assert "no Jarvis data" in output
-    assert "k3s server or agent state" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_accepts_jarvis_dirs_when_k3s_has_run(tmp_path: Path) -> None:
-    """A re-run passes when k3s state and Jarvis directories are both present."""
-    k3s_role = "server"
-    mount = tmp_path / "data"
-    for name in ("local-path", "backup", "lost+found"):
-        (mount / name).mkdir(parents=True)
-    (mount / "backup" / "etcd-snapshots").mkdir()
-    k3s_data = tmp_path / "k3s-data"
-    (k3s_data / k3s_role / "db").mkdir(parents=True)
-    mounts = _own_mount(mount)
-    for name in ("local-path", "backup"):
-        mounts[str(mount / name)] = _mount_row(str(mount), _DISK_ID)
-    result = _run(tmp_path, mount=mount, mounts=mounts, extra=_paths(mount, k3s_data))
-    output = result.output
-    assert result.returncode == 0, output
-    assert playbook_recap_field(output, "changed") == 0
-    assert {path.name for path in mount.iterdir()} == {"local-path", "backup", "lost+found"}
-
-
-def test_node_disk_refuses_a_backup_path_outside_the_mount(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    mount.mkdir()
-    extra = _paths(mount, tmp_path / "k3s-data")
-    extra["backup_path"] = str(tmp_path / "elsewhere")
-    result = _run(tmp_path, mount=mount, mounts=_own_mount(mount), extra=extra)
-    output = result.output
-    assert result.returncode != 0, output
-    assert "outside" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_refuses_a_nested_mount(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    local = mount / "local-path"
-    local.mkdir(parents=True)
-    mounts = _own_mount(mount)
-    mounts[str(local)] = _mount_row(str(local), "9:2")
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=mounts,
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    assert "outside" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_refuses_backup_path_on_another_mount(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    local = mount / "local-path"
-    backup = mount / "backup"
-    local.mkdir(parents=True)
-    backup.mkdir()
-    mounts = _own_mount(mount)
-    mounts[str(local)] = _mount_row(str(mount), _DISK_ID)
-    mounts[str(backup)] = _mount_row(str(backup), "9:3")
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=mounts,
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    assert "backup_path" in output
-    assert "outside" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_node_disk_accepts_an_empty_mount_and_changes_nothing(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    mount.mkdir()
-    before = sorted(path.name for path in mount.iterdir())
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=_own_mount(mount),
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode == 0, output
-    assert playbook_recap_field(output, "changed") == 0
-    assert sorted(path.name for path in mount.iterdir()) == before
-    assert "disk command invoked" not in output
-
-    again = _run(
-        tmp_path,
-        mount=mount,
-        mounts=_own_mount(mount),
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    again_out = again.output
-    assert again.returncode == 0, again_out
-    assert playbook_recap_field(again_out, "changed") == 0
-
-    checked = _run(
-        tmp_path,
-        mount=mount,
-        mounts=_own_mount(mount),
-        extra=_paths(mount, tmp_path / "k3s-data"),
-        check=True,
-    )
-    checked_out = checked.output
-    assert checked.returncode == 0, checked_out
-    assert playbook_recap_field(checked_out, "changed") == 0
-
-
-def test_node_disk_accepts_only_jarvis_directories(tmp_path: Path) -> None:
-    mount = tmp_path / "data"
-    for name in ("local-path", "backup", "lost+found"):
-        (mount / name).mkdir(parents=True)
-    (mount / "backup" / "etcd-snapshots").mkdir()
-    mounts = _own_mount(mount)
-    for name in ("local-path", "backup"):
-        mounts[str(mount / name)] = _mount_row(str(mount), _DISK_ID)
-    result = _run(
-        tmp_path,
-        mount=mount,
-        mounts=mounts,
-        extra=_paths(mount, tmp_path / "k3s-data"),
-    )
-    output = result.output
-    assert result.returncode == 0, output
-    assert playbook_recap_field(output, "changed") == 0
-    assert {path.name for path in mount.iterdir()} == {"local-path", "backup", "lost+found"}
-
-
-def test_node_disk_changes_nothing_without_data_disk(tmp_path: Path) -> None:
-    mount = tmp_path / "absent"
-    extra = _paths(mount, tmp_path / "k3s-data")
-    extra.pop("data_disk")
-    result = _run(tmp_path, mount=mount, mounts={}, extra=extra)
-    output = result.output
-    assert result.returncode == 0, output
-    assert playbook_recap_field(output, "changed") == 0
-    assert not mount.exists()
-    assert "findmnt:" not in output
+@pytest.mark.parametrize(
+    ("entries", "mounts", "values", "flags"),
+    [
+        pytest.param({}, {}, {"data_disk": None}, (), id="no-data-disk"),
+        pytest.param({"data": None}, _OWN, {}, (), id="empty-mount"),
+        pytest.param({"data": None}, _OWN, {}, ("--check",), id="empty-mount-check-mode"),
+        pytest.param(_JARVIS, _JARVIS_MOUNTS, {}, (), id="jarvis-data"),
+        pytest.param(_RERUN, _JARVIS_MOUNTS, {}, (), id="jarvis-data-after-k3s-ran"),
+        # As jarvis site --check reruns a node: every read node-disk has runs in check mode.
+        pytest.param(_RERUN, _JARVIS_MOUNTS, {}, ("--check",), id="rerun-in-check-mode"),
+        pytest.param({"data/lost+found": None, "env": "env-test\n", "k3s-data/server": None}, _OWN, {"jarvis_marker_path": "env"},
+                     (), id="marker-without-k3s-state"),
+    ],
+)
+def test_node_disk_accepts_only_jarvis_data_and_changes_nothing(
+    tmp_path: Path, entries: dict[str, str | None], mounts: dict[str, tuple[str, str]], values: dict[str, object],
+    flags: tuple[str, ...],
+) -> None:
+    """Rule: without data_disk nothing is checked; a mount holding nothing or only Jarvis data passes, also once k3s
+    stored state (the env marker is none), and nothing changes, in check mode too, with no disk tool run."""
+    root = _host(tmp_path, entries)
+    before = _tree(root)
+    run = _node_disk(tmp_path, root, mounts, *flags, **values)
+    assert run.returncode == 0, run.output
+    assert (changed(run), _tree(root)) == ({"localhost": 0}, before), run.output
+    assert not [word for word in _COMPLAINTS if word in run.output], run.output

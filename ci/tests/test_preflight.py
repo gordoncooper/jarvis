@@ -1,349 +1,125 @@
-"""Opening play fails before any change."""
+"""site.yml's opening play: a host it refuses stops every host before any change; a host it passes changes nothing."""
 
 from __future__ import annotations
 
 import json
 import os
-import re
-import shutil
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
-import yaml
-from ansible_role_proof import (
-    ANSIBLE_DIR,
-    LOCALHOST,
-    example_flux_entry,
-    load_cluster_vars,
-    local_play,
-    playbook,
-    playbook_recap_field,
-    role_tasks,
-    roles_inventory_path,
-    site_vars_file,
-)
+from ansible_role_proof import changed, fake_systemctl, playbook, plays, ran, roles_inventory_path, site_vars_file
 from conftest import require_cli
 
-from support import REPO_ROOT, bootstrap_example_copy, sample_root
-
-_EXAMPLE_SYNC = sample_root() / "envs" / "env-00" / "flux" / "sync.yaml"
-
-
-def _inventory(
-    path: Path,
-    *,
-    data_disk_hosts: set[str] | None = None,
-    control_plane: tuple[str, ...] = ("cp-1",),
-) -> None:
-    marked = data_disk_hosts or set()
-    hosts: dict[str, dict[str, object]] = {
-        "cp-1": {"ansible_connection": "local"},
-        "wk-1": {"ansible_connection": "local"},
-    }
-    for name in marked:
-        hosts[name]["data_disk"] = True
-    doc = {
-        "all": {
-            "hosts": hosts,
-            "children": {"control_plane": {"hosts": {name: None for name in control_plane}}},
-        }
-    }
-    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+_BOTH = ("cp-1", "wk-1")
+# The guard's probe on each host: cp-1 runs the k3s server, wk-1 the agent.
+_PROBES = ["is-active k3s", "is-active k3s-agent"]
+_MEMORY = "Require a readable eviction-hard memory.available on each host"
+_UNREADABLE = "eviction-hard's memory.available on {host} is not a Kubernetes quantity (such as 100Mi) or a percent (such as 10%)."
+_FLUX = "Require the env FluxInstance and Flux sources in Git"
+_CONTROL_PLANES = "Assert exactly one control_plane host"
+_COUNTED = ("control_plane has {} hosts; expected exactly one. Pass both inventories with jarvis site --env <env> (hosts file,"
+            " then infra/inventory/roles).")
+_UNMARKED = ("Refuse host with foreign or unmarked k3s", "k3s is already present on this host but {tmp}/missing-marker is missing"
+             " or does not contain 'env-00'. Wipe the node or fix the marker before re-running this env.")
 
 
-def _vars_file(path: Path, *, instance: Path | None, jarvis_env: str | None = None, override: dict[str, object] | None = None) -> Path:
-    """What jarvis site passes, for an instance at instance (None passes none)."""
-    from jarvis.env import k3s
-
-    # The env's k3s pair is optional (core's release otherwise); the opening play reads it either way.
-    version, sha256 = k3s.release(load_cluster_vars())
-    found = {"k3s_version": version, "k3s_sha256": sha256, "jarvis_instance_root": instance and str(instance), **(override or {})}
-    return site_vars_file(path, **found, **({"jarvis_env": jarvis_env} if jarvis_env else {}))
-
-
-def _assert_unchanged(output: str) -> None:
-    recap = output.split("PLAY RECAP", 1)[-1]
-    lines = [line for line in recap.splitlines() if "changed=" in line]
-    assert len(lines) >= 2, output
-    assert all(re.search(r"changed=0\b", line) for line in lines), output
-
-
-_NO_INSTANCE = Path("/nonexistent-default")
-
-
-def _run_site(
-    tmp_path: Path,
-    *,
-    extra: list[str] | None = None,
-    data_disk_hosts: set[str] | None = None,
-    check: bool = True,
-    tags: str | None = None,
-    path_prefix: Path | None = None,
-    jarvis_env: str | None = None,
-    flux_instance: bool = True,
-    control_plane: tuple[str, ...] = ("cp-1",),
-    override: dict[str, object] | None = None,
-    sync_file: Path | None = None,
-    instance: Path | None = _NO_INSTANCE,
-) -> subprocess.CompletedProcess[str]:
-    """flux_instance passes the example env's FluxInstance; False keeps the jarvis_env path.
-    sync_file replaces the example env's sync.yaml. instance is the jarvis_instance_root passed
-    (default: tmp_path, an instance with no env yet; None passes none)."""
+def _site(tmp_path: Path, *flags: str, control_plane: tuple[str, ...] = ("cp-1",), gpu: tuple[str, ...] = (),
+          host_vars: dict[str, dict] | None = None, running: bool = False, is_active_rc: int | None = 4, fail: str = "",
+          **values: object) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """site.yml --tags always (the opening play's tasks, no later role) as jarvis site runs it, for cp-1 and wk-1 on this
+    machine through core's roles inventory: cp-1 the control plane unless control_plane says otherwise, gpu naming the gpu
+    hosts, host_vars a host's own vars. The sample env's vars with values over them (None drops one); k3s's paths and the
+    data path point at nothing in tmp_path; the fake systemctl's is-active exits 4 (no such unit) unless told otherwise.
+    Returns the run and the systemctl calls, sorted."""
     require_cli("ansible-playbook")
-    if instance is _NO_INSTANCE:
-        instance = tmp_path
+    hosts = {name: {"node_roles": ["control_plane" if name in control_plane else "workers", *(["gpu"] if name in gpu else [])],
+                    **(host_vars or {}).get(name, {})} for name in _BOTH}
     inventory = tmp_path / "hosts.yml"
-    _inventory(inventory, data_disk_hosts=data_disk_hosts, control_plane=control_plane)
-    # jarvis site passes the instance repository; here, one holding no env yet.
-    vars_path = _vars_file(tmp_path / "vars.json", instance=instance, jarvis_env=jarvis_env, override=override)
-    args = [
-        "site.yml", "-i", inventory, "-e", "ansible_connection=local", "-e", "ansible_become=false",
-        "-e", f"@{vars_path}", *(extra or []),
-    ]  # fmt: skip
-    if flux_instance:
-        instance_file = example_flux_entry(tmp_path).instance_file
-        args += ["-e", f"flux_instance_file={instance_file}", "-e", f"flux_sync_file={sync_file or _EXAMPLE_SYNC}"]
-    args += [*(["--check"] if check else []), *(["--tags", tags] if tags is not None else [])]
-    return playbook(*args, env={"PATH": f"{path_prefix}:{os.environ.get('PATH', '')}"} if path_prefix else None)
+    inventory.write_text(json.dumps({"all": {"hosts": hosts}}), encoding="utf-8")
+    log = fake_systemctl(tmp_path / "bin", running=running, fail=fail, is_active_rc=is_active_rc)
+    paths = {"k3s_binary_path": "missing-k3s", "k3s_data_dir": "missing-data", "jarvis_marker_path": "missing-marker",
+             "node_disk_mount": "missing-mount"}
+    site = site_vars_file(tmp_path / "vars.json", **{"ansible_connection": "local", "ansible_become": False,
+                                                     **{key: str(tmp_path / name) for key, name in paths.items()}, **values})
+    run = playbook("site.yml", "-i", inventory, "-i", roles_inventory_path(), "-e", f"@{site}", "--tags", "always", *flags,
+                   json=True, env={"PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}"})
+    return run, sorted(log.read_text(encoding="utf-8").splitlines())
 
 
-def _k3s_paths(tmp_path: Path) -> list[str]:
-    return [
-        "-e",
-        json.dumps(
-            {
-                "k3s_binary_path": str(tmp_path / "missing-k3s"),
-                "k3s_data_dir": str(tmp_path / "missing-data"),
-                "jarvis_marker_path": str(tmp_path / "missing-marker"),
-            }
-        ),
-    ]
+def _failures(run: subprocess.CompletedProcess[str]) -> dict[str, tuple[str, str]]:
+    """Each host's failed task in a json=True run, named as in its task file, and its msg."""
+    return {host: (task["task"]["name"].split(" : ", 1)[-1], result.get("msg", "")) for play in run.json["plays"]
+            for task in play["tasks"] for host, result in task["hosts"].items() if result.get("failed")}
 
 
-def _install_systemctl(bin_dir: Path, *, active_rc: int) -> None:
-    bin_dir.mkdir()
-    (bin_dir / "systemctl").write_text(
-        textwrap.dedent(
-            f"""\
-            #!/bin/sh
-            if [ "$1" = "is-active" ]; then
-              if [ "{active_rc}" -eq 0 ]; then
-                echo active
-              elif [ "{active_rc}" -eq 1 ]; then
-                echo "systemctl: dbus connection failed" >&2
-              else
-                echo inactive
-              fi
-              exit {active_rc}
-            fi
-            echo "unexpected systemctl $*" >&2
-            exit 1
-            """
-        ),
-        encoding="utf-8",
-    )
-    (bin_dir / "systemctl").chmod(0o755)
-
-
-def _stopped_before_base_os(result: subprocess.CompletedProcess[str], needle: str) -> None:
-    output = result.output
-    assert result.returncode != 0, output
-    assert needle in output
-    assert "PLAY [Base OS]" not in output
-    _assert_unchanged(output)
-
-
-def test_non_x86_host_fails_before_any_change(tmp_path: Path) -> None:
-    result = _run_site(
-        tmp_path,
-        extra=["-e", '{"ansible_facts":{"architecture":"aarch64"}}'],
-    )
-    _stopped_before_base_os(result, "k3s role supports only amd64 hosts.")
-
-
-@pytest.mark.parametrize("control_plane", [(), ("cp-1", "wk-1")], ids=["none", "two"])
-def test_not_exactly_one_control_plane_fails_before_any_change(
-    tmp_path: Path, control_plane: tuple[str, ...]
+@pytest.mark.parametrize(
+    ("knobs", "refusal", "hosts", "probes"),
+    [
+        pytest.param({"ansible_facts": {"architecture": "aarch64"}}, ("Require an amd64 host", "k3s role supports only amd64 hosts."),
+                     _BOTH, [], id="not-amd64"),
+        pytest.param({"control_plane": ()}, (_CONTROL_PLANES, _COUNTED.format(0)), _BOTH, [], id="no-control-plane"),
+        pytest.param({"control_plane": _BOTH}, (_CONTROL_PLANES, _COUNTED.format(2)), _BOTH, [], id="two-control-planes"),
+        pytest.param({"k3s_kubelet_eviction_hard": "memory.available<100MB"}, (_MEMORY, _UNREADABLE), _BOTH, [],
+                     id="memory-in-megabytes"),
+        pytest.param({"k3s_kubelet_eviction_hard": "nodefs.available<10%,memory.available<"}, (_MEMORY, _UNREADABLE), _BOTH, [],
+                     id="memory-without-a-value"),
+        # The k3s role strips each signal, so a space after the comma still brings memory.available to the check.
+        pytest.param({"k3s_kubelet_eviction_hard": "nodefs.available<10%, memory.available<100MB"}, (_MEMORY, _UNREADABLE), _BOTH,
+                     [], id="memory-after-a-space"),
+        # A host's own value, which the roles inventory composes, since the env's extra vars would hide it.
+        pytest.param({"host_vars": {"wk-1": {"k3s_kubelet_eviction_hard": "memory.available<100MB"}}}, (_MEMORY, _UNREADABLE),
+                     ("wk-1",), [], id="host-memory-in-megabytes"),
+        pytest.param({"jarvis_instance_root": None}, ("Require the instance repository", "jarvis_instance_root is not set: run"
+                     " jarvis site --env <env> from the instance repository, which passes it."), _BOTH, [], id="no-instance-repository"),
+        pytest.param({"jarvis_env": "env-absent"}, (_FLUX, "core/flux/flux-instance.yaml (core's) or envs/env-absent/flux/sync.yaml"
+                     " is missing. flux-operator applies them on a new cluster; commit sync.yaml before running site.yml."),
+                     _BOTH, [], id="env-without-its-flux"),
+        pytest.param({"flux_instance_file": "/nonexistent/flux-instance.yaml"}, (_FLUX, "core/flux/flux-instance.yaml (core's) or"
+                     " envs/env-00/flux/sync.yaml is missing. flux-operator applies them on a new cluster; commit sync.yaml before"
+                     " running site.yml."), _BOTH, [], id="no-core-flux-instance"),
+        pytest.param({"gpu": ("cp-1",), "node_pci_devices_path": "/nonexistent/pci-devices"},
+                     ("A declared gpu host has an NVIDIA device", "gpu host cp-1 has no NVIDIA device."), ("cp-1",), [],
+                     id="gpu-host-without-nvidia"),
+        # k3s is on the host when it is active, or its binary or data directory is there (any file, any directory).
+        pytest.param({"running": True, "is_active_rc": None}, _UNMARKED, _BOTH, _PROBES, id="unmarked-k3s"),
+        pytest.param({"k3s_binary_path": "/bin/sh"}, _UNMARKED, _BOTH, _PROBES, id="unmarked-k3s-binary"),
+        pytest.param({"k3s_data_dir": "/"}, _UNMARKED, _BOTH, _PROBES, id="unmarked-k3s-data"),
+        pytest.param({"fail": "is-active"}, ("Probe whether k3s service is active", "The command exited with a non-zero return code."),
+                     _BOTH, _PROBES, id="probe-error"),
+        pytest.param({"host_vars": {"cp-1": {"data_disk": True}}}, ("Refuse a missing data path", "data path {tmp}/missing-mount does"
+                     " not exist or is not a directory."), ("cp-1",), _PROBES, id="one-bad-data-disk"),
+    ],
+)
+def test_a_refused_host_stops_every_host_before_any_change(
+    tmp_path: Path, knobs: dict[str, object], refusal: tuple[str, str], hosts: tuple[str, ...], probes: list[str]
 ) -> None:
-    result = _run_site(tmp_path, control_plane=control_plane)
-    _stopped_before_base_os(result, "expected exactly one")
-
-
-@pytest.mark.parametrize("value", ["memory.available<100MB", "nodefs.available<10%,memory.available<"])
-def test_unreadable_memory_threshold_fails_before_any_change(tmp_path: Path, value: str) -> None:
-    """Rule: an eviction-hard memory.available the reserve cannot compare stops the opening play."""
-    result = _run_site(tmp_path, override={"k3s_kubelet_eviction_hard": value})
-    _stopped_before_base_os(result, "is not a Kubernetes quantity")
-
-
-@pytest.mark.parametrize("value", ["memory.available<1.5Gi,nodefs.available<10%", "memory.available<7%"])
-def test_readable_memory_threshold_passes_preflight(tmp_path: Path, value: str) -> None:
-    """Rule: a quantity or percent memory.available, beside other signals, passes the check."""
-    result = _run_site(tmp_path, override={"k3s_kubelet_eviction_hard": value})
-    output = result.output
-    task = output.split("TASK [Require a readable eviction-hard memory.available on each host]")[1].split("TASK [")[0]
-    assert "ok: [cp-1]" in task and "ok: [wk-1]" in task and "failed" not in task, task
-
-
-def test_env_without_its_flux_fails_before_any_change(tmp_path: Path) -> None:
-    """site.yml applies core's FluxInstance and the env's sync.yaml, so an env without its flux/
-    stops the opening play."""
-    result = _run_site(tmp_path, jarvis_env="env-absent", flux_instance=False)
-    _stopped_before_base_os(result, "core/flux/flux-instance.yaml (core's) or envs/env-absent/flux/sync.yaml is missing")
-
-
-def test_missing_sync_yaml_with_flux_instance_present_fails_before_any_change(tmp_path: Path) -> None:
-    """site.yml applies sync.yaml after flux-instance.yaml, so a missing sync.yaml stops it too."""
-    result = _run_site(tmp_path, sync_file=tmp_path / "absent-sync.yaml")
-    _stopped_before_base_os(result, "flux-instance.yaml (core's) or envs/")
-
-
-def test_unmarked_k3s_fails_before_any_change(tmp_path: Path) -> None:
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=0)
-    result = _run_site(
-        tmp_path,
-        extra=_k3s_paths(tmp_path),
-        path_prefix=bin_dir,
-    )
-    _stopped_before_base_os(result, "k3s is already present")
+    """Rule: each refusal of the opening play (arch, control plane count, memory.available, instance, Flux files, GPU, an
+    unmarked k3s, a failed probe, a data disk) stops every host before Base OS, with nothing changed and no marker written."""
+    task, message = refusal
+    expected = {host: (task, message.format(host=host, tmp=tmp_path)) for host in hosts}
+    run, calls = _site(tmp_path, "--check", **knobs)
+    assert run.returncode != 0 and _failures(run) == expected, run.output
+    assert (plays(run), changed(run), calls) == (["Assert facts before any change"], dict.fromkeys(_BOTH, 0), probes)
     assert not (tmp_path / "missing-marker").exists()
 
 
-def test_failing_data_disk_stops_every_host(tmp_path: Path) -> None:
-    """One host with a bad data disk stops the run before base-os, including the other host."""
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=4)
-    result = _run_site(
-        tmp_path,
-        extra=[
-            *_k3s_paths(tmp_path),
-            "-e",
-            json.dumps({"node_disk_mount": str(tmp_path / "missing-mount")}),
-        ],
-        data_disk_hosts={"cp-1"},
-        path_prefix=bin_dir,
-    )
-    _stopped_before_base_os(result, "does not exist")
+# The checks a passing host must have run, not skipped: the memory threshold, the Flux files, the probe and the guard.
+_PASSED = (_MEMORY, _FLUX, "Probe whether k3s service is active", "Refuse host with foreign or unmarked k3s")
 
 
-def test_systemctl_inactive_rc_is_allowed(tmp_path: Path) -> None:
-    """is-active exit 3 (inactive or failed) is success and is not 'k3s is present'."""
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=3)
-    play = local_play(tmp_path, role_tasks("k3s", "refuse.yml"), bin_dir=bin_dir)
-    result = playbook(play, *LOCALHOST, "-e", "jarvis_env=fixture", *_k3s_paths(tmp_path))
-    output = result.output
-    assert result.returncode == 0, output
-    assert "k3s is already present" not in output
-    assert "Probe whether k3s service is active" in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_systemctl_probe_error_is_not_treated_as_inactive(tmp_path: Path) -> None:
-    """A failed is-active probe fails the run. It is not read as 'k3s is absent'."""
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=1)
-    result = _run_site(
-        tmp_path,
-        extra=_k3s_paths(tmp_path),
-        path_prefix=bin_dir,
-    )
-    output = result.output
-    assert result.returncode != 0, output
-    assert "Probe whether k3s service is active" in output
-    assert "k3s is already present" not in output
-    assert "PLAY [Base OS]" not in output
-    _assert_unchanged(output)
-
-
-def _write_opening_play(path: Path, *, bin_dir: Path) -> None:
-    tasks = ANSIBLE_DIR / "tasks"
-    path.write_text(
-        textwrap.dedent(
-            f"""\
-            ---
-            - name: Assert facts before any change
-              hosts: all
-              gather_facts: false
-              become: false
-              any_errors_fatal: true
-              environment:
-                PATH: "{bin_dir}:/usr/bin:/bin"
-              tasks:
-                - ansible.builtin.import_tasks: {tasks / "preflight.yml"}
-                - ansible.builtin.import_tasks: {tasks / "assert-gpu.yml"}
-                - ansible.builtin.import_role:
-                    name: k3s
-                    tasks_from: refuse.yml
-                - ansible.builtin.import_role:
-                    name: node-disk
-            """
-        ),
-        encoding="utf-8",
-    )
-
-
-def test_preflight_second_run_changes_nothing(tmp_path: Path) -> None:
-    """A host that passes the opening asserts changes nothing, including on --check."""
-    require_cli("ansible-playbook")
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=4)
-    inventory = tmp_path / "hosts.yml"
-    _inventory(inventory)
-    vars_path = _vars_file(tmp_path / "vars.json", instance=tmp_path)
-    play = tmp_path / "play.yml"
-    _write_opening_play(play, bin_dir=bin_dir)
-    flux_instance = example_flux_entry(tmp_path).instance_file
-    extra = ["-e", f"@{vars_path}", "-e", "ansible_connection=local",
-             "-e", f"flux_instance_file={flux_instance}", "-e", f"flux_sync_file={_EXAMPLE_SYNC}",
-             *_k3s_paths(tmp_path)]  # fmt: skip
-    for check in ([], [], ["--check"]):
-        result = playbook(play, "-i", inventory, *extra, *check)
-        assert result.returncode == 0, result.output
-        assert "PLAY [Base OS]" not in result.output
-        _assert_unchanged(result.output)
-        assert playbook_recap_field(result.output, "changed") == 0
-
-
-def test_site_reads_the_flux_instance_from_core_and_sync_from_the_instance(tmp_path: Path) -> None:
-    """group_vars resolves core's core/flux/flux-instance.yaml beside the playbook and the env's
-    sync.yaml in the instance site passes, and that assert passes. The playbook runs from a core
-    checkout, as jarvis site runs it; the instance holds only envs/."""
-    require_cli("ansible-playbook")
-    hosts = (
-        REPO_ROOT / "ci/tests/fixtures/env-shapes/single-node/hosts.yml"
-    ).read_text(encoding="utf-8")
-    copy = bootstrap_example_copy(tmp_path, hosts_text=hosts)
-    checkout = tmp_path / "core-checkout"
-    playbook_dir = checkout / "infra" / "ansible"
-    (playbook_dir / "group_vars").mkdir(parents=True)
-    (checkout / "core").symlink_to(REPO_ROOT / "core", target_is_directory=True)
-    shutil.copy(ANSIBLE_DIR / "group_vars" / "all.yml", playbook_dir / "group_vars" / "all.yml")
-    opening = playbook_dir / "open.yml"
-    bin_dir = tmp_path / "bin"
-    _install_systemctl(bin_dir, active_rc=4)
-    _write_opening_play(opening, bin_dir=bin_dir)
-    result = playbook(
-        opening, "-i", copy.env_dir / "inventory" / "hosts.yml", "-i", roles_inventory_path(),
-        "-e", "ansible_connection=local", "-e", "ansible_become=false",
-        "-e", f"@{site_vars_file(tmp_path / 'vars.json', copy.root, env=copy.name)}", *_k3s_paths(tmp_path),
-        env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"},
-    )  # fmt: skip
-    output = result.output
-    assert result.returncode == 0, output
-    assert "Require the env FluxInstance and Flux sources in Git" in output
-    assert "flux/sync.yaml is missing" not in output
-    assert "PLAY [Base OS]" not in output
-    assert playbook_recap_field(output, "changed") == 0
-
-
-def test_site_refuses_to_guess_the_instance_repository(tmp_path: Path) -> None:
-    """Rule: core holds no env, so site reads the env only from the instance repository jarvis site
-    passes; without one it stops with what to run, never falls back to the core checkout."""
-    result = _run_site(tmp_path, instance=None)
-    output = result.output
-    assert result.returncode != 0
-    assert "jarvis_instance_root is not set: run jarvis site --env <env> from the instance repository" in output
+@pytest.mark.parametrize(
+    ("knobs", "flags"),
+    [
+        pytest.param({"k3s_kubelet_eviction_hard": "memory.available<1.5Gi,nodefs.available<10%", "is_active_rc": None}, (),
+                     id="quantity-and-k3s-inactive"),
+        pytest.param({"k3s_kubelet_eviction_hard": "memory.available<7%"}, ("--check",), id="percent-check-mode"),
+    ],
+)
+def test_a_host_the_opening_play_passes_changes_nothing(tmp_path: Path, knobs: dict[str, object], flags: tuple[str, ...]) -> None:
+    """Rule: a readable memory.available and k3s inactive (is-active 3) or absent (4) pass the opening play, changing nothing,
+    in check mode too; it reads core's FluxInstance beside the playbook and sync.yaml in the instance, which holds no core."""
+    run, calls = _site(tmp_path, *flags, **knobs)
+    assert run.returncode == 0 and changed(run) == dict.fromkeys(_BOTH, 0), run.output
+    assert {task: ran(run, task) for task in _PASSED} == dict.fromkeys(_PASSED, dict.fromkeys(_BOTH, "ok"))
+    assert calls == _PROBES and not (tmp_path / "missing-marker").exists()

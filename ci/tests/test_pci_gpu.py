@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
-from ansible_role_proof import REPO_ROOT, playbook
+from ansible_role_proof import REPO_ROOT, failed_task, playbook
 from conftest import require_cli
 
 FIXTURE_DIR = REPO_ROOT / "ci" / "tests" / "fixtures" / "gpu-assert"
@@ -24,11 +23,6 @@ def _sysfs(root: Path, vendor: str) -> Path:
     return devices
 
 
-def _assert_gpu(devices: Path, hosts: str = "hosts.yml") -> subprocess.CompletedProcess[str]:
-    require_cli("ansible-playbook")
-    return playbook(FIXTURE_DIR / "play.yml", "-i", FIXTURE_DIR / hosts, "-e", f"node_pci_devices_path={devices}")
-
-
 @pytest.mark.parametrize(
     ("vendor", "hosts", "passes"),
     [
@@ -40,8 +34,11 @@ def _assert_gpu(devices: Path, hosts: str = "hosts.yml") -> subprocess.Completed
     ids=["nvidia-behind-link", "not-a-gpu-host", "no-pci-devices", "other-vendor"],
 )
 def test_a_gpu_host_needs_an_nvidia_device_behind_the_sysfs_links(tmp_path: Path, vendor, hosts, passes: bool) -> None:
+    """Rule: a host in the gpu group passes only with an NVIDIA vendor id among its PCI devices, read through the sysfs
+    links; a host outside the group is not checked."""
+    require_cli("ansible-playbook")
     devices = _sysfs(tmp_path, vendor) if vendor else tmp_path / "devices"
     devices.mkdir(exist_ok=True)
-    proc = _assert_gpu(devices, hosts)
-    assert (proc.returncode == 0) is passes, proc.output
-    assert ("no NVIDIA device" in proc.output) is not passes
+    run = playbook(FIXTURE_DIR / "play.yml", "-i", FIXTURE_DIR / hosts, "-e", f"node_pci_devices_path={devices}", json=True)
+    refusal = None if passes else ("A declared gpu host has an NVIDIA device", "gpu host gpu-host has no NVIDIA device.")
+    assert (run.returncode == 0) is passes and failed_task(run) == refusal, run.output
