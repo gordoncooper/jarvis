@@ -183,7 +183,6 @@ def add_env(
     name: str = NAME,
     *,
     hosts_text: str | None = HOSTS,
-    with_apps: bool = True,
     with_addons: bool = False,
     features: Iterable[str] = (),
     public_keys: list[str],
@@ -192,7 +191,7 @@ def add_env(
     only unless features or with_addons say otherwise."""
     return add_env_from_spec(
         root, spec(name, features=features), public_keys=public_keys,
-        hosts_text=hosts_text, with_apps=with_apps, with_addons=with_addons,
+        hosts_text=hosts_text, with_addons=with_addons,
     )  # fmt: skip
 
 

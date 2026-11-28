@@ -63,12 +63,11 @@ def ci_mode() -> bool:
     return os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 
 
-def require_cli(name: str, *, hint: str = "run make deps") -> str:
+def require_cli(name: str) -> str:
     path = shutil.which(name)
     if path:
         return path
-    message = f"{name} not found on PATH ({hint})"
+    message = f"{name} not found on PATH (run make deps)"
     if ci_mode():
         pytest.fail(f"{message} — required in CI")
     pytest.skip(message)
-    raise AssertionError("unreachable")

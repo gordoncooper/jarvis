@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import NamedTuple
 
 import yaml
 
@@ -21,8 +19,6 @@ K3S_ROLE_DIR = ANSIBLE_DIR / "roles" / "k3s"
 FLUX_OPERATOR_ROLE_DIR = ANSIBLE_DIR / "roles" / "flux-operator"
 FLUX_OPERATOR_ROLE_TASKS = FLUX_OPERATOR_ROLE_DIR / "tasks"
 K3S_ROLE_TEMPLATES = K3S_ROLE_DIR / "templates"
-# The flux-operator reconciles a FluxInstance only under this name.
-FLUX_INSTANCE_NAME = "flux"
 
 
 # A play's hosts and connection for a run on this machine.
@@ -171,17 +167,12 @@ def site_vars_file(dest: Path, repo_root: Path | None = None, *, env: str | None
     return dest
 
 
-def inventory_path(repo_root: Path | None = None) -> Path:
-    return (repo_root or sample_root()) / "envs" / env_name() / "inventory" / "hosts.yml"
+def inventory_path() -> Path:
+    return sample_root() / "envs" / env_name() / "inventory" / "hosts.yml"
 
 
-def roles_inventory_path(repo_root: Path = REPO_ROOT) -> Path:
-    return repo_root / "infra" / "inventory" / "roles"
-
-
-def env_inventory_args(repo_root: Path | None = None) -> list[str]:
-    """Env hosts first, then the constructed role groups. Order is required."""
-    return ["-i", str(inventory_path(repo_root).resolve()), "-i", str(roles_inventory_path().resolve())]
+def roles_inventory_path() -> Path:
+    return REPO_ROOT / "infra" / "inventory" / "roles"
 
 
 def role_groups(*inventory: Path) -> dict[str, set[str]]:
@@ -219,107 +210,6 @@ def load_cluster_vars(repo_root: Path | None = None, *, env: str | None = None) 
     return resolve_cluster_vars(data)
 
 
-def standard_flux_kustomization_paths(env: str) -> dict[str, str]:
-    """The three Flux Kustomizations every env entry applies, in dependsOn order.
-
-    Core paths are under core/, where the root source includes the core source.
-    """
-    return {
-        "platform-controllers": "./core/platform",
-        "platform-configs": f"./envs/{env}/flux/platform-configs",
-        "services": "./addons",
-    }
-
-
-class PlatformControllerHealthCheck(NamedTuple):
-    """One HelmRelease platform-controllers waits for.
-
-    kstatus holds the HelmRelease at InProgress until this generation is Ready,
-    which includes that release's Deployments.
-    """
-
-    name: str
-    namespace: str
-
-    def flux_object(self) -> dict[str, str]:
-        return {
-            "apiVersion": "helm.toolkit.fluxcd.io/v2",
-            "kind": "HelmRelease",
-            "name": self.name,
-            "namespace": self.namespace,
-        }
-
-
-# platform-controllers waits for these HelmReleases and no other object.
-PLATFORM_CONTROLLER_HEALTH_CHECKS = (
-    PlatformControllerHealthCheck("cert-manager", "flux-system"),
-    PlatformControllerHealthCheck("kyverno", "flux-system"),
-    PlatformControllerHealthCheck("volsync", "flux-system"),
-)
-
-
-class ExampleFluxEntry(NamedTuple):
-    env: str
-    instance_file: Path
-    instance: dict
-    kustomizations: list[dict]
-
-
-def example_flux_entry(tmp_path: Path) -> ExampleFluxEntry:
-    """An in-memory FluxInstance and four Kustomizations for drift tests.
-
-    Built from the health-check contract. The FluxInstance has no sync; the env's
-    sync.yaml declares the sources. The committed env-00 flux tree is what a copy starts from.
-    """
-    env = env_name()
-    role = load_role_defaults(FLUX_OPERATOR_ROLE_DIR)
-    instance = {
-        "apiVersion": "fluxcd.controlplane.io/v1",
-        "kind": "FluxInstance",
-        "metadata": {
-            "name": FLUX_INSTANCE_NAME,
-            "namespace": role["flux_system_namespace"],
-        },
-        "spec": {
-            "kustomize": {
-                "patches": [
-                    {
-                        "patch": (
-                            "- op: add\n"
-                            "  path: /spec/template/spec/containers/0/args/-\n"
-                            "  value: --feature-gates=StrictPostBuildSubstitutions=true\n"
-                        ),
-                        "target": {"kind": "Deployment", "name": "kustomize-controller"},
-                    }
-                ]
-            },
-        },
-    }
-    instance_file = tmp_path / "flux-instance.yaml"
-    instance_file.write_text(yaml.safe_dump(instance, sort_keys=False), encoding="utf-8")
-    names = list(standard_flux_kustomization_paths(env).items())
-    kustomizations = []
-    for index, (name, path) in enumerate(names):
-        spec: dict[str, object] = {
-            "path": path,
-            "dependsOn": [{"name": names[index - 1][0]}] if index else [],
-        }
-        if name == "platform-controllers":
-            spec["timeout"] = "15m"
-            spec["healthChecks"] = [
-                check.flux_object() for check in PLATFORM_CONTROLLER_HEALTH_CHECKS
-            ]
-        kustomizations.append(
-            {
-                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-                "kind": "Kustomization",
-                "metadata": {"name": name, "namespace": role["flux_system_namespace"]},
-                "spec": spec,
-            }
-        )
-    return ExampleFluxEntry(env, instance_file, instance, kustomizations)
-
-
 def ansible_render_template(
     template_name: str,
     variables: dict[str, object],
@@ -344,15 +234,3 @@ def ansible_render_template(
         dest.unlink(missing_ok=True)
         dest.with_suffix(".json").unlink(missing_ok=True)
 
-
-def playbook_recap_field(output: str, field: str) -> int:
-    """field's count on the last host's recap line only; changed() reads every host."""
-    recap_lines = [
-        line
-        for line in output.splitlines()
-        if f"{field}=" in line and "PLAY RECAP" not in line
-    ]
-    assert recap_lines, output
-    match = re.search(rf"{field}=(\d+)", recap_lines[-1])
-    assert match is not None, output
-    return int(match.group(1))

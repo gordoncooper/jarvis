@@ -9,8 +9,8 @@ from __future__ import annotations
 import contextlib
 import copy
 import functools
-import importlib
 import json
+import os
 import shlex
 import shutil
 import socket
@@ -106,7 +106,6 @@ def _write_env(
     env_name: str = "env-test",
     *,
     cluster_vars: dict | None = None,
-    omit_ssh_user: bool = False,
     hosts_yml: str | None = None,
 ) -> Path:
     import yaml
@@ -116,8 +115,6 @@ def _write_env(
     (env / "inventory").mkdir(parents=True)
 
     cv = cluster_vars if cluster_vars is not None else _valid_cluster_vars()
-    if omit_ssh_user:
-        cv = {k: v for k, v in cv.items() if k != "ssh_user"}
     if cv.get("jarvis_env") in (None, "env-00"):
         cv["jarvis_env"] = env_name
 
@@ -147,11 +144,6 @@ class ExampleCopy:
     @property
     def env_dir(self) -> Path:
         return self.root / "envs" / self.name
-
-
-def real_and_copy_envs(copy: ExampleCopy) -> list[tuple[Path, str]]:
-    """The envs a whole-env rule runs on: core ships none, so the sample copy."""
-    return [(copy.root, copy.name)]
 
 
 def bootstrap_example_copy(
@@ -295,29 +287,6 @@ def _git_ignored(repo: Path, path: Path) -> bool:
     return proc.returncode == 0
 
 
-def register_copy_app(copy: ExampleCopy, namespace: str) -> None:
-    """Turn on backup for one listed app in the copy as an owner would: its backups on in
-    values/apps.yaml, its credential minted as jarvis secrets does, then render."""
-    import yaml
-
-    sops = shutil.which("sops")
-    if not sops:
-        raise RuntimeError("sops not found on PATH (run make deps)")
-    path = copy.env_dir / "values" / "apps.yaml"
-    apps = yaml.safe_load(path.read_text(encoding="utf-8"))
-    apps[namespace.removeprefix("app-")].pop("backups", None)
-    path.write_text(yaml.safe_dump(apps, sort_keys=False), encoding="utf-8")
-    mod = importlib.import_module("jarvis.secrets.mint")
-    previous_root, previous_repo_root = mod.REPO_ROOT, mod._repo_root
-    mod.REPO_ROOT = copy.root
-    mod._repo_root = lambda: copy.root
-    try:
-        mod.bootstrap_app(copy.name, namespace, sops_bin=sops)
-    finally:
-        mod.REPO_ROOT, mod._repo_root = previous_root, previous_repo_root
-    render_switches(copy.env_dir, copy.root)
-
-
 def kyverno_generated(work: Path, policies: list[dict], triggers: list[dict], cluster: list[dict] | None = None) -> list[dict]:
     """Every object the GeneratingPolicies make for the triggers, with the kyverno CLI (kyverno
     apply -o). cluster holds what resource.get and resource.list read, and each trigger's
@@ -358,9 +327,10 @@ def kyverno_generated(work: Path, policies: list[dict], triggers: list[dict], cl
 
 
 def yaml_docs(source: Path | str) -> list[dict]:
-    """The mappings among the YAML documents in source, a file or YAML text."""
+    """The mappings among the YAML documents in source, a file (a Path) or YAML text."""
     import yaml
 
+    assert not (isinstance(source, str) and os.path.isfile(source)), f"yaml_docs({source!r}): a file's path as text; pass a Path"
     text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
     return [doc for doc in yaml.safe_load_all(text) if isinstance(doc, dict)]
 
