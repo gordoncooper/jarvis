@@ -10,7 +10,7 @@
 k3d = "5.9.0"
 # The admission test's loopback API server (Linux only): kube-apiserver at kubectl's release,
 # and the etcd kubeadm pairs with that minor.
-"aqua:kubernetes/kubernetes/kube-apiserver" = { version = "1.36.6", os = ["linux"] }
+"aqua:kubernetes/kubernetes/kube-apiserver" = { version = "1.36.7", os = ["linux"] }
 etcd = { version = "3.6.17", os = ["linux"] }
 
 [vars]
